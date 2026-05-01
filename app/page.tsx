@@ -1,6 +1,7 @@
 import { Nav } from "@/components/landing/nav";
 import { Hero } from "@/components/landing/hero";
-import { Preview } from "@/components/landing/preview";
+import { DashboardCascade } from "@/components/landing/dashboard-cascade";
+import { OldVsAi } from "@/components/landing/old-vs-ai";
 import { HowItWorks } from "@/components/landing/how-it-works";
 import { Features } from "@/components/landing/features";
 import { Pricing } from "@/components/landing/pricing";
@@ -12,7 +13,8 @@ export default function HomePage() {
     <main className="relative">
       <Nav />
       <Hero />
-      <Preview />
+      <DashboardCascade />
+      <OldVsAi />
       <HowItWorks />
       <Features />
       <Pricing />
