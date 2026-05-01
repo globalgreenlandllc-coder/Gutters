@@ -1,6 +1,7 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
 import type { SatImage } from "./static-map";
+import type { RoofPolygon } from "./sam";
 
 export type SegmentedEavePolyline = {
   id: string;
@@ -19,8 +20,8 @@ const SYSTEM_PROMPT = `You are an expert at analyzing aerial roofing imagery for
 
 Return VALID JSON ONLY. No prose, no markdown.`;
 
-const userPrompt = (image: SatImage) =>
-  `Identify the eaves (gutter-bearing horizontal edges) of the primary residence in this aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).
+const userPrompt = (image: SatImage, roofPolygon: RoofPolygon | null) => {
+  const base = `Identify the eaves (gutter-bearing horizontal edges) of the primary residence in this aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).
 
 Return JSON in this exact shape:
 {
@@ -39,8 +40,28 @@ Rules:
 - Coordinates are integers in image pixels.
 - If the primary residence is partially out of frame, mark buildingFound: false and return an empty eaves array.`;
 
+  if (!roofPolygon) return base;
+
+  // Pre-segmented polygon from SAM 2 — tell GPT-4o exactly where the
+  // building is so it only classifies edges instead of also locating it.
+  const polyPoints = roofPolygon.points
+    .slice(0, 32) // cap to keep prompt small; 32 vertices is more than enough
+    .map((p) => `(${p.x},${p.y})`)
+    .join(" ");
+  const { x, y, width, height } = roofPolygon.bbox;
+
+  return `${base}
+
+A vision segmentation model has already located the primary roof footprint.
+- Bounding box: x=${x}, y=${y}, width=${width}, height=${height}
+- Polygon vertices (clockwise, image pixels): ${polyPoints}
+
+Constrain every eave you return to lie ON this polygon's perimeter (within ~10px). Do not draw eaves outside the bounding box. Return only the polygon edges that are eaves (lower horizontal); skip rakes (sloped) and ridges (top).`;
+};
+
 export async function segmentEavesViaVision(
   image: SatImage,
+  roofPolygon: RoofPolygon | null = null,
 ): Promise<VisionSegmentation | null> {
   const key = await getActiveApiKey("OPENAI");
   if (!key) return null;
@@ -68,7 +89,7 @@ export async function segmentEavesViaVision(
                   detail: "high",
                 },
               },
-              { type: "text", text: userPrompt(image) },
+              { type: "text", text: userPrompt(image, roofPolygon) },
             ],
           },
         ],

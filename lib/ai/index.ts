@@ -2,6 +2,7 @@ import "server-only";
 import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
 import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
+import { segmentRoofViaSam } from "./sam";
 import { segmentEavesViaVision } from "./vision";
 import {
   buildEditableLines,
@@ -80,9 +81,26 @@ export async function runAIEstimatePipeline(
     }
   }
 
-  // 4. Vision segmentation
+  // 4. SAM 2 roof polygon (optional — fal.ai key required). Gives GPT-4o
+  // a verified building outline so it doesn't hallucinate eaves over
+  // driveways, trees, or neighboring roofs.
+  let roofPolygon = null;
   if (image) {
-    const segmentation = await segmentEavesViaVision(image);
+    roofPolygon = await segmentRoofViaSam(image);
+    if (roofPolygon) {
+      notes.push(
+        `SAM 2: roof polygon ${roofPolygon.points.length} verts, covers ${(
+          roofPolygon.areaFraction * 100
+        ).toFixed(1)}% of tile`,
+      );
+    } else {
+      notes.push("SAM 2: skipped (no FAL key) — vision will run unconstrained");
+    }
+  }
+
+  // 5. Vision segmentation
+  if (image) {
+    const segmentation = await segmentEavesViaVision(image, roofPolygon);
     if (
       segmentation &&
       segmentation.buildingFound &&
@@ -142,7 +160,7 @@ export async function runAIEstimatePipeline(
     );
   }
 
-  // 5. Fallback — mock geometry (with the real aerial image as background
+  // 6. Fallback — mock geometry (with the real aerial image as background
   // if we got that far).
   return {
     geocoded,

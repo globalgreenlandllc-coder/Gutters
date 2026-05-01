@@ -47,6 +47,11 @@ const PROVIDER_META: Record<
     sub: "GPT-4o vision for roof segmentation",
     tone: "violet",
   },
+  FAL: {
+    label: "fal.ai",
+    sub: "SAM 2 roof polygon segmentation",
+    tone: "violet",
+  },
   NEARMAP: {
     label: "Nearmap AI",
     sub: "Eave / rake vector lines",
