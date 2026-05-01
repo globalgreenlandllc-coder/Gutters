@@ -11,10 +11,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // Neon's pooled connection. Uncomment if you split pooled/direct:
-  // directUrl = env("DATABASE_URL_DIRECT")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Direct (non-pooled) URL for migrations. PgBouncer-style poolers
+  // can't run schema migrations.
+  directUrl = env("DATABASE_URL_DIRECT")
 }
 
 // -----------------------------------------------------------------------
