@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, Copy, Mail, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Mail, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/proposal-mock";
+import { sendProposal } from "@/app/actions/proposals";
 import { cn } from "@/lib/utils";
 
 export function SendModal({
@@ -24,6 +25,9 @@ export function SendModal({
     `Hi ${proposal.client.name.split(" ")[0]},\n\nAttached is your gutter replacement proposal. Tap below to review the three options, sign, and pay your deposit. Pricing locked for ${proposal.validDays} days.\n\n— ${proposal.contractor.name}`,
   );
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [sentPortalUrl, setSentPortalUrl] = useState<string | null>(null);
   const portalUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/p/${proposal.token}`
@@ -37,11 +41,22 @@ export function SendModal({
   }
 
   function send() {
-    setPhase("sent");
+    setError(null);
+    startTransition(async () => {
+      const res = await sendProposal({ proposal, subject, message });
+      if (res.ok) {
+        setSentPortalUrl(res.portalUrl);
+        setPhase("sent");
+      } else {
+        setError(res.reason);
+      }
+    });
   }
 
   function handleClose() {
     setPhase("compose");
+    setError(null);
+    setSentPortalUrl(null);
     onClose();
   }
 
@@ -139,13 +154,30 @@ export function SendModal({
                   </Row>
                 </div>
 
+                {error && (
+                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <div>
+                      <div className="font-medium">Couldn't send</div>
+                      <div className="mt-0.5 text-rose-700/90">{error}</div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-6 flex items-center justify-end gap-2">
-                  <Button variant="secondary" size="sm" onClick={handleClose}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleClose}
+                    disabled={pending}
+                  >
                     Cancel
                   </Button>
-                  <Button size="sm" onClick={send}>
+                  <Button size="sm" onClick={send} disabled={pending}>
                     <Mail className="h-4 w-4" />
-                    Send to {proposal.client.name.split(" ")[0]}
+                    {pending
+                      ? "Sending…"
+                      : `Send to ${proposal.client.name.split(" ")[0] || "client"}`}
                   </Button>
                 </div>
               </div>
@@ -170,7 +202,10 @@ export function SendModal({
                   <Button
                     size="sm"
                     onClick={() =>
-                      window.open(`/p/${proposal.token}`, "_blank")
+                      window.open(
+                        sentPortalUrl ?? `/p/${proposal.token}`,
+                        "_blank",
+                      )
                     }
                   >
                     Open client portal
