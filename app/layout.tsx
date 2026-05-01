@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,8 +28,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${display.variable}`}>
-      <body className="font-sans antialiased text-zinc-900">{children}</body>
-    </html>
+    <ClerkProvider
+      appearance={{
+        variables: {
+          colorPrimary: "#059669",
+          colorText: "#18181b",
+          colorBackground: "#ffffff",
+          colorInputBackground: "#ffffff",
+          colorInputText: "#18181b",
+          borderRadius: "0.75rem",
+        },
+      }}
+    >
+      <html lang="en" className={`${inter.variable} ${display.variable}`}>
+        <body className="font-sans antialiased text-zinc-900">{children}</body>
+      </html>
+    </ClerkProvider>
   );
 }

@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useUser } from "@clerk/nextjs";
 
-const STORAGE_KEY = "gutters.session.v1";
+const PROFILE_KEY = "gutters.profile.v1";
+const CREDITS_KEY = "gutters.credits.v1";
+const ADDRESS_LOG_KEY = "gutters.address-log.v1";
 
 export type LogoTone =
   | "emerald"
@@ -36,7 +39,7 @@ export type Session = {
     name: string;
     email: string;
     initials: string;
-    provider: "email" | "google";
+    provider: "email" | "google" | "other";
   };
   profile: ContractorProfile;
   credits: Credits;
@@ -58,51 +61,75 @@ function defaultCredits(used = 4): Credits {
   const reset = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
   );
-  return {
-    included: 12,
-    used,
-    bonus: 0,
-    resetsAt: reset.toISOString(),
-  };
-}
-
-const listeners = new Set<() => void>();
-
-function read(): Session | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Session> & {
-      user?: Partial<Session["user"]>;
-    };
-    if (!parsed?.user?.id) return null;
-    return {
-      user: {
-        id: parsed.user.id,
-        name: parsed.user.name ?? "Demo Contractor",
-        email: parsed.user.email ?? "demo@gutters.app",
-        initials: parsed.user.initials ?? "DC",
-        provider: parsed.user.provider ?? "email",
-      },
-      profile: { ...DEFAULT_PROFILE, ...(parsed.profile ?? {}) },
-      credits: parsed.credits ?? defaultCredits(),
-      signedAt: parsed.signedAt ?? new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function write(s: Session | null) {
-  if (typeof window === "undefined") return;
-  if (s) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  else window.localStorage.removeItem(STORAGE_KEY);
-  listeners.forEach((l) => l());
+  return { included: 12, used, bonus: 0, resetsAt: reset.toISOString() };
 }
 
 export function defaultProfile(): ContractorProfile {
   return { ...DEFAULT_PROFILE, logo: { ...DEFAULT_PROFILE.logo } };
+}
+
+const listeners = new Set<() => void>();
+
+function readJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+  listeners.forEach((l) => l());
+}
+
+function readProfile(): ContractorProfile {
+  const stored = readJson<Partial<ContractorProfile> | null>(
+    PROFILE_KEY,
+    null,
+  );
+  if (!stored) return defaultProfile();
+  return {
+    ...defaultProfile(),
+    ...stored,
+    logo: { ...defaultProfile().logo, ...(stored.logo ?? {}) },
+  };
+}
+
+function readCredits(): Credits {
+  return readJson<Credits>(CREDITS_KEY, defaultCredits());
+}
+
+function subscribe(cb: () => void) {
+  listeners.add(cb);
+  if (typeof window !== "undefined") {
+    const handler = (e: StorageEvent) => {
+      if (e.key === PROFILE_KEY || e.key === CREDITS_KEY) cb();
+    };
+    window.addEventListener("storage", handler);
+    return () => {
+      listeners.delete(cb);
+      window.removeEventListener("storage", handler);
+    };
+  }
+  return () => listeners.delete(cb);
+}
+
+function getProfileSnapshot() {
+  return readProfile();
+}
+function getCreditsSnapshot() {
+  return readCredits();
+}
+function emptyProfile(): ContractorProfile | null {
+  return null;
+}
+function emptyCredits(): Credits | null {
+  return null;
 }
 
 function initialsFromName(name: string) {
@@ -115,51 +142,72 @@ function initialsFromName(name: string) {
     .join("");
 }
 
-function nameFromEmail(email: string) {
-  const local = email.split("@")[0] ?? "Demo";
-  return local
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((p) => p[0].toUpperCase() + p.slice(1))
-    .join(" ");
+function detectProvider(
+  externalAccounts: Array<{ provider: string }> | undefined,
+): "email" | "google" | "other" {
+  if (!externalAccounts || externalAccounts.length === 0) return "email";
+  const first = externalAccounts[0]?.provider ?? "";
+  if (first.includes("google")) return "google";
+  return "other";
 }
 
-export function signIn(
-  email?: string,
-  opts: { provider?: "email" | "google" } = {},
-): Session {
-  const e = (email && email.trim()) || "alex@riveragutters.com";
-  const name = nameFromEmail(e);
-  const session: Session = {
-    user: {
-      id: "u_demo_1",
-      name,
-      email: e,
-      initials: initialsFromName(name),
-      provider: opts.provider ?? "email",
-    },
-    profile: defaultProfile(),
-    credits: defaultCredits(),
-    signedAt: new Date().toISOString(),
-  };
-  write(session);
-  return session;
+export function useSession(): { session: Session | null; loading: boolean } {
+  const { user, isLoaded, isSignedIn } = useUser();
+  const profile = useSyncExternalStore<ContractorProfile | null>(
+    subscribe,
+    getProfileSnapshot,
+    emptyProfile,
+  );
+  const credits = useSyncExternalStore<Credits | null>(
+    subscribe,
+    getCreditsSnapshot,
+    emptyCredits,
+  );
+
+  const session = useMemo<Session | null>(() => {
+    if (!isLoaded || !isSignedIn || !user) return null;
+    const name =
+      user.fullName ||
+      [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+      user.username ||
+      user.primaryEmailAddress?.emailAddress?.split("@")[0] ||
+      "Contractor";
+    const email = user.primaryEmailAddress?.emailAddress ?? "";
+    const initials = initialsFromName(name) || email.slice(0, 2).toUpperCase();
+    return {
+      user: {
+        id: user.id,
+        name,
+        email,
+        initials,
+        provider: detectProvider(user.externalAccounts as { provider: string }[]),
+      },
+      profile: profile ?? defaultProfile(),
+      credits: credits ?? defaultCredits(),
+      signedAt: user.lastSignInAt
+        ? new Date(user.lastSignInAt).toISOString()
+        : new Date().toISOString(),
+    };
+  }, [isLoaded, isSignedIn, user, profile, credits]);
+
+  return { session, loading: !isLoaded };
 }
 
-export function signOut() {
-  write(null);
+export function useProfile(): ContractorProfile {
+  const profile = useSyncExternalStore<ContractorProfile | null>(
+    subscribe,
+    getProfileSnapshot,
+    emptyProfile,
+  );
+  return profile ?? defaultProfile();
 }
 
 export function updateProfile(patch: Partial<ContractorProfile>) {
-  const cur = read();
-  if (!cur) return;
-  write({
+  const cur = readProfile();
+  writeJson(PROFILE_KEY, {
     ...cur,
-    profile: {
-      ...cur.profile,
-      ...patch,
-      logo: { ...cur.profile.logo, ...(patch.logo ?? {}) },
-    },
+    ...patch,
+    logo: { ...cur.logo, ...(patch.logo ?? {}) },
   });
 }
 
@@ -169,31 +217,36 @@ export function consumeCredit(address: string): {
   remaining: number;
   reason?: string;
 } {
-  const cur = read();
-  if (!cur) return { ok: true, reused: false, remaining: 0 };
-  const log = readAddressLog();
+  const credits = readCredits();
+  const log = readJson<{ address: string; at: number }[]>(ADDRESS_LOG_KEY, []);
   const now = Date.now();
   const within24h = log
     .filter((e) => now - e.at < 24 * 3600 * 1000)
     .filter((e) => e.address.toLowerCase() === address.toLowerCase());
+
   if (within24h.length > 0 && within24h.length < 10) {
-    writeAddressLog([...log, { address, at: now }]);
+    writeJson(
+      ADDRESS_LOG_KEY,
+      [...log, { address, at: now }].filter(
+        (e) => now - e.at < 24 * 3600 * 1000,
+      ),
+    );
     return {
       ok: true,
       reused: true,
-      remaining: cur.credits.included + cur.credits.bonus - cur.credits.used,
+      remaining: credits.included + credits.bonus - credits.used,
     };
   }
   if (within24h.length >= 10) {
     return {
       ok: false,
       reused: false,
-      remaining: cur.credits.included + cur.credits.bonus - cur.credits.used,
+      remaining: credits.included + credits.bonus - credits.used,
       reason: "Same address has been re-run 10 times in the last 24 hours.",
     };
   }
-  const total = cur.credits.included + cur.credits.bonus;
-  if (cur.credits.used >= total) {
+  const total = credits.included + credits.bonus;
+  if (credits.used >= total) {
     return {
       ok: false,
       reused: false,
@@ -201,67 +254,12 @@ export function consumeCredit(address: string): {
       reason: "Out of credits — upgrade or wait until the next renewal.",
     };
   }
-  const next: Session = {
-    ...cur,
-    credits: { ...cur.credits, used: cur.credits.used + 1 },
-  };
-  writeAddressLog([...log, { address, at: now }]);
-  write(next);
-  return {
-    ok: true,
-    reused: false,
-    remaining: total - next.credits.used,
-  };
-}
-
-const ADDRESS_LOG_KEY = "gutters.address-log.v1";
-type AddressLogEntry = { address: string; at: number };
-
-function readAddressLog(): AddressLogEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(ADDRESS_LOG_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as AddressLogEntry[];
-  } catch {
-    return [];
-  }
-}
-
-function writeAddressLog(entries: AddressLogEntry[]) {
-  if (typeof window === "undefined") return;
-  const cutoff = Date.now() - 24 * 3600 * 1000;
-  const trimmed = entries.filter((e) => e.at > cutoff);
-  window.localStorage.setItem(ADDRESS_LOG_KEY, JSON.stringify(trimmed));
-}
-
-function subscribe(cb: () => void) {
-  listeners.add(cb);
-  if (typeof window !== "undefined") {
-    const handler = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) cb();
-    };
-    window.addEventListener("storage", handler);
-    return () => {
-      listeners.delete(cb);
-      window.removeEventListener("storage", handler);
-    };
-  }
-  return () => listeners.delete(cb);
-}
-
-export function useSession(): { session: Session | null; loading: boolean } {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-  const session = useSyncExternalStore(
-    subscribe,
-    () => read(),
-    () => null,
+  writeJson(CREDITS_KEY, { ...credits, used: credits.used + 1 });
+  writeJson(
+    ADDRESS_LOG_KEY,
+    [...log, { address, at: now }].filter(
+      (e) => now - e.at < 24 * 3600 * 1000,
+    ),
   );
-  return { session, loading: !hydrated };
-}
-
-export function useProfile(): ContractorProfile {
-  const { session } = useSession();
-  return session?.profile ?? defaultProfile();
+  return { ok: true, reused: false, remaining: total - credits.used - 1 };
 }

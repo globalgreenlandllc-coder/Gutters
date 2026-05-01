@@ -11,10 +11,11 @@ import {
   Settings,
   User,
 } from "lucide-react";
+import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
 import { Avatar } from "@/components/ui/avatar";
 import { CreditsChip } from "./credits-chip";
-import { signOut, useSession } from "@/lib/auth-mock";
+import { useSession } from "@/lib/auth-mock";
 import { cn } from "@/lib/utils";
 
 const NAV: { href: string; label: string }[] = [
@@ -27,11 +28,12 @@ const NAV: { href: string; label: string }[] = [
 export function DashboardNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const { signOut } = useClerk();
   const { session } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  function logout() {
-    signOut();
+  async function logout() {
+    await signOut();
     router.push("/");
   }
 
