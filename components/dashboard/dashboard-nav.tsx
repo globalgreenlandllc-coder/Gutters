@@ -9,6 +9,7 @@ import {
   LogOut,
   Search,
   Settings,
+  ShieldAlert,
   User,
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
@@ -119,6 +120,18 @@ export function DashboardNav() {
                     label="Settings"
                     href="/dashboard/settings"
                   />
+                  {session?.user.role === "SUPER_ADMIN" && (
+                    <>
+                      <div className="my-1 h-px bg-zinc-100" />
+                      <Link
+                        href="/admin"
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
+                      >
+                        <ShieldAlert className="h-4 w-4" />
+                        Admin console
+                      </Link>
+                    </>
+                  )}
                   <div className="my-1 h-px bg-zinc-100" />
                   <button
                     onClick={logout}

@@ -24,6 +24,7 @@ export type SessionShape = {
     email: string;
     initials: string;
     provider: "email" | "google" | "other";
+    role: "CONTRACTOR" | "SUPER_ADMIN";
   };
   profile: ContractorProfile;
   credits: MeData["credits"];
@@ -79,6 +80,7 @@ function shapeSession(
       email: me.user.email,
       initials: initialsFromName(me.user.name, me.user.email),
       provider,
+      role: me.user.role,
     },
     profile: me.profile,
     credits: me.credits,

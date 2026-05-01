@@ -35,6 +35,7 @@ export type Session = {
     email: string;
     initials: string;
     provider: "email" | "google" | "other";
+    role: "CONTRACTOR" | "SUPER_ADMIN";
   };
   profile: ContractorProfile;
   credits: Credits;

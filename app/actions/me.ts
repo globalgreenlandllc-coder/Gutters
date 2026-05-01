@@ -68,6 +68,14 @@ function pickTone(seed: string): LogoTone {
   return TONES_CYCLE[hash % TONES_CYCLE.length];
 }
 
+function isAdminEmail(email: string): boolean {
+  const list = (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.trim().toLowerCase());
+}
+
 export async function getMe(): Promise<MeData | null> {
   const { userId: clerkId } = await auth();
   if (!clerkId) return null;
@@ -86,64 +94,25 @@ export async function getMe(): Promise<MeData | null> {
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
     null;
 
-  const existing = await db.user.findFirst({
+  const targetRole = isAdminEmail(email) ? "SUPER_ADMIN" : "CONTRACTOR";
+
+  let user = await db.user.findFirst({
     where: { OR: [{ clerkId }, { email }] },
     include: { contractorProfile: true, creditWallet: true },
   });
 
-  if (existing) {
-    if (existing.clerkId !== clerkId || existing.email !== email) {
-      await db.user.update({
-        where: { id: existing.id },
-        data: { clerkId, email, lastLoginAt: new Date() },
-      });
-    } else {
-      await db.user.update({
-        where: { id: existing.id },
-        data: { lastLoginAt: new Date() },
-      });
-    }
-    if (existing.contractorProfile && existing.creditWallet) {
-      return shape(existing.id, clerkId, email, fullName, existing);
-    }
-  }
-
-  const contractorName = deriveContractorName(fullName, email);
-  const initials = deriveInitials(contractorName);
-  const tone = pickTone(clerkId);
-
-  const created = await db.user.upsert({
-    where: { clerkId },
-    create: {
-      clerkId,
-      email,
-      name: fullName,
-      lastLoginAt: new Date(),
-      contractorProfile: {
-        create: {
-          company: contractorName,
-          contractorName,
-          email,
-          phone: "",
-          license: "",
-          tagline: "",
-          logoInitials: initials,
-          logoTone: tone,
-        },
-      },
-      creditWallet: {
-        create: {
-          included: 12,
-          used: 0,
-          bonus: 0,
-          resetsAt: nextMonthBoundary(),
-        },
-      },
-    },
-    update: {
-      lastLoginAt: new Date(),
-      contractorProfile: {
-        upsert: {
+  if (!user) {
+    const contractorName = deriveContractorName(fullName, email);
+    const initials = deriveInitials(contractorName);
+    const tone = pickTone(clerkId);
+    user = await db.user.create({
+      data: {
+        clerkId,
+        email,
+        name: fullName,
+        role: targetRole,
+        lastLoginAt: new Date(),
+        contractorProfile: {
           create: {
             company: contractorName,
             contractorName,
@@ -154,66 +123,76 @@ export async function getMe(): Promise<MeData | null> {
             logoInitials: initials,
             logoTone: tone,
           },
-          update: {},
         },
-      },
-      creditWallet: {
-        upsert: {
+        creditWallet: {
           create: {
             included: 12,
             used: 0,
             bonus: 0,
             resetsAt: nextMonthBoundary(),
           },
-          update: {},
         },
       },
-    },
-    include: { contractorProfile: true, creditWallet: true },
-  });
+      include: { contractorProfile: true, creditWallet: true },
+    });
+  } else {
+    const updates: Record<string, unknown> = { lastLoginAt: new Date() };
+    if (user.clerkId !== clerkId) updates.clerkId = clerkId;
+    if (user.email !== email) updates.email = email;
+    if (user.role !== targetRole) updates.role = targetRole;
+    await db.user.update({ where: { id: user.id }, data: updates });
 
-  return shape(created.id, clerkId, email, fullName, created);
-}
+    if (!user.contractorProfile) {
+      const contractorName = deriveContractorName(
+        user.name ?? fullName,
+        email,
+      );
+      const initials = deriveInitials(contractorName);
+      const tone = pickTone(clerkId);
+      await db.contractorProfile.create({
+        data: {
+          userId: user.id,
+          company: contractorName,
+          contractorName,
+          email,
+          phone: "",
+          license: "",
+          tagline: "",
+          logoInitials: initials,
+          logoTone: tone,
+        },
+      });
+    }
+    if (!user.creditWallet) {
+      await db.creditWallet.create({
+        data: {
+          userId: user.id,
+          included: 12,
+          used: 0,
+          bonus: 0,
+          resetsAt: nextMonthBoundary(),
+        },
+      });
+    }
 
-type UserWithRelations = {
-  id: string;
-  role: "CONTRACTOR" | "SUPER_ADMIN";
-  status: "ACTIVE" | "SUSPENDED";
-  contractorProfile: {
-    company: string;
-    contractorName: string;
-    email: string;
-    phone: string;
-    license: string;
-    tagline: string | null;
-    logoInitials: string;
-    logoTone: string;
-  } | null;
-  creditWallet: {
-    included: number;
-    used: number;
-    bonus: number;
-    resetsAt: Date;
-  } | null;
-};
+    user = await db.user.findUnique({
+      where: { id: user.id },
+      include: { contractorProfile: true, creditWallet: true },
+    });
+  }
 
-function shape(
-  userDbId: string,
-  clerkId: string,
-  email: string,
-  fullName: string | null,
-  user: UserWithRelations,
-): MeData {
+  if (!user) return null;
+
   const cp = user.contractorProfile;
   const cw = user.creditWallet;
   return {
     user: {
-      id: userDbId,
+      id: user.id,
       clerkId,
       email,
       name: fullName ?? cp?.contractorName ?? email,
-      role: user.role,
-      status: user.status,
+      role: user.role as "CONTRACTOR" | "SUPER_ADMIN",
+      status: user.status as "ACTIVE" | "SUSPENDED",
     },
     profile: {
       company: cp?.company ?? "",
@@ -320,7 +299,7 @@ export async function consumeMyCredit(address: string): Promise<{
     };
   }
 
-  const [, run] = await db.$transaction([
+  await db.$transaction([
     db.creditWallet.update({
       where: { userId },
       data: { used: { increment: 1 } },

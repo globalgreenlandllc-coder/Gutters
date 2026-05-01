@@ -1,0 +1,257 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { getMe } from "./me";
+
+async function requireAdmin() {
+  const me = await getMe();
+  if (!me || me.user.role !== "SUPER_ADMIN") {
+    throw new Error("Forbidden");
+  }
+  return me;
+}
+
+async function logAction(
+  actorId: string,
+  action:
+    | "USER_SUSPENDED"
+    | "USER_UNSUSPENDED"
+    | "USER_CREDITS_ADJUSTED"
+    | "USER_IMPERSONATED"
+    | "USER_IMPERSONATION_ENDED"
+    | "REFUND_ISSUED"
+    | "API_KEY_CREATED"
+    | "API_KEY_ROTATED"
+    | "API_KEY_REVOKED"
+    | "API_KEY_VIEWED"
+    | "PRICING_UPDATED"
+    | "MATERIAL_DEFAULTS_UPDATED",
+  targetType: string | null,
+  targetId: string | null,
+  payload: Record<string, unknown> = {},
+) {
+  await db.auditLog.create({
+    data: {
+      actorId,
+      action,
+      targetType,
+      targetId,
+      payload: payload as Prisma.InputJsonValue,
+    },
+  });
+}
+
+export type AdminUserRow = {
+  id: string;
+  email: string;
+  name: string | null;
+  role: "CONTRACTOR" | "SUPER_ADMIN";
+  status: "ACTIVE" | "SUSPENDED";
+  createdAt: string;
+  lastLoginAt: string | null;
+  company: string;
+  contractorName: string;
+  creditsIncluded: number;
+  creditsUsed: number;
+  creditsBonus: number;
+  remaining: number;
+  estimateRunsTotal: number;
+  proposalsTotal: number;
+  acceptedTotal: number;
+  revenueProcessedCents: number;
+};
+
+export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
+  await requireAdmin();
+  const users = await db.user.findMany({
+    include: {
+      contractorProfile: true,
+      creditWallet: true,
+      _count: {
+        select: { estimateRuns: true, proposals: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const ids = users.map((u) => u.id);
+  const accepted = await db.proposal.groupBy({
+    by: ["userId"],
+    where: { status: "ACCEPTED", userId: { in: ids } },
+    _count: { _all: true },
+    _sum: { paidCents: true },
+  });
+  const acceptedById = new Map(
+    accepted.map((a) => [
+      a.userId,
+      { count: a._count._all, paid: a._sum.paidCents ?? 0 },
+    ]),
+  );
+
+  return users.map((u) => {
+    const total =
+      (u.creditWallet?.included ?? 0) + (u.creditWallet?.bonus ?? 0);
+    const used = u.creditWallet?.used ?? 0;
+    const a = acceptedById.get(u.id) ?? { count: 0, paid: 0 };
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role as "CONTRACTOR" | "SUPER_ADMIN",
+      status: u.status as "ACTIVE" | "SUSPENDED",
+      createdAt: u.createdAt.toISOString(),
+      lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+      company: u.contractorProfile?.company ?? "",
+      contractorName: u.contractorProfile?.contractorName ?? "",
+      creditsIncluded: u.creditWallet?.included ?? 0,
+      creditsUsed: used,
+      creditsBonus: u.creditWallet?.bonus ?? 0,
+      remaining: Math.max(total - used, 0),
+      estimateRunsTotal: u._count.estimateRuns,
+      proposalsTotal: u._count.proposals,
+      acceptedTotal: a.count,
+      revenueProcessedCents: a.paid,
+    };
+  });
+}
+
+export async function adjustCredits(
+  userId: string,
+  delta: number,
+  reason: string,
+): Promise<{ ok: true; remaining: number }> {
+  const me = await requireAdmin();
+  if (!Number.isInteger(delta) || delta === 0) {
+    throw new Error("Delta must be a non-zero integer");
+  }
+  const updated = await db.creditWallet.update({
+    where: { userId },
+    data:
+      delta > 0
+        ? { bonus: { increment: delta } }
+        : { used: { increment: Math.max(0, -delta) } },
+  });
+
+  await logAction(me.user.id, "USER_CREDITS_ADJUSTED", "User", userId, {
+    delta,
+    reason,
+    after: {
+      included: updated.included,
+      used: updated.used,
+      bonus: updated.bonus,
+    },
+  });
+  revalidatePath("/admin/users");
+  revalidatePath("/admin");
+
+  const remaining = Math.max(
+    updated.included + updated.bonus - updated.used,
+    0,
+  );
+  return { ok: true, remaining };
+}
+
+export async function setUserStatus(
+  userId: string,
+  status: "ACTIVE" | "SUSPENDED",
+  reason?: string,
+): Promise<{ ok: true }> {
+  const me = await requireAdmin();
+  const before = await db.user.findUnique({ where: { id: userId } });
+  if (!before) throw new Error("User not found");
+  if (before.role === "SUPER_ADMIN" && status === "SUSPENDED") {
+    throw new Error("Cannot suspend a super admin");
+  }
+  await db.user.update({ where: { id: userId }, data: { status } });
+  await logAction(
+    me.user.id,
+    status === "SUSPENDED" ? "USER_SUSPENDED" : "USER_UNSUSPENDED",
+    "User",
+    userId,
+    { reason: reason ?? null, prior: before.status },
+  );
+  revalidatePath("/admin/users");
+  return { ok: true };
+}
+
+export type AdminKpis = {
+  contractorsActive: number;
+  contractorsSuspended: number;
+  estimatesThisMonth: number;
+  estimatesAllTime: number;
+  proposalsAccepted: number;
+  revenueProcessedCents: number;
+  platformFeesCents: number;
+  mrrCents: number;
+};
+
+export async function getAdminKpis(): Promise<AdminKpis> {
+  await requireAdmin();
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+
+  const [
+    contractorsActive,
+    contractorsSuspended,
+    estimatesThisMonth,
+    estimatesAllTime,
+    proposalsAccepted,
+    revenueAgg,
+    feesAgg,
+    activeSubs,
+  ] = await Promise.all([
+    db.user.count({ where: { role: "CONTRACTOR", status: "ACTIVE" } }),
+    db.user.count({ where: { role: "CONTRACTOR", status: "SUSPENDED" } }),
+    db.estimateRun.count({ where: { createdAt: { gte: monthStart } } }),
+    db.estimateRun.count(),
+    db.proposal.count({ where: { status: "ACCEPTED" } }),
+    db.proposal.aggregate({
+      where: { status: "ACCEPTED" },
+      _sum: { paidCents: true },
+    }),
+    db.transaction.aggregate({
+      where: {
+        status: "SUCCEEDED",
+        type: { in: ["PROPOSAL_DEPOSIT", "PROPOSAL_FINAL"] },
+      },
+      _sum: { platformFeeCents: true },
+    }),
+    db.subscription.count({ where: { status: "ACTIVE" } }),
+  ]);
+
+  return {
+    contractorsActive,
+    contractorsSuspended,
+    estimatesThisMonth,
+    estimatesAllTime,
+    proposalsAccepted,
+    revenueProcessedCents: revenueAgg._sum.paidCents ?? 0,
+    platformFeesCents: feesAgg._sum.platformFeeCents ?? 0,
+    mrrCents: activeSubs * 5000,
+  };
+}
+
+export type AdminActivityRow = {
+  id: string;
+  kind: "PROPOSAL" | "USER";
+  message: string;
+  at: string;
+};
+
+export async function recentAdminActivity(): Promise<AdminActivityRow[]> {
+  await requireAdmin();
+  const recent = await db.proposalEvent.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    include: { proposal: { include: { user: true } } },
+  });
+  return recent.map((e) => ({
+    id: e.id,
+    kind: "PROPOSAL",
+    message: `${e.proposal.user.email} · ${e.kind.toLowerCase().replace("_", " ")} on ${e.proposal.address}`,
+    at: e.createdAt.toISOString(),
+  }));
+}
