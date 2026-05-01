@@ -14,25 +14,16 @@ const STEPS = [
   { id: "price", label: "Building takeoff" },
 ];
 
-export function LoadingState({
-  address,
-  onComplete,
-}: {
-  address: string;
-  onComplete: () => void;
-}) {
+export function LoadingState({ address }: { address: string }) {
   const [stepIndex, setStepIndex] = useState(0);
 
   useEffect(() => {
-    if (stepIndex >= STEPS.length) {
-      const t = setTimeout(onComplete, 320);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setStepIndex((i) => i + 1), 620);
+    if (stepIndex >= STEPS.length - 1) return;
+    const t = setTimeout(() => setStepIndex((i) => i + 1), 420);
     return () => clearTimeout(t);
-  }, [stepIndex, onComplete]);
+  }, [stepIndex]);
 
-  const progress = Math.min(stepIndex / STEPS.length, 1);
+  const progress = Math.min((stepIndex + 1) / STEPS.length, 1);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
