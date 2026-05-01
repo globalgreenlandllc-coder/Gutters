@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { SessionProvider } from "@/components/auth/session-provider";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,7 +42,9 @@ export default function RootLayout({
       }}
     >
       <html lang="en" className={`${inter.variable} ${display.variable}`}>
-        <body className="font-sans antialiased text-zinc-900">{children}</body>
+        <body className="font-sans antialiased text-zinc-900">
+          <SessionProvider>{children}</SessionProvider>
+        </body>
       </html>
     </ClerkProvider>
   );

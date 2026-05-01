@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/ui/brand-mark";
 import { Button } from "@/components/ui/button";
 import {
   defaultProfile,
-  updateProfile,
+  useUpdateProfile,
   useProfile,
   type ContractorProfile,
   type LogoTone,
@@ -27,7 +27,9 @@ const TONES: { id: LogoTone; label: string; swatch: string }[] = [
 
 export function BrandProfileSection() {
   const stored = useProfile();
+  const updateProfile = useUpdateProfile();
   const [draft, setDraft] = useState<ContractorProfile>(stored);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -59,16 +61,26 @@ export function BrandProfileSection() {
     setDraft((d) => ({ ...d, logo: { ...d.logo, [key]: value } }));
   }
 
-  function save() {
-    updateProfile(draft);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1800);
+  async function save() {
+    setSaving(true);
+    try {
+      await updateProfile(draft);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function reset() {
+  async function reset() {
     const def = defaultProfile();
     setDraft(def);
-    updateProfile(def);
+    setSaving(true);
+    try {
+      await updateProfile(def);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -180,11 +192,11 @@ export function BrandProfileSection() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button onClick={save} disabled={!dirty}>
+            <Button onClick={save} disabled={!dirty || saving}>
               <Save className="h-4 w-4" />
-              {saved ? "Saved" : "Save changes"}
+              {saving ? "Saving…" : saved ? "Saved" : "Save changes"}
             </Button>
-            <Button variant="ghost" onClick={reset}>
+            <Button variant="ghost" onClick={reset} disabled={saving}>
               Reset to defaults
             </Button>
           </div>

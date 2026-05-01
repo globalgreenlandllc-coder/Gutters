@@ -1,0 +1,345 @@
+"use server";
+
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { db } from "@/lib/db";
+import type {
+  ContractorProfile,
+  Credits,
+  LogoTone,
+} from "@/lib/auth-mock";
+
+export type MeData = {
+  user: {
+    id: string;
+    clerkId: string;
+    email: string;
+    name: string;
+    role: "CONTRACTOR" | "SUPER_ADMIN";
+    status: "ACTIVE" | "SUSPENDED";
+  };
+  profile: ContractorProfile;
+  credits: Credits;
+};
+
+function nextMonthBoundary(): Date {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0),
+  );
+}
+
+function deriveContractorName(
+  fullName: string | null,
+  email: string,
+): string {
+  if (fullName && fullName.trim().length > 0) return fullName.trim();
+  const local = email.split("@")[0] ?? "Contractor";
+  return local
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map((p) => p[0].toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
+function deriveInitials(name: string): string {
+  const parts = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .filter(Boolean);
+  if (parts.length === 0) return "GU";
+  return parts.slice(0, 2).join("");
+}
+
+const TONES_CYCLE: LogoTone[] = [
+  "emerald",
+  "sky",
+  "indigo",
+  "amber",
+  "rose",
+  "violet",
+];
+
+function pickTone(seed: string): LogoTone {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return TONES_CYCLE[hash % TONES_CYCLE.length];
+}
+
+export async function getMe(): Promise<MeData | null> {
+  const { userId: clerkId } = await auth();
+  if (!clerkId) return null;
+
+  const clerkUser = await currentUser();
+  if (!clerkUser) return null;
+
+  const email =
+    clerkUser.emailAddresses.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId,
+    )?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress;
+  if (!email) return null;
+
+  const fullName =
+    clerkUser.fullName ||
+    [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+    null;
+
+  const existing = await db.user.findFirst({
+    where: { OR: [{ clerkId }, { email }] },
+    include: { contractorProfile: true, creditWallet: true },
+  });
+
+  if (existing) {
+    if (existing.clerkId !== clerkId || existing.email !== email) {
+      await db.user.update({
+        where: { id: existing.id },
+        data: { clerkId, email, lastLoginAt: new Date() },
+      });
+    } else {
+      await db.user.update({
+        where: { id: existing.id },
+        data: { lastLoginAt: new Date() },
+      });
+    }
+    if (existing.contractorProfile && existing.creditWallet) {
+      return shape(existing.id, clerkId, email, fullName, existing);
+    }
+  }
+
+  const contractorName = deriveContractorName(fullName, email);
+  const initials = deriveInitials(contractorName);
+  const tone = pickTone(clerkId);
+
+  const created = await db.user.upsert({
+    where: { clerkId },
+    create: {
+      clerkId,
+      email,
+      name: fullName,
+      lastLoginAt: new Date(),
+      contractorProfile: {
+        create: {
+          company: contractorName,
+          contractorName,
+          email,
+          phone: "",
+          license: "",
+          tagline: "",
+          logoInitials: initials,
+          logoTone: tone,
+        },
+      },
+      creditWallet: {
+        create: {
+          included: 12,
+          used: 0,
+          bonus: 0,
+          resetsAt: nextMonthBoundary(),
+        },
+      },
+    },
+    update: {
+      lastLoginAt: new Date(),
+      contractorProfile: {
+        upsert: {
+          create: {
+            company: contractorName,
+            contractorName,
+            email,
+            phone: "",
+            license: "",
+            tagline: "",
+            logoInitials: initials,
+            logoTone: tone,
+          },
+          update: {},
+        },
+      },
+      creditWallet: {
+        upsert: {
+          create: {
+            included: 12,
+            used: 0,
+            bonus: 0,
+            resetsAt: nextMonthBoundary(),
+          },
+          update: {},
+        },
+      },
+    },
+    include: { contractorProfile: true, creditWallet: true },
+  });
+
+  return shape(created.id, clerkId, email, fullName, created);
+}
+
+type UserWithRelations = {
+  id: string;
+  role: "CONTRACTOR" | "SUPER_ADMIN";
+  status: "ACTIVE" | "SUSPENDED";
+  contractorProfile: {
+    company: string;
+    contractorName: string;
+    email: string;
+    phone: string;
+    license: string;
+    tagline: string | null;
+    logoInitials: string;
+    logoTone: string;
+  } | null;
+  creditWallet: {
+    included: number;
+    used: number;
+    bonus: number;
+    resetsAt: Date;
+  } | null;
+};
+
+function shape(
+  userDbId: string,
+  clerkId: string,
+  email: string,
+  fullName: string | null,
+  user: UserWithRelations,
+): MeData {
+  const cp = user.contractorProfile;
+  const cw = user.creditWallet;
+  return {
+    user: {
+      id: userDbId,
+      clerkId,
+      email,
+      name: fullName ?? cp?.contractorName ?? email,
+      role: user.role,
+      status: user.status,
+    },
+    profile: {
+      company: cp?.company ?? "",
+      contractorName: cp?.contractorName ?? "",
+      email: cp?.email ?? email,
+      phone: cp?.phone ?? "",
+      license: cp?.license ?? "",
+      tagline: cp?.tagline ?? "",
+      logo: {
+        initials: cp?.logoInitials ?? "GU",
+        tone: (cp?.logoTone as LogoTone) ?? "emerald",
+      },
+    },
+    credits: {
+      included: cw?.included ?? 12,
+      used: cw?.used ?? 0,
+      bonus: cw?.bonus ?? 0,
+      resetsAt: (cw?.resetsAt ?? nextMonthBoundary()).toISOString(),
+    },
+  };
+}
+
+export async function updateMyProfile(
+  patch: Partial<ContractorProfile>,
+): Promise<MeData | null> {
+  const me = await getMe();
+  if (!me) return null;
+
+  const data: Record<string, unknown> = {};
+  if (patch.company !== undefined) data.company = patch.company;
+  if (patch.contractorName !== undefined)
+    data.contractorName = patch.contractorName;
+  if (patch.email !== undefined) data.email = patch.email;
+  if (patch.phone !== undefined) data.phone = patch.phone;
+  if (patch.license !== undefined) data.license = patch.license;
+  if (patch.tagline !== undefined) data.tagline = patch.tagline;
+  if (patch.logo?.initials !== undefined)
+    data.logoInitials = patch.logo.initials;
+  if (patch.logo?.tone !== undefined) data.logoTone = patch.logo.tone;
+
+  await db.contractorProfile.update({
+    where: { userId: me.user.id },
+    data,
+  });
+
+  return getMe();
+}
+
+export async function consumeMyCredit(address: string): Promise<{
+  ok: boolean;
+  reused: boolean;
+  remaining: number;
+  reason?: string;
+}> {
+  const me = await getMe();
+  if (!me) return { ok: false, reused: false, remaining: 0, reason: "Not signed in" };
+
+  const userId = me.user.id;
+  const since = new Date(Date.now() - 24 * 3600 * 1000);
+  const norm = address.trim().toLowerCase();
+
+  const recentSame = await db.estimateRun.count({
+    where: {
+      userId,
+      addressNormalized: norm,
+      createdAt: { gte: since },
+    },
+  });
+
+  if (recentSame >= 10) {
+    return {
+      ok: false,
+      reused: false,
+      remaining: me.credits.included + me.credits.bonus - me.credits.used,
+      reason: "Same address has been re-run 10 times in the last 24 hours.",
+    };
+  }
+
+  if (recentSame > 0) {
+    await db.estimateRun.create({
+      data: {
+        userId,
+        address,
+        addressNormalized: norm,
+        status: "SUCCEEDED",
+        creditConsumed: false,
+        reused: true,
+      },
+    });
+    return {
+      ok: true,
+      reused: true,
+      remaining: me.credits.included + me.credits.bonus - me.credits.used,
+    };
+  }
+
+  const total = me.credits.included + me.credits.bonus;
+  if (me.credits.used >= total) {
+    return {
+      ok: false,
+      reused: false,
+      remaining: 0,
+      reason: "Out of credits — upgrade or wait until the next renewal.",
+    };
+  }
+
+  const [, run] = await db.$transaction([
+    db.creditWallet.update({
+      where: { userId },
+      data: { used: { increment: 1 } },
+    }),
+    db.estimateRun.create({
+      data: {
+        userId,
+        address,
+        addressNormalized: norm,
+        status: "SUCCEEDED",
+        creditConsumed: true,
+        reused: false,
+      },
+    }),
+  ]);
+
+  return {
+    ok: true,
+    reused: false,
+    remaining: total - me.credits.used - 1,
+  };
+}
