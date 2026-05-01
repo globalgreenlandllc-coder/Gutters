@@ -14,8 +14,9 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   // Direct (non-pooled) URL for migrations. PgBouncer-style poolers
-  // can't run schema migrations.
-  directUrl = env("DATABASE_URL_DIRECT")
+  // can't run schema migrations. Vercel's Neon integration auto-injects
+  // DATABASE_URL_UNPOOLED, so this name lines up zero-config.
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // -----------------------------------------------------------------------
