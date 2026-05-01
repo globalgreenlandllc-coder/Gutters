@@ -53,7 +53,7 @@ export function ResultsView({ address }: { address: string }) {
           </div>
 
           <div className="lg:sticky lg:top-[72px] lg:self-start">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] shadow-card backdrop-blur-xl">
+            <div className="rounded-2xl border border-zinc-200 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
                 <PricingPanel measurements={measurements} />
               </div>
@@ -73,29 +73,31 @@ function PropertyHeader({
   measurements: Measurements;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
       <div>
         <div className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 text-zinc-500" />
-          <h1 className="font-display text-lg font-semibold tracking-tight text-zinc-100">
+          <Building2 className="h-4 w-4 text-zinc-400" />
+          <h1 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
             {address}
           </h1>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
           <span>
-            <span className="text-zinc-300">{measurements.stories}-story</span>{" "}
+            <span className="text-zinc-700">{measurements.stories}-story</span>{" "}
             single-family
           </span>
           <span>·</span>
           <span>
-            <span className="text-zinc-300">
+            <span className="text-zinc-700">
               {measurements.outsideCorners + measurements.insideCorners}
             </span>{" "}
             corners
           </span>
           <span>·</span>
           <span>
-            <span className="text-zinc-300">{measurements.wasteFactorPct}%</span>{" "}
+            <span className="text-zinc-700">
+              {measurements.wasteFactorPct}%
+            </span>{" "}
             waste factor
           </span>
         </div>
@@ -105,7 +107,9 @@ function PropertyHeader({
           <Ruler className="h-3 w-3" />
           {measurements.eaveLF} LF eaves
         </Badge>
-        <Badge tone="neutral">{measurements.downspoutCount} downspouts</Badge>
+        <Badge tone="neutral">
+          {measurements.downspoutCount} downspouts
+        </Badge>
       </div>
     </div>
   );
@@ -118,10 +122,10 @@ function SiteContext() {
     { label: "Backyard", note: "Tree overhang — gutter guards rec." },
   ];
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
       <div className="flex items-center gap-2">
-        <Camera className="h-4 w-4 text-zinc-500" />
-        <span className="text-xs uppercase tracking-wider text-zinc-500">
+        <Camera className="h-4 w-4 text-zinc-400" />
+        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
           Site context
         </span>
       </div>
@@ -129,9 +133,9 @@ function SiteContext() {
         {items.map((it) => (
           <div
             key={it.label}
-            className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
+            className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3"
           >
-            <div className="text-sm font-medium text-zinc-200">{it.label}</div>
+            <div className="text-sm font-medium text-zinc-900">{it.label}</div>
             <div className="mt-0.5 text-xs text-zinc-500">{it.note}</div>
           </div>
         ))}

@@ -1,5 +1,16 @@
 import { cn } from "@/lib/utils";
 
+type Tone = "accent" | "neutral" | "amber" | "rose" | "sky" | "violet";
+
+const tones: Record<Tone, string> = {
+  accent: "bg-accent-50 text-accent-700 border-accent-200/80",
+  neutral: "bg-zinc-100 text-zinc-700 border-zinc-200",
+  amber: "bg-amber-50 text-amber-700 border-amber-200",
+  rose: "bg-rose-50 text-rose-700 border-rose-200",
+  sky: "bg-sky-50 text-sky-700 border-sky-200",
+  violet: "bg-violet-50 text-violet-700 border-violet-200",
+};
+
 export function Badge({
   children,
   className,
@@ -7,18 +18,12 @@ export function Badge({
 }: {
   children: React.ReactNode;
   className?: string;
-  tone?: "accent" | "neutral";
+  tone?: Tone;
 }) {
-  const tones = {
-    accent:
-      "bg-accent-500/10 text-accent-300 border-accent-400/20 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.1)]",
-    neutral: "bg-white/5 text-zinc-300 border-white/10",
-  } as const;
-
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide uppercase",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
         tones[tone],
         className,
       )}

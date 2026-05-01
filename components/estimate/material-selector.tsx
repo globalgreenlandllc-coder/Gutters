@@ -1,7 +1,13 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { EstimateConfig, GutterMaterial, GutterSize, GutterStyle, DownspoutSize } from "@/lib/types";
+import type {
+  EstimateConfig,
+  GutterMaterial,
+  GutterSize,
+  GutterStyle,
+  DownspoutSize,
+} from "@/lib/types";
 import { COLOR_OPTIONS } from "@/lib/pricing";
 
 const SIZES: { id: GutterSize; label: string }[] = [
@@ -44,7 +50,6 @@ export function MaterialSelector({
           onChange={(v) => onChange({ ...config, size: v })}
         />
       </Group>
-
       <Group label="Profile">
         <Pills
           options={STYLES}
@@ -52,7 +57,6 @@ export function MaterialSelector({
           onChange={(v) => onChange({ ...config, style: v })}
         />
       </Group>
-
       <Group label="Material">
         <Pills
           options={MATERIALS}
@@ -60,7 +64,6 @@ export function MaterialSelector({
           onChange={(v) => onChange({ ...config, material: v })}
         />
       </Group>
-
       <Group label="Downspout">
         <Pills
           options={DOWNSPOUTS}
@@ -68,7 +71,6 @@ export function MaterialSelector({
           onChange={(v) => onChange({ ...config, downspoutSize: v })}
         />
       </Group>
-
       <Group label="Color">
         <div className="flex flex-wrap gap-2">
           {COLOR_OPTIONS.map((c) => {
@@ -80,24 +82,17 @@ export function MaterialSelector({
                 onClick={() => onChange({ ...config, color: c.id })}
                 title={c.name}
                 className={cn(
-                  "group flex items-center gap-2 rounded-full border px-2.5 py-1.5 transition",
+                  "flex items-center gap-2 rounded-full border px-2.5 py-1.5 transition",
                   selected
-                    ? "border-accent-400/60 bg-accent-500/10"
-                    : "border-white/10 bg-white/[0.02] hover:border-white/25",
+                    ? "border-accent-500 bg-accent-50 text-accent-800"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
                 )}
               >
                 <span
-                  className="h-4 w-4 rounded-full border border-black/30"
+                  className="h-4 w-4 rounded-full border border-zinc-300 shadow-inner"
                   style={{ background: c.hex }}
                 />
-                <span
-                  className={cn(
-                    "text-xs",
-                    selected ? "text-accent-200" : "text-zinc-300",
-                  )}
-                >
-                  {c.name}
-                </span>
+                <span className="text-xs">{c.name}</span>
               </button>
             );
           })}
@@ -116,7 +111,7 @@ function Group({
 }) {
   return (
     <div>
-      <div className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
         {label}
       </div>
       {children}
@@ -145,8 +140,8 @@ function Pills<T extends string>({
             className={cn(
               "rounded-lg border px-3 py-1.5 text-sm transition",
               selected
-                ? "border-accent-400/60 bg-accent-500/10 text-accent-200"
-                : "border-white/10 bg-white/[0.02] text-zinc-300 hover:border-white/25 hover:text-white",
+                ? "border-accent-500 bg-accent-50 text-accent-800"
+                : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
             )}
           >
             {o.label}

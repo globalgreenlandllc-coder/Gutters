@@ -1,0 +1,201 @@
+"use client";
+
+import { CheckCircle2, CreditCard, Palette, Sparkles } from "lucide-react";
+import { AuthGate } from "@/components/auth/auth-gate";
+import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { BrandProfileSection } from "@/components/dashboard/brand-profile-section";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useSession } from "@/lib/auth-mock";
+
+export default function SettingsPage() {
+  return (
+    <AuthGate>
+      <main className="min-h-screen">
+        <DashboardNav />
+        <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+          <header>
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900">
+              Settings
+            </h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              Configure your brand, payments, and pricing baselines.
+            </p>
+          </header>
+
+          <BrandProfileSection />
+
+          <Section
+            icon={CreditCard}
+            title="Stripe Connect"
+            sub="Get paid directly. Funds settle to your bank in 1–2 business days."
+            badge={{ label: "Not connected", tone: "amber" }}
+          >
+            <Button>Connect Stripe account</Button>
+            <p className="mt-3 text-xs text-zinc-500">
+              We use Stripe Connect Express. You'll be redirected to Stripe to
+              complete onboarding.
+            </p>
+          </Section>
+
+          <BillingSection />
+
+          <Section
+            icon={Palette}
+            title="Baseline pricing"
+            sub="Per-LF prices, labor minimums, and tax rates flow into every estimate."
+            badge={{ label: "Configured", tone: "accent" }}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label={'6" K-style aluminum'} value="$12.00 / LF" />
+              <Field label="3×4 downspout" value="$9.00 / LF" />
+              <Field label="Hidden hangers" value="$3.25 / ea" />
+              <Field label="Default markup" value="15%" />
+              <Field label="Sales tax (TX)" value="8.25%" />
+              <Field label="Labor minimum" value="$250" />
+            </div>
+          </Section>
+        </div>
+      </main>
+    </AuthGate>
+  );
+}
+
+function BillingSection() {
+  const { session } = useSession();
+  const credits = session?.credits;
+  const used = credits?.used ?? 0;
+  const total = (credits?.included ?? 12) + (credits?.bonus ?? 0);
+  const remaining = Math.max(total - used, 0);
+  const pct = Math.round((used / total) * 100);
+
+  return (
+    <Section
+      icon={Sparkles}
+      title="Plan & credits"
+      sub="$50/month · 12 estimates included · $5 each additional address."
+      badge={{ label: "Pro plan · Active", tone: "accent" }}
+    >
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
+          <div className="flex items-baseline justify-between">
+            <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">
+              {remaining}
+            </span>
+            <span className="text-xs text-zinc-500">
+              of {total} credits remaining
+            </span>
+          </div>
+          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-accent-500 to-accent-700"
+              style={{ width: `${100 - pct}%` }}
+            />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <Stat label="Used this month" value={`${used}`} />
+            <Stat
+              label="Renews"
+              value={
+                credits?.resetsAt
+                  ? new Date(credits.resetsAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "—"
+              }
+            />
+            <Stat label="Same-address re-runs" value="10× / 24h · free" />
+            <Stat label="Add-on rate" value="$5 / address" />
+          </div>
+        </div>
+        <div className="flex flex-col justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4">
+          <div>
+            <div className="text-sm font-semibold text-zinc-900">Pro plan</div>
+            <div className="mt-1 text-xs text-zinc-500">
+              $50/month · billed monthly
+            </div>
+            <ul className="mt-3 space-y-1.5 text-xs text-zinc-600">
+              <li className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3 w-3 text-accent-600" />
+                12 estimates / month
+              </li>
+              <li className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3 w-3 text-accent-600" />
+                Re-run any address 10× / 24h
+              </li>
+              <li className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3 w-3 text-accent-600" />
+                Stripe Connect payouts
+              </li>
+            </ul>
+          </div>
+          <Button variant="secondary" size="sm">
+            Manage plan
+          </Button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function Section({
+  icon: Icon,
+  title,
+  sub,
+  badge,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  sub: string;
+  badge?: { label: string; tone: "accent" | "amber" };
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+              {title}
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">{sub}</p>
+          </div>
+        </div>
+        {badge && (
+          <Badge tone={badge.tone}>
+            {badge.tone === "accent" && <CheckCircle2 className="h-3 w-3" />}
+            {badge.label}
+          </Badge>
+        )}
+      </div>
+      <div className="mt-5">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
+    </div>
+  );
+}

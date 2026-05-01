@@ -43,46 +43,44 @@ export function TermsSection({
         readOnly={readOnly}
       />
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02]">
+      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
         <ul>
-          {visible.map((t, i) => {
+          {visible.map((t) => {
             const open = openId === t.id;
             return (
               <li
                 key={t.id}
                 className={cn(
-                  "border-b border-white/[0.06] last:border-0",
+                  "border-b border-zinc-100 last:border-0",
                   !t.enabled && !readOnly && "opacity-50",
                 )}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
                   {!readOnly && (
-                    <GripVertical className="h-4 w-4 shrink-0 text-zinc-700" />
+                    <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
                   )}
                   <button
                     type="button"
                     onClick={() => setOpenId(open ? null : t.id)}
                     className="flex flex-1 items-center justify-between gap-2 text-left"
                   >
-                    <span className="font-medium text-zinc-100">
-                      {t.title}
-                    </span>
+                    <span className="font-medium text-zinc-900">{t.title}</span>
                     <ChevronDown
                       className={cn(
-                        "h-4 w-4 text-zinc-500 transition-transform",
+                        "h-4 w-4 text-zinc-400 transition-transform",
                         open && "rotate-180",
                       )}
                     />
                   </button>
                   {!readOnly && (
-                    <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
+                    <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-zinc-600">
                       <input
                         type="checkbox"
                         checked={t.enabled}
                         onChange={(e) =>
                           update(t.id, { enabled: e.target.checked })
                         }
-                        className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.06] accent-accent-400"
+                        className="h-3.5 w-3.5 rounded border-zinc-300 accent-accent-600"
                       />
                       Include
                     </label>
@@ -100,7 +98,7 @@ export function TermsSection({
                     >
                       <div className="px-4 pb-4">
                         {readOnly ? (
-                          <p className="text-sm leading-relaxed text-zinc-400">
+                          <p className="text-sm leading-relaxed text-zinc-600">
                             {t.body}
                           </p>
                         ) : (
@@ -110,7 +108,7 @@ export function TermsSection({
                               update(t.id, { body: e.target.value })
                             }
                             rows={3}
-                            className="w-full resize-none rounded-lg border border-white/10 bg-white/[0.02] p-3 text-sm leading-relaxed text-zinc-300 outline-none transition focus:border-accent-400/40"
+                            className="w-full resize-none rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-relaxed text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                           />
                         )}
                       </div>

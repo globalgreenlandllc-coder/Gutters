@@ -1,13 +1,19 @@
 import { cn } from "@/lib/utils";
 
-export function Logo({ className }: { className?: string }) {
+export function Logo({
+  className,
+  showSubtitle = true,
+}: {
+  className?: string;
+  showSubtitle?: boolean;
+}) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <div className="relative h-8 w-8">
-        <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-accent-400 to-accent-600 shadow-glow" />
+        <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow" />
         <svg
           viewBox="0 0 32 32"
-          className="absolute inset-0 h-8 w-8 text-ink-950"
+          className="absolute inset-0 h-8 w-8 text-white"
           fill="none"
           stroke="currentColor"
           strokeWidth="2.5"
@@ -21,12 +27,14 @@ export function Logo({ className }: { className?: string }) {
         </svg>
       </div>
       <div className="flex flex-col leading-none">
-        <span className="font-display text-lg font-semibold tracking-tight">
+        <span className="font-display text-lg font-semibold tracking-tight text-zinc-900">
           Gutters
         </span>
-        <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-          AI Takeoff
-        </span>
+        {showSubtitle && (
+          <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            AI Takeoff
+          </span>
+        )}
       </div>
     </div>
   );

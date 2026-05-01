@@ -3,6 +3,8 @@
 import { Pencil } from "lucide-react";
 import type { Proposal } from "@/lib/proposal-mock";
 import { Badge } from "@/components/ui/badge";
+import { BrandMark } from "@/components/ui/brand-mark";
+import { useProfile } from "@/lib/auth-mock";
 
 export function CoverSection({
   proposal,
@@ -13,29 +15,39 @@ export function CoverSection({
   onChange: (next: Proposal) => void;
   readOnly?: boolean;
 }) {
+  const profile = useProfile();
   return (
     <section
       data-section="cover"
-      className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 sm:p-8"
+      className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card sm:p-8"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Badge>Proposal</Badge>
-          <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Gutter replacement at <br className="hidden sm:block" />
             <span className="text-gradient">{proposal.address}</span>
           </h1>
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-right text-sm">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">
-            Prepared by
-          </div>
-          <div className="mt-1 font-medium text-zinc-100">
-            {proposal.contractor.company}
-          </div>
-          <div className="text-zinc-400">{proposal.contractor.name}</div>
-          <div className="mt-1 text-xs text-zinc-500">
-            License {proposal.contractor.license}
+        <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-4 text-sm">
+          <BrandMark
+            initials={profile.logo.initials || "GU"}
+            tone={profile.logo.tone}
+            size="lg"
+          />
+          <div className="text-right">
+            <div className="text-xs uppercase tracking-wider text-zinc-500">
+              Prepared by
+            </div>
+            <div className="mt-0.5 font-semibold text-zinc-900">
+              {profile.company}
+            </div>
+            <div className="text-xs text-zinc-600">
+              {profile.contractorName}
+            </div>
+            <div className="mt-0.5 text-[11px] text-zinc-500">
+              License {profile.license}
+            </div>
           </div>
         </div>
       </div>
@@ -44,15 +56,12 @@ export function CoverSection({
         value={proposal.intro}
         onChange={(v) => onChange({ ...proposal, intro: v })}
         readOnly={readOnly}
-        className="mt-6 text-base leading-relaxed text-zinc-300"
+        className="mt-6 text-base leading-relaxed text-zinc-700"
       />
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Client" value={proposal.client.name} />
-        <Stat
-          label="Total LF"
-          value={`${proposal.measurements.eaveLF} LF`}
-        />
+        <Stat label="Total LF" value={`${proposal.measurements.eaveLF} LF`} />
         <Stat
           label="Downspouts"
           value={`${proposal.measurements.downspoutCount}`}
@@ -65,11 +74,11 @@ export function CoverSection({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">
+    <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 px-3 py-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
         {label}
       </div>
-      <div className="mt-0.5 truncate text-sm font-medium text-zinc-100">
+      <div className="mt-0.5 truncate text-sm font-medium text-zinc-900">
         {value}
       </div>
     </div>
@@ -96,9 +105,9 @@ function EditableTextarea({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
-        className={`${className} w-full resize-none rounded-lg border border-transparent bg-transparent p-2 outline-none transition focus:border-accent-400/30 focus:bg-white/[0.02] group-hover:border-white/10`}
+        className={`${className} w-full resize-none rounded-lg border border-transparent bg-transparent p-2 outline-none transition group-hover:border-zinc-200 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15`}
       />
-      <Pencil className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-zinc-600 opacity-0 transition group-hover:opacity-100" />
+      <Pencil className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-zinc-400 opacity-0 transition group-hover:opacity-100" />
     </div>
   );
 }

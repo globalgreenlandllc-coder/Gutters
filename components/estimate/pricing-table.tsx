@@ -33,8 +33,8 @@ export function PricingTable({
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02]">
-      <div className="hidden grid-cols-[minmax(0,1fr)_84px_60px_110px_110px_36px] gap-2 border-b border-white/10 px-3 py-2 text-[11px] uppercase tracking-wider text-zinc-500 sm:grid">
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <div className="hidden grid-cols-[minmax(0,1fr)_84px_60px_110px_110px_36px] gap-2 border-b border-zinc-200 px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 sm:grid">
         <div>Item</div>
         <div className="text-right">Qty</div>
         <div className="text-center">Unit</div>
@@ -51,17 +51,19 @@ export function PricingTable({
               <motion.li
                 key={item.id}
                 layout
-                initial={{ opacity: 0, y: -6 }}
+                initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, height: 0 }}
-                className="border-b border-white/[0.06] last:border-0"
+                className="border-b border-zinc-100 last:border-0"
               >
                 <div className="grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_84px_60px_110px_110px_36px] sm:items-center">
                   <div className="min-w-0">
                     <input
                       value={item.name}
-                      onChange={(e) => update(item.id, { name: e.target.value })}
-                      className="w-full bg-transparent text-sm font-medium text-zinc-100 outline-none focus:text-white"
+                      onChange={(e) =>
+                        update(item.id, { name: e.target.value })
+                      }
+                      className="w-full bg-transparent text-sm font-medium text-zinc-900 outline-none"
                     />
                     {item.description && (
                       <div className="mt-0.5 truncate text-xs text-zinc-500">
@@ -79,8 +81,10 @@ export function PricingTable({
 
                   <input
                     value={item.unit}
-                    onChange={(e) => update(item.id, { unit: e.target.value })}
-                    className="h-8 w-full rounded-md border border-white/10 bg-white/[0.02] px-2 text-center text-xs text-zinc-300 outline-none focus:border-accent-400/40"
+                    onChange={(e) =>
+                      update(item.id, { unit: e.target.value })
+                    }
+                    className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-center text-xs text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                   />
 
                   <NumInput
@@ -91,13 +95,13 @@ export function PricingTable({
                     decimals={2}
                   />
 
-                  <div className="text-right text-sm font-semibold tabular-nums text-zinc-100">
+                  <div className="text-right text-sm font-semibold tabular-nums text-zinc-900">
                     {formatCurrency(total)}
                   </div>
 
                   <button
                     onClick={() => remove(item.id)}
-                    className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-rose-500/15 hover:text-rose-300"
+                    className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600"
                     aria-label="Remove line item"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -111,7 +115,7 @@ export function PricingTable({
 
       <button
         onClick={addRow}
-        className="flex w-full items-center justify-center gap-2 border-t border-dashed border-white/10 px-3 py-2.5 text-xs text-zinc-400 transition hover:bg-white/[0.03] hover:text-accent-300"
+        className="flex w-full items-center justify-center gap-2 border-t border-dashed border-zinc-200 px-3 py-2.5 text-xs text-zinc-500 transition hover:bg-zinc-50 hover:text-accent-700"
       >
         <Plus className="h-3.5 w-3.5" />
         Add line item
@@ -136,11 +140,11 @@ function NumInput({
   return (
     <div
       className={cn(
-        "flex h-8 items-center rounded-md border border-white/10 bg-white/[0.02] px-2 text-sm text-zinc-100 transition focus-within:border-accent-400/40",
+        "flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15",
         align === "right" && "justify-end",
       )}
     >
-      {prefix && <span className="mr-0.5 text-zinc-500">{prefix}</span>}
+      {prefix && <span className="mr-0.5 text-zinc-400">{prefix}</span>}
       <input
         type="number"
         inputMode="decimal"

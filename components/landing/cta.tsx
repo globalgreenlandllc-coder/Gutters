@@ -12,14 +12,14 @@ export function CTA() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
         transition={{ duration: 0.6 }}
-        className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-ink-850 to-ink-900 p-8 text-center sm:p-14"
+        className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-8 text-center shadow-card sm:p-14"
       >
         <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_70%)]" />
-        <div className="pointer-events-none absolute -top-20 left-1/2 h-[300px] w-[600px] -translate-x-1/2 rounded-full bg-accent-500/15 blur-3xl" />
+        <div className="pointer-events-none absolute -top-20 left-1/2 h-[280px] w-[600px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
         <div className="relative">
           <Badge>Ready when you are</Badge>
-          <h2 className="font-display mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl md:text-5xl">
+          <h2 className="font-display mt-5 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl md:text-5xl">
             Type an address. Watch the estimate{" "}
             <span className="text-gradient">build itself.</span>
           </h2>

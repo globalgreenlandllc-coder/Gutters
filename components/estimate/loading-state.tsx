@@ -36,8 +36,8 @@ export function LoadingState({
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[600px] -translate-x-1/2 rounded-full bg-accent-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 bg-grid opacity-40 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
+      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[600px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -49,22 +49,22 @@ export function LoadingState({
           <Logo />
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 backdrop-blur-2xl shadow-card">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-elevated">
           <div className="flex items-start gap-3">
-            <MapPin className="mt-0.5 h-5 w-5 text-accent-400" />
+            <MapPin className="mt-0.5 h-5 w-5 text-accent-600" />
             <div className="min-w-0 flex-1">
               <div className="text-xs uppercase tracking-wider text-zinc-500">
                 Analyzing
               </div>
-              <div className="mt-1 truncate font-medium text-zinc-100">
+              <div className="mt-1 truncate font-medium text-zinc-900">
                 {address}
               </div>
             </div>
           </div>
 
-          <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-white/[0.05]">
+          <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
             <motion.div
-              className="h-full bg-gradient-to-r from-accent-400 via-accent-300 to-cyan-400"
+              className="h-full bg-gradient-to-r from-accent-500 via-accent-600 to-cyan-500"
               initial={{ width: 0 }}
               animate={{ width: `${progress * 100}%` }}
               transition={{ duration: 0.5, ease: "easeOut" }}
@@ -90,7 +90,7 @@ export function LoadingState({
                           key="done"
                           initial={{ scale: 0.6, opacity: 0 }}
                           animate={{ scale: 1, opacity: 1 }}
-                          className="flex h-5 w-5 items-center justify-center rounded-full bg-accent-500/20 text-accent-300 ring-1 ring-inset ring-accent-400/30"
+                          className="flex h-5 w-5 items-center justify-center rounded-full bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200"
                         >
                           <Check className="h-3 w-3" />
                         </motion.span>
@@ -100,7 +100,7 @@ export function LoadingState({
                           key="active"
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          className="text-accent-300"
+                          className="text-accent-600"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
                         </motion.span>
@@ -110,7 +110,7 @@ export function LoadingState({
                           key="pending"
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          className="h-2 w-2 rounded-full bg-white/15"
+                          className="h-2 w-2 rounded-full bg-zinc-300"
                         />
                       )}
                     </AnimatePresence>
@@ -118,14 +118,16 @@ export function LoadingState({
                   <span
                     className={
                       state === "done"
-                        ? "text-zinc-300"
+                        ? "text-zinc-700"
                         : state === "active"
-                        ? "text-zinc-100 font-medium"
-                        : "text-zinc-600"
+                        ? "font-medium text-zinc-900"
+                        : "text-zinc-400"
                     }
                   >
                     {s.label}
-                    {state === "active" && <span className="ml-1 animate-pulse">…</span>}
+                    {state === "active" && (
+                      <span className="ml-1 animate-pulse">…</span>
+                    )}
                   </span>
                 </motion.li>
               );
@@ -133,7 +135,7 @@ export function LoadingState({
           </ul>
         </div>
 
-        <p className="mt-4 text-center text-xs text-zinc-600">
+        <p className="mt-4 text-center text-xs text-zinc-500">
           Running in parallel: Solar API · Vision segmentation · Turf.js geometry
         </p>
       </motion.div>

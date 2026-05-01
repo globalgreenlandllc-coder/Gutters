@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { sampleProposal, type Proposal } from "@/lib/proposal-mock";
+import { AuthGate } from "@/components/auth/auth-gate";
 import { ProposalTopBar } from "@/components/proposal/proposal-top-bar";
 import { CoverSection } from "@/components/proposal/cover-section";
 import { AerialSection } from "@/components/proposal/aerial-section";
@@ -11,11 +12,41 @@ import { TermsSection } from "@/components/proposal/terms-section";
 import { BuilderSidebar } from "@/components/proposal/builder-sidebar";
 import { SendModal } from "@/components/proposal/send-modal";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
+import { useProfile } from "@/lib/auth-mock";
 
 export default function ProposalPage() {
+  return (
+    <AuthGate>
+      <Inner />
+    </AuthGate>
+  );
+}
+
+function Inner() {
+  const profile = useProfile();
   const [proposal, setProposal] = useState<Proposal>(sampleProposal);
   const [preview, setPreview] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+
+  useEffect(() => {
+    setProposal((p) => ({
+      ...p,
+      contractor: {
+        ...p.contractor,
+        company: profile.company,
+        name: profile.contractorName,
+        email: profile.email,
+        phone: profile.phone,
+        license: profile.license,
+      },
+    }));
+  }, [
+    profile.company,
+    profile.contractorName,
+    profile.email,
+    profile.phone,
+    profile.license,
+  ]);
 
   function download() {
     if (typeof window !== "undefined") window.print();

@@ -115,11 +115,7 @@ export function AerialCanvas({
         const id = `eave-${Date.now()}`;
         onEavesChange([
           ...eaves,
-          {
-            id,
-            kind: "eave",
-            points: [drawing.start, drawing.end],
-          },
+          { id, kind: "eave", points: [drawing.start, drawing.end] },
         ]);
         setSelectedId(id);
       }
@@ -142,14 +138,13 @@ export function AerialCanvas({
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl border border-white/10 bg-ink-900/60 shadow-card">
+    <div className="relative h-full w-full overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 shadow-card">
       <Toolbar
         tool={tool}
         setTool={setTool}
         canDelete={!!selectedId}
         onDelete={deleteSelected}
       />
-
       <Legend totalEaveLF={totalEaveLF} downspoutCount={downspouts.length} />
 
       <svg
@@ -175,7 +170,7 @@ export function AerialCanvas({
             <g key={line.id}>
               <motion.path
                 d={pathFor(line)}
-                stroke={isSelected ? "#22d3ee" : "#34d399"}
+                stroke={isSelected ? "#0e7490" : "#059669"}
                 strokeWidth={isSelected ? 5 : isHover ? 4.5 : 4}
                 strokeLinecap="round"
                 fill="none"
@@ -184,8 +179,8 @@ export function AerialCanvas({
                 transition={{ duration: 0.7, ease: "easeOut" }}
                 style={{
                   filter: isSelected
-                    ? "drop-shadow(0 0 8px rgba(34,211,238,0.7))"
-                    : "drop-shadow(0 0 6px rgba(52,211,153,0.55))",
+                    ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
+                    : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))",
                   cursor: "pointer",
                 }}
                 onPointerDown={(e) => {
@@ -203,8 +198,8 @@ export function AerialCanvas({
                     cx={pt.x}
                     cy={pt.y}
                     r={7}
-                    fill="#0a0d14"
-                    stroke="#22d3ee"
+                    fill="white"
+                    stroke="#0e7490"
                     strokeWidth={2.5}
                     style={{ cursor: "grab" }}
                     onPointerDown={(e) => {
@@ -235,16 +230,16 @@ export function AerialCanvas({
                 cx={d.x}
                 cy={d.y}
                 r={isSelected ? 12 : 9}
-                fill="rgba(34,211,238,0.18)"
-                stroke={isSelected ? "#22d3ee" : "rgba(34,211,238,0.7)"}
+                fill="white"
+                stroke={isSelected ? "#0e7490" : "rgba(14,116,144,0.85)"}
                 strokeWidth={2}
               />
-              <circle cx={d.x} cy={d.y} r={3.5} fill="#22d3ee" />
+              <circle cx={d.x} cy={d.y} r={3.5} fill="#0e7490" />
               {isSelected && (
                 <text
                   x={d.x + 14}
                   y={d.y + 4}
-                  className="fill-cyan-200"
+                  fill="#0e7490"
                   fontSize="11"
                   fontWeight={600}
                 >
@@ -261,10 +256,10 @@ export function AerialCanvas({
             y1={drawing.start.y}
             x2={drawing.end.x}
             y2={drawing.end.y}
-            stroke="#34d399"
+            stroke="#059669"
             strokeWidth="3"
             strokeDasharray="8 5"
-            opacity="0.9"
+            opacity="0.95"
           />
         )}
       </svg>
@@ -277,14 +272,14 @@ export function AerialCanvas({
             exit={{ opacity: 0, y: 12 }}
             className="absolute bottom-4 left-1/2 -translate-x-1/2"
           >
-            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-ink-900/90 px-3 py-2 text-xs text-zinc-300 shadow-card backdrop-blur">
-              <span className="rounded-full bg-cyan-400/15 px-2 py-0.5 text-cyan-300">
+            <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-3 py-2 text-xs text-zinc-700 shadow-elevated backdrop-blur">
+              <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-cyan-700">
                 Selected
               </span>
               <span>Drag handles to adjust · Delete to remove</span>
               <button
                 onClick={deleteSelected}
-                className="ml-1 rounded-full border border-white/10 px-2 py-0.5 text-zinc-300 transition hover:border-rose-400/40 hover:text-rose-300"
+                className="ml-1 rounded-full border border-zinc-200 px-2 py-0.5 transition hover:border-rose-300 hover:text-rose-600"
               >
                 <Trash2 className="inline h-3 w-3" />
               </button>
@@ -313,28 +308,28 @@ function Toolbar({
     { id: "add-downspout", icon: Layers, label: "Add downspout" },
   ];
   return (
-    <div className="absolute left-4 top-4 z-10 flex flex-col gap-1 rounded-xl border border-white/10 bg-ink-900/80 p-1 shadow-card backdrop-blur-xl">
+    <div className="absolute left-4 top-4 z-10 flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white/95 p-1 shadow-card backdrop-blur">
       {tools.map((t) => (
         <button
           key={t.id}
           onClick={() => setTool(t.id)}
           title={t.label}
           className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition",
+            "flex h-9 w-9 items-center justify-center rounded-lg transition",
             tool === t.id
-              ? "bg-accent-500/20 text-accent-300 ring-1 ring-inset ring-accent-400/30"
-              : "hover:bg-white/[0.05] hover:text-white",
+              ? "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
+              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
           )}
         >
           <t.icon className="h-4 w-4" />
         </button>
       ))}
-      <div className="my-1 h-px w-full bg-white/10" />
+      <div className="my-1 h-px w-full bg-zinc-200" />
       <button
         onClick={onDelete}
         disabled={!canDelete}
         title="Delete selection"
-        className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-rose-500/15 hover:text-rose-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-400"
+        className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -350,26 +345,30 @@ function Legend({
   downspoutCount: number;
 }) {
   return (
-    <div className="absolute right-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-ink-900/80 px-3 py-2 text-xs shadow-card backdrop-blur-xl">
-      <div className="flex items-center gap-1.5 text-zinc-300">
-        <span className="h-2 w-4 rounded-full bg-accent-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
+    <div className="absolute right-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white/95 px-3 py-2 text-xs shadow-card backdrop-blur">
+      <div className="flex items-center gap-1.5 text-zinc-700">
+        <span className="h-2 w-4 rounded-full bg-accent-500 shadow-[0_1px_3px_rgba(5,150,105,0.5)]" />
         Eaves
-        <span className="font-semibold text-zinc-100">{totalEaveLF} LF</span>
+        <span className="font-semibold tabular-nums text-zinc-900">
+          {totalEaveLF} LF
+        </span>
       </div>
-      <div className="h-4 w-px bg-white/10" />
-      <div className="flex items-center gap-1.5 text-zinc-300">
-        <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
+      <div className="h-4 w-px bg-zinc-200" />
+      <div className="flex items-center gap-1.5 text-zinc-700">
+        <span className="h-2.5 w-2.5 rounded-full bg-cyan-600" />
         Downspouts
-        <span className="font-semibold text-zinc-100">{downspoutCount}</span>
+        <span className="font-semibold tabular-nums text-zinc-900">
+          {downspoutCount}
+        </span>
       </div>
-      <div className="hidden h-4 w-px bg-white/10 sm:block" />
-      <div className="hidden items-center gap-1.5 text-zinc-400 sm:flex">
+      <div className="hidden h-4 w-px bg-zinc-200 sm:block" />
+      <div className="hidden items-center gap-1.5 text-zinc-500 sm:flex">
         <Ruler className="h-3 w-3" />
         Scale 1:240
       </div>
       <button
         title="Fit to view"
-        className="ml-1 rounded-md border border-white/10 p-1 text-zinc-400 hover:border-accent-400/40 hover:text-accent-300"
+        className="ml-1 rounded-md border border-zinc-200 p-1 text-zinc-500 hover:border-accent-400 hover:text-accent-700"
       >
         <Maximize2 className="h-3 w-3" />
       </button>
@@ -391,16 +390,15 @@ function LineLabel({ line }: { line: EditableLine }) {
         width={60}
         height={20}
         rx={6}
-        fill="#0a0d14"
-        stroke="#22d3ee"
+        fill="white"
+        stroke="#0e7490"
         strokeWidth={1}
-        opacity={0.95}
       />
       <text
         x={mid.x}
         y={mid.y - 12}
         textAnchor="middle"
-        className="fill-cyan-200"
+        fill="#0e7490"
         fontSize="11"
         fontWeight={600}
       >

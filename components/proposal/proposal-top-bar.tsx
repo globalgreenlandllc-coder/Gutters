@@ -21,24 +21,24 @@ export function ProposalTopBar({
   onDownload: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-ink-950/80 backdrop-blur-xl print:hidden">
+    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-3 px-4">
         <Link
-          href="/estimate"
-          className="flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+          href="/dashboard"
+          className="flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-900"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span className="hidden sm:inline">Estimate</span>
+          <span className="hidden sm:inline">Dashboard</span>
         </Link>
-        <div className="hidden h-6 w-px bg-white/10 md:block" />
+        <div className="hidden h-6 w-px bg-zinc-200 md:block" />
         <div className="hidden md:block">
-          <Logo />
+          <Logo showSubtitle={false} />
         </div>
-        <div className="hidden h-6 w-px bg-white/10 md:block" />
+        <div className="hidden h-6 w-px bg-zinc-200 md:block" />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-100">
+            <span className="truncate text-sm font-medium text-zinc-900">
               Proposal · {address}
             </span>
             <Badge tone={preview ? "accent" : "neutral"}>
@@ -47,14 +47,14 @@ export function ProposalTopBar({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+        <div className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white p-1">
           <button
             onClick={() => preview && onTogglePreview()}
             className={cn(
               "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
               !preview
-                ? "bg-white/[0.06] text-zinc-100"
-                : "text-zinc-400 hover:text-white",
+                ? "bg-zinc-100 text-zinc-900"
+                : "text-zinc-600 hover:text-zinc-900",
             )}
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -65,8 +65,8 @@ export function ProposalTopBar({
             className={cn(
               "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
               preview
-                ? "bg-accent-500/20 text-accent-300 ring-1 ring-inset ring-accent-400/30"
-                : "text-zinc-400 hover:text-white",
+                ? "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
+                : "text-zinc-600 hover:text-zinc-900",
             )}
           >
             <Eye className="h-3.5 w-3.5" />

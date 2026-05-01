@@ -32,7 +32,8 @@ export function Summary({
     .filter((i) => i.taxable)
     .reduce((s, i) => s + i.quantity * i.unitPrice, 0);
   const taxableAfterAdj =
-    taxableBase * (1 + adjustments.markupPct / 100) *
+    taxableBase *
+    (1 + adjustments.markupPct / 100) *
     (1 - adjustments.discountPct / 100);
   const tax = taxableAfterAdj * (adjustments.taxPct / 100);
   const total = afterMarkup - discount + tax;
@@ -60,7 +61,7 @@ export function Summary({
         />
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-ink-900/60 p-4">
+      <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
         <Row label="Subtotal" value={subtotal} muted />
         <Row label={`Markup (${adjustments.markupPct}%)`} value={markup} muted />
         {adjustments.discountPct > 0 && (
@@ -72,17 +73,17 @@ export function Summary({
           />
         )}
         <Row label={`Tax (${adjustments.taxPct}%)`} value={tax} muted />
-        <div className="my-3 h-px w-full bg-white/10" />
+        <div className="my-3 h-px w-full bg-zinc-200" />
         <motion.div
           key={Math.round(total)}
           initial={{ opacity: 0.4, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex items-baseline justify-between"
         >
-          <span className="text-sm uppercase tracking-wider text-zinc-400">
+          <span className="text-xs uppercase tracking-wider text-zinc-500">
             Client total
           </span>
-          <span className="font-display text-3xl font-semibold tabular-nums text-zinc-50">
+          <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">
             {formatCurrency(total)}
           </span>
         </motion.div>
@@ -105,15 +106,15 @@ export function Summary({
 
       <ul className="space-y-1.5 text-xs text-zinc-500">
         <li className="flex items-center gap-2">
-          <CheckCircle2 className="h-3.5 w-3.5 text-accent-400" />
+          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
           Auto-attaches signed warranty + T&Cs
         </li>
         <li className="flex items-center gap-2">
-          <CheckCircle2 className="h-3.5 w-3.5 text-accent-400" />
+          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
           Stripe Connect deposit + final invoice
         </li>
         <li className="flex items-center gap-2">
-          <Sparkles className="h-3.5 w-3.5 text-accent-400" />
+          <Sparkles className="h-3.5 w-3.5 text-accent-600" />
           AI-drafted scope of work included
         </li>
       </ul>
@@ -134,11 +135,11 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between py-1 text-sm">
-      <span className={muted ? "text-zinc-500" : "text-zinc-300"}>{label}</span>
+      <span className={muted ? "text-zinc-500" : "text-zinc-700"}>{label}</span>
       <span
         className={cn(
           "tabular-nums",
-          tone === "discount" ? "text-accent-300" : "text-zinc-200",
+          tone === "discount" ? "text-accent-700" : "text-zinc-900",
         )}
       >
         {formatCurrency(value)}
@@ -159,8 +160,8 @@ function Adj({
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] p-2.5">
-      <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+    <label className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-white p-2.5 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
         {label}
       </span>
       <div className="flex items-center gap-1">
@@ -170,9 +171,9 @@ function Adj({
           step={0.5}
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-          className="w-full bg-transparent text-base font-semibold tabular-nums text-zinc-100 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="w-full bg-transparent text-base font-semibold tabular-nums text-zinc-900 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
-        <span className="text-sm text-zinc-500">{suffix}</span>
+        <span className="text-sm text-zinc-400">{suffix}</span>
       </div>
     </label>
   );

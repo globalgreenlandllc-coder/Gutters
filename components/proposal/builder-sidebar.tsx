@@ -26,12 +26,12 @@ export function BuilderSidebar({
 
   return (
     <aside className="space-y-4">
-      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-xl shadow-card">
-        <div className="text-xs uppercase tracking-wider text-zinc-500">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
           Most popular
         </div>
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="font-display text-3xl font-semibold tracking-tight">
+          <span className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
             {recommended ? formatCurrency(recommended.total) : "—"}
           </span>
         </div>
@@ -45,12 +45,12 @@ export function BuilderSidebar({
               key={pkg.id}
               className="flex items-center justify-between text-sm"
             >
-              <span className="text-zinc-300">{pkg.name}</span>
+              <span className="text-zinc-700">{pkg.name}</span>
               <motion.span
                 key={Math.round(total)}
                 initial={{ opacity: 0.4 }}
                 animate={{ opacity: 1 }}
-                className="tabular-nums text-zinc-100"
+                className="tabular-nums text-zinc-900"
               >
                 {formatCurrency(total)}
               </motion.span>
@@ -58,9 +58,9 @@ export function BuilderSidebar({
           ))}
         </div>
 
-        <div className="my-4 h-px w-full bg-white/10" />
+        <div className="my-4 h-px w-full bg-zinc-100" />
 
-        <div className="space-y-2 text-xs text-zinc-400">
+        <div className="space-y-2 text-xs text-zinc-600">
           <Field
             label="Deposit %"
             value={proposal.depositPct}
@@ -87,8 +87,8 @@ export function BuilderSidebar({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-        <div className="text-xs uppercase tracking-wider text-zinc-500">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
           Recipient
         </div>
         <input
@@ -99,7 +99,7 @@ export function BuilderSidebar({
               client: { ...proposal.client, name: e.target.value },
             })
           }
-          className="mt-2 w-full bg-transparent text-base font-medium text-zinc-100 outline-none focus:text-white"
+          className="mt-2 w-full bg-transparent text-base font-medium text-zinc-900 outline-none"
         />
         <input
           value={proposal.client.email}
@@ -109,20 +109,20 @@ export function BuilderSidebar({
               client: { ...proposal.client, email: e.target.value },
             })
           }
-          className="mt-1 w-full bg-transparent text-sm text-zinc-400 outline-none focus:text-zinc-200"
+          className="mt-1 w-full bg-transparent text-sm text-zinc-600 outline-none"
         />
 
         <ul className="mt-4 space-y-1.5 text-xs text-zinc-500">
           <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-400" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
             Email + secure portal link
           </li>
           <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-400" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
             Stripe Connect deposit on accept
           </li>
           <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-400" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
             Live "viewed" + "accepted" status
           </li>
         </ul>
@@ -143,9 +143,9 @@ function Field({
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+    <label className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-zinc-50/40 px-3 py-2">
       <span>{label}</span>
-      <span className="flex items-center gap-1 text-sm font-medium text-zinc-100">
+      <span className="flex items-center gap-1 text-sm font-medium text-zinc-900">
         <input
           type="number"
           step={1}

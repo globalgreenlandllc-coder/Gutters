@@ -5,6 +5,8 @@ import { motion } from "framer-motion";
 import { ShieldCheck, Phone, Mail } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Badge } from "@/components/ui/badge";
+import { BrandMark } from "@/components/ui/brand-mark";
+import { useProfile } from "@/lib/auth-mock";
 import { AerialSection } from "@/components/proposal/aerial-section";
 import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
@@ -52,7 +54,9 @@ export function ClientPortalView({
   else if (!agreed) reason = "Acknowledge the terms to continue";
 
   if (accepted) {
-    const due = totals.total * (paymentChoice === "deposit" ? proposal.depositPct / 100 : 1);
+    const due =
+      totals.total *
+      (paymentChoice === "deposit" ? proposal.depositPct / 100 : 1);
     return (
       <AcceptedScreen
         packageName={selected.name}
@@ -98,7 +102,7 @@ export function ClientPortalView({
           />
 
           <section className="space-y-4">
-            <h2 className="font-display text-xl font-semibold tracking-tight">
+            <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
               Sign & accept
             </h2>
             <SignaturePad
@@ -107,14 +111,14 @@ export function ClientPortalView({
               signerName={signerName}
               onSignerName={setSignerName}
             />
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
               <input
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-white/20 bg-white/[0.06] accent-accent-400"
+                className="mt-1 h-4 w-4 rounded border-zinc-300 accent-accent-600"
               />
-              <span className="text-sm text-zinc-300">
+              <span className="text-sm text-zinc-700">
                 I authorize {proposal.contractor.company} to perform the
                 described scope of work and agree to the terms above. I confirm
                 I'm authorized to sign for this property.
@@ -142,17 +146,32 @@ export function ClientPortalView({
 }
 
 function PortalNav({ proposal }: { proposal: Proposal }) {
+  const profile = useProfile();
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-ink-950/85 backdrop-blur-xl print:hidden">
+    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-        <Logo />
+        <div className="flex items-center gap-2.5">
+          <BrandMark
+            initials={profile.logo.initials || "GU"}
+            tone={profile.logo.tone}
+            size="sm"
+          />
+          <div className="leading-none">
+            <div className="text-sm font-semibold text-zinc-900">
+              {proposal.contractor.company}
+            </div>
+            <div className="mt-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+              Proposal
+            </div>
+          </div>
+        </div>
         <div className="hidden items-center gap-3 text-xs text-zinc-500 sm:flex">
           <Badge tone="neutral">
             <ShieldCheck className="h-3 w-3" />
-            Verified contractor
+            Secured by Gutters
           </Badge>
           <span>·</span>
-          <span>{proposal.contractor.company}</span>
+          <Logo showSubtitle={false} className="opacity-70" />
         </div>
       </div>
     </header>
@@ -160,22 +179,34 @@ function PortalNav({ proposal }: { proposal: Proposal }) {
 }
 
 function Header({ proposal }: { proposal: Proposal }) {
+  const profile = useProfile();
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] to-transparent p-6 sm:p-8">
-      <Badge>For {proposal.client.name}</Badge>
-      <h1 className="font-display mt-4 text-balance text-4xl font-semibold tracking-tight sm:text-5xl">
-        Your gutter quote from{" "}
-        <span className="text-gradient">{proposal.contractor.company}</span>
-      </h1>
-      <p className="mt-3 max-w-2xl text-balance text-base leading-relaxed text-zinc-400">
-        {proposal.intro}
-      </p>
-      <div className="mt-5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-        <Badge tone="neutral">{proposal.address}</Badge>
-        <span>·</span>
-        <span>Valid for {proposal.validDays} days</span>
-        <span>·</span>
-        <span>Prepared by {proposal.contractor.name}</span>
+    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card sm:p-8">
+      <div className="flex flex-wrap items-start gap-4">
+        <BrandMark
+          initials={profile.logo.initials || "GU"}
+          tone={profile.logo.tone}
+          size="xl"
+        />
+        <div className="min-w-0 flex-1">
+          <Badge>For {proposal.client.name}</Badge>
+          <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+            Your gutter quote from{" "}
+            <span className="text-gradient">
+              {proposal.contractor.company}
+            </span>
+          </h1>
+          <p className="mt-3 max-w-2xl text-balance text-base leading-relaxed text-zinc-600">
+            {proposal.intro}
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <Badge tone="neutral">{proposal.address}</Badge>
+            <span>·</span>
+            <span>Valid for {proposal.validDays} days</span>
+            <span>·</span>
+            <span>Prepared by {proposal.contractor.name}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -187,25 +218,25 @@ function ContactCard({
   contractor: Proposal["contractor"];
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-      <div className="text-xs uppercase tracking-wider text-zinc-500">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+      <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
         Questions? Talk to your contractor
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
         <div>
-          <div className="font-medium text-zinc-100">{contractor.name}</div>
+          <div className="font-medium text-zinc-900">{contractor.name}</div>
           <div className="text-sm text-zinc-500">{contractor.company}</div>
         </div>
         <a
           href={`tel:${contractor.phone}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-300 hover:text-accent-300"
+          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
         >
           <Phone className="h-4 w-4" />
           {contractor.phone}
         </a>
         <a
           href={`mailto:${contractor.email}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-300 hover:text-accent-300"
+          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
         >
           <Mail className="h-4 w-4" />
           {contractor.email}

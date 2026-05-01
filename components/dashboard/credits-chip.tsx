@@ -1,0 +1,130 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sparkles, Zap } from "lucide-react";
+import { useSession } from "@/lib/auth-mock";
+import { cn } from "@/lib/utils";
+
+export function CreditsChip() {
+  const { session } = useSession();
+  const [open, setOpen] = useState(false);
+  if (!session) return null;
+
+  const total = session.credits.included + session.credits.bonus;
+  const remaining = Math.max(total - session.credits.used, 0);
+  const pct = Math.round((remaining / total) * 100);
+  const low = remaining <= 3;
+  const out = remaining === 0;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium transition",
+          out
+            ? "border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300"
+            : low
+            ? "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300"
+            : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
+        )}
+      >
+        <Sparkles
+          className={cn(
+            "h-3.5 w-3.5",
+            out
+              ? "text-rose-600"
+              : low
+              ? "text-amber-600"
+              : "text-accent-600",
+          )}
+        />
+        <span className="tabular-nums">
+          {remaining} / {total}
+        </span>
+        <span className="hidden sm:inline text-zinc-400">credits</span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: -4, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.14 }}
+              className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-4 shadow-elevated"
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="font-display text-2xl font-semibold tabular-nums text-zinc-900">
+                  {remaining}
+                </span>
+                <span className="text-xs text-zinc-500">
+                  of {total} remaining
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    out
+                      ? "bg-rose-500"
+                      : low
+                      ? "bg-amber-500"
+                      : "bg-gradient-to-r from-accent-500 to-accent-700",
+                  )}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+
+              <div className="mt-3 space-y-1.5 text-xs">
+                <Row
+                  label="Renews"
+                  value={new Date(session.credits.resetsAt).toLocaleDateString(
+                    "en-US",
+                    { month: "short", day: "numeric" },
+                  )}
+                />
+                <Row label="Add-on rate" value="$5 / address" />
+                <Row label="Same address" value="10× / 24h · free" />
+              </div>
+
+              <div className="mt-4 flex items-center gap-2">
+                <Link
+                  href="/dashboard/settings"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-glow transition hover:bg-accent-700"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  Manage plan
+                </Link>
+                <Link
+                  href="/estimate"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:text-zinc-900"
+                >
+                  New estimate
+                </Link>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between text-zinc-500">
+      <span>{label}</span>
+      <span className="font-medium text-zinc-900">{value}</span>
+    </div>
+  );
+}

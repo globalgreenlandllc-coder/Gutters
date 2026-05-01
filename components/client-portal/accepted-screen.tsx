@@ -19,7 +19,7 @@ export function AcceptedScreen({
   return (
     <div className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[700px] -translate-x-1/2 rounded-full bg-accent-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[700px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
       <div className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4 py-16">
         <Logo />
@@ -27,7 +27,7 @@ export function AcceptedScreen({
           initial={{ scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", damping: 14, stiffness: 220 }}
-          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-accent-500/15 text-accent-300 ring-1 ring-inset ring-accent-400/40 shadow-glow"
+          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200 shadow-glow"
         >
           <Check className="h-10 w-10" />
         </motion.div>
@@ -36,11 +36,15 @@ export function AcceptedScreen({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="font-display mt-6 text-balance text-center text-4xl font-semibold tracking-tight"
+          className="font-display mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
         >
-          You're all set, <span className="text-gradient">{signerName.split(" ")[0]}</span>.
+          You're all set,{" "}
+          <span className="text-gradient">
+            {signerName.split(" ")[0]}
+          </span>
+          .
         </motion.h1>
-        <p className="mt-3 max-w-md text-center text-zinc-400">
+        <p className="mt-3 max-w-md text-center text-zinc-600">
           {contractor.company} received your signed proposal and{" "}
           {formatCurrency(amount)} payment. A receipt is on its way.
         </p>
@@ -59,10 +63,11 @@ export function AcceptedScreen({
           />
         </div>
 
-        <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.02] p-5 text-center text-sm text-zinc-400">
-          Selected: <span className="font-medium text-zinc-100">{packageName}</span>{" "}
-          · Paid today:{" "}
-          <span className="font-medium text-zinc-100">
+        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-5 text-center text-sm text-zinc-600 shadow-card">
+          Selected:{" "}
+          <span className="font-medium text-zinc-900">{packageName}</span> ·
+          Paid today:{" "}
+          <span className="font-medium text-zinc-900">
             {formatCurrency(amount)}
           </span>
         </div>
@@ -81,9 +86,9 @@ function Tile({
   body: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-      <Icon className="h-5 w-5 text-accent-300" />
-      <div className="mt-2 font-medium text-zinc-100">{title}</div>
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-card">
+      <Icon className="h-5 w-5 text-accent-700" />
+      <div className="mt-2 font-medium text-zinc-900">{title}</div>
       <div className="mt-0.5 text-xs text-zinc-500">{body}</div>
     </div>
   );

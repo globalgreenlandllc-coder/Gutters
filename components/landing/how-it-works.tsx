@@ -29,10 +29,10 @@ export function HowItWorks() {
   return (
     <section id="how" className="relative mx-auto max-w-7xl px-4 py-24">
       <div className="mb-12 max-w-2xl">
-        <h2 className="font-display text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h2 className="font-display text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
           From address to accepted in four steps.
         </h2>
-        <p className="mt-3 text-zinc-400">
+        <p className="mt-3 text-zinc-600">
           The pipeline runs in parallel server-side, so the contractor sees an
           editable estimate seconds after typing the address.
         </p>
@@ -46,15 +46,15 @@ export function HowItWorks() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-60px" }}
             transition={{ duration: 0.5, delay: i * 0.06 }}
-            className="group relative rounded-2xl border border-white/10 bg-white/[0.02] p-6 hover:border-accent-400/30"
+            className="group relative rounded-2xl border border-zinc-200 bg-white p-6 shadow-card transition hover:border-accent-300"
           >
-            <span className="font-display text-3xl font-semibold tracking-tight text-accent-300/90">
+            <span className="font-display text-3xl font-semibold tracking-tight text-accent-700">
               {s.n}
             </span>
-            <h3 className="font-display mt-3 text-lg font-semibold tracking-tight">
+            <h3 className="font-display mt-3 text-lg font-semibold tracking-tight text-zinc-900">
               {s.title}
             </h3>
-            <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600">
               {s.body}
             </p>
           </motion.li>

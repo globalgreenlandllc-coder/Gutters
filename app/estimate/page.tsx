@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { AuthGate } from "@/components/auth/auth-gate";
 import { LoadingState } from "@/components/estimate/loading-state";
 import { ResultsView } from "@/components/estimate/results-view";
 import { SAMPLE_ADDRESS } from "@/lib/mock-estimate";
@@ -25,10 +26,12 @@ function EstimateContent() {
 
 export default function EstimatePage() {
   return (
-    <Suspense
-      fallback={<LoadingState address="…" onComplete={() => undefined} />}
-    >
-      <EstimateContent />
-    </Suspense>
+    <AuthGate>
+      <Suspense
+        fallback={<LoadingState address="…" onComplete={() => undefined} />}
+      >
+        <EstimateContent />
+      </Suspense>
+    </AuthGate>
   );
 }

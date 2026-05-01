@@ -29,7 +29,7 @@ export function SignaturePad({
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.scale(dpr, dpr);
-    ctx.strokeStyle = "#34d399";
+    ctx.strokeStyle = "#0e7490";
     ctx.lineWidth = 2.4;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -85,16 +85,16 @@ export function SignaturePad({
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
       <div className="flex items-center justify-between">
-        <label className="text-xs uppercase tracking-wider text-zinc-500">
+        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">
           Signature
         </label>
         <button
           type="button"
           onClick={clear}
           disabled={!hasInk}
-          className="inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-xs text-zinc-400 transition hover:border-rose-400/40 hover:text-rose-300 disabled:opacity-40 disabled:hover:border-white/10 disabled:hover:text-zinc-400"
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 transition hover:border-rose-300 hover:text-rose-600 disabled:opacity-40"
         >
           <Eraser className="h-3 w-3" />
           Clear
@@ -102,8 +102,8 @@ export function SignaturePad({
       </div>
       <div
         className={cn(
-          "relative mt-2 overflow-hidden rounded-xl border bg-ink-950/60 transition",
-          hasInk ? "border-accent-400/30" : "border-white/10",
+          "relative mt-2 overflow-hidden rounded-xl border bg-zinc-50/40 transition",
+          hasInk ? "border-accent-300" : "border-zinc-200",
         )}
       >
         <canvas
@@ -114,22 +114,22 @@ export function SignaturePad({
           className="block h-44 w-full touch-none cursor-crosshair"
         />
         {!hasInk && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-zinc-600">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-zinc-400">
             <PenLine className="h-4 w-4" />
             <span className="text-sm">Sign here</span>
           </div>
         )}
-        <div className="pointer-events-none absolute bottom-2 left-3 right-3 border-t border-dashed border-white/10" />
+        <div className="pointer-events-none absolute bottom-2 left-3 right-3 border-t border-dashed border-zinc-300" />
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <label className="text-xs uppercase tracking-wider text-zinc-500">
+        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">
           Print name
         </label>
         <input
           value={signerName}
           onChange={(e) => onSignerName(e.target.value)}
           placeholder="Your full name"
-          className="h-9 flex-1 rounded-lg border border-white/10 bg-white/[0.02] px-3 text-sm text-zinc-100 outline-none transition focus:border-accent-400/40"
+          className="h-9 flex-1 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
         />
       </div>
     </div>

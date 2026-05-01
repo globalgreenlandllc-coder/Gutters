@@ -33,9 +33,7 @@ export function AerialSection({ proposal }: { proposal: Proposal }) {
               proposal.measurements.insideCorners}{" "}
             corners
           </Badge>
-          <Badge tone="neutral">
-            {proposal.measurements.stories}-story
-          </Badge>
+          <Badge tone="neutral">{proposal.measurements.stories}-story</Badge>
           <Badge tone="neutral">
             {proposal.measurements.wasteFactorPct}% waste
           </Badge>

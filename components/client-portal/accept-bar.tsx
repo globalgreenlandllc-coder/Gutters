@@ -33,14 +33,14 @@ export function AcceptBar({
       initial={{ y: 60, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ type: "spring", damping: 22, stiffness: 240 }}
-      className="sticky bottom-0 z-30 border-t border-white/10 bg-ink-950/90 backdrop-blur-xl print:hidden"
+      className="sticky bottom-0 z-30 border-t border-zinc-200 bg-white/95 backdrop-blur-xl print:hidden"
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center">
         <div className="flex-1">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
             Selected · {packageName}
           </div>
-          <div className="font-display flex items-baseline gap-2 text-2xl font-semibold tracking-tight">
+          <div className="font-display flex items-baseline gap-2 text-2xl font-semibold tracking-tight text-zinc-900">
             {formatCurrency(due)}
             <span className="text-xs font-normal text-zinc-500">
               {paymentChoice === "deposit"
@@ -51,14 +51,14 @@ export function AcceptBar({
         </div>
 
         <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-          <div className="flex rounded-xl border border-white/10 bg-white/[0.03] p-1 text-xs">
+          <div className="flex rounded-xl border border-zinc-200 bg-white p-1 text-xs">
             <button
               onClick={() => onPaymentChoice("deposit")}
               className={
                 "rounded-lg px-3 py-1.5 transition " +
                 (paymentChoice === "deposit"
-                  ? "bg-white/[0.06] text-zinc-100"
-                  : "text-zinc-400 hover:text-white")
+                  ? "bg-zinc-100 text-zinc-900"
+                  : "text-zinc-600 hover:text-zinc-900")
               }
             >
               {depositPct}% deposit
@@ -68,8 +68,8 @@ export function AcceptBar({
               className={
                 "rounded-lg px-3 py-1.5 transition " +
                 (paymentChoice === "full"
-                  ? "bg-white/[0.06] text-zinc-100"
-                  : "text-zinc-400 hover:text-white")
+                  ? "bg-zinc-100 text-zinc-900"
+                  : "text-zinc-600 hover:text-zinc-900")
               }
             >
               Pay in full

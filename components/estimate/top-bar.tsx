@@ -10,24 +10,24 @@ import { Badge } from "@/components/ui/badge";
 export function TopBar({ address }: { address: string }) {
   const router = useRouter();
   return (
-    <header className="sticky top-0 z-40 border-b border-white/10 bg-ink-950/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-4 px-4">
         <Link
-          href="/"
-          className="flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+          href="/dashboard"
+          className="flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-900"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span className="hidden sm:inline">Back</span>
+          <span className="hidden sm:inline">Dashboard</span>
         </Link>
-        <div className="hidden h-6 w-px bg-white/10 md:block" />
+        <div className="hidden h-6 w-px bg-zinc-200 md:block" />
         <div className="hidden md:block">
-          <Logo />
+          <Logo showSubtitle={false} />
         </div>
-        <div className="hidden h-6 w-px bg-white/10 md:block" />
+        <div className="hidden h-6 w-px bg-zinc-200 md:block" />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-100">
+            <span className="truncate text-sm font-medium text-zinc-900">
               {address}
             </span>
             <Badge tone="neutral" className="hidden sm:inline-flex">

@@ -24,10 +24,7 @@ export function PhotosSection({
     const tone = TONES[proposal.photos.length % TONES.length];
     onChange({
       ...proposal,
-      photos: [
-        ...proposal.photos,
-        { id, caption: "Site photo", tone },
-      ],
+      photos: [...proposal.photos, { id, caption: "Site photo", tone }],
     });
   }
 
@@ -64,12 +61,12 @@ export function PhotosSection({
                 <input
                   value={photo.caption}
                   onChange={(e) => setCaption(photo.id, e.target.value)}
-                  className="absolute inset-x-2 bottom-2 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs text-zinc-100 outline-none backdrop-blur transition focus:border-accent-400/50"
+                  className="absolute inset-x-2 bottom-2 rounded-md border border-zinc-200 bg-white/90 px-2 py-1 text-xs text-zinc-900 outline-none backdrop-blur transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                 />
                 <button
                   type="button"
                   onClick={() => remove(photo.id)}
-                  className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-black/50 text-zinc-300 opacity-0 backdrop-blur transition hover:border-rose-400/40 hover:text-rose-300 group-hover:opacity-100"
+                  className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 opacity-0 backdrop-blur transition hover:border-rose-300 hover:text-rose-600 group-hover:opacity-100"
                   aria-label="Remove photo"
                 >
                   <X className="h-3 w-3" />
@@ -88,7 +85,7 @@ export function PhotosSection({
               e.preventDefault();
               addPlaceholder();
             }}
-            className="group flex aspect-[4/3] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.02] text-xs text-zinc-500 transition hover:border-accent-400/40 hover:bg-white/[0.04] hover:text-accent-300"
+            className="group flex aspect-[4/3] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-white text-xs text-zinc-500 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
           >
             <Upload className="h-5 w-5" />
             <span>Drop or tap to add photo</span>

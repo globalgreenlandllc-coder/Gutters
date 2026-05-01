@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, MapPin, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SAMPLE_ADDRESS } from "@/lib/mock-estimate";
+import { useSession } from "@/lib/auth-mock";
 
 const SUGGESTIONS = [
   "1247 Maple Ridge Drive, Austin, TX",
@@ -15,22 +15,26 @@ const SUGGESTIONS = [
 
 export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
   const router = useRouter();
+  const { session } = useSession();
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function submit(addr: string) {
-    const target = addr.trim() || SAMPLE_ADDRESS;
-    startTransition(() => {
-      router.push(`/estimate?address=${encodeURIComponent(target)}`);
-    });
+    const target = (addr || "").trim();
+    if (!target) return;
+    const dest = `/estimate?address=${encodeURIComponent(target)}`;
+    const route = session
+      ? dest
+      : `/sign-in?next=${encodeURIComponent(dest)}`;
+    startTransition(() => router.push(route));
   }
 
   return (
     <motion.form
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2, duration: 0.6 }}
+      transition={{ delay: 0.18, duration: 0.6 }}
       onSubmit={(e) => {
         e.preventDefault();
         submit(value);
@@ -39,17 +43,17 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
     >
       <div
         className={cn(
-          "relative flex items-center gap-2 rounded-2xl border bg-white/[0.04] backdrop-blur-2xl transition-all duration-300",
+          "flex items-center gap-2 rounded-2xl border bg-white transition-all duration-300",
           focused
-            ? "border-accent-400/60 shadow-glow-lg"
-            : "border-white/10 shadow-card",
+            ? "border-accent-500 shadow-glow-lg"
+            : "border-zinc-200 shadow-sm",
           size === "lg" ? "h-16 pl-5 pr-2" : "h-14 pl-4 pr-2",
         )}
       >
         <MapPin
           className={cn(
-            "shrink-0 text-zinc-400 transition-colors",
-            focused && "text-accent-400",
+            "shrink-0 transition-colors",
+            focused ? "text-accent-600" : "text-zinc-400",
             size === "lg" ? "h-5 w-5" : "h-4 w-4",
           )}
         />
@@ -60,7 +64,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
           onBlur={() => setFocused(false)}
           placeholder="Enter a property address…"
           className={cn(
-            "w-full bg-transparent text-zinc-100 placeholder:text-zinc-500 outline-none",
+            "w-full bg-transparent text-zinc-900 placeholder:text-zinc-400 outline-none",
             size === "lg" ? "text-lg" : "text-base",
           )}
           autoComplete="off"
@@ -70,7 +74,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
           type="submit"
           disabled={pending}
           className={cn(
-            "group inline-flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-b from-accent-400 to-accent-500 font-semibold text-ink-950 transition-all hover:from-accent-300 hover:to-accent-400 active:translate-y-px disabled:opacity-60",
+            "group inline-flex shrink-0 items-center gap-2 rounded-xl bg-accent-600 font-semibold text-white transition-all hover:bg-accent-700 active:translate-y-px disabled:opacity-60",
             size === "lg" ? "h-12 px-5 text-base" : "h-10 px-4 text-sm",
           )}
         >
@@ -90,7 +94,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-500">
-        <span className="text-zinc-600">Try:</span>
+        <span className="text-zinc-400">Try:</span>
         {SUGGESTIONS.map((s) => (
           <button
             key={s}
@@ -99,12 +103,18 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
               setValue(s);
               submit(s);
             }}
-            className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-zinc-400 transition hover:border-accent-400/40 hover:text-accent-300"
+            className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
           >
             {s}
           </button>
         ))}
       </div>
+
+      {!session && (
+        <p className="mt-3 text-center text-xs text-zinc-500">
+          Free demo · no credit card required
+        </p>
+      )}
     </motion.form>
   );
 }
