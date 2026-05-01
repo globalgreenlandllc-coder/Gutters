@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --surface-soft: #f4f4f5;
+  --border: #e4e4e7;
+  --border-subtle: #f1f1f4;
+  --text: #18181b;
+  --text-muted: #52525b;
+  --text-subtle: #71717a;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse at 12% 0%, rgba(167, 243, 208, 0.28) 0px, transparent 55%),
+    radial-gradient(ellipse at 88% 6%, rgba(186, 230, 253, 0.22) 0px, transparent 55%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(5, 150, 105, 0.18);
+  color: #064e3b;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(24, 24, 27, 0.08);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(24, 24, 27, 0.18);
+}
+
+@layer components {
+  .surface {
+    @apply bg-white border border-zinc-200 rounded-2xl;
+  }
+  .surface-soft {
+    @apply bg-zinc-50 border border-zinc-200 rounded-2xl;
+  }
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-zinc-200/70;
+  }
+  .glass-strong {
+    @apply bg-white/85 backdrop-blur-2xl border border-zinc-200/80;
+  }
+  .text-gradient {
+    background: linear-gradient(135deg, #047857 0%, #0e7490 50%, #4338ca 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(24, 24, 27, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(24, 24, 27, 0.05) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  .ring-focus {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+  }
+  .input {
+    @apply h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15;
+  }
+  .num-input {
+    @apply tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none;
+  }
+}
+
+.dot-pattern {
+  background-image: radial-gradient(rgba(24, 24, 27, 0.10) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+@media print {
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  body {
+    background-image: none !important;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+  .text-gradient {
+    color: #047857 !important;
+    -webkit-text-fill-color: initial !important;
+    background: none !important;
+  }
+}
