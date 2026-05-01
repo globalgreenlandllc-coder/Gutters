@@ -19,6 +19,20 @@ export type Downspout = {
   heightFt: number;
 };
 
+export type Stories = 1 | 2 | 3;
+
+export const STORY_HEIGHT_FT: Record<Stories, number> = {
+  1: 10,
+  2: 20,
+  3: 30,
+};
+
+export function storiesFromHeightFt(heightFt: number): Stories {
+  if (heightFt <= 14) return 1;
+  if (heightFt <= 24) return 2;
+  return 3;
+}
+
 export type Measurements = {
   eaveLF: number;
   rakeLF: number;
@@ -26,7 +40,7 @@ export type Measurements = {
   insideCorners: number;
   endCaps: number;
   downspoutCount: number;
-  stories: 1 | 2;
+  stories: Stories;
   wasteFactorPct: number;
 };
 

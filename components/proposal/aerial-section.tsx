@@ -19,6 +19,7 @@ export function AerialSection({ proposal }: { proposal: Proposal }) {
           eaves={sampleEaves}
           downspouts={sampleDownspouts}
           className="aspect-[16/10]"
+          theme="tactical"
         />
         <div className="flex flex-wrap items-center gap-2">
           <Badge>
