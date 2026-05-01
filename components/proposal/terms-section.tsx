@@ -1,0 +1,127 @@
+"use client";
+
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronDown, GripVertical } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { Proposal } from "@/lib/proposal-mock";
+import { SectionHeader } from "./packages-section";
+
+export function TermsSection({
+  proposal,
+  onChange,
+  readOnly,
+}: {
+  proposal: Proposal;
+  onChange: (p: Proposal) => void;
+  readOnly?: boolean;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  function update(id: string, patch: Partial<Proposal["terms"][number]>) {
+    onChange({
+      ...proposal,
+      terms: proposal.terms.map((t) =>
+        t.id === id ? { ...t, ...patch } : t,
+      ),
+    });
+  }
+
+  const visible = readOnly
+    ? proposal.terms.filter((t) => t.enabled)
+    : proposal.terms;
+
+  return (
+    <section data-section="terms" className="space-y-4">
+      <SectionHeader
+        title="Terms & warranty"
+        sub={
+          readOnly
+            ? "Please review before signing."
+            : "Toggle which boilerplates apply. Click to expand and edit."
+        }
+        readOnly={readOnly}
+      />
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02]">
+        <ul>
+          {visible.map((t, i) => {
+            const open = openId === t.id;
+            return (
+              <li
+                key={t.id}
+                className={cn(
+                  "border-b border-white/[0.06] last:border-0",
+                  !t.enabled && !readOnly && "opacity-50",
+                )}
+              >
+                <div className="flex items-center gap-3 px-4 py-3">
+                  {!readOnly && (
+                    <GripVertical className="h-4 w-4 shrink-0 text-zinc-700" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOpenId(open ? null : t.id)}
+                    className="flex flex-1 items-center justify-between gap-2 text-left"
+                  >
+                    <span className="font-medium text-zinc-100">
+                      {t.title}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 text-zinc-500 transition-transform",
+                        open && "rotate-180",
+                      )}
+                    />
+                  </button>
+                  {!readOnly && (
+                    <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
+                      <input
+                        type="checkbox"
+                        checked={t.enabled}
+                        onChange={(e) =>
+                          update(t.id, { enabled: e.target.checked })
+                        }
+                        className="h-3.5 w-3.5 rounded border-white/20 bg-white/[0.06] accent-accent-400"
+                      />
+                      Include
+                    </label>
+                  )}
+                </div>
+                <AnimatePresence initial={false}>
+                  {open && (
+                    <motion.div
+                      key="body"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-4 pb-4">
+                        {readOnly ? (
+                          <p className="text-sm leading-relaxed text-zinc-400">
+                            {t.body}
+                          </p>
+                        ) : (
+                          <textarea
+                            value={t.body}
+                            onChange={(e) =>
+                              update(t.id, { body: e.target.value })
+                            }
+                            rows={3}
+                            className="w-full resize-none rounded-lg border border-white/10 bg-white/[0.02] p-3 text-sm leading-relaxed text-zinc-300 outline-none transition focus:border-accent-400/40"
+                          />
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}

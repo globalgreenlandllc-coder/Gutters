@@ -1,0 +1,100 @@
+"use client";
+
+import { useRef } from "react";
+import { Upload, X } from "lucide-react";
+import type { Proposal } from "@/lib/proposal-mock";
+import { PhotoTile } from "./photo-tile";
+import { SectionHeader } from "./packages-section";
+
+const TONES = ["front", "side", "back", "detail"] as const;
+
+export function PhotosSection({
+  proposal,
+  onChange,
+  readOnly,
+}: {
+  proposal: Proposal;
+  onChange: (p: Proposal) => void;
+  readOnly?: boolean;
+}) {
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  function addPlaceholder() {
+    const id = `p-${Date.now()}`;
+    const tone = TONES[proposal.photos.length % TONES.length];
+    onChange({
+      ...proposal,
+      photos: [
+        ...proposal.photos,
+        { id, caption: "Site photo", tone },
+      ],
+    });
+  }
+
+  function remove(id: string) {
+    onChange({
+      ...proposal,
+      photos: proposal.photos.filter((p) => p.id !== id),
+    });
+  }
+
+  function setCaption(id: string, caption: string) {
+    onChange({
+      ...proposal,
+      photos: proposal.photos.map((p) =>
+        p.id === id ? { ...p, caption } : p,
+      ),
+    });
+  }
+
+  return (
+    <section data-section="photos" className="space-y-4">
+      <SectionHeader
+        title="Site photos"
+        sub="Show the homeowner exactly what you saw on site."
+        readOnly={readOnly}
+      />
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {proposal.photos.map((photo) => (
+          <div key={photo.id} className="group relative">
+            <PhotoTile photo={photo} className="aspect-[4/3]" />
+            {!readOnly && (
+              <>
+                <input
+                  value={photo.caption}
+                  onChange={(e) => setCaption(photo.id, e.target.value)}
+                  className="absolute inset-x-2 bottom-2 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs text-zinc-100 outline-none backdrop-blur transition focus:border-accent-400/50"
+                />
+                <button
+                  type="button"
+                  onClick={() => remove(photo.id)}
+                  className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-black/50 text-zinc-300 opacity-0 backdrop-blur transition hover:border-rose-400/40 hover:text-rose-300 group-hover:opacity-100"
+                  aria-label="Remove photo"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+
+        {!readOnly && (
+          <div
+            ref={dropRef}
+            onClick={addPlaceholder}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              addPlaceholder();
+            }}
+            className="group flex aspect-[4/3] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.02] text-xs text-zinc-500 transition hover:border-accent-400/40 hover:bg-white/[0.04] hover:text-accent-300"
+          >
+            <Upload className="h-5 w-5" />
+            <span>Drop or tap to add photo</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
