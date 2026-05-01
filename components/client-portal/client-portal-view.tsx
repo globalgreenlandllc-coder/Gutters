@@ -61,7 +61,13 @@ export function ClientPortalView({
       <AcceptedScreen
         packageName={selected.name}
         amount={due}
-        contractor={proposal.contractor}
+        contractor={{
+          name: proposal.contractor.name,
+          company: proposal.contractor.company,
+          email: proposal.contractor.email,
+          stripePaymentUrl: proposal.contractor.stripePaymentUrl ?? null,
+          squarePaymentUrl: proposal.contractor.squarePaymentUrl ?? null,
+        }}
         signerName={signerName}
       />
     );

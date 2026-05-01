@@ -38,6 +38,8 @@ function Inner() {
         email: profile.email,
         phone: profile.phone,
         license: profile.license,
+        stripePaymentUrl: profile.payments.stripeUrl,
+        squarePaymentUrl: profile.payments.squareUrl,
       },
     }));
   }, [
@@ -46,6 +48,8 @@ function Inner() {
     profile.email,
     profile.phone,
     profile.license,
+    profile.payments.stripeUrl,
+    profile.payments.squareUrl,
   ]);
 
   function download() {

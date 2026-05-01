@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
+  CreditCard,
   Eye,
   MoreHorizontal,
   Search,
@@ -28,9 +29,9 @@ import {
 
 export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
   const [rows, setRows] = useState(initial);
-  const [filter, setFilter] = useState<"all" | "active" | "suspended" | "admin">(
-    "all",
-  );
+  const [filter, setFilter] = useState<
+    "all" | "active" | "suspended" | "admin" | "no_payments"
+  >("all");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<AdminUserRow | null>(null);
   const [confirm, setConfirm] = useState<{
@@ -43,6 +44,8 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
     if (filter === "active" && r.status !== "ACTIVE") return false;
     if (filter === "suspended" && r.status !== "SUSPENDED") return false;
     if (filter === "admin" && r.role !== "SUPER_ADMIN") return false;
+    if (filter === "no_payments" && (r.payments.stripe || r.payments.square))
+      return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return (
@@ -67,6 +70,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                 { id: "active", label: "Active" },
                 { id: "suspended", label: "Suspended" },
                 { id: "admin", label: "Admins" },
+                { id: "no_payments", label: "No payments" },
               ] as const
             ).map((f) => {
               const count =
@@ -76,7 +80,11 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   ? rows.filter((r) => r.status === "ACTIVE").length
                   : f.id === "suspended"
                   ? rows.filter((r) => r.status === "SUSPENDED").length
-                  : rows.filter((r) => r.role === "SUPER_ADMIN").length;
+                  : f.id === "admin"
+                  ? rows.filter((r) => r.role === "SUPER_ADMIN").length
+                  : rows.filter(
+                      (r) => !r.payments.stripe && !r.payments.square,
+                    ).length;
               const active = filter === f.id;
               return (
                 <button
@@ -115,11 +123,12 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           </div>
         </div>
 
-        <div className="hidden grid-cols-[minmax(0,1fr)_140px_140px_120px_120px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 lg:grid">
+        <div className="hidden grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 lg:grid">
           <div>Contractor · Email</div>
           <div>Plan</div>
           <div className="text-right">Credits</div>
           <div className="text-right">Activity</div>
+          <div>Payments</div>
           <div>Status</div>
           <div />
         </div>
@@ -135,7 +144,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           <ul>
             {filtered.map((u) => (
               <li key={u.id} className="border-b border-zinc-100 last:border-0">
-                <div className="grid grid-cols-1 gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_140px_140px_120px_120px_60px] lg:items-center lg:gap-4">
+                <div className="grid grid-cols-1 gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-zinc-900">
@@ -182,6 +191,8 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                     </div>
                     <div>{formatCurrency(u.revenueProcessedCents / 100)}</div>
                   </div>
+
+                  <PaymentsBadge payments={u.payments} />
 
                   <StatusBadge status={u.status} />
 
@@ -239,6 +250,27 @@ function StatusBadge({ status }: { status: AdminUserRow["status"] }) {
     <Badge tone="accent">
       <CheckCircle2 className="h-3 w-3" />
       Active
+    </Badge>
+  );
+}
+
+function PaymentsBadge({ payments }: { payments: AdminUserRow["payments"] }) {
+  const { stripe, square } = payments;
+  if (!stripe && !square) {
+    return (
+      <Badge tone="amber" className="gap-1">
+        <CreditCard className="h-3 w-3" />
+        None
+      </Badge>
+    );
+  }
+  const labels = [stripe && "Stripe", square && "Square"]
+    .filter(Boolean)
+    .join(" + ");
+  return (
+    <Badge tone="accent" className="gap-1">
+      <CreditCard className="h-3 w-3" />
+      {labels}
     </Badge>
   );
 }

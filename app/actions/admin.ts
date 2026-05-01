@@ -65,6 +65,10 @@ export type AdminUserRow = {
   proposalsTotal: number;
   acceptedTotal: number;
   revenueProcessedCents: number;
+  payments: {
+    stripe: boolean;
+    square: boolean;
+  };
 };
 
 export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
@@ -117,6 +121,10 @@ export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
       proposalsTotal: u._count.proposals,
       acceptedTotal: a.count,
       revenueProcessedCents: a.paid,
+      payments: {
+        stripe: !!u.contractorProfile?.stripePaymentUrl,
+        square: !!u.contractorProfile?.squarePaymentUrl,
+      },
     };
   });
 }

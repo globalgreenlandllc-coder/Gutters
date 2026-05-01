@@ -19,6 +19,10 @@ export type ContractorProfile = {
   license: string;
   tagline: string;
   logo: { initials: string; tone: LogoTone; url: string | null };
+  payments: {
+    stripeUrl: string | null;
+    squareUrl: string | null;
+  };
 };
 
 export type Credits = {
@@ -59,10 +63,15 @@ const DEFAULT_PROFILE: ContractorProfile = {
   license: "",
   tagline: "",
   logo: { initials: "GU", tone: "emerald", url: null },
+  payments: { stripeUrl: null, squareUrl: null },
 };
 
 export function defaultProfile(): ContractorProfile {
-  return { ...DEFAULT_PROFILE, logo: { ...DEFAULT_PROFILE.logo } };
+  return {
+    ...DEFAULT_PROFILE,
+    logo: { ...DEFAULT_PROFILE.logo },
+    payments: { ...DEFAULT_PROFILE.payments },
+  };
 }
 
 export function useSession(): { session: Session | null; loading: boolean } {

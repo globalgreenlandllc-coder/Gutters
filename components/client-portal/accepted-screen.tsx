@@ -1,7 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { CalendarClock, Check, FileText, Mail } from "lucide-react";
+import {
+  CalendarClock,
+  Check,
+  CreditCard,
+  ExternalLink,
+  FileText,
+  Mail,
+} from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { formatCurrency } from "@/lib/utils";
 
@@ -13,9 +20,18 @@ export function AcceptedScreen({
 }: {
   packageName: string;
   amount: number;
-  contractor: { name: string; company: string; email: string };
+  contractor: {
+    name: string;
+    company: string;
+    email: string;
+    stripePaymentUrl?: string | null;
+    squarePaymentUrl?: string | null;
+  };
   signerName: string;
 }) {
+  const stripeUrl = contractor.stripePaymentUrl ?? null;
+  const squareUrl = contractor.squarePaymentUrl ?? null;
+  const hasPayment = !!(stripeUrl || squareUrl);
   return (
     <div className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
@@ -45,9 +61,33 @@ export function AcceptedScreen({
           .
         </motion.h1>
         <p className="mt-3 max-w-md text-center text-zinc-600">
-          {contractor.company} received your signed proposal and{" "}
-          {formatCurrency(amount)} payment. A receipt is on its way.
+          {contractor.company} received your signed proposal.{" "}
+          {hasPayment
+            ? `Pay ${formatCurrency(amount)} below to lock in scheduling.`
+            : `${contractor.name} will reach out shortly to arrange payment and scheduling.`}
         </p>
+
+        {hasPayment && (
+          <div className="mt-6 flex w-full flex-col items-stretch gap-2 sm:max-w-md">
+            {stripeUrl && (
+              <PayButton
+                href={stripeUrl}
+                label={`Pay ${formatCurrency(amount)} with Stripe`}
+                variant="primary"
+              />
+            )}
+            {squareUrl && (
+              <PayButton
+                href={squareUrl}
+                label={`Pay ${formatCurrency(amount)} with Square`}
+                variant={stripeUrl ? "secondary" : "primary"}
+              />
+            )}
+            <p className="text-center text-xs text-zinc-500">
+              Opens {contractor.company}'s secure payment page in a new tab.
+            </p>
+          </div>
+        )}
 
         <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
           <Tile icon={Mail} title="Receipt" body="Check your inbox" />
@@ -91,5 +131,32 @@ function Tile({
       <div className="mt-2 font-medium text-zinc-900">{title}</div>
       <div className="mt-0.5 text-xs text-zinc-500">{body}</div>
     </div>
+  );
+}
+
+function PayButton({
+  href,
+  label,
+  variant,
+}: {
+  href: string;
+  label: string;
+  variant: "primary" | "secondary";
+}) {
+  const cls =
+    variant === "primary"
+      ? "bg-zinc-900 text-white hover:bg-zinc-800"
+      : "border border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300";
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-medium shadow-card transition ${cls}`}
+    >
+      <CreditCard className="h-4 w-4" />
+      {label}
+      <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+    </a>
   );
 }

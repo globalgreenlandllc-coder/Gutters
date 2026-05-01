@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, CreditCard, Palette, Sparkles } from "lucide-react";
+import { CheckCircle2, Palette, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { BrandProfileSection } from "@/components/dashboard/brand-profile-section";
+import { PaymentsSection } from "@/components/dashboard/payments-section";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/lib/auth-mock";
@@ -25,18 +26,7 @@ export default function SettingsPage() {
 
           <BrandProfileSection />
 
-          <Section
-            icon={CreditCard}
-            title="Stripe Connect"
-            sub="Get paid directly. Funds settle to your bank in 1–2 business days."
-            badge={{ label: "Not connected", tone: "amber" }}
-          >
-            <Button>Connect Stripe account</Button>
-            <p className="mt-3 text-xs text-zinc-500">
-              We use Stripe Connect Express. You'll be redirected to Stripe to
-              complete onboarding.
-            </p>
-          </Section>
+          <PaymentsSection />
 
           <BillingSection />
 

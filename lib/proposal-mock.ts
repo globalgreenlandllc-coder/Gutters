@@ -46,6 +46,8 @@ export type Proposal = {
     phone: string;
     email: string;
     license: string;
+    stripePaymentUrl?: string | null;
+    squarePaymentUrl?: string | null;
   };
   intro: string;
   measurements: Measurements;
@@ -66,6 +68,8 @@ export const sampleProposal: Proposal = {
     phone: "(512) 555-0184",
     email: "alex@riveragutters.com",
     license: "TX-RCC-48217",
+    stripePaymentUrl: "https://buy.stripe.com/test_demo_link",
+    squarePaymentUrl: null,
   },
   intro:
     "Thanks for the opportunity to quote your gutter replacement. Below you'll find three package options sized to your roof, with detailed materials, labor, and a 1-click way to accept. Pricing is locked for 30 days.",
@@ -231,6 +235,8 @@ export function blankProposal(): Proposal {
       phone: "",
       email: "",
       license: "",
+      stripePaymentUrl: null,
+      squarePaymentUrl: null,
     },
     intro:
       "Thanks for the opportunity to quote your gutter project. Below you'll find package options sized to your roof, with detailed materials, labor, and a 1-click way to accept.",

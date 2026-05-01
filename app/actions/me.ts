@@ -215,6 +215,10 @@ function shape(
         tone: (cp?.logoTone as LogoTone) ?? "emerald",
         url: cp?.logoUrl ?? null,
       },
+      payments: {
+        stripeUrl: cp?.stripePaymentUrl ?? null,
+        squareUrl: cp?.squarePaymentUrl ?? null,
+      },
     },
     credits: {
       included: cw?.included ?? 12,
@@ -306,6 +310,12 @@ export async function updateMyProfile(
   if (patch.logo?.url !== undefined) {
     data.logoUrl = validateLogoUrl(patch.logo.url);
   }
+  if (patch.payments?.stripeUrl !== undefined) {
+    data.stripePaymentUrl = validatePaymentUrl(patch.payments.stripeUrl);
+  }
+  if (patch.payments?.squareUrl !== undefined) {
+    data.squarePaymentUrl = validatePaymentUrl(patch.payments.squareUrl);
+  }
 
   await db.contractorProfile.update({
     where: { userId: me.user.id },
@@ -339,6 +349,25 @@ function validateLogoUrl(url: string | null): string | null {
     );
   }
   return url;
+}
+
+function validatePaymentUrl(url: string | null): string | null {
+  if (url === null) return null;
+  const trimmed = typeof url === "string" ? url.trim() : "";
+  if (trimmed.length === 0) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("Payment link must be a valid URL (https://…).");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Payment link must use https://");
+  }
+  if (trimmed.length > 2048) {
+    throw new Error("Payment link is too long.");
+  }
+  return parsed.toString();
 }
 
 export async function consumeMyCredit(address: string): Promise<{
