@@ -28,6 +28,14 @@ export type Credits = {
   resetsAt: string;
 };
 
+export type Impersonation = {
+  sessionId: string;
+  adminUserId: string;
+  adminEmail: string;
+  startedAt: string;
+  reason: string | null;
+};
+
 export type Session = {
   user: {
     id: string;
@@ -40,6 +48,7 @@ export type Session = {
   profile: ContractorProfile;
   credits: Credits;
   signedAt: string;
+  impersonation?: Impersonation;
 };
 
 const DEFAULT_PROFILE: ContractorProfile = {

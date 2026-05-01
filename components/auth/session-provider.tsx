@@ -16,6 +16,7 @@ import {
   type MeData,
 } from "@/app/actions/me";
 import type { ContractorProfile } from "@/lib/auth-mock";
+import { ImpersonationBanner } from "./impersonation-banner";
 
 export type SessionShape = {
   user: {
@@ -29,6 +30,7 @@ export type SessionShape = {
   profile: ContractorProfile;
   credits: MeData["credits"];
   signedAt: string;
+  impersonation?: NonNullable<MeData["impersonation"]>;
 };
 
 type Ctx = {
@@ -85,6 +87,7 @@ function shapeSession(
     profile: me.profile,
     credits: me.credits,
     signedAt,
+    impersonation: me.impersonation,
   };
 }
 
@@ -151,6 +154,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         consumeCredit: consume,
       }}
     >
+      <ImpersonationBanner />
       {children}
     </SessionContext.Provider>
   );

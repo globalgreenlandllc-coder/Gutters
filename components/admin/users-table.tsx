@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
@@ -8,6 +9,7 @@ import {
   Eye,
   MoreHorizontal,
   Search,
+  ShieldAlert,
   Sparkles,
   UserMinus,
   UserPlus,
@@ -20,6 +22,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import {
   adjustCredits,
   setUserStatus,
+  startImpersonation,
   type AdminUserRow,
 } from "@/app/actions/admin";
 
@@ -34,6 +37,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
     user: AdminUserRow;
     action: "suspend" | "unsuspend";
   } | null>(null);
+  const [impersonating, setImpersonating] = useState<AdminUserRow | null>(null);
 
   const filtered = rows.filter((r) => {
     if (filter === "active" && r.status !== "ACTIVE") return false;
@@ -185,6 +189,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                     <RowMenu
                       user={u}
                       onEditCredits={() => setEditing(u)}
+                      onImpersonate={() => setImpersonating(u)}
                       onConfirmStatus={(action) => setConfirm({ user: u, action })}
                     />
                   </div>
@@ -212,6 +217,11 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           setConfirm(null);
         }}
       />
+
+      <ImpersonateDialog
+        user={impersonating}
+        onClose={() => setImpersonating(null)}
+      />
     </>
   );
 }
@@ -236,10 +246,12 @@ function StatusBadge({ status }: { status: AdminUserRow["status"] }) {
 function RowMenu({
   user,
   onEditCredits,
+  onImpersonate,
   onConfirmStatus,
 }: {
   user: AdminUserRow;
   onEditCredits: () => void;
+  onImpersonate: () => void;
   onConfirmStatus: (action: "suspend" | "unsuspend") => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -267,12 +279,22 @@ function RowMenu({
               Adjust credits
             </button>
             <button
-              disabled
-              title="Coming next: shadow-login flow with banner + audit log"
-              className="flex w-full cursor-not-allowed items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-400"
+              onClick={() => {
+                onImpersonate();
+                setOpen(false);
+              }}
+              disabled={user.role === "SUPER_ADMIN" || user.status === "SUSPENDED"}
+              title={
+                user.role === "SUPER_ADMIN"
+                  ? "Cannot impersonate another super admin"
+                  : user.status === "SUSPENDED"
+                  ? "Reinstate the user before impersonating"
+                  : "Shadow-login as this contractor"
+              }
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
               <Eye className="h-3.5 w-3.5" />
-              Impersonate (soon)
+              Impersonate
             </button>
             <div className="my-1 h-px bg-zinc-100" />
             {user.status === "ACTIVE" ? (
@@ -465,6 +487,94 @@ function StatusConfirm({
               disabled={pending}
             >
               {pending ? "Working…" : isSuspend ? "Suspend" : "Reinstate"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function ImpersonateDialog({
+  user,
+  onClose,
+}: {
+  user: AdminUserRow | null;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function submit() {
+    if (!user) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await startImpersonation(user.id, reason);
+        router.push("/dashboard");
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not start session");
+      }
+    });
+  }
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Impersonate contractor">
+      {user && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <div className="text-amber-900">
+                <div className="font-medium">
+                  You'll see exactly what {user.contractorName || user.email}{" "}
+                  sees.
+                </div>
+                <div className="mt-0.5 text-xs text-amber-800/80">
+                  An amber banner will follow you on every page. Any action
+                  you take is recorded as theirs. Auto-expires after 60
+                  minutes; end manually any time.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+            <div className="font-medium text-zinc-900">
+              {user.company || user.contractorName || user.email}
+            </div>
+            <div className="text-xs text-zinc-500">{user.email}</div>
+          </div>
+
+          <label className="block">
+            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+              Reason (audit log)
+            </span>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Debugging Stripe Connect on their account"
+              autoFocus
+              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={submit} disabled={pending}>
+              <Eye className="h-3.5 w-3.5" />
+              {pending ? "Starting…" : "Start session"}
             </Button>
           </div>
         </div>

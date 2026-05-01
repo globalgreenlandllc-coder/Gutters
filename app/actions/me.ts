@@ -2,11 +2,24 @@
 
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
+import {
+  IMPERSONATION_MAX_AGE_MS,
+  clearImpersonationCookie,
+  readImpersonationSessionId,
+} from "@/lib/impersonation";
 import type {
   ContractorProfile,
   Credits,
   LogoTone,
 } from "@/lib/auth-mock";
+
+export type Impersonation = {
+  sessionId: string;
+  adminUserId: string;
+  adminEmail: string;
+  startedAt: string;
+  reason: string | null;
+};
 
 export type MeData = {
   user: {
@@ -19,6 +32,7 @@ export type MeData = {
   };
   profile: ContractorProfile;
   credits: Credits;
+  impersonation?: Impersonation;
 };
 
 function nextMonthBoundary(): Date {
@@ -76,24 +90,15 @@ function isAdminEmail(email: string): boolean {
   return list.includes(email.trim().toLowerCase());
 }
 
-export async function getMe(): Promise<MeData | null> {
-  const { userId: clerkId } = await auth();
-  if (!clerkId) return null;
+type DbUserWithRelations = NonNullable<
+  Awaited<ReturnType<typeof findOrCreateUser>>
+>;
 
-  const clerkUser = await currentUser();
-  if (!clerkUser) return null;
-
-  const email =
-    clerkUser.emailAddresses.find(
-      (e) => e.id === clerkUser.primaryEmailAddressId,
-    )?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress;
-  if (!email) return null;
-
-  const fullName =
-    clerkUser.fullName ||
-    [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
-    null;
-
+async function findOrCreateUser(
+  clerkId: string,
+  email: string,
+  fullName: string | null,
+) {
   const targetRole = isAdminEmail(email) ? "SUPER_ADMIN" : "CONTRACTOR";
 
   let user = await db.user.findFirst({
@@ -135,69 +140,73 @@ export async function getMe(): Promise<MeData | null> {
       },
       include: { contractorProfile: true, creditWallet: true },
     });
-  } else {
-    const updates: Record<string, unknown> = { lastLoginAt: new Date() };
-    if (user.clerkId !== clerkId) updates.clerkId = clerkId;
-    if (user.email !== email) updates.email = email;
-    if (user.role !== targetRole) updates.role = targetRole;
-    await db.user.update({ where: { id: user.id }, data: updates });
+    return user;
+  }
 
-    if (!user.contractorProfile) {
-      const contractorName = deriveContractorName(
-        user.name ?? fullName,
+  const updates: Record<string, unknown> = { lastLoginAt: new Date() };
+  if (user.clerkId !== clerkId) updates.clerkId = clerkId;
+  if (user.email !== email) updates.email = email;
+  if (user.role !== targetRole) updates.role = targetRole;
+  await db.user.update({ where: { id: user.id }, data: updates });
+
+  if (!user.contractorProfile) {
+    const contractorName = deriveContractorName(user.name ?? fullName, email);
+    const initials = deriveInitials(contractorName);
+    const tone = pickTone(clerkId);
+    await db.contractorProfile.create({
+      data: {
+        userId: user.id,
+        company: contractorName,
+        contractorName,
         email,
-      );
-      const initials = deriveInitials(contractorName);
-      const tone = pickTone(clerkId);
-      await db.contractorProfile.create({
-        data: {
-          userId: user.id,
-          company: contractorName,
-          contractorName,
-          email,
-          phone: "",
-          license: "",
-          tagline: "",
-          logoInitials: initials,
-          logoTone: tone,
-        },
-      });
-    }
-    if (!user.creditWallet) {
-      await db.creditWallet.create({
-        data: {
-          userId: user.id,
-          included: 12,
-          used: 0,
-          bonus: 0,
-          resetsAt: nextMonthBoundary(),
-        },
-      });
-    }
-
-    user = await db.user.findUnique({
-      where: { id: user.id },
-      include: { contractorProfile: true, creditWallet: true },
+        phone: "",
+        license: "",
+        tagline: "",
+        logoInitials: initials,
+        logoTone: tone,
+      },
+    });
+  }
+  if (!user.creditWallet) {
+    await db.creditWallet.create({
+      data: {
+        userId: user.id,
+        included: 12,
+        used: 0,
+        bonus: 0,
+        resetsAt: nextMonthBoundary(),
+      },
     });
   }
 
-  if (!user) return null;
+  return db.user.findUnique({
+    where: { id: user.id },
+    include: { contractorProfile: true, creditWallet: true },
+  });
+}
 
+function shape(
+  user: DbUserWithRelations,
+  clerkId: string,
+  fallbackEmail: string,
+  fallbackName: string | null,
+  impersonation?: Impersonation,
+): MeData {
   const cp = user.contractorProfile;
   const cw = user.creditWallet;
   return {
     user: {
       id: user.id,
       clerkId,
-      email,
-      name: fullName ?? cp?.contractorName ?? email,
+      email: user.email,
+      name: fallbackName ?? cp?.contractorName ?? user.email,
       role: user.role as "CONTRACTOR" | "SUPER_ADMIN",
       status: user.status as "ACTIVE" | "SUSPENDED",
     },
     profile: {
       company: cp?.company ?? "",
       contractorName: cp?.contractorName ?? "",
-      email: cp?.email ?? email,
+      email: cp?.email ?? user.email,
       phone: cp?.phone ?? "",
       license: cp?.license ?? "",
       tagline: cp?.tagline ?? "",
@@ -212,7 +221,68 @@ export async function getMe(): Promise<MeData | null> {
       bonus: cw?.bonus ?? 0,
       resetsAt: (cw?.resetsAt ?? nextMonthBoundary()).toISOString(),
     },
+    impersonation,
   };
+}
+
+export async function getMe(): Promise<MeData | null> {
+  const { userId: clerkId } = await auth();
+  if (!clerkId) return null;
+
+  const clerkUser = await currentUser();
+  if (!clerkUser) return null;
+
+  const email =
+    clerkUser.emailAddresses.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId,
+    )?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress;
+  if (!email) return null;
+
+  const fullName =
+    clerkUser.fullName ||
+    [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+    null;
+
+  const adminUser = await findOrCreateUser(clerkId, email, fullName);
+  if (!adminUser) return null;
+
+  if (adminUser.role === "SUPER_ADMIN") {
+    const sessionId = await readImpersonationSessionId();
+    if (sessionId) {
+      const session = await db.impersonationSession.findUnique({
+        where: { id: sessionId },
+        include: {
+          admin: true,
+          user: { include: { contractorProfile: true, creditWallet: true } },
+        },
+      });
+      const valid =
+        session &&
+        !session.endedAt &&
+        session.adminId === adminUser.id &&
+        Date.now() - session.startedAt.getTime() < IMPERSONATION_MAX_AGE_MS &&
+        session.user.role !== "SUPER_ADMIN";
+
+      if (valid) {
+        return shape(
+          session.user,
+          session.user.clerkId ?? "",
+          session.user.email,
+          session.user.name,
+          {
+            sessionId: session.id,
+            adminUserId: session.adminId,
+            adminEmail: session.admin.email,
+            startedAt: session.startedAt.toISOString(),
+            reason: session.reason,
+          },
+        );
+      }
+      await clearImpersonationCookie();
+    }
+  }
+
+  return shape(adminUser, clerkId, email, fullName);
 }
 
 export async function updateMyProfile(

@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import {
+  clearImpersonationCookie,
+  setImpersonationCookie,
+} from "@/lib/impersonation";
 import { getMe } from "./me";
 
 async function requireAdmin() {
@@ -232,6 +236,94 @@ export async function getAdminKpis(): Promise<AdminKpis> {
     platformFeesCents: feesAgg._sum.platformFeeCents ?? 0,
     mrrCents: activeSubs * 5000,
   };
+}
+
+export async function startImpersonation(
+  targetUserId: string,
+  reason: string,
+): Promise<{ ok: true; targetEmail: string }> {
+  const me = await requireAdmin();
+
+  if (me.impersonation) {
+    throw new Error(
+      "You're already impersonating — end the current session before starting a new one.",
+    );
+  }
+
+  if (targetUserId === me.user.id) {
+    throw new Error("You can't impersonate yourself.");
+  }
+
+  const target = await db.user.findUnique({ where: { id: targetUserId } });
+  if (!target) throw new Error("Target user not found");
+  if (target.role === "SUPER_ADMIN") {
+    throw new Error("Cannot impersonate another super admin.");
+  }
+  if (target.status === "SUSPENDED") {
+    throw new Error(
+      "Cannot impersonate a suspended user — reinstate them first if you need to debug.",
+    );
+  }
+
+  const session = await db.impersonationSession.create({
+    data: {
+      adminId: me.user.id,
+      userId: targetUserId,
+      reason: reason.trim() || null,
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      actorId: me.user.id,
+      action: "USER_IMPERSONATED",
+      targetType: "User",
+      targetId: targetUserId,
+      payload: {
+        sessionId: session.id,
+        targetEmail: target.email,
+        reason: reason.trim() || null,
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  await setImpersonationCookie(session.id);
+  revalidatePath("/", "layout");
+  return { ok: true, targetEmail: target.email };
+}
+
+export async function endImpersonation(): Promise<{ ok: true }> {
+  const { readImpersonationSessionId } = await import("@/lib/impersonation");
+  const sessionId = await readImpersonationSessionId();
+  if (!sessionId) {
+    await clearImpersonationCookie();
+    return { ok: true };
+  }
+  const session = await db.impersonationSession.findUnique({
+    where: { id: sessionId },
+  });
+  if (session && !session.endedAt) {
+    const startedMs = session.startedAt.getTime();
+    await db.impersonationSession.update({
+      where: { id: sessionId },
+      data: { endedAt: new Date() },
+    });
+    await db.auditLog.create({
+      data: {
+        actorId: session.adminId,
+        action: "USER_IMPERSONATION_ENDED",
+        targetType: "User",
+        targetId: session.userId,
+        payload: {
+          sessionId: session.id,
+          durationMs: Date.now() - startedMs,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+  await clearImpersonationCookie();
+  revalidatePath("/", "layout");
+  return { ok: true };
 }
 
 export type AdminActivityRow = {
