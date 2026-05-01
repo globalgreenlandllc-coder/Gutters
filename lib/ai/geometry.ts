@@ -1,6 +1,7 @@
 import "server-only";
 import type { SegmentedEavePolyline } from "./vision";
-import type { EditableLine, Downspout, Measurements } from "@/lib/types";
+import { STORY_HEIGHT_FT } from "@/lib/types";
+import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
 
 const METERS_PER_FOOT = 0.3048;
 
@@ -75,6 +76,7 @@ export function buildEditableLines(
 export function placeDownspouts(
   lines: EditableLine[],
   totalEaveLF: number,
+  defaultStories: Stories = 2,
 ): Downspout[] {
   if (lines.length === 0 || totalEaveLF === 0) return [];
 
@@ -103,11 +105,12 @@ export function placeDownspouts(
     if (!tooClose) chosen.push({ x: c.x, y: c.y });
   }
 
+  const heightFt = STORY_HEIGHT_FT[defaultStories];
   return chosen.map((c, i) => ({
     id: `ds-${i + 1}`,
     x: c.x,
     y: c.y,
-    heightFt: 20,
+    heightFt,
   }));
 }
 
@@ -115,7 +118,7 @@ export function measurementsFromVision(args: {
   eaveLF: number;
   downspoutCount: number;
   cornerCount: number;
-  stories?: 1 | 2;
+  stories?: Stories;
 }): Measurements {
   return {
     eaveLF: Math.round(args.eaveLF),

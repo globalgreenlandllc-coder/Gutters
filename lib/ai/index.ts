@@ -1,7 +1,7 @@
 import "server-only";
 import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
-import { getBuildingInsights } from "./solar";
+import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
 import { segmentEavesViaVision } from "./vision";
 import {
   buildEditableLines,
@@ -16,7 +16,7 @@ import {
   sampleDownspouts,
   sampleMeasurements,
 } from "@/lib/mock-estimate";
-import type { EditableLine, Downspout, Measurements } from "@/lib/types";
+import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
 
 export type EstimateResult = {
   geocoded: GeocodeResult;
@@ -65,13 +65,15 @@ export async function runAIEstimatePipeline(
   }
 
   // 3. Building insights (Solar API has limited regional coverage)
+  let estimatedStories: Stories = 2;
   if (image) {
     const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
     if (insights) {
+      estimatedStories = estimateStoriesFromInsights(insights);
       notes.push(
         `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
           insights.totalRoofAreaMeters2,
-        )} m² total`,
+        )} m² total · est. ${estimatedStories}-story`,
       );
     } else {
       notes.push("Solar API: no coverage / unavailable for this location");
@@ -109,11 +111,12 @@ export async function runAIEstimatePipeline(
       totalEaveLF = totalEaveLF * 1.08;
 
       const cornerCount = countCorners(eaves);
-      const downspouts = placeDownspouts(eaves, totalEaveLF);
+      const downspouts = placeDownspouts(eaves, totalEaveLF, estimatedStories);
       const measurements = measurementsFromVision({
         eaveLF: totalEaveLF,
         downspoutCount: downspouts.length,
         cornerCount,
+        stories: estimatedStories,
       });
 
       return {

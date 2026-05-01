@@ -46,8 +46,10 @@ export function downspoutUnitPrice(cfg: EstimateConfig) {
   return DOWNSPOUT_UNIT_PRICES[cfg.downspoutSize] ?? 9;
 }
 
-export function downspoutLengthFt(stories: 1 | 2) {
-  return stories === 2 ? 20 : 10;
+export function downspoutLengthFt(stories: 1 | 2 | 3) {
+  if (stories === 3) return 30;
+  if (stories === 2) return 20;
+  return 10;
 }
 
 export const COLOR_OPTIONS = [

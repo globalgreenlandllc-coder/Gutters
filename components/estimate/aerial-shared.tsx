@@ -7,6 +7,83 @@ export const VIEWBOX_W = 900;
 export const VIEWBOX_H = 580;
 export const PX_PER_FT = 2.4;
 
+export type CanvasTheme = "tactical" | "schematic";
+
+export const THEMES: Record<
+  CanvasTheme,
+  {
+    eave: string;
+    eaveSelected: string;
+    eaveGlowFilter: string | null;
+    downspout: string;
+    downspoutCore: string;
+    downspoutGlowFilter: string | null;
+    overlay: string | null;
+    handleStroke: string;
+    handleFill: string;
+    label: string;
+  }
+> = {
+  tactical: {
+    eave: "#00e5ff",
+    eaveSelected: "#a3f7ff",
+    eaveGlowFilter: "url(#neonCyanGlow)",
+    downspout: "#ff2bd6",
+    downspoutCore: "#fff0fb",
+    downspoutGlowFilter: "url(#neonMagentaGlow)",
+    overlay: "rgba(2, 6, 23, 0.45)",
+    handleStroke: "#a3f7ff",
+    handleFill: "#0b1220",
+    label: "#a3f7ff",
+  },
+  schematic: {
+    eave: "#059669",
+    eaveSelected: "#0e7490",
+    eaveGlowFilter: null,
+    downspout: "#0e7490",
+    downspoutCore: "#0e7490",
+    downspoutGlowFilter: null,
+    overlay: null,
+    handleStroke: "#0e7490",
+    handleFill: "white",
+    label: "#0e7490",
+  },
+};
+
+/**
+ * SVG filter defs used for the Tactical theme. Drop this once anywhere
+ * inside the SVG tree and the filters become referenceable as
+ * `url(#neonCyanGlow)` / `url(#neonMagentaGlow)`.
+ */
+export function NeonDefs() {
+  return (
+    <defs>
+      <filter id="neonCyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3.5" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter
+        id="neonMagentaGlow"
+        x="-100%"
+        y="-100%"
+        width="300%"
+        height="300%"
+      >
+        <feGaussianBlur stdDeviation="4" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+    </defs>
+  );
+}
+
 export function AerialImage({ imageDataUrl }: { imageDataUrl: string }) {
   return (
     <image
@@ -141,15 +218,23 @@ export function AerialReadonly({
   eaves,
   downspouts,
   className,
+  theme = "tactical",
+  imageDataUrl,
 }: {
   eaves: EditableLine[];
   downspouts: Downspout[];
   className?: string;
+  theme?: CanvasTheme;
+  imageDataUrl?: string;
 }) {
+  const t = THEMES[theme];
   return (
     <div
       className={
-        "relative overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-100 " +
+        "relative overflow-hidden rounded-2xl border " +
+        (theme === "tactical"
+          ? "border-cyan-900/40 bg-slate-950 "
+          : "border-zinc-200 bg-zinc-100 ") +
         (className ?? "")
       }
     >
@@ -159,32 +244,82 @@ export function AerialReadonly({
         className="h-full w-full"
         style={{ minHeight: 280 }}
       >
-        <AerialBackground />
-        {eaves.map((line) => (
+        <NeonDefs />
+        {imageDataUrl ? (
+          <AerialImage imageDataUrl={imageDataUrl} />
+        ) : (
+          <AerialBackground />
+        )}
+        {t.overlay && (
+          <rect
+            x={0}
+            y={0}
+            width={VIEWBOX_W}
+            height={VIEWBOX_H}
+            fill={t.overlay}
+            pointerEvents="none"
+          />
+        )}
+        {eaves.map((line, i) => (
           <motion.path
             key={line.id}
             d={pathFor(line)}
-            stroke="#059669"
-            strokeWidth={4}
+            stroke={t.eave}
+            strokeWidth={theme === "tactical" ? 3 : 4}
             strokeLinecap="round"
             fill="none"
             initial={{ pathLength: 0, opacity: 0 }}
             animate={{ pathLength: 1, opacity: 1 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-            style={{ filter: "drop-shadow(0 1px 4px rgba(5,150,105,0.45))" }}
+            transition={{ duration: 0.7, ease: "easeOut", delay: i * 0.06 }}
+            style={{
+              filter:
+                theme === "tactical"
+                  ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
+                  : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))",
+            }}
           />
         ))}
-        {downspouts.map((d) => (
+        {downspouts.map((d, i) => (
           <g key={d.id}>
-            <circle
-              cx={d.x}
-              cy={d.y}
-              r={9}
-              fill="white"
-              stroke="#0e7490"
-              strokeWidth={2}
-            />
-            <circle cx={d.x} cy={d.y} r={3.5} fill="#0e7490" />
+            {theme === "tactical" ? (
+              <>
+                <motion.circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={14}
+                  fill={t.downspout}
+                  opacity={0.18}
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: [0.7, 1.25, 0.9], opacity: [0, 0.35, 0.18] }}
+                  transition={{
+                    duration: 2.2,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                    delay: i * 0.15,
+                  }}
+                />
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={6}
+                  fill={t.downspout}
+                  filter={t.downspoutGlowFilter ?? undefined}
+                />
+                <circle cx={d.x} cy={d.y} r={2.2} fill={t.downspoutCore} />
+              </>
+            ) : (
+              <>
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={9}
+                  fill="white"
+                  stroke={t.downspout}
+                  strokeWidth={2}
+                />
+                <circle cx={d.x} cy={d.y} r={3.5} fill={t.downspoutCore} />
+              </>
+            )}
           </g>
         ))}
       </svg>
