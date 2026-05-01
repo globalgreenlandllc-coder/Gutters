@@ -2,14 +2,14 @@ import { notFound } from "next/navigation";
 import { sampleProposal } from "@/lib/proposal-mock";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
 
-export default function PublicProposalPage({
+export default async function PublicProposalPage({
   params,
 }: {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }) {
-  const proposal = sampleProposal;
-  if (!params.token || params.token.length < 3) {
+  const { token } = await params;
+  if (!token || token.length < 3) {
     notFound();
   }
-  return <ClientPortalView proposal={{ ...proposal, token: params.token }} />;
+  return <ClientPortalView proposal={{ ...sampleProposal, token }} />;
 }
