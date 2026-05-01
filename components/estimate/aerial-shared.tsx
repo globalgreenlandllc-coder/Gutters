@@ -7,6 +7,19 @@ export const VIEWBOX_W = 900;
 export const VIEWBOX_H = 580;
 export const PX_PER_FT = 2.4;
 
+export function AerialImage({ imageDataUrl }: { imageDataUrl: string }) {
+  return (
+    <image
+      href={imageDataUrl}
+      x={0}
+      y={0}
+      width={VIEWBOX_W}
+      height={VIEWBOX_H}
+      preserveAspectRatio="xMidYMid slice"
+    />
+  );
+}
+
 export function AerialBackground() {
   return (
     <g aria-hidden>

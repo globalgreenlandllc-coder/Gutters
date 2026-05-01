@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { EditableLine, Downspout } from "@/lib/types";
 import {
   AerialBackground,
+  AerialImage,
   VIEWBOX_W,
   VIEWBOX_H,
   pathFor,
@@ -30,11 +31,13 @@ export function AerialCanvas({
   downspouts,
   onEavesChange,
   onDownspoutsChange,
+  aerialImageUrl,
 }: {
   eaves: EditableLine[];
   downspouts: Downspout[];
   onEavesChange: (next: EditableLine[]) => void;
   onDownspoutsChange: (next: Downspout[]) => void;
+  aerialImageUrl?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [tool, setTool] = useState<Tool>("select");
@@ -161,7 +164,11 @@ export function AerialCanvas({
         )}
         style={{ minHeight: 420 }}
       >
-        <AerialBackground />
+        {aerialImageUrl ? (
+          <AerialImage imageDataUrl={aerialImageUrl} />
+        ) : (
+          <AerialBackground />
+        )}
 
         {eaves.map((line) => {
           const isSelected = selectedId === line.id;
