@@ -154,6 +154,7 @@ function PortalNav({ proposal }: { proposal: Proposal }) {
           <BrandMark
             initials={profile.logo.initials || "GU"}
             tone={profile.logo.tone}
+            logoUrl={profile.logo.url}
             size="sm"
           />
           <div className="leading-none">
@@ -186,6 +187,7 @@ function Header({ proposal }: { proposal: Proposal }) {
         <BrandMark
           initials={profile.logo.initials || "GU"}
           tone={profile.logo.tone}
+          logoUrl={profile.logo.url}
           size="xl"
         />
         <div className="min-w-0 flex-1">

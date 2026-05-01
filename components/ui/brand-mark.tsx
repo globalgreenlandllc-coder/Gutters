@@ -31,12 +31,14 @@ const SIZES = {
 export function BrandMark({
   initials,
   tone,
+  logoUrl,
   size = "md",
   rounded = "lg",
   className,
 }: {
   initials: string;
   tone: LogoTone;
+  logoUrl?: string | null;
   size?: keyof typeof SIZES;
   rounded?: "lg" | "xl" | "full";
   className?: string;
@@ -47,6 +49,27 @@ export function BrandMark({
       : rounded === "xl"
       ? "rounded-2xl"
       : "rounded-xl";
+
+  if (logoUrl) {
+    return (
+      <div
+        className={cn(
+          "relative flex shrink-0 items-center justify-center overflow-hidden border border-zinc-200 bg-white shadow-sm",
+          SIZES[size],
+          radius,
+          className,
+        )}
+      >
+        <img
+          src={logoUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

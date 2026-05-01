@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { sampleProposal, type Proposal } from "@/lib/proposal-mock";
+import { blankProposal, type Proposal } from "@/lib/proposal-mock";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { ProposalTopBar } from "@/components/proposal/proposal-top-bar";
 import { CoverSection } from "@/components/proposal/cover-section";
@@ -24,7 +24,7 @@ export default function ProposalPage() {
 
 function Inner() {
   const profile = useProfile();
-  const [proposal, setProposal] = useState<Proposal>(sampleProposal);
+  const [proposal, setProposal] = useState<Proposal>(blankProposal);
   const [preview, setPreview] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
 

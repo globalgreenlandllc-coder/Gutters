@@ -1,0 +1,198 @@
+"use server";
+
+import { db } from "@/lib/db";
+import { getMe } from "./me";
+
+import type { ProposalListItem } from "@/lib/dashboard-mock";
+export type MyProposalRow = ProposalListItem;
+
+export type MyKpis = {
+  sent: number;
+  accepted: number;
+  revenueMtd: number;
+  conversion: number;
+  pipelineValue: number;
+  avgDeal: number;
+};
+
+export type MyActivityEvent = {
+  id: string;
+  kind: "viewed" | "accepted" | "paid" | "sent" | "drafted" | "expired" | "declined";
+  client: string;
+  proposalId: string;
+  message: string;
+  at: string;
+};
+
+const STATUS_TO_UI: Record<
+  | "DRAFT"
+  | "SENT"
+  | "VIEWED"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "EXPIRED",
+  MyProposalRow["status"]
+> = {
+  DRAFT: "draft",
+  SENT: "sent",
+  VIEWED: "viewed",
+  ACCEPTED: "accepted",
+  DECLINED: "declined",
+  EXPIRED: "expired",
+};
+
+export async function listMyProposals(): Promise<MyProposalRow[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const rows = await db.proposal.findMany({
+    where: { userId: me.user.id },
+    orderBy: { updatedAt: "desc" },
+    include: {
+      _count: { select: { events: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    address: r.address,
+    client: r.clientName,
+    total: r.totalCents / 100,
+    status: STATUS_TO_UI[r.status as keyof typeof STATUS_TO_UI] ?? "draft",
+    selectedPackage: r.selectedPackageId ?? undefined,
+    updatedAt: r.updatedAt.toISOString(),
+    views: r._count.events,
+    paid: r.paidCents > 0 ? r.paidCents / 100 : undefined,
+  }));
+}
+
+export async function getMyKpis(): Promise<MyKpis> {
+  const me = await getMe();
+  if (!me) {
+    return {
+      sent: 0,
+      accepted: 0,
+      revenueMtd: 0,
+      conversion: 0,
+      pipelineValue: 0,
+      avgDeal: 0,
+    };
+  }
+  const userId = me.user.id;
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+
+  const [sentCount, acceptedThisMonth, allDecided, openPipeline] = await Promise.all([
+    db.proposal.count({
+      where: {
+        userId,
+        status: { in: ["SENT", "VIEWED", "ACCEPTED", "DECLINED", "EXPIRED"] },
+        updatedAt: { gte: monthStart },
+      },
+    }),
+    db.proposal.findMany({
+      where: { userId, status: "ACCEPTED", acceptedAt: { gte: monthStart } },
+      select: { paidCents: true, totalCents: true },
+    }),
+    db.proposal.findMany({
+      where: { userId, status: { in: ["ACCEPTED", "DECLINED"] } },
+      select: { status: true },
+    }),
+    db.proposal.aggregate({
+      where: {
+        userId,
+        status: { in: ["DRAFT", "SENT", "VIEWED"] },
+      },
+      _sum: { totalCents: true },
+    }),
+  ]);
+
+  const acceptedCount = acceptedThisMonth.length;
+  const revenueMtd =
+    acceptedThisMonth.reduce((sum, p) => sum + p.paidCents, 0) / 100;
+  const totalAcceptedDollarsMtd =
+    acceptedThisMonth.reduce((sum, p) => sum + p.totalCents, 0) / 100;
+  const avgDeal = acceptedCount > 0 ? totalAcceptedDollarsMtd / acceptedCount : 0;
+
+  const decidedCount = allDecided.length;
+  const decidedAccepted = allDecided.filter((p) => p.status === "ACCEPTED").length;
+  const conversion = decidedCount > 0 ? decidedAccepted / decidedCount : 0;
+  const pipelineValue = (openPipeline._sum.totalCents ?? 0) / 100;
+
+  return {
+    sent: sentCount,
+    accepted: acceptedCount,
+    revenueMtd,
+    conversion,
+    pipelineValue,
+    avgDeal,
+  };
+}
+
+export async function listMyActivity(limit = 10): Promise<MyActivityEvent[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const rows = await db.proposalEvent.findMany({
+    where: { proposal: { userId: me.user.id } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: { proposal: true },
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    kind: mapEventKind(e.kind),
+    client: e.proposal.clientName,
+    proposalId: e.proposalId,
+    message: messageForEvent(e.kind, e.proposal.address, e.proposal.clientName),
+    at: e.createdAt.toISOString(),
+  }));
+}
+
+function mapEventKind(
+  k: string,
+): "viewed" | "accepted" | "paid" | "sent" | "drafted" | "expired" | "declined" {
+  switch (k) {
+    case "DRAFTED":
+      return "drafted";
+    case "SENT":
+      return "sent";
+    case "VIEWED":
+      return "viewed";
+    case "PACKAGE_SELECTED":
+    case "SIGNED":
+    case "ACCEPTED":
+      return "accepted";
+    case "PAID":
+      return "paid";
+    case "DECLINED":
+      return "declined";
+    case "EXPIRED":
+      return "expired";
+    default:
+      return "drafted";
+  }
+}
+
+function messageForEvent(kind: string, address: string, client: string): string {
+  switch (kind) {
+    case "DRAFTED":
+      return `Drafted estimate · ${address}`;
+    case "SENT":
+      return `Proposal sent to ${client}`;
+    case "VIEWED":
+      return `${client} opened the proposal`;
+    case "PACKAGE_SELECTED":
+      return `${client} picked a package`;
+    case "SIGNED":
+      return `${client} signed the proposal`;
+    case "ACCEPTED":
+      return `Accepted · ${address}`;
+    case "PAID":
+      return `Paid · ${address}`;
+    case "DECLINED":
+      return `Declined · ${address}`;
+    case "EXPIRED":
+      return `Expired · ${address}`;
+    default:
+      return `${kind} · ${address}`;
+  }
+}

@@ -212,6 +212,40 @@ export const sampleProposal: Proposal = {
   validDays: 30,
 };
 
+/**
+ * Returns a clean starting state for a new proposal: contractor + client
+ * fields blank, photos empty, but the package and terms libraries
+ * pre-populated as starting templates the user can edit.
+ *
+ * Use this from /proposal when starting a fresh draft. The full
+ * `sampleProposal` above is for the public /p/[token] demo and tests.
+ */
+export function blankProposal(): Proposal {
+  return {
+    token: `draft-${Math.random().toString(36).slice(2, 9)}`,
+    address: "",
+    client: { name: "", email: "" },
+    contractor: {
+      name: "",
+      company: "",
+      phone: "",
+      email: "",
+      license: "",
+    },
+    intro:
+      "Thanks for the opportunity to quote your gutter project. Below you'll find package options sized to your roof, with detailed materials, labor, and a 1-click way to accept.",
+    measurements: sampleMeasurements,
+    packages: sampleProposal.packages.map((p) => ({
+      ...p,
+      addOns: p.addOns.map((a) => ({ ...a })),
+    })),
+    photos: [],
+    terms: sampleProposal.terms.map((t) => ({ ...t })),
+    depositPct: 30,
+    validDays: 30,
+  };
+}
+
 export function packageTotal(
   p: Package,
   measurements: Measurements,

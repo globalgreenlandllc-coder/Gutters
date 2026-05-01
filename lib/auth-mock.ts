@@ -18,7 +18,7 @@ export type ContractorProfile = {
   phone: string;
   license: string;
   tagline: string;
-  logo: { initials: string; tone: LogoTone };
+  logo: { initials: string; tone: LogoTone; url: string | null };
 };
 
 export type Credits = {
@@ -58,7 +58,7 @@ const DEFAULT_PROFILE: ContractorProfile = {
   phone: "",
   license: "",
   tagline: "",
-  logo: { initials: "GU", tone: "emerald" },
+  logo: { initials: "GU", tone: "emerald", url: null },
 };
 
 export function defaultProfile(): ContractorProfile {

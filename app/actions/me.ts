@@ -213,6 +213,7 @@ function shape(
       logo: {
         initials: cp?.logoInitials ?? "GU",
         tone: (cp?.logoTone as LogoTone) ?? "emerald",
+        url: cp?.logoUrl ?? null,
       },
     },
     credits: {
@@ -302,6 +303,9 @@ export async function updateMyProfile(
   if (patch.logo?.initials !== undefined)
     data.logoInitials = patch.logo.initials;
   if (patch.logo?.tone !== undefined) data.logoTone = patch.logo.tone;
+  if (patch.logo?.url !== undefined) {
+    data.logoUrl = validateLogoUrl(patch.logo.url);
+  }
 
   await db.contractorProfile.update({
     where: { userId: me.user.id },
@@ -309,6 +313,32 @@ export async function updateMyProfile(
   });
 
   return getMe();
+}
+
+const ALLOWED_LOGO_PREFIXES = [
+  "data:image/png;",
+  "data:image/jpeg;",
+  "data:image/webp;",
+  "data:image/svg+xml;",
+];
+const MAX_LOGO_DATAURL_BYTES = 600_000;
+
+function validateLogoUrl(url: string | null): string | null {
+  if (url === null || url === "") return null;
+  if (typeof url !== "string") {
+    throw new Error("Logo must be a string");
+  }
+  if (url.length > MAX_LOGO_DATAURL_BYTES) {
+    throw new Error(
+      `Logo too large (${Math.round(url.length / 1024)} KB). Max ~450 KB binary.`,
+    );
+  }
+  if (!ALLOWED_LOGO_PREFIXES.some((p) => url.startsWith(p))) {
+    throw new Error(
+      "Unsupported image format. Use PNG, JPEG, WebP, or SVG.",
+    );
+  }
+  return url;
 }
 
 export async function consumeMyCredit(address: string): Promise<{

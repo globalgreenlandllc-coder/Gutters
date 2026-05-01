@@ -118,6 +118,7 @@ model ContractorProfile {
   tagline         String?
   logoInitials    String   @default("GU")
   logoTone        String   @default("emerald")
+  logoUrl         String?  @db.Text
   stripeAccountId String?  @unique
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

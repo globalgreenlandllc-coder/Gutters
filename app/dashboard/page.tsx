@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { StatTile } from "@/components/dashboard/stat-tile";
@@ -8,11 +11,15 @@ import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { QuickStart } from "@/components/dashboard/quick-start";
 import { OnboardingStrip } from "@/components/dashboard/onboarding-strip";
+import { Button } from "@/components/ui/button";
 import {
-  computeKpis,
-  mockActivity,
-  mockProposals,
-} from "@/lib/dashboard-mock";
+  listMyActivity,
+  listMyProposals,
+  getMyKpis,
+  type MyActivityEvent,
+  type MyKpis,
+  type MyProposalRow,
+} from "@/app/actions/dashboard";
 import { formatCurrency } from "@/lib/utils";
 import { useSession } from "@/lib/auth-mock";
 
@@ -26,8 +33,38 @@ export default function DashboardPage() {
 
 function Inner() {
   const { session } = useSession();
-  const kpis = computeKpis(mockProposals);
-  const recent = mockProposals.slice(0, 5);
+  const [proposals, setProposals] = useState<MyProposalRow[]>([]);
+  const [kpis, setKpis] = useState<MyKpis | null>(null);
+  const [activity, setActivity] = useState<MyActivityEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listMyProposals(), getMyKpis(), listMyActivity()])
+      .then(([p, k, a]) => {
+        if (cancelled) return;
+        setProposals(p);
+        setKpis(k);
+        setActivity(a);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const k = kpis ?? {
+    sent: 0,
+    accepted: 0,
+    revenueMtd: 0,
+    conversion: 0,
+    pipelineValue: 0,
+    avgDeal: 0,
+  };
+  const recent = proposals.slice(0, 5);
+  const isEmpty = !loading && proposals.length === 0;
 
   return (
     <main className="min-h-screen">
@@ -44,7 +81,9 @@ function Inner() {
               Welcome back, {session?.user.name.split(" ")[0]}
             </h1>
             <p className="mt-1 text-sm text-zinc-500">
-              Here's what's happening across your proposals today.
+              {isEmpty
+                ? "Your dashboard is ready. Run your first estimate to start filling it in."
+                : "Here's what's happening across your proposals today."}
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -61,31 +100,30 @@ function Inner() {
           <StatTile
             index={0}
             label="Sent this month"
-            value={String(kpis.sent)}
-            delta="+18%"
-            spark={[3, 5, 4, 6, 7, 5, 8]}
+            value={String(k.sent)}
+            delta={k.sent > 0 ? undefined : "Send your first proposal"}
           />
           <StatTile
             index={1}
             label="Accepted"
-            value={String(kpis.accepted)}
-            delta="+12%"
-            spark={[1, 2, 1, 3, 2, 4, 3]}
+            value={String(k.accepted)}
+            delta={k.accepted > 0 ? undefined : "—"}
           />
           <StatTile
             index={2}
             label="Revenue MTD"
-            value={formatCurrency(kpis.revenueMtd)}
-            delta="+24%"
-            spark={[2, 4, 3, 6, 7, 9, 11]}
+            value={formatCurrency(k.revenueMtd)}
+            delta={k.revenueMtd > 0 ? undefined : "—"}
           />
           <StatTile
             index={3}
             label="Pipeline"
-            value={formatCurrency(kpis.pipelineValue)}
-            delta={`${Math.round(kpis.conversion * 100)}% close rate`}
-            positive
-            spark={[5, 7, 6, 8, 7, 9, 10]}
+            value={formatCurrency(k.pipelineValue)}
+            delta={
+              k.pipelineValue > 0
+                ? `${Math.round(k.conversion * 100)}% close rate`
+                : "—"
+            }
           />
         </section>
 
@@ -98,13 +136,21 @@ function Inner() {
                   Recent proposals
                 </h2>
               </div>
-              <ProposalsTable items={recent} compact showFilters={false} />
+              {isEmpty ? (
+                <EmptyProposals />
+              ) : (
+                <ProposalsTable
+                  items={recent}
+                  compact={proposals.length > 5}
+                  showFilters={false}
+                />
+              )}
             </div>
           </div>
 
           <div className="space-y-6">
-            <ActivityFeed events={mockActivity} />
-            <ConversionCard kpis={kpis} />
+            <ActivityFeed events={activity} />
+            <ConversionCard kpis={k} />
           </div>
         </section>
       </div>
@@ -112,7 +158,31 @@ function Inner() {
   );
 }
 
-function ConversionCard({ kpis }: { kpis: ReturnType<typeof computeKpis> }) {
+function EmptyProposals() {
+  return (
+    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center shadow-sm">
+      <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-50 text-accent-700">
+        <Sparkles className="h-5 w-5" />
+      </div>
+      <h3 className="font-display mt-4 text-lg font-semibold tracking-tight text-zinc-900">
+        No proposals yet
+      </h3>
+      <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500">
+        Run an AI takeoff for any address — your draft, the proposal you send,
+        and the homeowner's response will all land here.
+      </p>
+      <Link href="/estimate" className="mt-5 inline-block">
+        <Button>
+          <Sparkles className="h-4 w-4" />
+          Start your first estimate
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
+function ConversionCard({ kpis }: { kpis: MyKpis }) {
   const conv = Math.round(kpis.conversion * 100);
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
@@ -126,7 +196,11 @@ function ConversionCard({ kpis }: { kpis: ReturnType<typeof computeKpis> }) {
         <div className="font-display text-4xl font-semibold tracking-tight tabular-nums text-zinc-900">
           {conv}%
         </div>
-        <div className="pb-1.5 text-xs text-zinc-500">of decided proposals</div>
+        <div className="pb-1.5 text-xs text-zinc-500">
+          {kpis.accepted + (kpis.sent - kpis.accepted) > 0
+            ? "of decided proposals"
+            : "no decided proposals yet"}
+        </div>
       </div>
       <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
         <div
@@ -136,7 +210,6 @@ function ConversionCard({ kpis }: { kpis: ReturnType<typeof computeKpis> }) {
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
         <span>Avg deal · {formatCurrency(kpis.avgDeal || 0)}</span>
-        <span className="text-accent-700">+8% vs Q1</span>
       </div>
     </div>
   );

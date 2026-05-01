@@ -34,6 +34,12 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
         </h3>
         <span className="text-xs text-zinc-500">Last 7 days</span>
       </div>
+      {events.length === 0 ? (
+        <div className="mt-4 rounded-xl border border-dashed border-zinc-200 p-6 text-center text-sm text-zinc-500">
+          Once a homeowner views, signs, or pays a proposal, you'll see it
+          here in real time.
+        </div>
+      ) : null}
       <ul className="mt-4 space-y-1">
         {events.map((e, i) => {
           const meta = ICONS[e.kind];

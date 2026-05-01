@@ -33,6 +33,7 @@ export function CoverSection({
           <BrandMark
             initials={profile.logo.initials || "GU"}
             tone={profile.logo.tone}
+            logoUrl={profile.logo.url}
             size="lg"
           />
           <div className="text-right">

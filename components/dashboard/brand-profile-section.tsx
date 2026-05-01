@@ -1,8 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Building2, Check, Eye, Pencil, Save } from "lucide-react";
+import {
+  Building2,
+  Check,
+  Eye,
+  Image as ImageIcon,
+  Pencil,
+  Save,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Button } from "@/components/ui/button";
@@ -14,6 +23,9 @@ import {
   type LogoTone,
 } from "@/lib/auth-mock";
 import { cn } from "@/lib/utils";
+
+const ACCEPTED_LOGO_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+const MAX_LOGO_BYTES = 450 * 1024;
 
 const TONES: { id: LogoTone; label: string; swatch: string }[] = [
   { id: "emerald", label: "Emerald", swatch: "bg-accent-500" },
@@ -32,6 +44,9 @@ export function BrandProfileSection() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   useEffect(() => {
     setDraft(stored);
   }, [
@@ -43,7 +58,37 @@ export function BrandProfileSection() {
     stored.tagline,
     stored.logo.initials,
     stored.logo.tone,
+    stored.logo.url,
   ]);
+
+  async function handleFile(file: File | null) {
+    setUploadError(null);
+    if (!file) return;
+    if (!ACCEPTED_LOGO_TYPES.includes(file.type)) {
+      setUploadError(
+        "Use PNG, JPEG, WebP, or SVG. Other formats aren't supported.",
+      );
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setUploadError(
+        `That file is ${Math.round(file.size / 1024)} KB. Max is 450 KB — try a smaller one or a tighter crop.`,
+      );
+      return;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    setLogo("url", dataUrl);
+  }
+
+  function removeLogo() {
+    setLogo("url", null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
 
@@ -166,7 +211,66 @@ export function BrandProfileSection() {
 
           <div>
             <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
-              Logo color
+              Logo image
+            </label>
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-3">
+              <BrandMark
+                initials={draft.logo.initials || "GU"}
+                tone={draft.logo.tone}
+                logoUrl={draft.logo.url}
+                size="lg"
+                rounded="xl"
+              />
+              <div className="flex-1 text-xs text-zinc-500">
+                {draft.logo.url ? (
+                  <span>Custom image active. Replace or remove below.</span>
+                ) : (
+                  <span>
+                    Optional. Upload a square PNG, JPEG, WebP, or SVG. Max
+                    450&nbsp;KB. Without an image, the colored monogram is
+                    used.
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPTED_LOGO_TYPES.join(",")}
+                  className="hidden"
+                  onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  {draft.logo.url ? "Replace" : "Upload"}
+                </Button>
+                {draft.logo.url && (
+                  <button
+                    type="button"
+                    onClick={removeLogo}
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 transition hover:border-rose-300 hover:text-rose-600"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+            {uploadError && (
+              <div className="mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                <ImageIcon className="h-3.5 w-3.5" />
+                {uploadError}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+              Logo color (used when no image is set)
             </label>
             <div className="flex flex-wrap gap-1.5">
               {TONES.map((t) => {
@@ -230,6 +334,7 @@ function ProposalPreview({ draft }: { draft: ContractorProfile }) {
           <BrandMark
             initials={draft.logo.initials || "GU"}
             tone={draft.logo.tone}
+            logoUrl={draft.logo.url}
             size="lg"
           />
           <div className="min-w-0 flex-1">
