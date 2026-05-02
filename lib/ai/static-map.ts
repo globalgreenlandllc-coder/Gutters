@@ -11,13 +11,17 @@ export type SatImage = {
   centerLng: number;
 };
 
+export type SatImageOutcome =
+  | { ok: true; image: SatImage }
+  | { ok: false; reason: string };
+
 export async function fetchSatelliteImage(
   lat: number,
   lng: number,
   opts: { zoom?: number; size?: number } = {},
-): Promise<SatImage | null> {
+): Promise<SatImageOutcome> {
   const key = await getActiveApiKey("GOOGLE_MAPS");
-  if (!key) return null;
+  if (!key) return { ok: false, reason: "no GOOGLE_MAPS key in vault" };
 
   const zoom = opts.zoom ?? 20;
   const size = opts.size ?? 640;
@@ -33,24 +37,31 @@ export async function fetchSatelliteImage(
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
-      console.warn(`[static-map] HTTP ${res.status}`);
-      return null;
+      // Static Maps returns errors as a small image with the message
+      // baked in — try to surface the textual hint where possible.
+      let detail = "";
+      const errHeader = res.headers.get("x-staticmap-api-warning");
+      if (errHeader) detail = ` — ${errHeader}`;
+      const reason = `Static Maps HTTP ${res.status}${detail}`;
+      console.warn(`[static-map] ${reason}`);
+      return { ok: false, reason };
     }
     const buf = await res.arrayBuffer();
     return {
-      base64: Buffer.from(buf).toString("base64"),
-      mimeType: "image/png",
-      width: size,
-      height: size,
-      zoom,
-      centerLat: lat,
-      centerLng: lng,
+      ok: true,
+      image: {
+        base64: Buffer.from(buf).toString("base64"),
+        mimeType: "image/png",
+        width: size,
+        height: size,
+        zoom,
+        centerLat: lat,
+        centerLng: lng,
+      },
     };
   } catch (e) {
-    console.warn(
-      "[static-map] Fetch failed:",
-      e instanceof Error ? e.message : e,
-    );
-    return null;
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn("[static-map] Fetch failed:", reason);
+    return { ok: false, reason };
   }
 }

@@ -46,21 +46,24 @@ export async function runAIEstimatePipeline(
   notes.push(
     geocoded.source === "google"
       ? "Geocoded via Google Maps"
-      : "Geocoded via mock (no Google Maps key in vault)",
+      : `Geocoded via mock — ${geocoded.fallbackReason ?? "Google Maps unavailable"}`,
   );
 
   // 2. Aerial imagery (only if we have a real geocode)
   let image: SatImage | null = null;
   if (geocoded.source === "google") {
-    image = await fetchSatelliteImage(geocoded.lat, geocoded.lng, {
+    const imgOutcome = await fetchSatelliteImage(geocoded.lat, geocoded.lng, {
       zoom: 20,
       size: 640,
     });
-    notes.push(
-      image
-        ? `Fetched ${image.width}×${image.height} satellite tile @ z${image.zoom}`
-        : "Static Maps fetch failed — using mock geometry",
-    );
+    if (imgOutcome.ok) {
+      image = imgOutcome.image;
+      notes.push(
+        `Fetched ${image.width}×${image.height} satellite tile @ z${image.zoom}`,
+      );
+    } else {
+      notes.push(`Static Maps fetch failed — ${imgOutcome.reason}`);
+    }
   } else {
     notes.push("Skipped aerial fetch (mock geocode)");
   }

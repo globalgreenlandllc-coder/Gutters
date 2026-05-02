@@ -6,6 +6,13 @@ export type GeocodeResult = {
   lat: number;
   lng: number;
   source: "google" | "mock";
+  /**
+   * When source is "mock", explains *why* we fell back. Surfaced into
+   * the estimate notes so contractors can self-diagnose ("API not
+   * enabled", "REQUEST_DENIED", "no key in vault", etc.) without
+   * needing to read server logs.
+   */
+  fallbackReason?: string;
 };
 
 export async function geocodeAddress(
@@ -13,7 +20,7 @@ export async function geocodeAddress(
 ): Promise<GeocodeResult> {
   const key = await getActiveApiKey("GOOGLE_MAPS");
   if (!key) {
-    return mockGeocode(address);
+    return mockGeocode(address, "no GOOGLE_MAPS key in vault");
   }
 
   try {
@@ -48,15 +55,16 @@ export async function geocodeAddress(
       source: "google",
     };
   } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
     console.warn(
       "[geocode] Falling back to mock — Google API call failed:",
-      e instanceof Error ? e.message : e,
+      reason,
     );
-    return mockGeocode(address);
+    return mockGeocode(address, reason);
   }
 }
 
-function mockGeocode(address: string): GeocodeResult {
+function mockGeocode(address: string, fallbackReason: string): GeocodeResult {
   let h = 0;
   for (let i = 0; i < address.length; i++) {
     h = ((h << 5) - h + address.charCodeAt(i)) | 0;
@@ -68,5 +76,6 @@ function mockGeocode(address: string): GeocodeResult {
     lat: Number(lat.toFixed(6)),
     lng: Number(lng.toFixed(6)),
     source: "mock",
+    fallbackReason,
   };
 }
