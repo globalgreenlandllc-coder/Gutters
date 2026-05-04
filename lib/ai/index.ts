@@ -8,6 +8,7 @@ import {
   buildEditableLines,
   countCorners,
   eavesFromRoofPolygon,
+  latLngToImagePixel,
   measurementsFromVision,
   pixelLengthToFeet,
   placeDownspouts,
@@ -70,8 +71,12 @@ export async function runAIEstimatePipeline(
     notes.push("Skipped aerial fetch (mock geocode)");
   }
 
-  // 3. Building insights (Solar API has limited regional coverage)
+  // 3. Building insights (Solar API has limited regional coverage). When
+  // available, the bounding box also tells us where the actual house sits
+  // in the tile — Google geocoding often returns the parcel centroid which
+  // can be 50-100 ft offset from the building.
   let estimatedStories: Stories = 2;
+  let buildingPointPx: { x: number; y: number } | null = null;
   if (image) {
     const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
     if (insights) {
@@ -81,6 +86,29 @@ export async function runAIEstimatePipeline(
           insights.totalRoofAreaMeters2,
         )} m² total · est. ${estimatedStories}-story`,
       );
+
+      // Project the building's lat/lng bbox center onto image pixel space.
+      const bldgLat =
+        (insights.boundingBoxNE.lat + insights.boundingBoxSW.lat) / 2;
+      const bldgLng =
+        (insights.boundingBoxNE.lng + insights.boundingBoxSW.lng) / 2;
+      buildingPointPx = latLngToImagePixel(
+        bldgLat,
+        bldgLng,
+        geocoded.lat,
+        geocoded.lng,
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      const dx = buildingPointPx.x - image.width / 2;
+      const dy = buildingPointPx.y - image.height / 2;
+      const offsetPx = Math.round(Math.hypot(dx, dy));
+      if (offsetPx > 30) {
+        notes.push(
+          `Building offset from geocode by ${offsetPx}px — pointing SAM at actual house`,
+        );
+      }
     } else {
       notes.push("Solar API: no coverage / unavailable for this location");
     }
@@ -91,7 +119,10 @@ export async function runAIEstimatePipeline(
   // to the GPT-4o vision path which under-detects eaves on complex roofs.
   let roofPolygon: RoofPolygon | null = null;
   if (image) {
-    const samOutcome = await segmentRoofViaSam(image);
+    const samOutcome = await segmentRoofViaSam(
+      image,
+      buildingPointPx ?? undefined,
+    );
     if (samOutcome.ok) {
       roofPolygon = samOutcome.polygon;
       notes.push(
@@ -168,7 +199,11 @@ export async function runAIEstimatePipeline(
   // returned a polygon too noisy/small to trace. Less reliable but still
   // produces eaves on most homes.
   if (image) {
-    const segmentation = await segmentEavesViaVision(image, roofPolygon);
+    const segmentation = await segmentEavesViaVision(
+      image,
+      roofPolygon,
+      buildingPointPx,
+    );
     if (
       segmentation &&
       segmentation.buildingFound &&

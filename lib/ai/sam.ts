@@ -31,14 +31,19 @@ type Pt = { x: number; y: number };
  */
 export async function segmentRoofViaSam(
   image: SatImage,
+  /**
+   * Optional point in image-pixel space to use as the SAM prompt. When the
+   * Solar API has located the actual building, we pass that center here so
+   * SAM segments the right house (not whatever happens to be at the
+   * geocoded parcel centroid).
+   */
+  pointPrompt?: { x: number; y: number },
 ): Promise<SamOutcome> {
   const key = await getActiveApiKey("FAL");
   if (!key) return { ok: false, reason: "no FAL key in vault" };
 
-  // Center-point prompt in actual image-pixel space (image.width is the
-  // post-scale=2 PNG dimension, e.g. 1280, so center is at 640).
-  const cx = Math.round(image.width / 2);
-  const cy = Math.round(image.height / 2);
+  const cx = Math.round(pointPrompt?.x ?? image.width / 2);
+  const cy = Math.round(pointPrompt?.y ?? image.height / 2);
 
   let res: Response;
   try {
@@ -147,25 +152,64 @@ export async function segmentRoofViaSam(
     };
   }
 
-  // SAM masks come in different flavors:
-  //   - White-on-transparent: alpha=255 + RGB=255 in foreground
-  //   - White-on-black:       alpha=255 everywhere, RGB=255 in foreground
-  //   - Single-channel grayscale (rare): RGB=brightness, alpha=255
-  // Treating a pixel as foreground when alpha > 128 AND red > 64 covers
-  // both transparent-bg and solid-bg masks.
-  const isFg = (x: number, y: number): boolean => {
-    const idx = (y * png.width + x) * 4;
-    const r = png.data[idx];
-    const a = png.data[idx + 3];
-    return a > 128 && r > 64;
-  };
+  // SAM masks come in different flavors and we don't know in advance
+  // which one fal.ai is sending today. Try several foreground predicates,
+  // count how many pixels each marks as foreground, then pick whichever
+  // gives a sensible building-sized region (5–60% of the image).
+  const totalPx = png.width * png.height;
+  const candidates: Array<{ name: string; isFg: (x: number, y: number) => boolean }> = [
+    {
+      name: "alpha+red",
+      isFg: (x, y) => {
+        const i = (y * png.width + x) * 4;
+        return png.data[i + 3] > 128 && png.data[i] > 64;
+      },
+    },
+    {
+      name: "alpha-only",
+      isFg: (x, y) => png.data[(y * png.width + x) * 4 + 3] > 128,
+    },
+    {
+      name: "white-on-black",
+      isFg: (x, y) => png.data[(y * png.width + x) * 4] > 128,
+    },
+    {
+      name: "black-on-white",
+      isFg: (x, y) => png.data[(y * png.width + x) * 4] < 128,
+    },
+  ];
+
+  let chosen: typeof candidates[number] | null = null;
+  let chosenCount = 0;
+  for (const c of candidates) {
+    let count = 0;
+    for (let y = 0; y < png.height; y++) {
+      for (let x = 0; x < png.width; x++) {
+        if (c.isFg(x, y)) count++;
+      }
+    }
+    const frac = count / totalPx;
+    // Reasonable building footprint: 2–60% of the tile at zoom 20.
+    if (frac >= 0.02 && frac <= 0.6) {
+      chosen = c;
+      chosenCount = count;
+      break;
+    }
+  }
+
+  if (!chosen) {
+    return {
+      ok: false,
+      reason: `no usable mask found (tried ${candidates.length} foreground rules; all matched <2% or >60% of pixels)`,
+    };
+  }
 
   // Trace the boundary
-  const boundary = traceMooreNeighbor(png.width, png.height, isFg);
+  const boundary = traceMooreNeighbor(png.width, png.height, chosen.isFg);
   if (boundary.length < 8) {
     return {
       ok: false,
-      reason: `mask traced to only ${boundary.length} boundary points (mask may be empty or solid)`,
+      reason: `mask "${chosen.name}" had ${chosenCount} fg pixels but traced to only ${boundary.length} boundary points`,
     };
   }
 
@@ -177,7 +221,7 @@ export async function segmentRoofViaSam(
       : boundary;
 
   const bbox = computeBbox(downsampled);
-  const areaFraction = countForeground(png) / (png.width * png.height);
+  const areaFraction = chosenCount / totalPx;
 
   return {
     ok: true,
@@ -288,10 +332,3 @@ function computeBbox(points: Pt[]) {
   };
 }
 
-function countForeground(png: PNG): number {
-  let count = 0;
-  for (let i = 0; i < png.data.length; i += 4) {
-    if (png.data[i + 3] > 128 && png.data[i] > 64) count++;
-  }
-  return count;
-}

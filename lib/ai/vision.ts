@@ -26,8 +26,16 @@ Critical rules:
 
 Return VALID JSON ONLY. No prose, no markdown.`;
 
-const userPrompt = (image: SatImage, roofPolygon: RoofPolygon | null) => {
-  const base = `Trace the COMPLETE perimeter of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).
+const userPrompt = (
+  image: SatImage,
+  roofPolygon: RoofPolygon | null,
+  buildingHint: { x: number; y: number } | null,
+) => {
+  const hint = buildingHint
+    ? `\n\nThe primary residence's roof is centered around image pixel (${buildingHint.x}, ${buildingHint.y}). Ignore any other buildings in the tile (sheds, neighbors, garages with separate footprints).\n`
+    : "";
+
+  const base = `Trace the COMPLETE perimeter of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
 
 Return JSON in this exact shape:
 {
@@ -70,6 +78,7 @@ Constrain every eave you return to lie ON this polygon's perimeter (within ~10px
 export async function segmentEavesViaVision(
   image: SatImage,
   roofPolygon: RoofPolygon | null = null,
+  buildingHint: { x: number; y: number } | null = null,
 ): Promise<VisionSegmentation | null> {
   const key = await getActiveApiKey("OPENAI");
   if (!key) return null;
@@ -97,7 +106,10 @@ export async function segmentEavesViaVision(
                   detail: "high",
                 },
               },
-              { type: "text", text: userPrompt(image, roofPolygon) },
+              {
+                type: "text",
+                text: userPrompt(image, roofPolygon, buildingHint),
+              },
             ],
           },
         ],

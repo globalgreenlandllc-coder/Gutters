@@ -27,6 +27,34 @@ export function pixelLengthToFeet(
   return meters / METERS_PER_FOOT;
 }
 
+/**
+ * Convert a lat/lng pair into image-pixel coordinates within a Static Maps
+ * tile centered at (centerLat, centerLng). Used to project the Solar API's
+ * building bounding box onto the satellite image so we can point SAM at the
+ * actual house (not the geocoded parcel centroid, which can be 50–100 ft off).
+ */
+export function latLngToImagePixel(
+  lat: number,
+  lng: number,
+  centerLat: number,
+  centerLng: number,
+  zoom: number,
+  imageWidth: number,
+  imageHeight: number,
+): Pt {
+  const mpp = metersPerPixel(centerLat, zoom);
+  // Earth approximations — good enough at zoom 20 over a single building.
+  const metersPerLat = 111_320;
+  const metersPerLng = 111_320 * Math.cos((centerLat * Math.PI) / 180);
+  const dxMeters = (lng - centerLng) * metersPerLng;
+  const dyMeters = (lat - centerLat) * metersPerLat;
+  return {
+    x: Math.round(imageWidth / 2 + dxMeters / mpp),
+    // Image Y axis grows downward; latitude grows northward → invert.
+    y: Math.round(imageHeight / 2 - dyMeters / mpp),
+  };
+}
+
 export function polylineLengthPx(points: { x: number; y: number }[]): number {
   let total = 0;
   for (let i = 1; i < points.length; i++) {
