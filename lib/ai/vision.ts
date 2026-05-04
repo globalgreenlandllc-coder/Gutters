@@ -16,12 +16,18 @@ export type VisionSegmentation = {
   notes: string;
 };
 
-const SYSTEM_PROMPT = `You are an expert at analyzing aerial roofing imagery for gutter contractors. Your job: identify the EAVES of a single primary residence — the lower horizontal edges of each roof segment where rainwater would flow off into a gutter. RAKES (sloped sides of a gable roof) are NOT eaves. Hip roof valleys are NOT eaves. Skip outbuildings unless the customer is clearly there.
+const SYSTEM_PROMPT = `You are an expert at tracing roof footprints for gutter contractors. Your job: trace the COMPLETE outer perimeter of the primary residence's roof in a top-down aerial view, segment by segment. Every straight section of the roof's outline is a gutter run.
+
+Critical rules:
+- Trace the ENTIRE perimeter — every wall of the house has gutters along its lower edge. A typical house has 6-12 perimeter segments. If you only return 2-3 segments, you are missing eaves.
+- On a top-down view, every straight edge of the roof's outer outline IS an eave (rakes only appear in side views; from above they project as the same line as the eave).
+- Walk the perimeter clockwise starting from the northwest corner.
+- Skip outbuildings (sheds, detached garages with separate footprints) unless they're clearly attached.
 
 Return VALID JSON ONLY. No prose, no markdown.`;
 
 const userPrompt = (image: SatImage, roofPolygon: RoofPolygon | null) => {
-  const base = `Identify the eaves (gutter-bearing horizontal edges) of the primary residence in this aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).
+  const base = `Trace the COMPLETE perimeter of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).
 
 Return JSON in this exact shape:
 {
@@ -29,15 +35,17 @@ Return JSON in this exact shape:
   "confidence": number (0.0–1.0),
   "eaves": [
     { "id": "e1", "points": [{"x": 100, "y": 200}, {"x": 350, "y": 200}] },
-    { "id": "e2", "points": [{"x": 100, "y": 380}, {"x": 350, "y": 380}] }
+    { "id": "e2", "points": [{"x": 350, "y": 200}, {"x": 350, "y": 380}] }
   ],
   "estimatedTotalFeet": number,
   "notes": "one short sentence on confidence drivers"
 }
 
 Rules:
-- Each eave is a single straight or near-straight polyline (most are 2 points).
+- Walk the perimeter clockwise. Each eave is one straight edge between two corners.
+- Two adjacent eaves should SHARE an endpoint (the corner of the house).
 - Coordinates are integers in image pixels.
+- A house with N corners produces N eave segments. Don't skip any.
 - If the primary residence is partially out of frame, mark buildingFound: false and return an empty eaves array.`;
 
   if (!roofPolygon) return base;
