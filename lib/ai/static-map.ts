@@ -25,12 +25,18 @@ export async function fetchSatelliteImage(
 
   const zoom = opts.zoom ?? 20;
   const size = opts.size ?? 640;
+  // We always request scale=2 — Google returns a 2× density PNG (so a
+  // requested 640×640 actually arrives as 1280×1280 pixels). Downstream
+  // consumers (vision prompts, SAM center-point, canvas transform) need
+  // the *real* pixel dimensions of what GPT-4o / SAM 2 actually see, not
+  // the size we requested.
+  const scale = 2;
   const url =
     `https://maps.googleapis.com/maps/api/staticmap?` +
     `center=${lat},${lng}` +
     `&zoom=${zoom}` +
     `&size=${size}x${size}` +
-    `&scale=2` +
+    `&scale=${scale}` +
     `&maptype=satellite` +
     `&key=${encodeURIComponent(key)}`;
 
@@ -52,8 +58,8 @@ export async function fetchSatelliteImage(
       image: {
         base64: Buffer.from(buf).toString("base64"),
         mimeType: "image/png",
-        width: size,
-        height: size,
+        width: size * scale,
+        height: size * scale,
         zoom,
         centerLat: lat,
         centerLng: lng,
