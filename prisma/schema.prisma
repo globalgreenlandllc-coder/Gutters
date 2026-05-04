@@ -394,13 +394,16 @@ model ApiKey {
   provider       ApiKeyProvider
   label          String
   encryptedValue String         @db.Text
-  fingerprint    String         @unique
+  fingerprint    String
   active         Boolean        @default(true)
   lastUsedAt     DateTime?
   rotatedAt      DateTime?
   createdAt      DateTime       @default(now())
   createdBy      String
 
+  // Same Google Cloud key may legitimately power both GOOGLE_MAPS and
+  // GOOGLE_SOLAR slots, so uniqueness is scoped to the provider.
+  @@unique([provider, fingerprint])
   @@index([provider, active])
   @@map("api_keys")
 }

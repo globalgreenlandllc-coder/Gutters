@@ -53,10 +53,12 @@ export async function createApiKey(args: {
     throw new Error("Key value looks too short to be a real credential.");
   }
   const fp = fingerprint(value);
-  const dup = await db.apiKey.findUnique({ where: { fingerprint: fp } });
+  const dup = await db.apiKey.findUnique({
+    where: { provider_fingerprint: { provider: args.provider, fingerprint: fp } },
+  });
   if (dup) {
     throw new Error(
-      "This exact key value is already stored. Rotate the existing entry instead.",
+      "This exact key value is already stored for this provider. Rotate the existing entry instead.",
     );
   }
 
@@ -161,10 +163,14 @@ export async function rotateApiKey(args: {
   if (fp === before.fingerprint) {
     throw new Error("New value matches the current key — nothing to rotate.");
   }
-  const dup = await db.apiKey.findUnique({ where: { fingerprint: fp } });
+  const dup = await db.apiKey.findUnique({
+    where: {
+      provider_fingerprint: { provider: before.provider, fingerprint: fp },
+    },
+  });
   if (dup) {
     throw new Error(
-      "That key value is already stored against another row. Pick a different one.",
+      "That key value is already stored as a prior row for this provider. Pick a different one.",
     );
   }
 
