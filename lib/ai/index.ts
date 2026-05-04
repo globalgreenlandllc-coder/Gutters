@@ -2,7 +2,7 @@ import "server-only";
 import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
 import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
-import { segmentRoofViaSam } from "./sam";
+import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { segmentEavesViaVision } from "./vision";
 import {
   buildEditableLines,
@@ -86,20 +86,21 @@ export async function runAIEstimatePipeline(
     }
   }
 
-  // 4. SAM 2 roof polygon (optional — fal.ai key required). Gives GPT-4o
-  // a verified building outline so it doesn't hallucinate eaves over
-  // driveways, trees, or neighboring roofs.
-  let roofPolygon = null;
+  // 4. SAM 2 roof polygon (optional — fal.ai key required). Gives the
+  // pipeline a pixel-accurate building outline; without it we fall back
+  // to the GPT-4o vision path which under-detects eaves on complex roofs.
+  let roofPolygon: RoofPolygon | null = null;
   if (image) {
-    roofPolygon = await segmentRoofViaSam(image);
-    if (roofPolygon) {
+    const samOutcome = await segmentRoofViaSam(image);
+    if (samOutcome.ok) {
+      roofPolygon = samOutcome.polygon;
       notes.push(
         `SAM 2: roof polygon ${roofPolygon.points.length} verts, covers ${(
           roofPolygon.areaFraction * 100
         ).toFixed(1)}% of tile`,
       );
     } else {
-      notes.push("SAM 2: skipped (no FAL key) — vision will run unconstrained");
+      notes.push(`SAM 2 failed — ${samOutcome.reason}`);
     }
   }
 

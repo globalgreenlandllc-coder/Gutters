@@ -11,6 +11,10 @@ export type RoofPolygon = {
   areaFraction: number;
 };
 
+export type SamOutcome =
+  | { ok: true; polygon: RoofPolygon }
+  | { ok: false; reason: string };
+
 /**
  * Calls fal.ai's SAM 2 endpoint with the satellite tile and a center-point
  * prompt to segment the primary building's roof footprint.
@@ -21,14 +25,15 @@ export type RoofPolygon = {
  * verified building outline so it doesn't hallucinate eaves over driveways
  * or trees.
  *
- * Returns null when the FAL key is missing or the call fails — caller should
- * proceed with GPT-4o alone.
+ * Returns a discriminated union so callers can surface the actual reason
+ * for failure (no key, auth error, schema mismatch, empty mask) — instead
+ * of the misleading "skipped (no key)" we used to print for every outcome.
  */
 export async function segmentRoofViaSam(
   image: SatImage,
-): Promise<RoofPolygon | null> {
+): Promise<SamOutcome> {
   const key = await getActiveApiKey("FAL");
-  if (!key) return null;
+  if (!key) return { ok: false, reason: "no FAL key in vault" };
 
   // Center-point prompt: the satellite tile is geocoded to the property,
   // so the building is centered. SAM 2 will grow the mask outward from there.
@@ -36,8 +41,6 @@ export async function segmentRoofViaSam(
   const cy = Math.round(image.height / 2);
 
   try {
-    // Synchronous /run endpoint — returns the result inline up to ~30s, which
-    // is plenty for SAM 2 on a 640×640 tile (~1–2s typical).
     const res = await fetch("https://fal.run/fal-ai/sam2/image", {
       method: "POST",
       headers: {
@@ -54,8 +57,18 @@ export async function segmentRoofViaSam(
     });
 
     if (!res.ok) {
-      console.warn(`[sam2] HTTP ${res.status}`);
-      return null;
+      // Try to surface fal's error body — they return JSON with a
+      // human-readable message for auth / quota / model errors.
+      let detail = "";
+      try {
+        const body = (await res.json()) as { detail?: string; message?: string };
+        detail = body.detail || body.message || "";
+      } catch {
+        // body wasn't json
+      }
+      const reason = `fal.ai HTTP ${res.status}${detail ? ` — ${detail}` : ""}`;
+      console.warn(`[sam2] ${reason}`);
+      return { ok: false, reason };
     }
 
     type SamMask = {
@@ -83,21 +96,24 @@ export async function segmentRoofViaSam(
       )
       .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
 
-    if (points.length < 4) return null;
+    if (points.length < 4) {
+      return {
+        ok: false,
+        reason: `SAM 2 response had no usable polygon (got ${points.length} points; raw response keys: ${Object.keys(data).join(", ")})`,
+      };
+    }
 
-    const bbox =
-      firstMask?.bbox ??
-      computeBbox(points);
-
+    const bbox = firstMask?.bbox ?? computeBbox(points);
     const areaFraction =
       typeof firstMask?.area === "number"
         ? firstMask.area / (image.width * image.height)
         : (bbox.width * bbox.height) / (image.width * image.height);
 
-    return { points, bbox, areaFraction };
+    return { ok: true, polygon: { points, bbox, areaFraction } };
   } catch (e) {
-    console.warn("[sam2] Failed:", e instanceof Error ? e.message : e);
-    return null;
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn("[sam2] Failed:", reason);
+    return { ok: false, reason };
   }
 }
 
