@@ -7,9 +7,11 @@ import { segmentEavesViaVision } from "./vision";
 import {
   buildEditableLines,
   countCorners,
+  eavesFromRoofPolygon,
   measurementsFromVision,
   pixelLengthToFeet,
   placeDownspouts,
+  placeDownspoutsOnPolygon,
   polylineLengthPx,
 } from "./geometry";
 import {
@@ -101,7 +103,69 @@ export async function runAIEstimatePipeline(
     }
   }
 
-  // 5. Vision segmentation
+  // 5a. Primary path: SAM 2 polygon → eaves directly. On a top-down view
+  // every outer edge of the roof footprint IS a gutter run, so we don't
+  // need GPT-4o to "find" eaves — SAM 2 already traced the perimeter.
+  if (image && roofPolygon) {
+    const eaves = eavesFromRoofPolygon(roofPolygon, image.width, image.height);
+    if (eaves.length >= 3) {
+      // LF computed from polygon edges in original image-pixel space, then
+      // 8% waste factor for overlap + cuts.
+      let totalEaveLF = 0;
+      for (let i = 0; i < roofPolygon.points.length; i++) {
+        const a = roofPolygon.points[i];
+        const b = roofPolygon.points[(i + 1) % roofPolygon.points.length];
+        totalEaveLF += pixelLengthToFeet(
+          Math.hypot(b.x - a.x, b.y - a.y),
+          geocoded.lat,
+          image.zoom,
+        );
+      }
+      totalEaveLF = totalEaveLF * 1.08;
+
+      const downspouts = placeDownspoutsOnPolygon(
+        roofPolygon,
+        eaves,
+        image.width,
+        image.height,
+        estimatedStories,
+      );
+      const cornerCount = countCorners(eaves);
+      const measurements = measurementsFromVision({
+        eaveLF: totalEaveLF,
+        downspoutCount: downspouts.length,
+        cornerCount,
+        stories: estimatedStories,
+      });
+
+      notes.push(
+        `Eaves traced from SAM 2 polygon: ${eaves.length} segments, ${downspouts.length} downspouts`,
+      );
+
+      return {
+        geocoded,
+        measurements,
+        eaves,
+        downspouts,
+        source: "ai",
+        durationMs: Date.now() - t0,
+        notes,
+        aerial: {
+          imageDataUrl: `data:${image.mimeType};base64,${image.base64}`,
+          width: image.width,
+          height: image.height,
+          zoom: image.zoom,
+        },
+      };
+    }
+    notes.push(
+      `SAM 2 polygon had too few edges (${eaves.length}) — falling back to GPT-4o vision`,
+    );
+  }
+
+  // 5b. Fallback path: GPT-4o vision, used when SAM 2 is unavailable or
+  // returned a polygon too noisy/small to trace. Less reliable but still
+  // produces eaves on most homes.
   if (image) {
     const segmentation = await segmentEavesViaVision(image, roofPolygon);
     if (
@@ -122,8 +186,6 @@ export async function runAIEstimatePipeline(
         image.height,
       );
 
-      // Compute LF using ORIGINAL image-pixel coords + map scale, then
-      // apply an 8% waste factor for material overlap and cuts.
       let totalEaveLF = 0;
       for (const seg of segmentation.eaves) {
         const px = polylineLengthPx(seg.points);

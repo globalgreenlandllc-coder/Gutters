@@ -1,9 +1,12 @@
 import "server-only";
 import type { SegmentedEavePolyline } from "./vision";
+import type { RoofPolygon } from "./sam";
 import { STORY_HEIGHT_FT } from "@/lib/types";
 import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
 
 const METERS_PER_FOOT = 0.3048;
+
+type Pt = { x: number; y: number };
 
 // Mercator scale for Google Static Maps. The image is rendered at scale=2
 // so the effective meters-per-pixel is half the standard formula.
@@ -66,6 +69,170 @@ export function buildEditableLines(
     kind: "eave",
     points: transformToCanvas(s.points, imageWidth, imageHeight),
   }));
+}
+
+/**
+ * Douglas–Peucker line simplification. Collapses near-colinear vertices so a
+ * noisy SAM polygon (often 30–80 verts) becomes a clean architectural outline
+ * (typically 6–14 verts that match the actual roof corners).
+ */
+function simplify(points: Pt[], epsilon: number): Pt[] {
+  if (points.length < 3) return points;
+  let maxDist = 0;
+  let index = 0;
+  const last = points.length - 1;
+  for (let i = 1; i < last; i++) {
+    const d = perpendicularDistance(points[i], points[0], points[last]);
+    if (d > maxDist) {
+      maxDist = d;
+      index = i;
+    }
+  }
+  if (maxDist > epsilon) {
+    const left = simplify(points.slice(0, index + 1), epsilon);
+    const right = simplify(points.slice(index), epsilon);
+    return left.slice(0, -1).concat(right);
+  }
+  return [points[0], points[last]];
+}
+
+function perpendicularDistance(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy);
+  const px = a.x + t * dx;
+  const py = a.y + t * dy;
+  return Math.hypot(p.x - px, p.y - py);
+}
+
+/**
+ * Convert a SAM 2 roof polygon into one EditableLine per perimeter edge.
+ *
+ * On a top-down satellite view the polygon outline IS the gutter perimeter —
+ * every outer edge of the roof's footprint is an eave (rakes are sloped
+ * surfaces visible only from the side and don't show in the footprint
+ * outline). So we walk the simplified polygon and emit one straight eave
+ * segment per side.
+ */
+export function eavesFromRoofPolygon(
+  polygon: RoofPolygon,
+  imageWidth: number,
+  imageHeight: number,
+): EditableLine[] {
+  // 1. Map polygon points from image-pixel space to canvas space
+  const pts = transformToCanvas(polygon.points, imageWidth, imageHeight);
+  if (pts.length < 3) return [];
+
+  // 2. Simplify to architectural corners. epsilon=6px works well for roofs
+  // segmented at zoom-20 satellite tiles.
+  const simplified = simplify(pts, 6);
+  if (simplified.length < 3) return [];
+
+  // 3. Drop edges shorter than ~3 ft of canvas distance (noise from
+  // serrated roof lines or imperfect masking).
+  const MIN_EDGE_PX = 18;
+  const lines: EditableLine[] = [];
+  for (let i = 0; i < simplified.length; i++) {
+    const a = simplified[i];
+    const b = simplified[(i + 1) % simplified.length];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < MIN_EDGE_PX) continue;
+    lines.push({
+      id: `sam-eave-${i}`,
+      kind: "eave",
+      points: [a, b],
+    });
+  }
+  return lines;
+}
+
+/**
+ * Walk a polygon's vertices and return only the convex (outside) corners.
+ * Convex = the polygon turns "outward" at that vertex when walked clockwise.
+ * Outside corners are where downspouts naturally drop.
+ */
+export function convexCornersOf(
+  polygon: RoofPolygon,
+  imageWidth: number,
+  imageHeight: number,
+): Pt[] {
+  const pts = simplify(
+    transformToCanvas(polygon.points, imageWidth, imageHeight),
+    6,
+  );
+  if (pts.length < 3) return [];
+
+  // Determine winding order — sum signed area; positive = counter-clockwise
+  // in screen coords (y-down), negative = clockwise. We'll mirror the
+  // convexity check accordingly.
+  let signedArea = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    signedArea += (b.x - a.x) * (b.y + a.y);
+  }
+  const cwSign = signedArea > 0 ? 1 : -1;
+
+  const corners: Pt[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[(i - 1 + pts.length) % pts.length];
+    const curr = pts[i];
+    const next = pts[(i + 1) % pts.length];
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const cross = v1x * v2y - v1y * v2x;
+    if (cross * cwSign > 0) corners.push(curr);
+  }
+  return corners;
+}
+
+/**
+ * Drop a downspout at every outside corner of the polygon, then add extra
+ * downspouts in the middle of any single eave longer than 35 LF.
+ */
+export function placeDownspoutsOnPolygon(
+  polygon: RoofPolygon,
+  eaveLines: EditableLine[],
+  imageWidth: number,
+  imageHeight: number,
+  defaultStories: Stories = 2,
+  pxPerFt = 2.4,
+): Downspout[] {
+  const heightFt = STORY_HEIGHT_FT[defaultStories];
+  const placed: Downspout[] = [];
+
+  // 1. One per outside corner
+  const corners = convexCornersOf(polygon, imageWidth, imageHeight);
+  for (let i = 0; i < corners.length; i++) {
+    placed.push({
+      id: `ds-corner-${i + 1}`,
+      x: corners[i].x,
+      y: corners[i].y,
+      heightFt,
+    });
+  }
+
+  // 2. Mid-eave downspouts for long runs (>35 LF)
+  const MAX_RUN_FT = 35;
+  for (const line of eaveLines) {
+    if (line.points.length < 2) continue;
+    const a = line.points[0];
+    const b = line.points[line.points.length - 1];
+    const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
+    const lengthFt = lengthPx / pxPerFt;
+    if (lengthFt > MAX_RUN_FT) {
+      placed.push({
+        id: `ds-mid-${line.id}`,
+        x: Math.round((a.x + b.x) / 2),
+        y: Math.round((a.y + b.y) / 2),
+        heightFt,
+      });
+    }
+  }
+
+  return placed;
 }
 
 /**

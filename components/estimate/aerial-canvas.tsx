@@ -267,7 +267,12 @@ export function AerialCanvas({
                     }}
                   />
                 ))}
-              {isSelected && <LineLabel line={line} theme={theme} />}
+              <LineLabel
+                line={line}
+                theme={theme}
+                emphasized={isSelected}
+                animationDelay={0.6 + i * 0.06}
+              />
             </g>
           );
         })}
@@ -678,35 +683,95 @@ function Legend({
   );
 }
 
-function LineLabel({ line, theme }: { line: EditableLine; theme: CanvasTheme }) {
+function LineLabel({
+  line,
+  theme,
+  emphasized = false,
+  animationDelay = 0,
+}: {
+  line: EditableLine;
+  theme: CanvasTheme;
+  /** Selected eaves render a larger label; non-selected render a compact pill. */
+  emphasized?: boolean;
+  animationDelay?: number;
+}) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
   const b = line.points[line.points.length - 1];
-  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   const len = Math.round(lineLengthFt(line));
+
+  // Skip the always-on label for tiny segments — they'd visually clutter
+  // the perimeter without adding info. Selected segments still show.
+  if (!emphasized && len < 6) return null;
+
   const tactical = theme === "tactical";
+  const w = emphasized ? 60 : 44;
+  const h = emphasized ? 20 : 16;
+  const fontSize = emphasized ? 11 : 10;
+
+  // Offset the label perpendicular to the line so it sits OFF the eave
+  // rather than crossing it. For mostly-horizontal lines, lift it up; for
+  // mostly-vertical lines, push it sideways.
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = Math.hypot(dx, dy) || 1;
+  const offsetMag = emphasized ? 16 : 12;
+  const nx = (-dy / len2) * offsetMag;
+  const ny = (dx / len2) * offsetMag;
+
+  // Always offset toward the "inside" of the canvas so labels don't escape
+  // the viewBox on roof corners near the edges of the image.
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+  const towardCenter = (cx - VIEWBOX_W / 2) * nx + (cy - VIEWBOX_H / 2) * ny;
+  const sign = towardCenter > 0 ? -1 : 1;
+  const labelCx = cx + nx * sign;
+  const labelCy = cy + ny * sign;
+
   return (
-    <g pointerEvents="none">
+    <motion.g
+      pointerEvents="none"
+      initial={{ opacity: 0, scale: 0.7 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{
+        delay: animationDelay,
+        type: "spring",
+        stiffness: 240,
+        damping: 16,
+      }}
+    >
       <rect
-        x={mid.x - 30}
-        y={mid.y - 26}
-        width={60}
-        height={20}
-        rx={6}
-        fill={tactical ? "rgba(2,6,23,0.85)" : "white"}
-        stroke={tactical ? "#67e8f9" : "#0e7490"}
+        x={labelCx - w / 2}
+        y={labelCy - h / 2}
+        width={w}
+        height={h}
+        rx={emphasized ? 6 : 4}
+        fill={tactical ? "rgba(2,6,23,0.88)" : "rgba(255,255,255,0.96)"}
+        stroke={
+          tactical
+            ? emphasized
+              ? "#67e8f9"
+              : "rgba(103,232,249,0.6)"
+            : "#0e7490"
+        }
         strokeWidth={1}
+        style={{
+          filter: tactical
+            ? "drop-shadow(0 0 4px rgba(0,229,255,0.4))"
+            : undefined,
+        }}
       />
       <text
-        x={mid.x}
-        y={mid.y - 12}
+        x={labelCx}
+        y={labelCy + (emphasized ? 4 : 3.5)}
         textAnchor="middle"
         fill={tactical ? "#a5f3fc" : "#0e7490"}
-        fontSize="11"
+        fontSize={fontSize}
         fontWeight={600}
+        fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
       >
         {len} LF
       </text>
-    </g>
+    </motion.g>
   );
 }
