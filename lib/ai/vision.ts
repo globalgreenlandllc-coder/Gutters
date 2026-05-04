@@ -16,6 +16,13 @@ export type VisionSegmentation = {
   notes: string;
 };
 
+/** Hint for where the building lives in the image. Either a single
+ *  point (when only the parcel centroid is known) or a full bounding
+ *  box (preferred — Solar API gives this when it locates a building). */
+export type BuildingHint =
+  | { x: number; y: number }
+  | { x1: number; y1: number; x2: number; y2: number };
+
 const SYSTEM_PROMPT = `You are an expert at tracing roof footprints for gutter contractors. Your job: trace the COMPLETE outer perimeter of the primary residence's roof in a top-down aerial view, segment by segment. Every straight section of the roof's outline is a gutter run.
 
 Critical rules:
@@ -29,11 +36,16 @@ Return VALID JSON ONLY. No prose, no markdown.`;
 const userPrompt = (
   image: SatImage,
   roofPolygon: RoofPolygon | null,
-  buildingHint: { x: number; y: number } | null,
+  buildingHint: BuildingHint | null,
 ) => {
-  const hint = buildingHint
-    ? `\n\nThe primary residence's roof is centered around image pixel (${buildingHint.x}, ${buildingHint.y}). Ignore any other buildings in the tile (sheds, neighbors, garages with separate footprints).\n`
-    : "";
+  let hint = "";
+  if (buildingHint) {
+    if ("x1" in buildingHint) {
+      hint = `\n\nThe primary residence's roof footprint occupies the image region from pixel (${buildingHint.x1}, ${buildingHint.y1}) to (${buildingHint.x2}, ${buildingHint.y2}). Trace the COMPLETE outline of THIS region's roof — every wall on every side. Ignore any other buildings in the tile (sheds, neighbors, garages with separate footprints).\n`;
+    } else {
+      hint = `\n\nThe primary residence's roof is centered around image pixel (${buildingHint.x}, ${buildingHint.y}). Ignore any other buildings in the tile (sheds, neighbors, garages with separate footprints).\n`;
+    }
+  }
 
   const base = `Trace the COMPLETE perimeter of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
 
@@ -78,7 +90,7 @@ Constrain every eave you return to lie ON this polygon's perimeter (within ~10px
 export async function segmentEavesViaVision(
   image: SatImage,
   roofPolygon: RoofPolygon | null = null,
-  buildingHint: { x: number; y: number } | null = null,
+  buildingHint: BuildingHint | null = null,
 ): Promise<VisionSegmentation | null> {
   const key = await getActiveApiKey("OPENAI");
   if (!key) return null;

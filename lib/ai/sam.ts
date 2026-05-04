@@ -103,22 +103,25 @@ export async function segmentRoofViaSam(
     };
   }
 
+  // Walk the response looking for a mask URL. Prefer fields explicitly
+  // named "mask" over generic "image" — fal.ai often returns BOTH a
+  // visualization-style "image" (original photo with mask overlaid in
+  // color) AND a separate raw "mask" PNG. We want the raw mask.
   const maskRef =
-    (typeof data.image === "object" ? data.image?.url : undefined) ||
-    (typeof data.image === "string" ? data.image : undefined) ||
-    data.mask_url ||
-    (typeof data.masks?.[0]?.image === "object"
-      ? data.masks?.[0]?.image?.url
-      : undefined) ||
-    data.masks?.[0]?.url ||
+    extractUrl((data as Record<string, unknown>).mask_url) ||
+    extractUrl((data as Record<string, unknown>).mask) ||
+    extractUrl((data as Record<string, unknown>).mask_image) ||
+    extractUrl(data.masks?.[0]?.image) ||
+    extractUrl(data.masks?.[0]?.url) ||
+    extractUrl(data.image) ||
     null;
 
   if (!maskRef) {
     return {
       ok: false,
-      reason: `SAM 2 response had no mask URL (raw response keys: ${Object.keys(
+      reason: `SAM 2 response had no mask URL (top-level keys: [${Object.keys(
         data,
-      ).join(", ")})`,
+      ).join(", ")}], JSON: ${truncate(JSON.stringify(data), 300)})`,
     };
   }
 
@@ -181,6 +184,7 @@ export async function segmentRoofViaSam(
 
   let chosen: typeof candidates[number] | null = null;
   let chosenCount = 0;
+  const ruleStats: string[] = [];
   for (const c of candidates) {
     let count = 0;
     for (let y = 0; y < png.height; y++) {
@@ -189,18 +193,32 @@ export async function segmentRoofViaSam(
       }
     }
     const frac = count / totalPx;
+    ruleStats.push(`${c.name}=${(frac * 100).toFixed(1)}%`);
     // Reasonable building footprint: 2–60% of the tile at zoom 20.
-    if (frac >= 0.02 && frac <= 0.6) {
+    if (!chosen && frac >= 0.02 && frac <= 0.6) {
       chosen = c;
       chosenCount = count;
-      break;
     }
   }
 
   if (!chosen) {
+    // Sample a few pixels to help diagnose unusual mask formats. Picks
+    // the center, the corners, and a quarter-point.
+    const samples = [
+      { name: "center", idx: ((png.height >> 1) * png.width + (png.width >> 1)) * 4 },
+      { name: "tl", idx: 0 },
+      { name: "tr", idx: (png.width - 1) * 4 },
+      { name: "bl", idx: ((png.height - 1) * png.width) * 4 },
+      { name: "br", idx: ((png.height - 1) * png.width + png.width - 1) * 4 },
+    ]
+      .map(
+        (s) =>
+          `${s.name}=rgba(${png.data[s.idx]},${png.data[s.idx + 1]},${png.data[s.idx + 2]},${png.data[s.idx + 3]})`,
+      )
+      .join(" ");
     return {
       ok: false,
-      reason: `no usable mask found (tried ${candidates.length} foreground rules; all matched <2% or >60% of pixels)`,
+      reason: `no usable mask in ${png.width}×${png.height} PNG. Rule fractions: [${ruleStats.join(", ")}]. Pixel samples: ${samples}`,
     };
   }
 
@@ -311,6 +329,21 @@ function traceMooreNeighbor(
   }
 
   return boundary;
+}
+
+/** Pull a URL string out of any of the shapes fal.ai's mask field can take. */
+function extractUrl(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && v !== null) {
+    const url = (v as { url?: unknown }).url;
+    if (typeof url === "string") return url;
+  }
+  return null;
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 function computeBbox(points: Pt[]) {

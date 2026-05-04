@@ -77,6 +77,9 @@ export async function runAIEstimatePipeline(
   // can be 50-100 ft offset from the building.
   let estimatedStories: Stories = 2;
   let buildingPointPx: { x: number; y: number } | null = null;
+  let buildingBoxPx:
+    | { x1: number; y1: number; x2: number; y2: number }
+    | null = null;
   if (image) {
     const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
     if (insights) {
@@ -87,26 +90,40 @@ export async function runAIEstimatePipeline(
         )} m² total · est. ${estimatedStories}-story`,
       );
 
-      // Project the building's lat/lng bbox center onto image pixel space.
-      const bldgLat =
-        (insights.boundingBoxNE.lat + insights.boundingBoxSW.lat) / 2;
-      const bldgLng =
-        (insights.boundingBoxNE.lng + insights.boundingBoxSW.lng) / 2;
-      buildingPointPx = latLngToImagePixel(
-        bldgLat,
-        bldgLng,
+      // Project the building's lat/lng bbox onto image pixel space.
+      const ne = latLngToImagePixel(
+        insights.boundingBoxNE.lat,
+        insights.boundingBoxNE.lng,
         geocoded.lat,
         geocoded.lng,
         image.zoom,
         image.width,
         image.height,
       );
+      const sw = latLngToImagePixel(
+        insights.boundingBoxSW.lat,
+        insights.boundingBoxSW.lng,
+        geocoded.lat,
+        geocoded.lng,
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      const x1 = Math.min(ne.x, sw.x);
+      const y1 = Math.min(ne.y, sw.y);
+      const x2 = Math.max(ne.x, sw.x);
+      const y2 = Math.max(ne.y, sw.y);
+      buildingBoxPx = { x1, y1, x2, y2 };
+      buildingPointPx = {
+        x: Math.round((x1 + x2) / 2),
+        y: Math.round((y1 + y2) / 2),
+      };
       const dx = buildingPointPx.x - image.width / 2;
       const dy = buildingPointPx.y - image.height / 2;
       const offsetPx = Math.round(Math.hypot(dx, dy));
       if (offsetPx > 30) {
         notes.push(
-          `Building offset from geocode by ${offsetPx}px — pointing SAM at actual house`,
+          `Building offset from geocode by ${offsetPx}px — pointing AI at actual house`,
         );
       }
     } else {
@@ -202,7 +219,7 @@ export async function runAIEstimatePipeline(
     const segmentation = await segmentEavesViaVision(
       image,
       roofPolygon,
-      buildingPointPx,
+      buildingBoxPx ?? buildingPointPx,
     );
     if (
       segmentation &&
