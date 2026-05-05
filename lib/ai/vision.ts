@@ -23,18 +23,18 @@ export type BuildingHint =
   | { x: number; y: number }
   | { x1: number; y1: number; x2: number; y2: number };
 
-const SYSTEM_PROMPT = `You are an expert at identifying GUTTER LINES on a residential roof from a top-down aerial photo. Gutters only run along EAVES — the bottom horizontal edges where the roof slope meets the wall. Gutters DO NOT run along RAKES (the angled sides of a gable end where the roof slopes up toward a peak).
+const SYSTEM_PROMPT = `You are an expert at tracing residential roof footprints for gutter contractors from top-down aerial photos.
 
-How to tell eaves from rakes from a top-down view:
-- A GABLE end is a triangular wall under a roof peak. From above, the roof at a gable end shows two slope panels meeting at a RIDGE LINE that runs perpendicular to the gable wall. The TWO LONG EDGES of those panels (parallel to the ridge) are EAVES — gutters here. The TWO SHORT EDGES at the gable wall are RAKES — NO gutter.
-- A HIP roof has all four perimeter edges sloping inward to a ridge. ALL FOUR perimeter edges are EAVES — gutters everywhere.
-- Most houses are a mix. When in doubt: if the edge runs PERPENDICULAR to the ridge of its roof panel, it's a rake (skip). If PARALLEL to the ridge, it's an eave (gutter goes here).
+Your job: trace EVERY straight perimeter edge of the primary residence's roof. The contractor will manually remove any edge that's actually a rake (gable end) — your job is to find ALL the candidate edges, not to over-filter.
 
-Critical rules:
-- Return ONLY eave segments. Do NOT return rake segments. A typical house has 6-12 eaves; gable houses typically have eaves on the two long sides only.
-- Trace each eave as one straight line between two corners.
-- Walk clockwise starting from the northwest corner.
-- Skip outbuildings (sheds, detached garages with separate footprints) unless they're clearly attached to the main house.
+When in doubt, INCLUDE the edge. Missing an eave costs the contractor a sale; including a rake costs them one click to delete. Bias toward inclusion.
+
+A typical complex residential roof has 8–14 perimeter edges. If you only return 2–4, you are missing eaves and the contractor will reject the estimate.
+
+Skip only:
+- Detached outbuildings (separate sheds, separate garages with their own footprint)
+- Edges that are clearly INSIDE the roof outline (ridge lines, valleys)
+- Edges where you're <50% confident a roof actually exists
 
 Return VALID JSON ONLY. No prose, no markdown.`;
 
@@ -52,7 +52,7 @@ const userPrompt = (
     }
   }
 
-  const base = `Identify all EAVE segments (gutter-bearing edges) of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
+  const base = `Trace EVERY perimeter edge of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
 
 Return JSON in this exact shape:
 {
@@ -60,19 +60,20 @@ Return JSON in this exact shape:
   "confidence": number (0.0–1.0),
   "eaves": [
     { "id": "e1", "points": [{"x": 100, "y": 200}, {"x": 350, "y": 200}] },
-    { "id": "e2", "points": [{"x": 100, "y": 380}, {"x": 350, "y": 380}] }
+    { "id": "e2", "points": [{"x": 350, "y": 200}, {"x": 350, "y": 380}] },
+    { "id": "e3", "points": [{"x": 350, "y": 380}, {"x": 100, "y": 380}] },
+    { "id": "e4", "points": [{"x": 100, "y": 380}, {"x": 100, "y": 200}] }
   ],
   "estimatedTotalFeet": number,
-  "notes": "one short sentence on which edges are gables/rakes you skipped, if any"
+  "notes": "one short sentence on confidence drivers"
 }
 
 Rules:
-- Return ONLY eaves (gutter lines). SKIP rakes/gables (the angled sides under a gable peak).
-- Each eave is one straight line between two corners of the roof's footprint.
+- Walk the COMPLETE perimeter clockwise. Adjacent edges share a corner endpoint.
+- Each segment is one straight line between two corners.
 - Coordinates are integers in image pixels.
-- For a hip roof, every perimeter edge is an eave (return all of them).
-- For a gable roof, only the two long sides parallel to the ridge are eaves (return those, skip the gable ends).
-- Most houses are mixed — apply the rule per roof section.
+- A complex residential roof has 8–14 perimeter segments. Returning fewer means you missed eaves.
+- Include short edges (under 10 ft) — they're often the connectors between roof sections.
 - If the primary residence is partially out of frame, mark buildingFound: false and return an empty eaves array.`;
 
   if (!roofPolygon) return base;
