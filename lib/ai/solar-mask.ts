@@ -147,7 +147,12 @@ export async function getRoofMaskFromSolar(
     originX = origin[0];
     originY = origin[1];
     pxX = resolution[0];
-    pxY = resolution[1];
+    // Force pxY negative — convention is "image y grows down, world y
+    // grows up." geotiff.js sometimes returns it positive when the
+    // GeoTIFF stores pixelScale unsigned, which would render the mask
+    // upside-down (the failure mode that put the polygon ~750 px above
+    // the satellite tile in the prior diagnostic).
+    pxY = -Math.abs(resolution[1]);
 
     // Get the actual EPSG code from the GeoTIFF's GeoKeys. Solar API
     // returns local UTM zones (e.g. EPSG:32610 for Lake Stevens / WA in
