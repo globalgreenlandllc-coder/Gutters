@@ -32,10 +32,8 @@ type Pt = { x: number; y: number };
 export async function segmentRoofViaSam(
   image: SatImage,
   /**
-   * Optional point in image-pixel space to use as the SAM prompt. When the
-   * Solar API has located the actual building, we pass that center here so
-   * SAM segments the right house (not whatever happens to be at the
-   * geocoded parcel centroid).
+   * Optional point in image-pixel space to use as a SAM positive prompt.
+   * When omitted, defaults to the image center.
    */
   pointPrompt?: { x: number; y: number },
 ): Promise<SamOutcome> {
@@ -44,6 +42,20 @@ export async function segmentRoofViaSam(
 
   const cx = Math.round(pointPrompt?.x ?? image.width / 2);
   const cy = Math.round(pointPrompt?.y ?? image.height / 2);
+
+  // SAM 2 accepts box-and-point prompts together. Combining them gives
+  // dramatically better masks than a single point — the box tells SAM
+  // *where* the object is, the point seeds *which* object to grab when
+  // the box contains multiple things. Box covers most of the image
+  // (since the caller already cropped to the building); point sits at
+  // the prompt center.
+  const margin = Math.round(Math.min(image.width, image.height) * 0.1);
+  const box = {
+    x_min: margin,
+    y_min: margin,
+    x_max: image.width - margin,
+    y_max: image.height - margin,
+  };
 
   let res: Response;
   try {
@@ -55,7 +67,18 @@ export async function segmentRoofViaSam(
       },
       body: JSON.stringify({
         image_url: `data:${image.mimeType};base64,${image.base64}`,
-        prompts: [{ type: "point", x: cx, y: cy, label: 1 }],
+        // fal.ai's SAM 2 accepts these prompt array shapes interchangeably.
+        // Sending both `prompts` (object form) and `box`/`point_coords`
+        // (named form) covers the variants different fal.ai SAM endpoints
+        // expect — extra fields are ignored by the variant that doesn't use
+        // them.
+        prompts: [
+          { type: "box", x_min: box.x_min, y_min: box.y_min, x_max: box.x_max, y_max: box.y_max, label: 1 },
+          { type: "point", x: cx, y: cy, label: 1 },
+        ],
+        box_prompts: [[box.x_min, box.y_min, box.x_max, box.y_max]],
+        point_coords: [[cx, cy]],
+        point_labels: [1],
       }),
       cache: "no-store",
     });
