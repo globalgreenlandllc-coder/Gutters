@@ -3,6 +3,7 @@ import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
 import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
+import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
   buildEditableLines,
@@ -131,21 +132,63 @@ export async function runAIEstimatePipeline(
     }
   }
 
+  // 3.5. Crop the satellite tile around the Solar bounding box (with
+  // padding) so the AI sees only the actual house. Two big wins:
+  //   - SAM 2 via fal.ai was returning all-black masks on full 1280×1280
+  //     payloads (~2MB base64); a 600×600 crop is ~250KB and processes
+  //     successfully.
+  //   - GPT-4o gets more pixel detail per inch of roof and can't pick the
+  //     wrong building.
+  // All AI-returned coordinates are in cropped pixel space — we translate
+  // them back into original image space using `cropOffset`.
+  let workImage: SatImage = image!;
+  let cropOffset = { x: 0, y: 0 };
+  let didCrop = false;
+  if (image && buildingBoxPx) {
+    const cropResult = cropSatImageToBox(image, buildingBoxPx, 120);
+    if (cropResult) {
+      workImage = cropResult.image;
+      cropOffset = cropResult.offset;
+      didCrop = true;
+      notes.push(
+        `Cropped to ${workImage.width}×${workImage.height} around building (offset ${cropOffset.x},${cropOffset.y})`,
+      );
+    }
+  }
+
+  const translatePoint = (p: { x: number; y: number }) => ({
+    x: p.x + cropOffset.x,
+    y: p.y + cropOffset.y,
+  });
+
   // 4. SAM 2 roof polygon (optional — fal.ai key required). Gives the
   // pipeline a pixel-accurate building outline; without it we fall back
   // to the GPT-4o vision path which under-detects eaves on complex roofs.
   let roofPolygon: RoofPolygon | null = null;
   if (image) {
-    const samOutcome = await segmentRoofViaSam(
-      image,
-      buildingPointPx ?? undefined,
-    );
+    // When cropped, point SAM at the center of the cropped image (which
+    // IS the building); when uncropped, point at the building location
+    // computed from Solar.
+    const samPoint = didCrop
+      ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
+      : (buildingPointPx ?? undefined);
+    const samOutcome = await segmentRoofViaSam(workImage, samPoint);
     if (samOutcome.ok) {
-      roofPolygon = samOutcome.polygon;
+      // Translate polygon coords from cropped → original image space
+      roofPolygon = {
+        points: samOutcome.polygon.points.map(translatePoint),
+        bbox: {
+          x: samOutcome.polygon.bbox.x + cropOffset.x,
+          y: samOutcome.polygon.bbox.y + cropOffset.y,
+          width: samOutcome.polygon.bbox.width,
+          height: samOutcome.polygon.bbox.height,
+        },
+        areaFraction: samOutcome.polygon.areaFraction,
+      };
       notes.push(
         `SAM 2: roof polygon ${roofPolygon.points.length} verts, covers ${(
           roofPolygon.areaFraction * 100
-        ).toFixed(1)}% of tile`,
+        ).toFixed(1)}% of crop`,
       );
     } else {
       notes.push(`SAM 2 failed — ${samOutcome.reason}`);
@@ -216,10 +259,13 @@ export async function runAIEstimatePipeline(
   // returned a polygon too noisy/small to trace. Less reliable but still
   // produces eaves on most homes.
   if (image) {
+    // When cropped, the building IS the image so no hint needed; GPT-4o
+    // gets a focused crop and traces the only roof in frame. roofPolygon
+    // is in original image space so we can't pass it as crop-space context.
     const segmentation = await segmentEavesViaVision(
-      image,
-      roofPolygon,
-      buildingBoxPx ?? buildingPointPx,
+      workImage,
+      didCrop ? null : roofPolygon,
+      didCrop ? null : (buildingBoxPx ?? buildingPointPx),
     );
     if (
       segmentation &&
@@ -233,14 +279,20 @@ export async function runAIEstimatePipeline(
       );
       if (segmentation.notes) notes.push(`Vision note: ${segmentation.notes}`);
 
+      // Translate eaves from cropped → original image space
+      const eavesOriginalSpace = segmentation.eaves.map((e) => ({
+        ...e,
+        points: e.points.map(translatePoint),
+      }));
+
       const eaves = buildEditableLines(
-        segmentation.eaves,
+        eavesOriginalSpace,
         image.width,
         image.height,
       );
 
       let totalEaveLF = 0;
-      for (const seg of segmentation.eaves) {
+      for (const seg of eavesOriginalSpace) {
         const px = polylineLengthPx(seg.points);
         totalEaveLF += pixelLengthToFeet(px, geocoded.lat, image.zoom);
       }
