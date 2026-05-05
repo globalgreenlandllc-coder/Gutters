@@ -12,6 +12,31 @@ export type EditableLine = {
   points: { x: number; y: number }[];
 };
 
+export type RoofStructureLineKind = "ridge" | "valley";
+
+export type RoofStructureLine = {
+  id: string;
+  kind: RoofStructureLineKind;
+  /** Canvas-space (900×580 viewBox) endpoints. */
+  points: { x: number; y: number }[];
+  label?: string;
+};
+
+/**
+ * Visual roof annotation — the white perimeter outline plus the dashed
+ * ridge/valley lines that show where the roof's planes peak and where
+ * they drain together. NOT used for measurements (eaves drive LF math)
+ * — purely a recreational aid that helps the contractor read the roof.
+ */
+export type RoofStructure = {
+  /** Closed perimeter polygon in canvas space. */
+  perimeter: { x: number; y: number }[];
+  ridges: RoofStructureLine[];
+  valleys: RoofStructureLine[];
+  /** 0–1, surfaces an "approximation only" warning when low. */
+  confidence: number;
+};
+
 export type Downspout = {
   id: string;
   x: number;

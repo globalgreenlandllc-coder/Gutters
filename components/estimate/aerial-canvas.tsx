@@ -6,6 +6,7 @@ import {
   Building2,
   Layers,
   Maximize2,
+  MountainSnow,
   MousePointer2,
   Plus,
   Ruler,
@@ -18,6 +19,7 @@ import {
   storiesFromHeightFt,
   type Downspout,
   type EditableLine,
+  type RoofStructure,
   type Stories,
 } from "@/lib/types";
 import {
@@ -25,6 +27,7 @@ import {
   AerialImage,
   CanvasTheme,
   NeonDefs,
+  RoofStructureOverlay,
   THEMES,
   VIEWBOX_W,
   VIEWBOX_H,
@@ -43,12 +46,14 @@ export function AerialCanvas({
   onEavesChange,
   onDownspoutsChange,
   aerialImageUrl,
+  roofStructure,
 }: {
   eaves: EditableLine[];
   downspouts: Downspout[];
   onEavesChange: (next: EditableLine[]) => void;
   onDownspoutsChange: (next: Downspout[]) => void;
   aerialImageUrl?: string;
+  roofStructure?: RoofStructure;
 }) {
   const [theme, setTheme] = useState<CanvasTheme>("tactical");
   const t = THEMES[theme];
@@ -56,6 +61,7 @@ export function AerialCanvas({
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [showRoofStructure, setShowRoofStructure] = useState(true);
   const [drag, setDrag] = useState<
     | { kind: "vertex"; lineId: string; index: number }
     | { kind: "downspout"; id: string }
@@ -176,12 +182,18 @@ export function AerialCanvas({
         onThemeToggle={() =>
           setTheme((th) => (th === "tactical" ? "schematic" : "tactical"))
         }
+        roofStructureAvailable={!!roofStructure}
+        showRoofStructure={showRoofStructure}
+        onToggleRoofStructure={() => setShowRoofStructure((s) => !s)}
       />
       <Legend
         totalEaveLF={totalEaveLF}
         downspoutCount={downspouts.length}
         theme={theme}
       />
+      {roofStructure && showRoofStructure && (
+        <RoofStructureBanner confidence={roofStructure.confidence} />
+      )}
 
       <svg
         ref={svgRef}
@@ -212,6 +224,10 @@ export function AerialCanvas({
             fill={t.overlay}
             pointerEvents="none"
           />
+        )}
+
+        {roofStructure && showRoofStructure && (
+          <RoofStructureOverlay structure={roofStructure} />
         )}
 
         {eaves.map((line, i) => {
@@ -512,6 +528,9 @@ function Toolbar({
   onDelete,
   theme,
   onThemeToggle,
+  roofStructureAvailable,
+  showRoofStructure,
+  onToggleRoofStructure,
 }: {
   tool: Tool;
   setTool: (t: Tool) => void;
@@ -519,6 +538,9 @@ function Toolbar({
   onDelete: () => void;
   theme: CanvasTheme;
   onThemeToggle: () => void;
+  roofStructureAvailable: boolean;
+  showRoofStructure: boolean;
+  onToggleRoofStructure: () => void;
 }) {
   const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
     { id: "select", icon: MousePointer2, label: "Select" },
@@ -591,6 +613,52 @@ function Toolbar({
       >
         <Sparkles className="h-4 w-4" />
       </button>
+      {roofStructureAvailable && (
+        <button
+          onClick={onToggleRoofStructure}
+          title={
+            showRoofStructure
+              ? "Hide roof structure (perimeter / ridges / valleys)"
+              : "Show roof structure (perimeter / ridges / valleys)"
+          }
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-lg transition",
+            showRoofStructure
+              ? tactical
+                ? "bg-white/15 text-white ring-1 ring-inset ring-white/40"
+                : "bg-zinc-900/10 text-zinc-900 ring-1 ring-inset ring-zinc-300"
+              : tactical
+                ? "text-cyan-200/70 hover:bg-white/10 hover:text-white"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          <MountainSnow className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RoofStructureBanner({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  const lowConfidence = confidence < 0.7;
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
+      <div className="flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
+        <span className="h-2 w-2 rounded-full bg-white" />
+        <span>Perimeter</span>
+        <span className="mx-1 h-3 w-px bg-white/25" />
+        <span className="rounded px-1.5 py-0.5 bg-blue-700/80 uppercase tracking-wider text-[10px]">
+          Ridge
+        </span>
+        <span className="rounded px-1.5 py-0.5 bg-emerald-700/80 uppercase tracking-wider text-[10px]">
+          Valley
+        </span>
+        <span className="mx-1 h-3 w-px bg-white/25" />
+        <span className={cn(lowConfidence ? "text-amber-300" : "text-white/70")}>
+          {lowConfidence ? "Visual approx — verify before estimating" : `Approximation · ${pct}% conf`}
+        </span>
+      </div>
     </div>
   );
 }

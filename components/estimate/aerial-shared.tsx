@@ -1,7 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import type { Downspout, EditableLine } from "@/lib/types";
+import type {
+  Downspout,
+  EditableLine,
+  RoofStructure,
+  RoofStructureLine,
+} from "@/lib/types";
 
 export const VIEWBOX_W = 900;
 export const VIEWBOX_H = 580;
@@ -348,4 +353,143 @@ export function lineLengthFt(line: EditableLine) {
     total += dist(line.points[i - 1], line.points[i]);
   }
   return total / PX_PER_FT;
+}
+
+/**
+ * Recreational roof-structure annotation: white perimeter outline plus
+ * blue RIDGE labels and green VALLEY labels (on dashed lines). Renders
+ * UNDERNEATH the editable eaves/downspouts so it doesn't interfere with
+ * the gutter-estimate workflow — purely a visual aid.
+ */
+export function RoofStructureOverlay({
+  structure,
+}: {
+  structure: RoofStructure;
+}) {
+  if (structure.perimeter.length < 3) return null;
+  const perimeterD = closedPathD(structure.perimeter);
+  return (
+    <g pointerEvents="none">
+      <motion.path
+        d={perimeterD}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.92}
+        initial={{ pathLength: 0, opacity: 0 }}
+        animate={{ pathLength: 1, opacity: 0.92 }}
+        transition={{ duration: 0.9, ease: "easeOut" }}
+        style={{ filter: "drop-shadow(0 0 4px rgba(0,0,0,0.55))" }}
+      />
+      {structure.ridges.map((ridge, i) => (
+        <RoofLineWithLabel
+          key={ridge.id}
+          line={ridge}
+          stroke="#ffffff"
+          dashed={false}
+          strokeWidth={2.5}
+          labelFill="#1e3a8a"
+          labelText={ridge.label ?? "RIDGE"}
+          delay={0.4 + i * 0.08}
+        />
+      ))}
+      {structure.valleys.map((valley, i) => (
+        <RoofLineWithLabel
+          key={valley.id}
+          line={valley}
+          stroke="#e5e7eb"
+          dashed
+          strokeWidth={2.5}
+          labelFill="#0f5132"
+          labelText={valley.label ?? "VALLEY"}
+          delay={0.55 + i * 0.08}
+        />
+      ))}
+    </g>
+  );
+}
+
+function RoofLineWithLabel({
+  line,
+  stroke,
+  dashed,
+  strokeWidth,
+  labelFill,
+  labelText,
+  delay,
+}: {
+  line: RoofStructureLine;
+  stroke: string;
+  dashed: boolean;
+  strokeWidth: number;
+  labelFill: string;
+  labelText: string;
+  delay: number;
+}) {
+  if (line.points.length < 2) return null;
+  const a = line.points[0];
+  const b = line.points[line.points.length - 1];
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+  const lineD = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+  const w = Math.max(46, labelText.length * 7 + 14);
+  const h = 18;
+  return (
+    <g>
+      <motion.path
+        d={lineD}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={dashed ? "8 6" : undefined}
+        opacity={0.9}
+        initial={{ pathLength: 0, opacity: 0 }}
+        animate={{ pathLength: 1, opacity: 0.9 }}
+        transition={{ duration: 0.6, delay, ease: "easeOut" }}
+        style={{ filter: "drop-shadow(0 0 3px rgba(0,0,0,0.5))" }}
+      />
+      <motion.g
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.4, delay: delay + 0.2 }}
+      >
+        <rect
+          x={cx - w / 2}
+          y={cy - h / 2}
+          width={w}
+          height={h}
+          rx={5}
+          fill={labelFill}
+          stroke="rgba(255,255,255,0.85)"
+          strokeWidth={1}
+          style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.45))" }}
+        />
+        <text
+          x={cx}
+          y={cy + 4}
+          textAnchor="middle"
+          fill="white"
+          fontSize={11}
+          fontWeight={700}
+          letterSpacing={0.6}
+          fontFamily="ui-sans-serif, system-ui, sans-serif"
+        >
+          {labelText}
+        </text>
+      </motion.g>
+    </g>
+  );
+}
+
+function closedPathD(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return "";
+  const [first, ...rest] = points;
+  return (
+    `M ${first.x} ${first.y} ` +
+    rest.map((p) => `L ${p.x} ${p.y}`).join(" ") +
+    " Z"
+  );
 }

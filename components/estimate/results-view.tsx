@@ -65,6 +65,7 @@ export function ResultsView({
                 onEavesChange={setEaves}
                 onDownspoutsChange={setDownspouts}
                 aerialImageUrl={initial.aerial?.imageDataUrl}
+                roofStructure={initial.roofStructure}
               />
             </div>
             <SiteContext />

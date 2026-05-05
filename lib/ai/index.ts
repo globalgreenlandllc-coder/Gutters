@@ -10,6 +10,10 @@ import { classifyEdgeWithDsm, ringCentroid } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
+  detectRoofStructureViaVision,
+  type DetectedRoofStructure,
+} from "./roof-structure";
+import {
   buildEditableLines,
   countCorners,
   eavesFromRoofPolygon,
@@ -26,7 +30,13 @@ import {
   sampleDownspouts,
   sampleMeasurements,
 } from "@/lib/mock-estimate";
-import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
+import type {
+  EditableLine,
+  Downspout,
+  Measurements,
+  RoofStructure,
+  Stories,
+} from "@/lib/types";
 
 export type EstimateResult = {
   geocoded: GeocodeResult;
@@ -42,7 +52,46 @@ export type EstimateResult = {
     height: number;
     zoom: number;
   };
+  /** Optional perimeter + ridge/valley overlay for the visual annotation
+   *  layer. Detected via GPT-4o vision in parallel with the eaves
+   *  pipeline; null when the vision call fails or no image is available. */
+  roofStructure?: RoofStructure;
 };
+
+/**
+ * Project a vision-detected roof structure (cropped-image-pixel coords)
+ * into the SVG canvas's 900×580 viewBox so the overlay component can
+ * render lines straight onto the displayed satellite tile.
+ */
+function detectedToCanvasRoofStructure(
+  detected: DetectedRoofStructure,
+  cropOffset: { x: number; y: number },
+  imageWidth: number,
+  imageHeight: number,
+): RoofStructure {
+  const toCanvas = (pts: { x: number; y: number }[]) =>
+    transformToCanvas(
+      pts.map((p) => ({ x: p.x + cropOffset.x, y: p.y + cropOffset.y })),
+      imageWidth,
+      imageHeight,
+    );
+  return {
+    perimeter: toCanvas(detected.perimeter),
+    ridges: detected.ridges.map((r) => ({
+      id: r.id,
+      kind: "ridge" as const,
+      points: toCanvas(r.points),
+      label: r.label ?? "RIDGE",
+    })),
+    valleys: detected.valleys.map((v) => ({
+      id: v.id,
+      kind: "valley" as const,
+      points: toCanvas(v.points),
+      label: v.label ?? "VALLEY",
+    })),
+    confidence: detected.confidence,
+  };
+}
 
 export async function runAIEstimatePipeline(
   address: string,
@@ -165,6 +214,39 @@ export async function runAIEstimatePipeline(
     x: p.x + cropOffset.x,
     y: p.y + cropOffset.y,
   });
+
+  // Fire the recreational roof-structure annotation in parallel with the
+  // Solar mask / DSM / SAM work below. It's a separate GPT-4o call so we
+  // don't want it serialized after the eaves pipeline. Awaited via
+  // `resolveRoofStructure()` at each return path; if the call fails the
+  // result is undefined and we just skip the overlay.
+  const roofStructurePromise: Promise<DetectedRoofStructure | null> = image
+    ? detectRoofStructureViaVision(
+        workImage,
+        didCrop
+          ? null
+          : (buildingBoxPx ?? buildingPointPx ?? null),
+      )
+    : Promise.resolve(null);
+  const resolveRoofStructure = async (): Promise<RoofStructure | undefined> => {
+    if (!image) return undefined;
+    const detected = await roofStructurePromise;
+    if (!detected) {
+      notes.push("Roof structure overlay unavailable (vision call failed)");
+      return undefined;
+    }
+    notes.push(
+      `Roof structure: ${detected.ridges.length} ridge(s), ${detected.valleys.length} valley(s) @ ${Math.round(
+        detected.confidence * 100,
+      )}% confidence`,
+    );
+    return detectedToCanvasRoofStructure(
+      detected,
+      cropOffset,
+      image.width,
+      image.height,
+    );
+  };
 
   // 4a. PRIMARY: Google Solar API building mask (GeoTIFF) + DSM-based
   // edge classifier. Pre-segmented server-side by Google. The mask gives
@@ -366,6 +448,7 @@ export async function runAIEstimatePipeline(
         `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts`,
       );
 
+      const roofStructure = await resolveRoofStructure();
       return {
         geocoded,
         measurements,
@@ -380,6 +463,7 @@ export async function runAIEstimatePipeline(
           height: image.height,
           zoom: image.zoom,
         },
+        roofStructure,
       };
     }
     notes.push(
@@ -439,6 +523,7 @@ export async function runAIEstimatePipeline(
         stories: estimatedStories,
       });
 
+      const roofStructure = await resolveRoofStructure();
       return {
         geocoded,
         measurements,
@@ -453,6 +538,7 @@ export async function runAIEstimatePipeline(
           height: image.height,
           zoom: image.zoom,
         },
+        roofStructure,
       };
     }
     notes.push(
@@ -464,6 +550,7 @@ export async function runAIEstimatePipeline(
 
   // 6. Fallback — mock geometry (with the real aerial image as background
   // if we got that far).
+  const roofStructure = await resolveRoofStructure();
   return {
     geocoded,
     measurements: sampleMeasurements,
@@ -480,5 +567,6 @@ export async function runAIEstimatePipeline(
           zoom: image.zoom,
         }
       : undefined,
+    roofStructure,
   };
 }
