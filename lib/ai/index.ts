@@ -268,7 +268,12 @@ export async function runAIEstimatePipeline(
       // distance via pixelLengthToFeet), then transform into canvas space
       // before stuffing into EditableLine — the SVG renders eaves in the
       // 900×580 canvas viewBox, not in raw image-pixel coords.
-      const imageSpaceEdges = classifiedEaveLatLng.map((edge) => {
+      // Drop eaves shorter than 3 ft on the ground — those are mask
+      // artifacts at the corners of the simplified polygon, not real
+      // gutter runs, and they show up as visual debris.
+      const MIN_EAVE_FT = 3;
+      const imageSpaceEdges: Array<readonly [{ x: number; y: number }, { x: number; y: number }]> = [];
+      for (const edge of classifiedEaveLatLng) {
         const a = latLngToImagePixel(
           edge.a.lat,
           edge.a.lng,
@@ -287,14 +292,14 @@ export async function runAIEstimatePipeline(
           image.width,
           image.height,
         );
-        return [a, b] as const;
-      });
-      for (const [a, b] of imageSpaceEdges) {
-        totalEaveLF += pixelLengthToFeet(
+        const ft = pixelLengthToFeet(
           Math.hypot(b.x - a.x, b.y - a.y),
           geocoded.lat,
           image.zoom,
         );
+        if (ft < MIN_EAVE_FT) continue;
+        imageSpaceEdges.push([a, b]);
+        totalEaveLF += ft;
       }
       totalEaveLF *= 1.08; // waste factor
       eaves = imageSpaceEdges.map(([a, b], i) => ({

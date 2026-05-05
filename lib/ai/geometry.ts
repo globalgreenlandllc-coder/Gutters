@@ -55,6 +55,32 @@ export function latLngToImagePixel(
   };
 }
 
+/**
+ * Inverse of `latLngToImagePixel` — recover lat/lng from a pixel coord
+ * inside the same Static Maps tile. Used after orthogonal regularization
+ * (which happens in image-pixel space) so the DSM edge classifier can
+ * still receive lat/lng inputs.
+ */
+export function imagePixelToLatLng(
+  x: number,
+  y: number,
+  centerLat: number,
+  centerLng: number,
+  zoom: number,
+  imageWidth: number,
+  imageHeight: number,
+): { lat: number; lng: number } {
+  const mpp = metersPerPixel(centerLat, zoom);
+  const metersPerLat = 111_320;
+  const metersPerLng = 111_320 * Math.cos((centerLat * Math.PI) / 180);
+  const dxMeters = (x - imageWidth / 2) * mpp;
+  const dyMeters = -(y - imageHeight / 2) * mpp;
+  return {
+    lat: centerLat + dyMeters / metersPerLat,
+    lng: centerLng + dxMeters / metersPerLng,
+  };
+}
+
 export function polylineLengthPx(points: { x: number; y: number }[]): number {
   let total = 0;
   for (let i = 1; i < points.length; i++) {
@@ -107,7 +133,7 @@ export function buildEditableLines(
  * noisy SAM polygon (often 30–80 verts) becomes a clean architectural outline
  * (typically 6–14 verts that match the actual roof corners).
  */
-function simplify(points: Pt[], epsilon: number): Pt[] {
+export function simplify(points: Pt[], epsilon: number): Pt[] {
   if (points.length < 3) return points;
   let maxDist = 0;
   let index = 0;
@@ -125,6 +151,125 @@ function simplify(points: Pt[], epsilon: number): Pt[] {
     return left.slice(0, -1).concat(right);
   }
   return [points[0], points[last]];
+}
+
+/**
+ * Snap a closed polygon to its dominant rectilinear grid. Most residential
+ * roofs sit on perpendicular wall axes — the raw mask boundary is jagged
+ * because mask pixels are 0.5m squares but the building wall is typically
+ * straighter than that. After Douglas–Peucker simplifies away most of the
+ * jaggedness, this regularizer:
+ *
+ *   1. Finds the dominant edge angle θ (mod 90°) — every edge is either
+ *      "along θ" or "perpendicular to θ".
+ *   2. Rotates the polygon so θ becomes horizontal.
+ *   3. Merges adjacent same-axis edges (a 5° kink between two horizontals
+ *      is just simplification noise; collapse it to a single horizontal).
+ *   4. For each horizontal edge, forces its two endpoints to share a y
+ *      (the average of their original ys). Mirrors that for vertical
+ *      edges. Each vertex is the corner of exactly one H and one V edge,
+ *      so x and y constraints don't conflict.
+ *   5. Rotates back.
+ *
+ * Result: the building outline becomes a clean staircase of right angles,
+ * which is what residential roofs actually look like from above.
+ */
+export function orthogonalizePolygon(points: Pt[]): Pt[] {
+  if (points.length < 4) return points;
+
+  // 1. Dominant angle: histogram of edge angles modulo π/2 (i.e. fold
+  // four-fold-symmetric bins). Weight each angle by its edge length so
+  // long walls dominate over short noise edges.
+  const BINS = 90;
+  const buckets = new Array<number>(BINS).fill(0);
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    let ang = Math.atan2(dy, dx);
+    // Fold to [0, π/2) — we don't care about direction, only orientation.
+    ang = ((ang % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
+    const bin = Math.min(BINS - 1, Math.floor((ang / (Math.PI / 2)) * BINS));
+    buckets[bin] += len;
+  }
+  let peakBin = 0;
+  for (let i = 1; i < BINS; i++) {
+    if (buckets[i] > buckets[peakBin]) peakBin = i;
+  }
+  const theta = ((peakBin + 0.5) / BINS) * (Math.PI / 2);
+
+  // 2. Rotate around centroid by -θ.
+  let cx = 0;
+  let cy = 0;
+  for (const p of points) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= points.length;
+  cy /= points.length;
+  const cosT = Math.cos(-theta);
+  const sinT = Math.sin(-theta);
+  let rotated: Pt[] = points.map((p) => ({
+    x: cx + (p.x - cx) * cosT - (p.y - cy) * sinT,
+    y: cy + (p.x - cx) * sinT + (p.y - cy) * cosT,
+  }));
+
+  // 3. Classify each edge as H (horizontal-ish) or V; merge adjacent
+  // same-class edges by dropping the shared vertex. Repeat until stable —
+  // a single pass can leave runs of 3+ same-class edges if simplification
+  // produced near-collinear segments.
+  const classify = (a: Pt, b: Pt): "H" | "V" =>
+    Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? "H" : "V";
+  let changed = true;
+  while (changed && rotated.length > 4) {
+    changed = false;
+    for (let i = 0; i < rotated.length; i++) {
+      const prev = rotated[(i - 1 + rotated.length) % rotated.length];
+      const curr = rotated[i];
+      const next = rotated[(i + 1) % rotated.length];
+      const c1 = classify(prev, curr);
+      const c2 = classify(curr, next);
+      if (c1 === c2) {
+        rotated.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  if (rotated.length < 4) {
+    // Degenerate (ortho regularization collapsed it) — return original
+    // simplified polygon, the caller will still get usable edges.
+    return points;
+  }
+
+  // 4. Snap each H edge to a constant y (avg of endpoints), each V edge
+  // to a constant x. Apply in two passes so each vertex's x and y are
+  // both set independently by their respective H/V edges.
+  const snapped = rotated.map((p) => ({ ...p }));
+  for (let i = 0; i < snapped.length; i++) {
+    const a = snapped[i];
+    const b = snapped[(i + 1) % snapped.length];
+    if (classify(a, b) === "H") {
+      const y = (a.y + b.y) / 2;
+      a.y = y;
+      b.y = y;
+    } else {
+      const x = (a.x + b.x) / 2;
+      a.x = x;
+      b.x = x;
+    }
+  }
+
+  // 5. Rotate back by +θ around centroid.
+  const cosTb = Math.cos(theta);
+  const sinTb = Math.sin(theta);
+  return snapped.map((p) => ({
+    x: cx + (p.x - cx) * cosTb - (p.y - cy) * sinTb,
+    y: cy + (p.x - cx) * sinTb + (p.y - cy) * cosTb,
+  }));
 }
 
 function perpendicularDistance(p: Pt, a: Pt, b: Pt): number {

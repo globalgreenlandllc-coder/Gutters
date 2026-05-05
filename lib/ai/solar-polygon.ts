@@ -2,7 +2,12 @@ import "server-only";
 import buffer from "@turf/buffer";
 import { polygon as turfPolygon } from "@turf/helpers";
 import type { SolarMaskOutcome } from "./solar-mask";
-import { latLngToImagePixel } from "./geometry";
+import {
+  imagePixelToLatLng,
+  latLngToImagePixel,
+  orthogonalizePolygon,
+  simplify,
+} from "./geometry";
 import type { RoofPolygon } from "./sam";
 
 /** Roof overhang from wall (typical residential = 12-18in). Used to expand
@@ -122,12 +127,28 @@ export function polygonFromSolarMask(
 
   if (downsampled.length < 8) return null;
 
+  // 5. Architectural cleanup. The raw boundary follows mask pixels (0.5m
+  // squares) and looks jagged — Gemini-style clean rectilinear lines come
+  // from two passes:
+  //   a) Douglas–Peucker collapses near-colinear noise. Epsilon ≈ 0.6m in
+  //      image-pixel space (12 px at zoom-20 ≈ 0.6m on the ground): keeps
+  //      true corners, drops sub-foot zigzag from the mask.
+  //   b) Orthogonal regularization: snap edges to the dominant building
+  //      axis ± 90° so walls become straight, like an architectural plan.
+  const SIMPLIFY_EPSILON_PX = 12;
+  const simplified = simplify(downsampled, SIMPLIFY_EPSILON_PX);
+  const cleaned =
+    simplified.length >= 4
+      ? orthogonalizePolygon(simplified)
+      : simplified;
+  if (cleaned.length < 4) return null;
+
   // bbox + area in satellite tile space
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const p of downsampled) {
+  for (const p of cleaned) {
     if (p.x < minX) minX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.x > maxX) maxX = p.x;
@@ -135,7 +156,7 @@ export function polygonFromSolarMask(
   }
 
   const polygon: RoofPolygon = {
-    points: downsampled,
+    points: cleaned,
     bbox: {
       x: Math.round(minX),
       y: Math.round(minY),
@@ -145,9 +166,28 @@ export function polygonFromSolarMask(
     areaFraction: mask.areaFraction,
   };
 
-  // Convert the buffered ring back to {lat, lng} objects for the
-  // downstream DSM edge classifier, which works in lat/lng space.
-  const ringObjects = bufferedRing.map(([lng, lat]) => ({ lat, lng }));
+  // Project the *cleaned* polygon back to lat/lng so the DSM edge
+  // classifier samples elevation at the same vertices we're rendering —
+  // otherwise classifier and renderer would disagree on which edges exist.
+  const ringObjects = cleaned.map((p) =>
+    imagePixelToLatLng(
+      p.x,
+      p.y,
+      satelliteCenter.lat,
+      satelliteCenter.lng,
+      satelliteZoom,
+      satelliteWidth,
+      satelliteHeight,
+    ),
+  );
+  // Close the ring (DSM walker iterates ring[i]→ring[i+1])
+  if (
+    ringObjects.length > 0 &&
+    (ringObjects[0].lat !== ringObjects[ringObjects.length - 1].lat ||
+      ringObjects[0].lng !== ringObjects[ringObjects.length - 1].lng)
+  ) {
+    ringObjects.push(ringObjects[0]);
+  }
 
   return { polygon, ringLatLng: ringObjects };
 }
