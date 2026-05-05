@@ -43,17 +43,20 @@ export async function segmentRoofViaSam(
   const cx = Math.round(pointPrompt?.x ?? image.width / 2);
   const cy = Math.round(pointPrompt?.y ?? image.height / 2);
 
-  // SAM 2 needs a box prompt to grow a useful mask — point-only prompts
-  // mark a single pixel and stop. Box covers most of the cropped image
-  // (caller already trimmed to the building footprint), point sits at
-  // the building center.
-  const margin = Math.round(Math.min(image.width, image.height) * 0.08);
+  // SAM 2 with combined point+box prompts was returning 0.4% masks (just
+  // the prompt point). With a box ALONE, SAM treats the box as "find the
+  // dominant object inside this region" — which on a building-cropped
+  // tile is the building. Caller already cropped tightly to the footprint
+  // so a small margin gives SAM a clean working area.
+  const margin = Math.round(Math.min(image.width, image.height) * 0.05);
   const box = {
     x_min: margin,
     y_min: margin,
     x_max: image.width - margin,
     y_max: image.height - margin,
   };
+  void cx;
+  void cy;
 
   let res: Response;
   try {
@@ -74,7 +77,6 @@ export async function segmentRoofViaSam(
             y_max: box.y_max,
             label: 1,
           },
-          { type: "point", x: cx, y: cy, label: 1 },
         ],
       }),
       cache: "no-store",
