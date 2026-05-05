@@ -3,8 +3,20 @@ import { getActiveApiKey } from "@/lib/api-keys";
 
 export type RoofSegment = {
   pitchDegrees: number;
+  /** Compass direction the slope FACES (0 = north, 90 = east). Ridge runs
+   *  perpendicular to this. */
   azimuthDegrees: number;
   areaMeters2: number;
+  /** Geographic center of the segment. Used to anchor ridge lines on
+   *  the correct roof plane. */
+  center: { lat: number; lng: number } | null;
+  /** Lat/lng axis-aligned bounding box of the segment — gives us the
+   *  ridge length (the perpendicular-to-azimuth dimension of the bbox). */
+  boundingBoxNE: { lat: number; lng: number } | null;
+  boundingBoxSW: { lat: number; lng: number } | null;
+  /** Plane height at center (m). Lets us pick the highest segment as the
+   *  primary ridge when buildings have multiple gable masses. */
+  planeHeightMeters: number | null;
 };
 
 export type BuildingInsights = {
@@ -15,6 +27,7 @@ export type BuildingInsights = {
   source: "google_solar";
 };
 
+type LatLngLiteral = { latitude?: number; longitude?: number };
 type RawSolarResponse = {
   boundingBox?: {
     ne: { latitude: number; longitude: number };
@@ -26,9 +39,25 @@ type RawSolarResponse = {
       pitchDegrees?: number;
       azimuthDegrees?: number;
       stats?: { areaMeters2?: number };
+      center?: LatLngLiteral;
+      boundingBox?: { ne?: LatLngLiteral; sw?: LatLngLiteral };
+      planeHeightAtCenterMeters?: number;
     }>;
   };
 };
+
+function latLngFromLiteral(
+  l: LatLngLiteral | undefined,
+): { lat: number; lng: number } | null {
+  if (
+    !l ||
+    typeof l.latitude !== "number" ||
+    typeof l.longitude !== "number"
+  ) {
+    return null;
+  }
+  return { lat: l.latitude, lng: l.longitude };
+}
 
 export async function getBuildingInsights(
   lat: number,
@@ -66,6 +95,13 @@ export async function getBuildingInsights(
         pitchDegrees: s.pitchDegrees ?? 0,
         azimuthDegrees: s.azimuthDegrees ?? 0,
         areaMeters2: s.stats?.areaMeters2 ?? 0,
+        center: latLngFromLiteral(s.center),
+        boundingBoxNE: latLngFromLiteral(s.boundingBox?.ne),
+        boundingBoxSW: latLngFromLiteral(s.boundingBox?.sw),
+        planeHeightMeters:
+          typeof s.planeHeightAtCenterMeters === "number"
+            ? s.planeHeightAtCenterMeters
+            : null,
       })),
       totalRoofAreaMeters2: data.solarPotential?.wholeRoofStats?.areaMeters2 ?? 0,
       source: "google_solar",

@@ -1,7 +1,11 @@
 import "server-only";
 import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
-import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
+import {
+  estimateStoriesFromInsights,
+  getBuildingInsights,
+  type RoofSegment,
+} from "./solar";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
@@ -13,6 +17,7 @@ import {
   detectRoofStructureViaVision,
   type DetectedRoofStructure,
 } from "./roof-structure";
+import { buildSegmentRidges } from "./segment-ridges";
 import {
   buildEditableLines,
   countCorners,
@@ -65,22 +70,31 @@ export type EstimateResult = {
  * render lines straight onto the displayed satellite tile. Ridges and
  * valleys whose MIDPOINT falls outside the building footprint are
  * dropped — those are vision-call hallucinations placed in the yard.
+ *
+ * When `solarRidgesImagePx` is supplied (Solar API roof segments are
+ * available), the ridges from that deterministic source REPLACE any
+ * vision-detected ridges. The vision call still contributes valleys —
+ * Solar's per-segment data doesn't tell us where two adjacent
+ * segments meet at an inside corner.
  */
 function detectedToCanvasRoofStructure(
-  detected: DetectedRoofStructure,
+  detected: DetectedRoofStructure | null,
   cropOffset: { x: number; y: number },
   imageWidth: number,
   imageHeight: number,
   /** Footprint polygon in ORIGINAL image-pixel space, used as the
    *  inside-test for filtering out off-roof labels. */
   footprintImagePx: { x: number; y: number }[] | null,
+  /** Deterministic ridges in ORIGINAL image-pixel space, derived from
+   *  Solar API roof segments. When non-empty, replaces vision ridges. */
+  solarRidgesImagePx: { id: string; a: { x: number; y: number }; b: { x: number; y: number } }[],
 ): RoofStructure {
   const toOriginal = (pts: { x: number; y: number }[]) =>
     pts.map((p) => ({ x: p.x + cropOffset.x, y: p.y + cropOffset.y }));
   const toCanvas = (pts: { x: number; y: number }[]) =>
     transformToCanvas(toOriginal(pts), imageWidth, imageHeight);
 
-  const insideFootprint = (line: { points: { x: number; y: number }[] }) => {
+  const insideFootprintCropped = (line: { points: { x: number; y: number }[] }) => {
     if (!footprintImagePx || footprintImagePx.length < 3) return true;
     const original = toOriginal(line.points);
     if (original.length < 2) return false;
@@ -90,25 +104,48 @@ function detectedToCanvasRoofStructure(
     return pointInPolygon(mid, footprintImagePx);
   };
 
+  const insideFootprintOriginal = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    if (!footprintImagePx || footprintImagePx.length < 3) return true;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    return pointInPolygon(mid, footprintImagePx);
+  };
+
+  // Solar ridges are already in ORIGINAL image-pixel space (from
+  // latLngToImagePixel) — skip the cropOffset translation and go
+  // straight to canvas coords via transformToCanvas.
+  const ridges =
+    solarRidgesImagePx.length > 0
+      ? solarRidgesImagePx
+          .filter((r) => insideFootprintOriginal(r.a, r.b))
+          .map((r) => ({
+            id: r.id,
+            kind: "ridge" as const,
+            points: transformToCanvas([r.a, r.b], imageWidth, imageHeight),
+            label: "RIDGE",
+          }))
+      : (detected?.ridges ?? [])
+          .filter(insideFootprintCropped)
+          .map((r) => ({
+            id: r.id,
+            kind: "ridge" as const,
+            points: toCanvas(r.points),
+            label: r.label ?? "RIDGE",
+          }));
+
+  const valleys = (detected?.valleys ?? [])
+    .filter(insideFootprintCropped)
+    .map((v) => ({
+      id: v.id,
+      kind: "valley" as const,
+      points: toCanvas(v.points),
+      label: v.label ?? "VALLEY",
+    }));
+
   return {
-    perimeter: toCanvas(detected.perimeter),
-    ridges: detected.ridges
-      .filter(insideFootprint)
-      .map((r) => ({
-        id: r.id,
-        kind: "ridge" as const,
-        points: toCanvas(r.points),
-        label: r.label ?? "RIDGE",
-      })),
-    valleys: detected.valleys
-      .filter(insideFootprint)
-      .map((v) => ({
-        id: v.id,
-        kind: "valley" as const,
-        points: toCanvas(v.points),
-        label: v.label ?? "VALLEY",
-      })),
-    confidence: detected.confidence,
+    perimeter: detected ? toCanvas(detected.perimeter) : [],
+    ridges,
+    valleys,
+    confidence: detected?.confidence ?? 0.85,
   };
 }
 
@@ -154,9 +191,11 @@ export async function runAIEstimatePipeline(
   let buildingBoxPx:
     | { x1: number; y1: number; x2: number; y2: number }
     | null = null;
+  let solarRoofSegments: RoofSegment[] = [];
   if (image) {
     const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
     if (insights) {
+      solarRoofSegments = insights.roofSegments;
       estimatedStories = estimateStoriesFromInsights(insights);
       notes.push(
         `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
@@ -250,25 +289,39 @@ export async function runAIEstimatePipeline(
   const resolveRoofStructure = async (): Promise<RoofStructure | undefined> => {
     if (!image) return undefined;
     const detected = await roofStructurePromise;
-    if (!detected) {
-      notes.push("Roof structure overlay unavailable (vision call failed)");
+
+    // Build deterministic ridges from the Solar roof-segment data we
+    // already fetched. Each segment's center + azimuth + bbox gives a
+    // ridge line anchored on the actual roof plane — no vision
+    // hallucination, no off-roof labels.
+    const solarRidges =
+      solarRoofSegments.length > 0
+        ? buildSegmentRidges(
+            solarRoofSegments,
+            { lat: geocoded.lat, lng: geocoded.lng },
+            image.zoom,
+            image.width,
+            image.height,
+          )
+        : [];
+
+    if (!detected && solarRidges.length === 0) {
+      notes.push("Roof structure overlay unavailable (no Solar segments, vision call failed)");
       return undefined;
     }
+
     const projected = detectedToCanvasRoofStructure(
       detected,
       cropOffset,
       image.width,
       image.height,
       roofPolygon ? roofPolygon.points : null,
+      solarRidges,
     );
-    const dropped =
-      detected.ridges.length -
-      projected.ridges.length +
-      (detected.valleys.length - projected.valleys.length);
+    const ridgeSource =
+      solarRidges.length > 0 ? "Solar segments" : "vision";
     notes.push(
-      `Roof structure: ${projected.ridges.length} ridge(s), ${projected.valleys.length} valley(s) @ ${Math.round(
-        detected.confidence * 100,
-      )}% confidence${dropped > 0 ? ` (${dropped} off-roof label(s) dropped)` : ""}`,
+      `Roof structure: ${projected.ridges.length} ridge(s) (${ridgeSource}), ${projected.valleys.length} valley(s)`,
     );
     return projected;
   };
