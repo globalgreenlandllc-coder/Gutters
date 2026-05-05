@@ -62,20 +62,14 @@ export function polygonFromSolarMask(
   // of pixels off the actual building). Pick the connected component
   // containing the pixel nearest the mask center instead.
   //
-  // FIRST, morphologically CLOSE the mask (dilate then erode by 2 px =
-  // 1 m on the ground). The Solar mask sometimes has small gaps between
-  // roof planes (e.g. a thin valley separating residence from garage)
-  // that split what should be one building into two connected
-  // components. A 1 m close fills those gaps without merging
-  // neighboring houses — typical residential lot setbacks are 3 m+.
-  const rawIsFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
-  const closedMask = morphologicalClose(
-    mask.width,
-    mask.height,
-    rawIsFg,
-    2,
-  );
-  const isFg = (x: number, y: number) => closedMask[y * mask.width + x] > 0;
+  // (Earlier we morphologically closed the mask before tracing to bridge
+  // sub-meter gaps between roof planes. That backfired on dense lots:
+  // any building within ~1 m of a neighbor — sheds, attached carports,
+  // detached garages — got merged into the same component, and the
+  // Moore-Neighbor trace then walks around the merged region's outer
+  // boundary, producing segments that cut through the actual roof.
+  // Reverted: trace the raw connected component containing the seed.)
+  const isFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
 
   const seed = findSeedNearCenter(mask.width, mask.height, isFg);
   if (!seed) return null;
@@ -160,14 +154,29 @@ export function polygonFromSolarMask(
   //      axis ± 90° so walls become straight, like an architectural plan.
   const SIMPLIFY_EPSILON_PX = 6;
   const simplified = simplify(downsampled, SIMPLIFY_EPSILON_PX);
-  // Try ortho regularization, but reject the result if it produced a
-  // self-folding polygon — common on complex 15+-segment hip+gable roofs
-  // where snap-to-axis collides one wing with another. Fall back through
-  // (DP-only → raw boundary) until we get a clean ring.
+  // Try ortho regularization, but reject it on three failure modes
+  // common on complex 15+-vertex hip+gable polygons:
+  //   a) self-folding ring (snap-to-axis collided two wings),
+  //   b) area shrunk >15% (we lost a meaningful porch / wing),
+  //   c) any vertex moved >2 m (~40 px at zoom 20) from its DP-input
+  //      position — a strong signal the dominant-angle estimate is
+  //      wrong for this polygon (e.g. two roof axes 45° apart).
+  // On any failure, fall back to the DP-simplified polygon. On
+  // self-intersection of the DP polygon itself, fall back to the raw
+  // downsampled boundary.
+  const MAX_VERTEX_DRIFT_PX = 40;
+  const MIN_AREA_RATIO = 0.85;
   let cleaned: Pt[];
   if (simplified.length >= 4) {
     const ortho = orthogonalizePolygon(simplified);
-    if (ortho.length >= 4 && !polygonSelfIntersects(ortho)) {
+    const orthoOk =
+      ortho.length >= 4 &&
+      !polygonSelfIntersects(ortho) &&
+      ortho.length === simplified.length &&
+      polygonArea(ortho) / Math.max(1, polygonArea(simplified)) >=
+        MIN_AREA_RATIO &&
+      maxPairwiseDist(simplified, ortho) <= MAX_VERTEX_DRIFT_PX;
+    if (orthoOk) {
       cleaned = ortho;
     } else if (!polygonSelfIntersects(simplified)) {
       cleaned = simplified;
@@ -232,68 +241,31 @@ export function polygonFromSolarMask(
 /*   Moore-Neighbor boundary tracing (same as sam.ts but inlined to   */
 /*   avoid pulling pngjs import into this module)                     */
 /* ------------------------------------------------------------------ */
+/** Shoelace formula. Sign is unsigned because we only compare ratios. */
+function polygonArea(points: Pt[]): number {
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
 /**
- * Morphological CLOSE: dilate by `radius` then erode by `radius`.
- * Used to bridge sub-meter gaps in the Solar mask so the connected
- * component traced from the seed includes ALL of the building's roof
- * planes, not just the one the seed happens to land in.
- *
- * Square structuring element (Chebyshev distance) — chosen over a
- * Euclidean disk because it's branch-free and the rectilinear bias
- * matches the orthogonal regularization that runs downstream. O(WHr²)
- * which is fine for 200×201 masks at r=2.
+ * Largest displacement between two same-length polygons walked in
+ * order. Used to detect when ortho regularization yanked a corner
+ * far from where it actually was — meaning the dominant-axis estimate
+ * was wrong for this shape and the result no longer matches the roof.
  */
-function morphologicalClose(
-  width: number,
-  height: number,
-  isFg: (x: number, y: number) => boolean,
-  radius: number,
-): Uint8Array {
-  const total = width * height;
-  // Dilate
-  const dilated = new Uint8Array(total);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const x0 = Math.max(0, x - radius);
-      const x1 = Math.min(width - 1, x + radius);
-      const y0 = Math.max(0, y - radius);
-      const y1 = Math.min(height - 1, y + radius);
-      let any = false;
-      outer: for (let yy = y0; yy <= y1; yy++) {
-        for (let xx = x0; xx <= x1; xx++) {
-          if (isFg(xx, yy)) {
-            any = true;
-            break outer;
-          }
-        }
-      }
-      if (any) dilated[y * width + x] = 1;
-    }
+function maxPairwiseDist(a: Pt[], b: Pt[]): number {
+  if (a.length !== b.length) return Infinity;
+  let max = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y);
+    if (d > max) max = d;
   }
-  // Erode (boundary pixels treated as background, so erosion shrinks
-  // along image edges — fine for our use because the building is well
-  // away from the mask edge).
-  const closed = new Uint8Array(total);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const x0 = x - radius;
-      const x1 = x + radius;
-      const y0 = y - radius;
-      const y1 = y + radius;
-      if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) continue;
-      let all = true;
-      outer: for (let yy = y0; yy <= y1; yy++) {
-        for (let xx = x0; xx <= x1; xx++) {
-          if (!dilated[yy * width + xx]) {
-            all = false;
-            break outer;
-          }
-        }
-      }
-      if (all) closed[y * width + x] = 1;
-    }
-  }
-  return closed;
+  return max;
 }
 
 /**
