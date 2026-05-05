@@ -1,5 +1,6 @@
 import "server-only";
 import { fromArrayBuffer, type GeoTIFFImage } from "geotiff";
+import proj4 from "proj4";
 import { getActiveApiKey } from "@/lib/api-keys";
 
 export type SolarMaskOutcome =
@@ -9,12 +10,14 @@ export type SolarMaskOutcome =
       mask: Uint8Array;
       width: number;
       height: number;
-      /** Coordinate system the origin/pixelSize values are expressed in. */
-      crs: "WGS84" | "WebMercator";
+      /** Detected CRS label (for diagnostic display). */
+      crsLabel: string;
       /** Top-left corner of the (0,0) pixel in the mask's native CRS. */
       origin: { x: number; y: number };
       /** Per-pixel size in the native CRS (y is signed; usually negative). */
       pixelSize: { x: number; y: number };
+      /** Convert a native-CRS point into WGS84 lat/lng. */
+      toLatLng: (x: number, y: number) => { lat: number; lng: number };
       /** Coverage stat for diagnostics. */
       areaFraction: number;
     }
@@ -131,14 +134,13 @@ export async function getRoofMaskFromSolar(
   const width = image.getWidth();
   const height = image.getHeight();
 
-  // 4. Extract georeferencing. geotiff.js exposes convenience methods
-  // that handle ModelTiepoint / ModelPixelScale / ModelTransformation
-  // matrix variants transparently.
+  // 4. Extract georeferencing.
   let originX: number;
   let originY: number;
   let pxX: number;
   let pxY: number;
-  let crs: "WGS84" | "WebMercator";
+  let crsLabel: string;
+  let toLatLng: (x: number, y: number) => { lat: number; lng: number };
   try {
     const origin = image.getOrigin();
     const resolution = image.getResolution();
@@ -146,13 +148,49 @@ export async function getRoofMaskFromSolar(
     originY = origin[1];
     pxX = resolution[0];
     pxY = resolution[1];
-    // Sniff the coordinate system. WGS84 lng/lat ranges are well within
-    // ±180 / ±90; Web Mercator easting/northing ranges go up to ~±20M
-    // meters. Solar API typically returns mask GeoTIFFs in EPSG:3857
-    // (Web Mercator) — origin values will be hundreds of thousands.
-    crs = Math.abs(originX) > 360 || Math.abs(originY) > 360
-      ? "WebMercator"
-      : "WGS84";
+
+    // Get the actual EPSG code from the GeoTIFF's GeoKeys. Solar API
+    // returns local UTM zones (e.g. EPSG:32610 for Lake Stevens / WA in
+    // UTM Zone 10N) for sub-meter local accuracy — NOT Web Mercator.
+    const geoKeys = (image.getGeoKeys() ?? {}) as {
+      ProjectedCSTypeGeoKey?: number;
+      GeographicTypeGeoKey?: number;
+    };
+    const epsg = geoKeys.ProjectedCSTypeGeoKey ?? geoKeys.GeographicTypeGeoKey;
+
+    if (!epsg) {
+      crsLabel = "unknown";
+      toLatLng = (x, y) => ({ lat: y, lng: x }); // assume WGS84
+    } else if (epsg === 4326) {
+      crsLabel = "WGS84";
+      toLatLng = (x, y) => ({ lat: y, lng: x });
+    } else {
+      crsLabel = `EPSG:${epsg}`;
+      // proj4 ships definitions for common EPSGs (4326, 3857, all UTM zones).
+      // For an arbitrary EPSG we'd need to register a definition; try
+      // the canonical name first and if proj4 doesn't recognize it we
+      // fall back to a Web Mercator inverse (good enough as a sanity-
+      // check rendering even if slightly off).
+      const epsgName = `EPSG:${epsg}`;
+      try {
+        // proj4(from, to) returns a converter; calling it on [x,y] gives [lng,lat].
+        const converter = proj4(epsgName, "EPSG:4326");
+        toLatLng = (x, y) => {
+          const [lng, lat] = converter.forward([x, y]);
+          return { lat, lng };
+        };
+      } catch {
+        // Fallback: treat as Web Mercator
+        const R = 6378137;
+        const RAD_TO_DEG = 180 / Math.PI;
+        toLatLng = (x, y) => ({
+          lng: (x / R) * RAD_TO_DEG,
+          lat:
+            (Math.atan(Math.exp(y / R)) * 2 - Math.PI / 2) * RAD_TO_DEG,
+        });
+        crsLabel = `${epsgName} (proj4 unknown — using Web Mercator fallback)`;
+      }
+    }
   } catch (e) {
     return {
       ok: false,
@@ -184,26 +222,10 @@ export async function getRoofMaskFromSolar(
     mask: raster,
     width,
     height,
-    crs,
+    crsLabel,
     origin: { x: originX, y: originY },
     pixelSize: { x: pxX, y: pxY },
+    toLatLng,
     areaFraction: fgCount / totalPx,
   };
-}
-
-/**
- * Convert a Web Mercator (EPSG:3857) easting/northing in meters to
- * WGS84 lng/lat in degrees. Used to interpret Solar API mask GeoTIFFs
- * which are typically in Web Mercator.
- */
-export function webMercatorToLatLng(
-  x: number,
-  y: number,
-): { lat: number; lng: number } {
-  const R = 6378137; // WGS84 semi-major axis (Web Mercator's reference sphere)
-  const RAD_TO_DEG = 180 / Math.PI;
-  const lng = (x / R) * RAD_TO_DEG;
-  const lat =
-    (Math.atan(Math.exp(y / R)) * 2 - Math.PI / 2) * RAD_TO_DEG;
-  return { lat, lng };
 }

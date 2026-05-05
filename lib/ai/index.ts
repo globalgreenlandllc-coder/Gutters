@@ -180,10 +180,7 @@ export async function runAIEstimatePipeline(
       if (polygon && polygon.points.length >= 8) {
         roofPolygon = polygon;
         notes.push(
-          `Solar mask (${solarMask.crs}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts → bbox ${polygon.bbox.width}×${polygon.bbox.height} px @ (${polygon.bbox.x},${polygon.bbox.y}) (${(solarMask.areaFraction * 100).toFixed(1)}% mask coverage)`,
-        );
-        notes.push(
-          `Solar georef: origin=(${solarMask.origin.x.toFixed(2)},${solarMask.origin.y.toFixed(2)}) pxSize=(${solarMask.pixelSize.x.toFixed(4)},${solarMask.pixelSize.y.toFixed(4)})`,
+          `Solar mask (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts → bbox ${polygon.bbox.width}×${polygon.bbox.height} px @ (${polygon.bbox.x},${polygon.bbox.y})`,
         );
       } else {
         notes.push(
