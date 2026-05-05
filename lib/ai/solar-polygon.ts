@@ -1,5 +1,5 @@
 import "server-only";
-import type { SolarMaskOutcome } from "./solar-mask";
+import { webMercatorToLatLng, type SolarMaskOutcome } from "./solar-mask";
 import { latLngToImagePixel } from "./geometry";
 import type { RoofPolygon } from "./sam";
 
@@ -31,10 +31,17 @@ export function polygonFromSolarMask(
   if (boundary.length < 8) return null;
 
   // 2 + 3. Project each boundary pixel to satellite tile pixel space.
-  // mask pixel (i, j) → lat/lng → satellite tile pixel.
+  //   mask pixel (i, j) → native CRS coords → lat/lng → satellite pixel
+  // For WGS84 GeoTIFFs the native coords are already lat/lng. For Web
+  // Mercator (EPSG:3857), they're easting/northing in meters and need
+  // an unprojection step before they make sense to latLngToImagePixel.
   const projected: Pt[] = boundary.map((p) => {
-    const lng = mask.origin.lng + p.x * mask.pixelSize.lng;
-    const lat = mask.origin.lat + p.y * mask.pixelSize.lat;
+    const nativeX = mask.origin.x + p.x * mask.pixelSize.x;
+    const nativeY = mask.origin.y + p.y * mask.pixelSize.y;
+    const { lat, lng } =
+      mask.crs === "WebMercator"
+        ? webMercatorToLatLng(nativeX, nativeY)
+        : { lat: nativeY, lng: nativeX };
     return latLngToImagePixel(
       lat,
       lng,

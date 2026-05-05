@@ -180,7 +180,7 @@ export async function runAIEstimatePipeline(
       if (polygon && polygon.points.length >= 8) {
         roofPolygon = polygon;
         notes.push(
-          `Solar mask: ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts (${(solarMask.areaFraction * 100).toFixed(1)}% bldg coverage)`,
+          `Solar mask (${solarMask.crs}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts (${(solarMask.areaFraction * 100).toFixed(1)}% bldg coverage)`,
         );
       } else {
         notes.push(
