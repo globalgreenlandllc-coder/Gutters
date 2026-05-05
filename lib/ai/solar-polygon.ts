@@ -11,11 +11,15 @@ import {
 } from "./geometry";
 import type { RoofPolygon } from "./sam";
 
-/** Roof overhang from wall. Typical residential overhang is 12-24 in;
- *  0.6 m (~24 in) sits the eave AT the gutter line for most homes. The
- *  earlier 0.45 m left the cyan trace visibly inside the actual roof
- *  edge on satellite tiles where the overhang is generous. */
-const ROOF_OVERHANG_METERS = 0.6;
+/** Roof overhang from wall. Typical residential overhang is 18-30 in;
+ *  0.8 m (~32 in) sits the eave at the gutter line on tiles with
+ *  generous overhangs. Slightly wider than the architectural average is
+ *  preferable here: the cyan trace floating outside the wall by 6 in is
+ *  a non-issue for the contractor — the contractor sees it line up with
+ *  the visible drip edge on the satellite tile — but a trace 6 in
+ *  inside the wall renders ABOVE the drip edge inside the shingles,
+ *  which looks broken even when the math is right. */
+const ROOF_OVERHANG_METERS = 0.8;
 
 export type SolarPolygonResult = {
   /** RoofPolygon in satellite-tile pixel space — what canvas + downstream
@@ -57,7 +61,22 @@ export function polygonFromSolarMask(
   // pixel — which can be a NEIGHBOR's roof (rendering the polygon hundreds
   // of pixels off the actual building). Pick the connected component
   // containing the pixel nearest the mask center instead.
-  const isFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
+  //
+  // FIRST, morphologically CLOSE the mask (dilate then erode by 2 px =
+  // 1 m on the ground). The Solar mask sometimes has small gaps between
+  // roof planes (e.g. a thin valley separating residence from garage)
+  // that split what should be one building into two connected
+  // components. A 1 m close fills those gaps without merging
+  // neighboring houses — typical residential lot setbacks are 3 m+.
+  const rawIsFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
+  const closedMask = morphologicalClose(
+    mask.width,
+    mask.height,
+    rawIsFg,
+    2,
+  );
+  const isFg = (x: number, y: number) => closedMask[y * mask.width + x] > 0;
+
   const seed = findSeedNearCenter(mask.width, mask.height, isFg);
   if (!seed) return null;
   const traceStart = findComponentTopLeft(mask.width, mask.height, isFg, seed);
@@ -213,6 +232,70 @@ export function polygonFromSolarMask(
 /*   Moore-Neighbor boundary tracing (same as sam.ts but inlined to   */
 /*   avoid pulling pngjs import into this module)                     */
 /* ------------------------------------------------------------------ */
+/**
+ * Morphological CLOSE: dilate by `radius` then erode by `radius`.
+ * Used to bridge sub-meter gaps in the Solar mask so the connected
+ * component traced from the seed includes ALL of the building's roof
+ * planes, not just the one the seed happens to land in.
+ *
+ * Square structuring element (Chebyshev distance) — chosen over a
+ * Euclidean disk because it's branch-free and the rectilinear bias
+ * matches the orthogonal regularization that runs downstream. O(WHr²)
+ * which is fine for 200×201 masks at r=2.
+ */
+function morphologicalClose(
+  width: number,
+  height: number,
+  isFg: (x: number, y: number) => boolean,
+  radius: number,
+): Uint8Array {
+  const total = width * height;
+  // Dilate
+  const dilated = new Uint8Array(total);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width - 1, x + radius);
+      const y0 = Math.max(0, y - radius);
+      const y1 = Math.min(height - 1, y + radius);
+      let any = false;
+      outer: for (let yy = y0; yy <= y1; yy++) {
+        for (let xx = x0; xx <= x1; xx++) {
+          if (isFg(xx, yy)) {
+            any = true;
+            break outer;
+          }
+        }
+      }
+      if (any) dilated[y * width + x] = 1;
+    }
+  }
+  // Erode (boundary pixels treated as background, so erosion shrinks
+  // along image edges — fine for our use because the building is well
+  // away from the mask edge).
+  const closed = new Uint8Array(total);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const x0 = x - radius;
+      const x1 = x + radius;
+      const y0 = y - radius;
+      const y1 = y + radius;
+      if (x0 < 0 || x1 >= width || y0 < 0 || y1 >= height) continue;
+      let all = true;
+      outer: for (let yy = y0; yy <= y1; yy++) {
+        for (let xx = x0; xx <= x1; xx++) {
+          if (!dilated[yy * width + xx]) {
+            all = false;
+            break outer;
+          }
+        }
+      }
+      if (all) closed[y * width + x] = 1;
+    }
+  }
+  return closed;
+}
+
 /**
  * Find a foreground pixel close to the mask's center. The Solar API
  * centers the dataLayers tile on the requested lat/lng, so the user's

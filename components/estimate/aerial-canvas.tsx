@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
@@ -163,6 +163,33 @@ export function AerialCanvas({
     }
     setSelectedId(null);
   }
+
+  // Delete / Backspace removes the current selection. Bail when the
+  // keystroke targets a real input — otherwise the contractor types in
+  // the estimate-builder fields and accidentally erases an eave.
+  useEffect(() => {
+    if (!selectedId) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT")
+      ) {
+        return;
+      }
+      e.preventDefault();
+      deleteSelected();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // deleteSelected closes over selectedId/eaves/downspouts; rebinding
+    // when selection changes is enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   return (
     <div
