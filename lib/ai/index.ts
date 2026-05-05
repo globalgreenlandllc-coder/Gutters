@@ -3,6 +3,8 @@ import { geocodeAddress, type GeocodeResult } from "./geocode";
 import { fetchSatelliteImage, type SatImage } from "./static-map";
 import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
+import { getRoofMaskFromSolar } from "./solar-mask";
+import { polygonFromSolarMask } from "./solar-polygon";
 import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
@@ -161,20 +163,44 @@ export async function runAIEstimatePipeline(
     y: p.y + cropOffset.y,
   });
 
-  // 4. SAM 2 roof polygon (optional — fal.ai key required). Gives the
-  // pipeline a pixel-accurate building outline; without it we fall back
-  // to the GPT-4o vision path which under-detects eaves on complex roofs.
+  // 4a. PRIMARY: Google Solar API building mask (GeoTIFF). Pre-segmented
+  // server-side by Google using their proprietary 3D pipeline. Most US
+  // homes have coverage; falls back through SAM 2 → GPT-4o when not.
   let roofPolygon: RoofPolygon | null = null;
   if (image) {
-    // When cropped, point SAM at the center of the cropped image (which
-    // IS the building); when uncropped, point at the building location
-    // computed from Solar.
+    const solarMask = await getRoofMaskFromSolar(geocoded.lat, geocoded.lng);
+    if (solarMask.ok) {
+      const polygon = polygonFromSolarMask(
+        solarMask,
+        { lat: geocoded.lat, lng: geocoded.lng },
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      if (polygon && polygon.points.length >= 8) {
+        roofPolygon = polygon;
+        notes.push(
+          `Solar mask: ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts (${(solarMask.areaFraction * 100).toFixed(1)}% bldg coverage)`,
+        );
+      } else {
+        notes.push(
+          `Solar mask polygon too small (${polygon?.points.length ?? 0} verts) — trying SAM`,
+        );
+      }
+    } else {
+      notes.push(`Solar mask unavailable — ${solarMask.reason}`);
+    }
+  }
+
+  // 4b. FALLBACK: SAM 2 via fal.ai. Only runs when Solar mask wasn't
+  // available (no Solar coverage for the address, or GeoTIFF decode
+  // failed).
+  if (image && !roofPolygon) {
     const samPoint = didCrop
       ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
       : (buildingPointPx ?? undefined);
     const samOutcome = await segmentRoofViaSam(workImage, samPoint);
     if (samOutcome.ok) {
-      // Translate polygon coords from cropped → original image space
       roofPolygon = {
         points: samOutcome.polygon.points.map(translatePoint),
         bbox: {
