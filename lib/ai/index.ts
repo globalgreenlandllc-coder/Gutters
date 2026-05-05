@@ -5,6 +5,8 @@ import { estimateStoriesFromInsights, getBuildingInsights } from "./solar";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
+import { getDsmFromSolar } from "./solar-dsm";
+import { classifyEdgeWithDsm, ringCentroid } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
@@ -163,28 +165,59 @@ export async function runAIEstimatePipeline(
     y: p.y + cropOffset.y,
   });
 
-  // 4a. PRIMARY: Google Solar API building mask (GeoTIFF). Pre-segmented
-  // server-side by Google using their proprietary 3D pipeline. Most US
-  // homes have coverage; falls back through SAM 2 → GPT-4o when not.
+  // 4a. PRIMARY: Google Solar API building mask (GeoTIFF) + DSM-based
+  // edge classifier. Pre-segmented server-side by Google. The mask gives
+  // us the building footprint; the DSM lets us tell eaves from rakes by
+  // elevation analysis at each polygon edge.
   let roofPolygon: RoofPolygon | null = null;
+  type ClassifiedEdge = {
+    a: { lat: number; lng: number };
+    b: { lat: number; lng: number };
+  };
+  let classifiedEaveLatLng: ClassifiedEdge[] | null = null;
   if (image) {
     const solarMask = await getRoofMaskFromSolar(geocoded.lat, geocoded.lng);
     if (solarMask.ok) {
-      const polygon = polygonFromSolarMask(
+      const result = polygonFromSolarMask(
         solarMask,
         { lat: geocoded.lat, lng: geocoded.lng },
         image.zoom,
         image.width,
         image.height,
       );
-      if (polygon && polygon.points.length >= 8) {
-        roofPolygon = polygon;
+      if (result && result.polygon.points.length >= 8) {
+        roofPolygon = result.polygon;
         notes.push(
-          `Solar mask (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${polygon.points.length} polygon verts → bbox ${polygon.bbox.width}×${polygon.bbox.height} px @ (${polygon.bbox.x},${polygon.bbox.y})`,
+          `Solar mask (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${result.polygon.points.length} polygon verts → bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y})`,
         );
+
+        // Try to classify edges using the DSM. If DSM is unavailable
+        // we fall through with all polygon edges as candidate eaves.
+        const dsm = await getDsmFromSolar(geocoded.lat, geocoded.lng);
+        if (dsm.ok) {
+          const ring = result.ringLatLng;
+          const centroid = ringCentroid(ring);
+          const eaves: ClassifiedEdge[] = [];
+          let rakeCount = 0;
+          let unknownCount = 0;
+          for (let i = 0; i < ring.length - 1; i++) {
+            const a = ring[i];
+            const b = ring[i + 1];
+            const cls = classifyEdgeWithDsm({ a, b }, dsm, centroid);
+            if (cls.kind === "eave") eaves.push({ a, b });
+            else if (cls.kind === "rake") rakeCount++;
+            else unknownCount++;
+          }
+          classifiedEaveLatLng = eaves;
+          notes.push(
+            `DSM filter: ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
+          );
+        } else {
+          notes.push(`DSM unavailable — using all polygon edges as eaves: ${dsm.reason}`);
+        }
       } else {
         notes.push(
-          `Solar mask polygon too small (${polygon?.points.length ?? 0} verts) — trying SAM`,
+          `Solar mask polygon too small (${result?.polygon.points.length ?? 0} verts) — trying SAM`,
         );
       }
     } else {
@@ -221,15 +254,54 @@ export async function runAIEstimatePipeline(
     }
   }
 
-  // 5a. Primary path: SAM 2 polygon → eaves directly. On a top-down view
-  // every outer edge of the roof footprint IS a gutter run, so we don't
-  // need GPT-4o to "find" eaves — SAM 2 already traced the perimeter.
+  // 5a. Primary path: polygon → eaves. When the DSM classifier ran and
+  // produced a filtered set of eave-only edges, use those directly. Otherwise
+  // emit every polygon edge as a candidate eave and let the contractor delete
+  // any rakes manually.
   if (image && roofPolygon) {
-    const eaves = eavesFromRoofPolygon(roofPolygon, image.width, image.height);
-    if (eaves.length >= 3) {
-      // LF computed from polygon edges in original image-pixel space, then
-      // 8% waste factor for overlap + cuts.
-      let totalEaveLF = 0;
+    let eaves: EditableLine[];
+    let totalEaveLF = 0;
+    if (classifiedEaveLatLng && classifiedEaveLatLng.length > 0) {
+      // DSM-classified path: build eaves from filtered lat/lng segments.
+      eaves = classifiedEaveLatLng.map((edge, i) => {
+        const a = latLngToImagePixel(
+          edge.a.lat,
+          edge.a.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        const b = latLngToImagePixel(
+          edge.b.lat,
+          edge.b.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        return {
+          id: `dsm-eave-${i}`,
+          kind: "eave" as const,
+          points: [a, b],
+        };
+      });
+      // LF computed in image-pixel space using existing scale math.
+      for (const line of eaves) {
+        const a = line.points[0];
+        const b = line.points[line.points.length - 1];
+        totalEaveLF += pixelLengthToFeet(
+          Math.hypot(b.x - a.x, b.y - a.y),
+          geocoded.lat,
+          image.zoom,
+        );
+      }
+      totalEaveLF *= 1.08; // waste factor
+    } else {
+      // Fallback path: every polygon edge is a candidate eave.
+      eaves = eavesFromRoofPolygon(roofPolygon, image.width, image.height);
       for (let i = 0; i < roofPolygon.points.length; i++) {
         const a = roofPolygon.points[i];
         const b = roofPolygon.points[(i + 1) % roofPolygon.points.length];
@@ -239,7 +311,9 @@ export async function runAIEstimatePipeline(
           image.zoom,
         );
       }
-      totalEaveLF = totalEaveLF * 1.08;
+      totalEaveLF *= 1.08;
+    }
+    if (eaves.length >= 3) {
 
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
@@ -256,8 +330,11 @@ export async function runAIEstimatePipeline(
         stories: estimatedStories,
       });
 
+      const sourceLabel = classifiedEaveLatLng
+        ? "DSM-classified"
+        : "polygon-edges";
       notes.push(
-        `Eaves traced from SAM 2 polygon: ${eaves.length} segments, ${downspouts.length} downspouts`,
+        `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts`,
       );
 
       return {

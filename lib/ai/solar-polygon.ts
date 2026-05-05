@@ -1,7 +1,23 @@
 import "server-only";
+import buffer from "@turf/buffer";
+import { polygon as turfPolygon } from "@turf/helpers";
 import type { SolarMaskOutcome } from "./solar-mask";
 import { latLngToImagePixel } from "./geometry";
 import type { RoofPolygon } from "./sam";
+
+/** Roof overhang from wall (typical residential = 12-18in). Used to expand
+ *  the building footprint mask to the actual gutter line position. */
+const ROOF_OVERHANG_METERS = 0.45;
+
+export type SolarPolygonResult = {
+  /** RoofPolygon in satellite-tile pixel space — what canvas + downstream
+   *  geometry consume. */
+  polygon: RoofPolygon;
+  /** Same polygon but as lat/lng vertices (closed ring, first === last)
+   *  — used by the DSM edge classifier so it can sample heights in the
+   *  DSM's native coordinate system. */
+  ringLatLng: Array<{ lat: number; lng: number }>;
+};
 
 type Pt = { x: number; y: number };
 
@@ -24,20 +40,53 @@ export function polygonFromSolarMask(
   satelliteZoom: number,
   satelliteWidth: number,
   satelliteHeight: number,
-): RoofPolygon | null {
+): SolarPolygonResult | null {
   // 1. Trace boundary in mask-pixel space
   const isFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
   const boundary = traceMooreNeighbor(mask.width, mask.height, isFg);
   if (boundary.length < 8) return null;
 
-  // 2 + 3. Project each boundary pixel to satellite tile pixel space.
-  //   mask pixel (i, j) → native CRS coords → lat/lng (via mask.toLatLng,
-  //   which knows the actual GeoTIFF projection) → satellite pixel.
-  const projected: Pt[] = boundary.map((p) => {
+  // 2. Project each boundary pixel to lat/lng. We stay in lat/lng for
+  // the buffer step so Turf can do correct great-circle expansion.
+  const ringLatLng: Array<[number, number]> = boundary.map((p) => {
     const nativeX = mask.origin.x + p.x * mask.pixelSize.x;
     const nativeY = mask.origin.y + p.y * mask.pixelSize.y;
     const { lat, lng } = mask.toLatLng(nativeX, nativeY);
-    return latLngToImagePixel(
+    return [lng, lat]; // GeoJSON convention: [lng, lat]
+  });
+  // Close the ring (GeoJSON requires first === last)
+  if (
+    ringLatLng.length &&
+    (ringLatLng[0][0] !== ringLatLng[ringLatLng.length - 1][0] ||
+      ringLatLng[0][1] !== ringLatLng[ringLatLng.length - 1][1])
+  ) {
+    ringLatLng.push(ringLatLng[0]);
+  }
+
+  // 3. Buffer the polygon outward to account for the roof overhang.
+  // Solar API masks trace the WALL footprint; the actual roof (and
+  // gutter line) extends ~12-18in beyond the wall.
+  let bufferedRing = ringLatLng;
+  try {
+    const inputPoly = turfPolygon([ringLatLng]);
+    const buffered = buffer(inputPoly, ROOF_OVERHANG_METERS / 1000, {
+      units: "kilometers",
+    });
+    if (buffered && buffered.geometry.type === "Polygon") {
+      bufferedRing = buffered.geometry.coordinates[0] as Array<
+        [number, number]
+      >;
+    }
+  } catch {
+    // Buffer failed (degenerate polygon, etc.) — fall through with the
+    // unbuffered ring. The eaves will sit slightly inside the actual
+    // gutter line but still be useful.
+  }
+
+  // 4. Project the (possibly buffered) lat/lng ring to satellite tile
+  // pixel space.
+  const projected: Pt[] = bufferedRing.map(([lng, lat]) =>
+    latLngToImagePixel(
       lat,
       lng,
       satelliteCenter.lat,
@@ -45,8 +94,8 @@ export function polygonFromSolarMask(
       satelliteZoom,
       satelliteWidth,
       satelliteHeight,
-    );
-  });
+    ),
+  );
 
   // 4. Downsample (raw boundary can be 2000+ points)
   const downsampled =
@@ -70,7 +119,7 @@ export function polygonFromSolarMask(
     if (p.y > maxY) maxY = p.y;
   }
 
-  return {
+  const polygon: RoofPolygon = {
     points: downsampled,
     bbox: {
       x: Math.round(minX),
@@ -80,6 +129,12 @@ export function polygonFromSolarMask(
     },
     areaFraction: mask.areaFraction,
   };
+
+  // Convert the buffered ring back to {lat, lng} objects for the
+  // downstream DSM edge classifier, which works in lat/lng space.
+  const ringObjects = bufferedRing.map(([lng, lat]) => ({ lat, lng }));
+
+  return { polygon, ringLatLng: ringObjects };
 }
 
 /* ------------------------------------------------------------------ */
