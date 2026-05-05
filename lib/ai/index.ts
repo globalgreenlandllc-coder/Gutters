@@ -255,24 +255,48 @@ export async function runAIEstimatePipeline(
     }
   }
 
-  // 5a. Primary path: polygon → eaves. When the DSM classifier ran and
-  // produced a filtered set of eave-only edges, use those directly. Otherwise
-  // emit every polygon edge as a candidate eave and let the contractor delete
-  // any rakes manually.
+  // 5a. Primary path: cleaned Solar polygon → eaves.
+  //
+  // We try DSM classification first (drops rake/gable edges using elevation
+  // data) but if it's too aggressive — e.g. an ortho-regularized polygon
+  // whose corners shifted off real building corners can confuse the
+  // perpendicular-interior sampler — we fall back to drawing EVERY polygon
+  // edge as a candidate eave. The contractor edits/deletes rakes manually
+  // in the canvas. Falling back to GPT-4o vision is a last resort because
+  // it loses the clean rectilinear shape the polygon already has.
   if (image && roofPolygon) {
-    let eaves: EditableLine[];
+    const MIN_EAVE_FT = 2;
+    const buildPolygonEdgeEaves = (): {
+      eaves: EditableLine[];
+      lf: number;
+    } => {
+      const lines = eavesFromRoofPolygon(
+        roofPolygon!,
+        image.width,
+        image.height,
+      );
+      let lf = 0;
+      for (let i = 0; i < roofPolygon!.points.length; i++) {
+        const a = roofPolygon!.points[i];
+        const b = roofPolygon!.points[(i + 1) % roofPolygon!.points.length];
+        lf += pixelLengthToFeet(
+          Math.hypot(b.x - a.x, b.y - a.y),
+          geocoded.lat,
+          image.zoom,
+        );
+      }
+      return { eaves: lines, lf: lf * 1.08 };
+    };
+
+    let eaves: EditableLine[] = [];
     let totalEaveLF = 0;
+    let sourceLabel = "polygon-edges";
+
     if (classifiedEaveLatLng && classifiedEaveLatLng.length > 0) {
-      // DSM-classified path: build eaves from filtered lat/lng segments.
-      // Project to image-pixel space first (so LF math uses real geographic
-      // distance via pixelLengthToFeet), then transform into canvas space
-      // before stuffing into EditableLine — the SVG renders eaves in the
-      // 900×580 canvas viewBox, not in raw image-pixel coords.
-      // Drop eaves shorter than 3 ft on the ground — those are mask
-      // artifacts at the corners of the simplified polygon, not real
-      // gutter runs, and they show up as visual debris.
-      const MIN_EAVE_FT = 3;
-      const imageSpaceEdges: Array<readonly [{ x: number; y: number }, { x: number; y: number }]> = [];
+      const imageSpaceEdges: Array<
+        readonly [{ x: number; y: number }, { x: number; y: number }]
+      > = [];
+      let dsmLF = 0;
       for (const edge of classifiedEaveLatLng) {
         const a = latLngToImagePixel(
           edge.a.lat,
@@ -299,30 +323,30 @@ export async function runAIEstimatePipeline(
         );
         if (ft < MIN_EAVE_FT) continue;
         imageSpaceEdges.push([a, b]);
-        totalEaveLF += ft;
+        dsmLF += ft;
       }
-      totalEaveLF *= 1.08; // waste factor
-      eaves = imageSpaceEdges.map(([a, b], i) => ({
-        id: `dsm-eave-${i}`,
-        kind: "eave" as const,
-        points: transformToCanvas([a, b], image.width, image.height),
-      }));
-    } else {
-      // Fallback path: every polygon edge is a candidate eave.
-      eaves = eavesFromRoofPolygon(roofPolygon, image.width, image.height);
-      for (let i = 0; i < roofPolygon.points.length; i++) {
-        const a = roofPolygon.points[i];
-        const b = roofPolygon.points[(i + 1) % roofPolygon.points.length];
-        totalEaveLF += pixelLengthToFeet(
-          Math.hypot(b.x - a.x, b.y - a.y),
-          geocoded.lat,
-          image.zoom,
+      if (imageSpaceEdges.length >= 3) {
+        eaves = imageSpaceEdges.map(([a, b], i) => ({
+          id: `dsm-eave-${i}`,
+          kind: "eave" as const,
+          points: transformToCanvas([a, b], image.width, image.height),
+        }));
+        totalEaveLF = dsmLF * 1.08;
+        sourceLabel = "DSM-classified";
+      } else {
+        notes.push(
+          `DSM kept only ${imageSpaceEdges.length} edge(s) — using all ${roofPolygon.points.length} polygon edges instead`,
         );
       }
-      totalEaveLF *= 1.08;
     }
-    if (eaves.length >= 3) {
 
+    if (eaves.length === 0) {
+      const fallback = buildPolygonEdgeEaves();
+      eaves = fallback.eaves;
+      totalEaveLF = fallback.lf;
+    }
+
+    if (eaves.length >= 3) {
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
         eaves,
@@ -338,9 +362,6 @@ export async function runAIEstimatePipeline(
         stories: estimatedStories,
       });
 
-      const sourceLabel = classifiedEaveLatLng
-        ? "DSM-classified"
-        : "polygon-edges";
       notes.push(
         `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts`,
       );
@@ -362,7 +383,7 @@ export async function runAIEstimatePipeline(
       };
     }
     notes.push(
-      `SAM 2 polygon had too few edges (${eaves.length}) — falling back to GPT-4o vision`,
+      `Solar polygon had too few edges (${eaves.length}) — falling back to GPT-4o vision`,
     );
   }
 

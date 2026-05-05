@@ -130,12 +130,13 @@ export function polygonFromSolarMask(
   // 5. Architectural cleanup. The raw boundary follows mask pixels (0.5m
   // squares) and looks jagged — Gemini-style clean rectilinear lines come
   // from two passes:
-  //   a) Douglas–Peucker collapses near-colinear noise. Epsilon ≈ 0.6m in
-  //      image-pixel space (12 px at zoom-20 ≈ 0.6m on the ground): keeps
-  //      true corners, drops sub-foot zigzag from the mask.
+  //   a) Douglas–Peucker collapses near-colinear noise. Epsilon ≈ 0.3m in
+  //      image-pixel space (6 px at zoom-20 ≈ 0.3m on the ground): keeps
+  //      architectural corners — bays, garage steps, dormers — while
+  //      dropping sub-foot mask zigzag.
   //   b) Orthogonal regularization: snap edges to the dominant building
   //      axis ± 90° so walls become straight, like an architectural plan.
-  const SIMPLIFY_EPSILON_PX = 12;
+  const SIMPLIFY_EPSILON_PX = 6;
   const simplified = simplify(downsampled, SIMPLIFY_EPSILON_PX);
   const cleaned =
     simplified.length >= 4
