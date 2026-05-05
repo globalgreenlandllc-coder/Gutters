@@ -10,9 +10,11 @@ import {
 } from "./geometry";
 import type { RoofPolygon } from "./sam";
 
-/** Roof overhang from wall (typical residential = 12-18in). Used to expand
- *  the building footprint mask to the actual gutter line position. */
-const ROOF_OVERHANG_METERS = 0.45;
+/** Roof overhang from wall. Typical residential overhang is 12-24 in;
+ *  0.6 m (~24 in) sits the eave AT the gutter line for most homes. The
+ *  earlier 0.45 m left the cyan trace visibly inside the actual roof
+ *  edge on satellite tiles where the overhang is generous. */
+const ROOF_OVERHANG_METERS = 0.6;
 
 export type SolarPolygonResult = {
   /** RoofPolygon in satellite-tile pixel space — what canvas + downstream

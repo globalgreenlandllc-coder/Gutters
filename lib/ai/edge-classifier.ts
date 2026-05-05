@@ -43,7 +43,13 @@ export function classifyEdgeWithDsm(
   edge: { a: { lat: number; lng: number }; b: { lat: number; lng: number } },
   dsm: Extract<DsmOutcome, { ok: true }>,
   centroid: { lat: number; lng: number },
-  slopeThresholdM = 0.5,
+  // 1.2 m, not 0.5 m, because complex hip/gable roofs (20+ Solar
+  // segments) have natural endpoint variance: an "eave" edge can span
+  // a small dormer or transition, putting endpoints on neighbouring
+  // roof planes that differ by ~0.7-1 m even though the contractor
+  // would still run a single gutter along it. 0.5 m was throwing out
+  // 24 of 26 edges on real residential roofs.
+  slopeThresholdM = 1.2,
   insideHeightDiffM = 0.5,
 ): ClassifiedEdge {
   const midLat = (edge.a.lat + edge.b.lat) / 2;

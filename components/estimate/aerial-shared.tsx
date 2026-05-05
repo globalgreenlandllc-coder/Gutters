@@ -356,33 +356,29 @@ export function lineLengthFt(line: EditableLine) {
 }
 
 /**
- * Recreational roof-structure annotation: white perimeter outline plus
- * blue RIDGE labels and green VALLEY labels (on dashed lines). Renders
- * UNDERNEATH the editable eaves/downspouts so it doesn't interfere with
- * the gutter-estimate workflow — purely a visual aid.
+ * Recreational roof-structure annotation: blue RIDGE labels (solid line)
+ * and green VALLEY labels (dashed line) over the satellite image.
+ *
+ * The perimeter is intentionally NOT rendered here — the cyan eaves
+ * already trace the building outline, and a second perimeter from a
+ * separate vision call almost always disagrees with the eave polygon
+ * (different model, different math), looking like a random white
+ * outline floating off the building. Just show the inside structure
+ * lines that the eaves layer can't show on its own.
  */
 export function RoofStructureOverlay({
   structure,
 }: {
   structure: RoofStructure;
 }) {
-  if (structure.perimeter.length < 3) return null;
-  const perimeterD = closedPathD(structure.perimeter);
+  if (
+    structure.ridges.length === 0 &&
+    structure.valleys.length === 0
+  ) {
+    return null;
+  }
   return (
     <g pointerEvents="none">
-      <motion.path
-        d={perimeterD}
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth={5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        opacity={0.92}
-        initial={{ pathLength: 0, opacity: 0 }}
-        animate={{ pathLength: 1, opacity: 0.92 }}
-        transition={{ duration: 0.9, ease: "easeOut" }}
-        style={{ filter: "drop-shadow(0 0 4px rgba(0,0,0,0.55))" }}
-      />
       {structure.ridges.map((ridge, i) => (
         <RoofLineWithLabel
           key={ridge.id}
