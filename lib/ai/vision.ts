@@ -23,13 +23,18 @@ export type BuildingHint =
   | { x: number; y: number }
   | { x1: number; y1: number; x2: number; y2: number };
 
-const SYSTEM_PROMPT = `You are an expert at tracing roof footprints for gutter contractors. Your job: trace the COMPLETE outer perimeter of the primary residence's roof in a top-down aerial view, segment by segment. Every straight section of the roof's outline is a gutter run.
+const SYSTEM_PROMPT = `You are an expert at identifying GUTTER LINES on a residential roof from a top-down aerial photo. Gutters only run along EAVES — the bottom horizontal edges where the roof slope meets the wall. Gutters DO NOT run along RAKES (the angled sides of a gable end where the roof slopes up toward a peak).
+
+How to tell eaves from rakes from a top-down view:
+- A GABLE end is a triangular wall under a roof peak. From above, the roof at a gable end shows two slope panels meeting at a RIDGE LINE that runs perpendicular to the gable wall. The TWO LONG EDGES of those panels (parallel to the ridge) are EAVES — gutters here. The TWO SHORT EDGES at the gable wall are RAKES — NO gutter.
+- A HIP roof has all four perimeter edges sloping inward to a ridge. ALL FOUR perimeter edges are EAVES — gutters everywhere.
+- Most houses are a mix. When in doubt: if the edge runs PERPENDICULAR to the ridge of its roof panel, it's a rake (skip). If PARALLEL to the ridge, it's an eave (gutter goes here).
 
 Critical rules:
-- Trace the ENTIRE perimeter — every wall of the house has gutters along its lower edge. A typical house has 6-12 perimeter segments. If you only return 2-3 segments, you are missing eaves.
-- On a top-down view, every straight edge of the roof's outer outline IS an eave (rakes only appear in side views; from above they project as the same line as the eave).
-- Walk the perimeter clockwise starting from the northwest corner.
-- Skip outbuildings (sheds, detached garages with separate footprints) unless they're clearly attached.
+- Return ONLY eave segments. Do NOT return rake segments. A typical house has 6-12 eaves; gable houses typically have eaves on the two long sides only.
+- Trace each eave as one straight line between two corners.
+- Walk clockwise starting from the northwest corner.
+- Skip outbuildings (sheds, detached garages with separate footprints) unless they're clearly attached to the main house.
 
 Return VALID JSON ONLY. No prose, no markdown.`;
 
@@ -47,7 +52,7 @@ const userPrompt = (
     }
   }
 
-  const base = `Trace the COMPLETE perimeter of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
+  const base = `Identify all EAVE segments (gutter-bearing edges) of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
 
 Return JSON in this exact shape:
 {
@@ -55,17 +60,19 @@ Return JSON in this exact shape:
   "confidence": number (0.0–1.0),
   "eaves": [
     { "id": "e1", "points": [{"x": 100, "y": 200}, {"x": 350, "y": 200}] },
-    { "id": "e2", "points": [{"x": 350, "y": 200}, {"x": 350, "y": 380}] }
+    { "id": "e2", "points": [{"x": 100, "y": 380}, {"x": 350, "y": 380}] }
   ],
   "estimatedTotalFeet": number,
-  "notes": "one short sentence on confidence drivers"
+  "notes": "one short sentence on which edges are gables/rakes you skipped, if any"
 }
 
 Rules:
-- Walk the perimeter clockwise. Each eave is one straight edge between two corners.
-- Two adjacent eaves should SHARE an endpoint (the corner of the house).
+- Return ONLY eaves (gutter lines). SKIP rakes/gables (the angled sides under a gable peak).
+- Each eave is one straight line between two corners of the roof's footprint.
 - Coordinates are integers in image pixels.
-- A house with N corners produces N eave segments. Don't skip any.
+- For a hip roof, every perimeter edge is an eave (return all of them).
+- For a gable roof, only the two long sides parallel to the ridge are eaves (return those, skip the gable ends).
+- Most houses are mixed — apply the rule per roof section.
 - If the primary residence is partially out of frame, mark buildingFound: false and return an empty eaves array.`;
 
   if (!roofPolygon) return base;

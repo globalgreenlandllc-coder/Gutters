@@ -43,13 +43,11 @@ export async function segmentRoofViaSam(
   const cx = Math.round(pointPrompt?.x ?? image.width / 2);
   const cy = Math.round(pointPrompt?.y ?? image.height / 2);
 
-  // SAM 2 accepts box-and-point prompts together. Combining them gives
-  // dramatically better masks than a single point — the box tells SAM
-  // *where* the object is, the point seeds *which* object to grab when
-  // the box contains multiple things. Box covers most of the image
-  // (since the caller already cropped to the building); point sits at
-  // the prompt center.
-  const margin = Math.round(Math.min(image.width, image.height) * 0.1);
+  // SAM 2 needs a box prompt to grow a useful mask — point-only prompts
+  // mark a single pixel and stop. Box covers most of the cropped image
+  // (caller already trimmed to the building footprint), point sits at
+  // the building center.
+  const margin = Math.round(Math.min(image.width, image.height) * 0.08);
   const box = {
     x_min: margin,
     y_min: margin,
@@ -67,18 +65,17 @@ export async function segmentRoofViaSam(
       },
       body: JSON.stringify({
         image_url: `data:${image.mimeType};base64,${image.base64}`,
-        // fal.ai's SAM 2 accepts these prompt array shapes interchangeably.
-        // Sending both `prompts` (object form) and `box`/`point_coords`
-        // (named form) covers the variants different fal.ai SAM endpoints
-        // expect — extra fields are ignored by the variant that doesn't use
-        // them.
         prompts: [
-          { type: "box", x_min: box.x_min, y_min: box.y_min, x_max: box.x_max, y_max: box.y_max, label: 1 },
+          {
+            type: "box",
+            x_min: box.x_min,
+            y_min: box.y_min,
+            x_max: box.x_max,
+            y_max: box.y_max,
+            label: 1,
+          },
           { type: "point", x: cx, y: cy, label: 1 },
         ],
-        box_prompts: [[box.x_min, box.y_min, box.x_max, box.y_max]],
-        point_coords: [[cx, cy]],
-        point_labels: [1],
       }),
       cache: "no-store",
     });
@@ -90,16 +87,30 @@ export async function segmentRoofViaSam(
   }
 
   if (!res.ok) {
+    // fal.ai's 4xx responses include a structured `detail` (often an
+    // array of validation errors). Stringify it properly so we don't
+    // print "[object Object]".
     let detail = "";
     try {
-      const body = (await res.json()) as { detail?: string; message?: string };
-      detail = body.detail || body.message || "";
+      const body = (await res.json()) as unknown;
+      const asObj = body as {
+        detail?: unknown;
+        message?: unknown;
+        error?: unknown;
+      };
+      const pickTextOrJson = (v: unknown): string =>
+        typeof v === "string" ? v : v ? JSON.stringify(v) : "";
+      detail =
+        pickTextOrJson(asObj.detail) ||
+        pickTextOrJson(asObj.message) ||
+        pickTextOrJson(asObj.error) ||
+        truncate(JSON.stringify(body), 300);
     } catch {
       // body wasn't JSON
     }
     return {
       ok: false,
-      reason: `fal.ai HTTP ${res.status}${detail ? ` — ${detail}` : ""}`,
+      reason: `fal.ai HTTP ${res.status}${detail ? ` — ${truncate(detail, 300)}` : ""}`,
     };
   }
 
