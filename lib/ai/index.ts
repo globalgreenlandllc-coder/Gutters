@@ -19,6 +19,7 @@ import {
   placeDownspouts,
   placeDownspoutsOnPolygon,
   polylineLengthPx,
+  transformToCanvas,
 } from "./geometry";
 import {
   sampleEaves,
@@ -263,7 +264,11 @@ export async function runAIEstimatePipeline(
     let totalEaveLF = 0;
     if (classifiedEaveLatLng && classifiedEaveLatLng.length > 0) {
       // DSM-classified path: build eaves from filtered lat/lng segments.
-      eaves = classifiedEaveLatLng.map((edge, i) => {
+      // Project to image-pixel space first (so LF math uses real geographic
+      // distance via pixelLengthToFeet), then transform into canvas space
+      // before stuffing into EditableLine — the SVG renders eaves in the
+      // 900×580 canvas viewBox, not in raw image-pixel coords.
+      const imageSpaceEdges = classifiedEaveLatLng.map((edge) => {
         const a = latLngToImagePixel(
           edge.a.lat,
           edge.a.lng,
@@ -282,16 +287,9 @@ export async function runAIEstimatePipeline(
           image.width,
           image.height,
         );
-        return {
-          id: `dsm-eave-${i}`,
-          kind: "eave" as const,
-          points: [a, b],
-        };
+        return [a, b] as const;
       });
-      // LF computed in image-pixel space using existing scale math.
-      for (const line of eaves) {
-        const a = line.points[0];
-        const b = line.points[line.points.length - 1];
+      for (const [a, b] of imageSpaceEdges) {
         totalEaveLF += pixelLengthToFeet(
           Math.hypot(b.x - a.x, b.y - a.y),
           geocoded.lat,
@@ -299,6 +297,11 @@ export async function runAIEstimatePipeline(
         );
       }
       totalEaveLF *= 1.08; // waste factor
+      eaves = imageSpaceEdges.map(([a, b], i) => ({
+        id: `dsm-eave-${i}`,
+        kind: "eave" as const,
+        points: transformToCanvas([a, b], image.width, image.height),
+      }));
     } else {
       // Fallback path: every polygon edge is a candidate eave.
       eaves = eavesFromRoofPolygon(roofPolygon, image.width, image.height);

@@ -69,16 +69,19 @@ const CANVAS_W = 900;
 const CANVAS_H = 580;
 
 /**
- * Vision returns coordinates in the source image's pixel space (e.g. 640×640).
- * Our SVG canvas uses a 900×580 viewBox. Map vision coords into canvas coords
- * preserving aspect ratio (image fits centered).
+ * Vision returns coordinates in the source image's pixel space (e.g. 1280×1280).
+ * Our SVG canvas uses a 900×580 viewBox and renders the satellite tile with
+ * preserveAspectRatio="xMidYMid slice" — i.e. the image is scaled to COVER the
+ * viewBox (cropping excess) rather than fit inside it. We mirror that exact
+ * transform here so eave/downspout coords land on the displayed roof rather
+ * than offset from it.
  */
 export function transformToCanvas(
   pts: { x: number; y: number }[],
   imageWidth: number,
   imageHeight: number,
 ): { x: number; y: number }[] {
-  const scale = Math.min(CANVAS_W / imageWidth, CANVAS_H / imageHeight);
+  const scale = Math.max(CANVAS_W / imageWidth, CANVAS_H / imageHeight);
   const offsetX = (CANVAS_W - imageWidth * scale) / 2;
   const offsetY = (CANVAS_H - imageHeight * scale) / 2;
   return pts.map((p) => ({

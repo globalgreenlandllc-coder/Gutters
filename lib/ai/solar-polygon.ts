@@ -41,9 +41,24 @@ export function polygonFromSolarMask(
   satelliteWidth: number,
   satelliteHeight: number,
 ): SolarPolygonResult | null {
-  // 1. Trace boundary in mask-pixel space
+  // 1. Trace boundary in mask-pixel space.
+  //
+  // The Solar API's dataLayers tile is centered on the requested lat/lng,
+  // but the mask can include neighbors' rooftops within the search radius.
+  // A naive top-down/left-right scan finds the topmost-leftmost foreground
+  // pixel — which can be a NEIGHBOR's roof (rendering the polygon hundreds
+  // of pixels off the actual building). Pick the connected component
+  // containing the pixel nearest the mask center instead.
   const isFg = (x: number, y: number) => mask.mask[y * mask.width + x] > 0;
-  const boundary = traceMooreNeighbor(mask.width, mask.height, isFg);
+  const seed = findSeedNearCenter(mask.width, mask.height, isFg);
+  if (!seed) return null;
+  const traceStart = findComponentTopLeft(mask.width, mask.height, isFg, seed);
+  const boundary = traceMooreNeighbor(
+    mask.width,
+    mask.height,
+    isFg,
+    traceStart,
+  );
   if (boundary.length < 8) return null;
 
   // 2. Project each boundary pixel to lat/lng. We stay in lat/lng for
@@ -141,23 +156,93 @@ export function polygonFromSolarMask(
 /*   Moore-Neighbor boundary tracing (same as sam.ts but inlined to   */
 /*   avoid pulling pngjs import into this module)                     */
 /* ------------------------------------------------------------------ */
+/**
+ * Find a foreground pixel close to the mask's center. The Solar API
+ * centers the dataLayers tile on the requested lat/lng, so the user's
+ * own building should be at (or near) the center of the mask. If the
+ * exact center pixel is foreground, use it; otherwise spiral outward.
+ */
+function findSeedNearCenter(
+  width: number,
+  height: number,
+  isFg: (x: number, y: number) => boolean,
+): Pt | null {
+  const cx = Math.floor(width / 2);
+  const cy = Math.floor(height / 2);
+  if (cx >= 0 && cx < width && cy >= 0 && cy < height && isFg(cx, cy)) {
+    return { x: cx, y: cy };
+  }
+  let nearest: Pt | null = null;
+  let nearestDist = Infinity;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isFg(x, y)) continue;
+      const dx = x - cx;
+      const dy = y - cy;
+      const d = dx * dx + dy * dy;
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearest = { x, y };
+      }
+    }
+  }
+  return nearest;
+}
+
+/**
+ * BFS the connected component containing `seed` and return its
+ * top-left-most pixel — the natural Moore-Neighbor trace start.
+ */
+function findComponentTopLeft(
+  width: number,
+  height: number,
+  isFg: (x: number, y: number) => boolean,
+  seed: Pt,
+): Pt {
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [];
+  const seedIdx = seed.y * width + seed.x;
+  visited[seedIdx] = 1;
+  queue.push(seedIdx);
+  let bestX = seed.x;
+  let bestY = seed.y;
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    const x = idx % width;
+    const y = (idx - x) / width;
+    if (y < bestY || (y === bestY && x < bestX)) {
+      bestX = x;
+      bestY = y;
+    }
+    if (x > 0 && !visited[idx - 1] && isFg(x - 1, y)) {
+      visited[idx - 1] = 1;
+      queue.push(idx - 1);
+    }
+    if (x < width - 1 && !visited[idx + 1] && isFg(x + 1, y)) {
+      visited[idx + 1] = 1;
+      queue.push(idx + 1);
+    }
+    if (y > 0 && !visited[idx - width] && isFg(x, y - 1)) {
+      visited[idx - width] = 1;
+      queue.push(idx - width);
+    }
+    if (y < height - 1 && !visited[idx + width] && isFg(x, y + 1)) {
+      visited[idx + width] = 1;
+      queue.push(idx + width);
+    }
+  }
+  return { x: bestX, y: bestY };
+}
+
 function traceMooreNeighbor(
   width: number,
   height: number,
   isFg: (x: number, y: number) => boolean,
+  start: Pt,
 ): Pt[] {
-  let startX = -1;
-  let startY = -1;
-  outer: for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (isFg(x, y)) {
-        startX = x;
-        startY = y;
-        break outer;
-      }
-    }
-  }
-  if (startX === -1) return [];
+  const startX = start.x;
+  const startY = start.y;
+  if (!isFg(startX, startY)) return [];
 
   const dirs: ReadonlyArray<readonly [number, number]> = [
     [0, -1],
