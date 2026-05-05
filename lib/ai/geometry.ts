@@ -154,6 +154,66 @@ export function simplify(points: Pt[], epsilon: number): Pt[] {
 }
 
 /**
+ * Test whether a closed polygon's edges cross each other. After ortho
+ * regularization on a complex hip+gable roof the snap-to-axis pass can
+ * produce self-folding polygons (an inside corner of one wing collides
+ * with another wing). Detected via O(n²) edge-pair intersection — n is
+ * tiny here (rarely above 30 verts) so a smarter sweep would be wasted.
+ */
+export function polygonSelfIntersects(points: Pt[]): boolean {
+  const n = points.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    const a1 = points[i];
+    const a2 = points[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      // Skip adjacent edges and the wrap-around edge that shares a vertex.
+      if (j === i + 1) continue;
+      if (i === 0 && j === n - 1) continue;
+      const b1 = points[j];
+      const b2 = points[(j + 1) % n];
+      if (segmentsIntersect(a1, a2, b1, b2)) return true;
+    }
+  }
+  return false;
+}
+
+function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  const d1 = cross(p4.x - p3.x, p4.y - p3.y, p1.x - p3.x, p1.y - p3.y);
+  const d2 = cross(p4.x - p3.x, p4.y - p3.y, p2.x - p3.x, p2.y - p3.y);
+  const d3 = cross(p2.x - p1.x, p2.y - p1.y, p3.x - p1.x, p3.y - p1.y);
+  const d4 = cross(p2.x - p1.x, p2.y - p1.y, p4.x - p1.x, p4.y - p1.y);
+  return (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  );
+}
+
+function cross(ax: number, ay: number, bx: number, by: number): number {
+  return ax * by - ay * bx;
+}
+
+/**
+ * Point-in-polygon test (ray-cast). Used to filter out ridge/valley
+ * labels that fall outside the building's perimeter — those almost
+ * always mean the vision model placed the line in the yard.
+ */
+export function pointInPolygon(p: Pt, polygon: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (
+      (a.y > p.y) !== (b.y > p.y) &&
+      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
  * Snap a closed polygon to its dominant rectilinear grid. Most residential
  * roofs sit on perpendicular wall axes — the raw mask boundary is jagged
  * because mask pixels are 0.5m squares but the building wall is typically
@@ -365,8 +425,23 @@ export function convexCornersOf(
 }
 
 /**
- * Drop a downspout at every outside corner of the polygon, then add extra
- * downspouts in the middle of any single eave longer than 35 LF.
+ * Place downspouts along a roof's eave perimeter at roughly one per
+ * 30 LF, biased toward outside corners (where rainwater naturally
+ * concentrates from two adjacent runs).
+ *
+ * Earlier behavior was "one downspout per convex corner of the polygon"
+ * — fine for a 4-corner box but produced 16+ downspouts on a complex
+ * 16-corner hip+gable roof, which is far more than any contractor
+ * actually installs. Real homes use 4–8 downspouts on strategic corners.
+ *
+ * Algorithm:
+ *   1. Target count = max(2, round(totalEaveLF / 30)).
+ *   2. Score every outside corner by the length of its longer adjacent
+ *      eave run; corners flanked by long runs catch more water.
+ *   3. Pick the top N by score with a min-spacing constraint so we don't
+ *      cluster two downspouts within 60 px of each other.
+ *   4. If we still need more (rare — only when a single uninterrupted
+ *      eave is longer than 35 LF), drop a mid-run downspout there.
  */
 export function placeDownspoutsOnPolygon(
   polygon: RoofPolygon,
@@ -379,33 +454,74 @@ export function placeDownspoutsOnPolygon(
   const heightFt = STORY_HEIGHT_FT[defaultStories];
   const placed: Downspout[] = [];
 
-  // 1. One per outside corner
-  const corners = convexCornersOf(polygon, imageWidth, imageHeight);
-  for (let i = 0; i < corners.length; i++) {
-    placed.push({
-      id: `ds-corner-${i + 1}`,
-      x: corners[i].x,
-      y: corners[i].y,
-      heightFt,
-    });
-  }
-
-  // 2. Mid-eave downspouts for long runs (>35 LF)
-  const MAX_RUN_FT = 35;
+  let totalEaveFt = 0;
   for (const line of eaveLines) {
     if (line.points.length < 2) continue;
     const a = line.points[0];
     const b = line.points[line.points.length - 1];
-    const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
-    const lengthFt = lengthPx / pxPerFt;
-    if (lengthFt > MAX_RUN_FT) {
-      placed.push({
-        id: `ds-mid-${line.id}`,
-        x: Math.round((a.x + b.x) / 2),
-        y: Math.round((a.y + b.y) / 2),
-        heightFt,
-      });
+    totalEaveFt += Math.hypot(b.x - a.x, b.y - a.y) / pxPerFt;
+  }
+  const targetCount = Math.max(2, Math.round(totalEaveFt / 30));
+
+  // Score outside corners: each corner scores by the longer of its two
+  // adjacent eave run lengths. Corners that join a long wall to a short
+  // jog score about as well as corners between two long walls — both
+  // need a downspout — but two short stubs together don't.
+  const corners = convexCornersOf(polygon, imageWidth, imageHeight);
+  type Scored = { x: number; y: number; score: number };
+  const scored: Scored[] = corners.map((c) => {
+    let bestRunPx = 0;
+    for (const line of eaveLines) {
+      if (line.points.length < 2) continue;
+      const a = line.points[0];
+      const b = line.points[line.points.length - 1];
+      const lengthPx = Math.hypot(b.x - a.x, b.y - a.y);
+      const distA = Math.hypot(a.x - c.x, a.y - c.y);
+      const distB = Math.hypot(b.x - c.x, b.y - c.y);
+      if (distA < 16 || distB < 16) bestRunPx = Math.max(bestRunPx, lengthPx);
     }
+    return { x: c.x, y: c.y, score: bestRunPx };
+  });
+  scored.sort((a, b) => b.score - a.score);
+
+  const MIN_SPACING_PX = 60;
+  let i = 0;
+  for (const cand of scored) {
+    if (placed.length >= targetCount) break;
+    const tooClose = placed.some(
+      (p) => Math.hypot(p.x - cand.x, p.y - cand.y) < MIN_SPACING_PX,
+    );
+    if (tooClose) continue;
+    placed.push({
+      id: `ds-corner-${++i}`,
+      x: cand.x,
+      y: cand.y,
+      heightFt,
+    });
+  }
+
+  // Mid-run downspouts only when a single eave is genuinely too long
+  // for one drain at each end (>35 ft uninterrupted run).
+  const MAX_RUN_FT = 35;
+  for (const line of eaveLines) {
+    if (placed.length >= targetCount + 2) break;
+    if (line.points.length < 2) continue;
+    const a = line.points[0];
+    const b = line.points[line.points.length - 1];
+    const lengthFt = Math.hypot(b.x - a.x, b.y - a.y) / pxPerFt;
+    if (lengthFt <= MAX_RUN_FT) continue;
+    const midX = Math.round((a.x + b.x) / 2);
+    const midY = Math.round((a.y + b.y) / 2);
+    const tooClose = placed.some(
+      (p) => Math.hypot(p.x - midX, p.y - midY) < MIN_SPACING_PX,
+    );
+    if (tooClose) continue;
+    placed.push({
+      id: `ds-mid-${line.id}`,
+      x: midX,
+      y: midY,
+      heightFt,
+    });
   }
 
   return placed;

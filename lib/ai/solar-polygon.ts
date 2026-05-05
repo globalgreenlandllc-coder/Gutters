@@ -6,6 +6,7 @@ import {
   imagePixelToLatLng,
   latLngToImagePixel,
   orthogonalizePolygon,
+  polygonSelfIntersects,
   simplify,
 } from "./geometry";
 import type { RoofPolygon } from "./sam";
@@ -140,10 +141,23 @@ export function polygonFromSolarMask(
   //      axis ± 90° so walls become straight, like an architectural plan.
   const SIMPLIFY_EPSILON_PX = 6;
   const simplified = simplify(downsampled, SIMPLIFY_EPSILON_PX);
-  const cleaned =
-    simplified.length >= 4
-      ? orthogonalizePolygon(simplified)
-      : simplified;
+  // Try ortho regularization, but reject the result if it produced a
+  // self-folding polygon — common on complex 15+-segment hip+gable roofs
+  // where snap-to-axis collides one wing with another. Fall back through
+  // (DP-only → raw boundary) until we get a clean ring.
+  let cleaned: Pt[];
+  if (simplified.length >= 4) {
+    const ortho = orthogonalizePolygon(simplified);
+    if (ortho.length >= 4 && !polygonSelfIntersects(ortho)) {
+      cleaned = ortho;
+    } else if (!polygonSelfIntersects(simplified)) {
+      cleaned = simplified;
+    } else {
+      cleaned = downsampled;
+    }
+  } else {
+    cleaned = simplified;
+  }
   if (cleaned.length < 4) return null;
 
   // bbox + area in satellite tile space

@@ -22,6 +22,7 @@ import {
   pixelLengthToFeet,
   placeDownspouts,
   placeDownspoutsOnPolygon,
+  pointInPolygon,
   polylineLengthPx,
   transformToCanvas,
 } from "./geometry";
@@ -61,34 +62,52 @@ export type EstimateResult = {
 /**
  * Project a vision-detected roof structure (cropped-image-pixel coords)
  * into the SVG canvas's 900×580 viewBox so the overlay component can
- * render lines straight onto the displayed satellite tile.
+ * render lines straight onto the displayed satellite tile. Ridges and
+ * valleys whose MIDPOINT falls outside the building footprint are
+ * dropped — those are vision-call hallucinations placed in the yard.
  */
 function detectedToCanvasRoofStructure(
   detected: DetectedRoofStructure,
   cropOffset: { x: number; y: number },
   imageWidth: number,
   imageHeight: number,
+  /** Footprint polygon in ORIGINAL image-pixel space, used as the
+   *  inside-test for filtering out off-roof labels. */
+  footprintImagePx: { x: number; y: number }[] | null,
 ): RoofStructure {
+  const toOriginal = (pts: { x: number; y: number }[]) =>
+    pts.map((p) => ({ x: p.x + cropOffset.x, y: p.y + cropOffset.y }));
   const toCanvas = (pts: { x: number; y: number }[]) =>
-    transformToCanvas(
-      pts.map((p) => ({ x: p.x + cropOffset.x, y: p.y + cropOffset.y })),
-      imageWidth,
-      imageHeight,
-    );
+    transformToCanvas(toOriginal(pts), imageWidth, imageHeight);
+
+  const insideFootprint = (line: { points: { x: number; y: number }[] }) => {
+    if (!footprintImagePx || footprintImagePx.length < 3) return true;
+    const original = toOriginal(line.points);
+    if (original.length < 2) return false;
+    const a = original[0];
+    const b = original[original.length - 1];
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    return pointInPolygon(mid, footprintImagePx);
+  };
+
   return {
     perimeter: toCanvas(detected.perimeter),
-    ridges: detected.ridges.map((r) => ({
-      id: r.id,
-      kind: "ridge" as const,
-      points: toCanvas(r.points),
-      label: r.label ?? "RIDGE",
-    })),
-    valleys: detected.valleys.map((v) => ({
-      id: v.id,
-      kind: "valley" as const,
-      points: toCanvas(v.points),
-      label: v.label ?? "VALLEY",
-    })),
+    ridges: detected.ridges
+      .filter(insideFootprint)
+      .map((r) => ({
+        id: r.id,
+        kind: "ridge" as const,
+        points: toCanvas(r.points),
+        label: r.label ?? "RIDGE",
+      })),
+    valleys: detected.valleys
+      .filter(insideFootprint)
+      .map((v) => ({
+        id: v.id,
+        kind: "valley" as const,
+        points: toCanvas(v.points),
+        label: v.label ?? "VALLEY",
+      })),
     confidence: detected.confidence,
   };
 }
@@ -235,17 +254,23 @@ export async function runAIEstimatePipeline(
       notes.push("Roof structure overlay unavailable (vision call failed)");
       return undefined;
     }
-    notes.push(
-      `Roof structure: ${detected.ridges.length} ridge(s), ${detected.valleys.length} valley(s) @ ${Math.round(
-        detected.confidence * 100,
-      )}% confidence`,
-    );
-    return detectedToCanvasRoofStructure(
+    const projected = detectedToCanvasRoofStructure(
       detected,
       cropOffset,
       image.width,
       image.height,
+      roofPolygon ? roofPolygon.points : null,
     );
+    const dropped =
+      detected.ridges.length -
+      projected.ridges.length +
+      (detected.valleys.length - projected.valleys.length);
+    notes.push(
+      `Roof structure: ${projected.ridges.length} ridge(s), ${projected.valleys.length} valley(s) @ ${Math.round(
+        detected.confidence * 100,
+      )}% confidence${dropped > 0 ? ` (${dropped} off-roof label(s) dropped)` : ""}`,
+    );
+    return projected;
   };
 
   // 4a. PRIMARY: Google Solar API building mask (GeoTIFF) + DSM-based
