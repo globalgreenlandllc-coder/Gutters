@@ -128,34 +128,30 @@ export async function getRoofMaskFromSolar(
   const width = image.getWidth();
   const height = image.getHeight();
 
-  // 4. Extract georeferencing. GeoTIFF stores it as ModelTiepoint +
-  // ModelPixelScale (or a ModelTransformation matrix). We convert to a
-  // simple top-left origin + per-pixel size in lng/lat.
-  const tiepoints = await image.getTiePoints();
-  const tiepoint = tiepoints[0];
-  const fileDir = image.getFileDirectory() as {
-    ModelPixelScale?: number[];
-    ModelTransformation?: number[];
-  };
-  const pixelScale = fileDir.ModelPixelScale;
-
+  // 4. Extract georeferencing. geotiff.js exposes convenience methods
+  // that handle ModelTiepoint / ModelPixelScale / ModelTransformation
+  // matrix variants transparently.
   let originLng: number;
   let originLat: number;
   let pxLng: number;
   let pxLat: number;
-
-  if (tiepoint && pixelScale) {
-    // Tiepoint maps a raster pixel (i, j, k) to world coords (x, y, z).
-    // For mask tiles, the tiepoint is at raster (0,0).
-    originLng = tiepoint.x;
-    originLat = tiepoint.y;
-    // Solar masks are in EPSG:4326 (WGS84) — units are degrees.
-    // PixelScale[0] = degrees per pixel longitude
-    // PixelScale[1] = degrees per pixel latitude (south-positive)
-    pxLng = pixelScale[0];
-    pxLat = -pixelScale[1]; // y axis grows southward in image, lat grows north
-  } else {
-    return { ok: false, reason: "GeoTIFF missing tiepoint/pixelScale" };
+  try {
+    // getOrigin returns [x, y, z] — for EPSG:4326 that's [lng, lat, alt].
+    // It points at the top-left corner of the top-left pixel.
+    const origin = image.getOrigin();
+    // getResolution returns [xRes, yRes] in world units per pixel.
+    // For EPSG:4326 raster data, yRes is conventionally negative because
+    // the image y-axis grows downward while latitude grows northward.
+    const resolution = image.getResolution();
+    originLng = origin[0];
+    originLat = origin[1];
+    pxLng = resolution[0];
+    pxLat = resolution[1]; // already signed correctly by geotiff.js
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `GeoTIFF georef missing: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
 
   // Count foreground pixels for diagnostics
