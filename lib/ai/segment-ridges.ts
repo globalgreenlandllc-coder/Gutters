@@ -117,5 +117,153 @@ export function buildSegmentRidges(
     out.push({ id: `solar-ridge-${i}`, a, b, confidence });
   });
 
+  return mergeCollinearRidges(out);
+}
+
+/**
+ * Adjacent Solar roof segments share a ridge: the top edge where their
+ * two slopes meet is one physical ridge but appears once per segment in
+ * the per-segment ridge list (a hip roof's 4 segments → 4 nearly
+ * coincident ridge candidates). Merge any group of ridges that are
+ *   - parallel (within ~6° of each other),
+ *   - within ~16 px (≈ 0.8 m) perpendicular distance, and
+ *   - whose projections onto the shared axis overlap or are within ~30 px
+ *     (≈ 1.5 m) of each other along the axis.
+ * Replaces them with a single ridge spanning the full extent.
+ */
+function mergeCollinearRidges(ridges: SegmentRidge[]): SegmentRidge[] {
+  const ANGLE_TOL_RAD = (6 * Math.PI) / 180;
+  const PERP_DIST_PX = 16;
+  const GAP_PX = 30;
+
+  const remaining = [...ridges];
+  const out: SegmentRidge[] = [];
+  while (remaining.length > 0) {
+    const seed = remaining.shift()!;
+    const group: SegmentRidge[] = [seed];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = remaining.length - 1; i >= 0; i--) {
+        const cand = remaining[i];
+        if (
+          group.some((g) =>
+            isCollinearAndOverlapping(
+              g,
+              cand,
+              ANGLE_TOL_RAD,
+              PERP_DIST_PX,
+              GAP_PX,
+            ),
+          )
+        ) {
+          group.push(cand);
+          remaining.splice(i, 1);
+          changed = true;
+        }
+      }
+    }
+    out.push(mergeRidgeGroup(group));
+  }
   return out;
+}
+
+function isCollinearAndOverlapping(
+  a: SegmentRidge,
+  b: SegmentRidge,
+  angleTol: number,
+  perpTol: number,
+  gapTol: number,
+): boolean {
+  const aLen = Math.hypot(a.b.x - a.a.x, a.b.y - a.a.y);
+  const bLen = Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y);
+  if (aLen < 1 || bLen < 1) return false;
+  const aDirX = (a.b.x - a.a.x) / aLen;
+  const aDirY = (a.b.y - a.a.y) / aLen;
+  const bDirX = (b.b.x - b.a.x) / bLen;
+  const bDirY = (b.b.y - b.a.y) / bLen;
+
+  // Angle between unit vectors via |cross|; folded mod 180° (direction
+  // sign doesn't matter — a "←" ridge is parallel to a "→" ridge).
+  const sinAng = Math.abs(aDirX * bDirY - aDirY * bDirX);
+  if (sinAng > Math.sin(angleTol)) return false;
+
+  // Perpendicular distance from b's midpoint to a's infinite line.
+  const aMidX = (a.a.x + a.b.x) / 2;
+  const aMidY = (a.a.y + a.b.y) / 2;
+  const bMidX = (b.a.x + b.b.x) / 2;
+  const bMidY = (b.a.y + b.b.y) / 2;
+  const dx = bMidX - aMidX;
+  const dy = bMidY - aMidY;
+  const perp = Math.abs(-aDirY * dx + aDirX * dy);
+  if (perp > perpTol) return false;
+
+  // Project each ridge onto a's axis through its midpoint; check that
+  // the two intervals overlap or are within `gapTol` of each other.
+  const project = (p: { x: number; y: number }) =>
+    aDirX * (p.x - aMidX) + aDirY * (p.y - aMidY);
+  const aT1 = project(a.a);
+  const aT2 = project(a.b);
+  const bT1 = project(b.a);
+  const bT2 = project(b.b);
+  const aMin = Math.min(aT1, aT2);
+  const aMax = Math.max(aT1, aT2);
+  const bMin = Math.min(bT1, bT2);
+  const bMax = Math.max(bT1, bT2);
+  const gap = Math.max(0, Math.max(aMin - bMax, bMin - aMax));
+  return gap <= gapTol;
+}
+
+function mergeRidgeGroup(group: SegmentRidge[]): SegmentRidge {
+  if (group.length === 1) return group[0];
+  // Use the longest ridge as the reference axis — it's the most stable
+  // direction estimate for the group.
+  const longest = group.reduce((best, r) => {
+    const lr = Math.hypot(r.b.x - r.a.x, r.b.y - r.a.y);
+    const lb = Math.hypot(best.b.x - best.a.x, best.b.y - best.a.y);
+    return lr > lb ? r : best;
+  });
+  const lLen = Math.hypot(longest.b.x - longest.a.x, longest.b.y - longest.a.y);
+  const dirX = (longest.b.x - longest.a.x) / lLen;
+  const dirY = (longest.b.y - longest.a.y) / lLen;
+  const midX = (longest.a.x + longest.b.x) / 2;
+  const midY = (longest.a.y + longest.b.y) / 2;
+
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  let perpSum = 0;
+  let perpCount = 0;
+  for (const r of group) {
+    for (const p of [r.a, r.b]) {
+      const t = dirX * (p.x - midX) + dirY * (p.y - midY);
+      const perp = -dirY * (p.x - midX) + dirX * (p.y - midY);
+      perpSum += perp;
+      perpCount++;
+      if (t < tMin) tMin = t;
+      if (t > tMax) tMax = t;
+    }
+  }
+  // Centerline shifted by the average perpendicular offset of all
+  // endpoints — biases the merged ridge toward the cluster center
+  // rather than sticking to the longest member's exact line.
+  const perpAvg = perpSum / Math.max(1, perpCount);
+  const newMidX = midX + -dirY * perpAvg;
+  const newMidY = midY + dirX * perpAvg;
+  const a = {
+    x: Math.round(newMidX + dirX * tMin),
+    y: Math.round(newMidY + dirY * tMin),
+  };
+  const b = {
+    x: Math.round(newMidX + dirX * tMax),
+    y: Math.round(newMidY + dirY * tMax),
+  };
+  const conf =
+    group.reduce((s, r) => s + r.confidence, 0) / group.length;
+
+  return {
+    id: `solar-ridge-merged-${group[0].id}`,
+    a,
+    b,
+    confidence: Math.round(conf * 100) / 100,
+  };
 }
