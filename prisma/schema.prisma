@@ -59,6 +59,7 @@ model User {
   auditLogs         AuditLog[]            @relation("ActorAudits")
   impersonations    ImpersonationSession[] @relation("AdminImpersonator")
   impersonated      ImpersonationSession[] @relation("ImpersonatedUser")
+  leadInteractions  UserLeadInteraction[]
 
   @@index([role])
   @@index([status])
@@ -460,4 +461,63 @@ model PlatformSetting {
   updatedBy String?
 
   @@map("platform_settings")
+}
+
+// -----------------------------------------------------------------------
+// Leads / Permits Tracking
+// -----------------------------------------------------------------------
+
+enum LeadStatus {
+  APPLIED
+  UNDER_REVIEW
+  ISSUED
+  INSPECTION
+  FINALED
+  UNKNOWN
+}
+
+model Lead {
+  id                  String       @id @default(cuid())
+  sourceId            String       // The ID from the city API
+  sourceCity          String       // e.g. "Seattle", "Kirkland"
+  address             String
+  originalDescription String       @db.Text
+  categorizedTrade    String?      // e.g. "Roofing", "Gutters", "Framing"
+  status              LeadStatus   @default(UNKNOWN)
+  latitude            Float
+  longitude           Float
+  projectValue        Int?         // in cents
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  interactions        UserLeadInteraction[]
+
+  @@unique([sourceCity, sourceId]) // Prevents duplicate imports from the same city
+  @@index([latitude, longitude])
+  @@index([categorizedTrade, status])
+  @@map("leads")
+}
+
+enum InteractionStatus {
+  UNREAD
+  VISITED
+  CONTACTED
+  BIDDING
+  NOT_INTERESTED
+}
+
+model UserLeadInteraction {
+  id        String            @id @default(cuid())
+  userId    String
+  leadId    String
+  status    InteractionStatus @default(UNREAD)
+  notes     String?           @db.Text
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, leadId])
+  @@map("user_lead_interactions")
 }
