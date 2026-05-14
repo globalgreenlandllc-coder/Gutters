@@ -1,9 +1,13 @@
 import OpenAI from "openai";
 
+import { getActiveApiKey } from "@/lib/api-keys";
+
 export type CategorizedTrade = "Roofing" | "Gutters" | "Framing" | "Siding" | "Windows" | "General" | "Other";
 
 export async function normalizePermitDescription(description: string): Promise<CategorizedTrade> {
-  if (!process.env.OPENAI_API_KEY) {
+  const apiKey = await getActiveApiKey("OPENAI");
+
+  if (!apiKey) {
     // Fallback simple regex parsing if no API key
     const lowerDesc = description.toLowerCase();
     if (lowerDesc.includes("roof") || lowerDesc.includes("r&r") && lowerDesc.includes("shingle")) return "Roofing";
@@ -16,7 +20,7 @@ export async function normalizePermitDescription(description: string): Promise<C
 
   try {
     const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: apiKey,
     });
 
     const response = await openai.chat.completions.create({

@@ -5,9 +5,7 @@ import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps
 import { InteractionStatus } from "@prisma/client";
 import LeadDetailsPanel, { LeadWithInteraction } from "./LeadDetailsPanel";
 
-const MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "dummy_key_please_replace";
-
-export default function LeadsMap() {
+export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [leads, setLeads] = useState<LeadWithInteraction[]>([]);
   const [selectedLead, setSelectedLead] = useState<LeadWithInteraction | null>(null);
   const [bbox, setBbox] = useState<string>("");
@@ -94,7 +92,7 @@ export default function LeadsMap() {
       </div>
 
       {/* Map */}
-      <APIProvider apiKey={MAPS_API_KEY}>
+      <APIProvider apiKey={apiKey}>
         <Map
           defaultCenter={{ lat: 47.6062, lng: -122.3321 }} // Default: Seattle
           defaultZoom={11}
