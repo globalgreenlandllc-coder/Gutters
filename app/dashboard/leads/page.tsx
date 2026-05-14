@@ -1,4 +1,4 @@
-import LeadsMap from "../../components/leads/LeadsMap";
+import LeadsMap from "@/components/leads/LeadsMap";
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
