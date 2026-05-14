@@ -8,6 +8,39 @@ import { fetchArcgisPermits } from "@/lib/leads/adapters/arcgis";
 import { cityRegistry } from "@/lib/leads/adapters/cities";
 import { analyzePermit } from "@/lib/leads/ai-normalizer";
 
+// Deterministic, AI-free summary for permits where the adapter has already
+// parsed a work-class + fixtures list. The LLM consistently echoes Bellevue-
+// style templated descriptions back verbatim no matter how the prompt is
+// framed — this is faster, free, and predictable.
+function deterministicSummary(p: RawPermitData): string | null {
+  if (!p.workClass || !p.fixtures) return null;
+  const wc = p.workClass.toLowerCase();
+  let verb: string;
+  if (wc.includes("new structure")) verb = "New construction";
+  else if (wc.includes("addition")) verb = "Addition";
+  else if (wc.includes("alteration")) verb = "Alteration";
+  else if (wc.includes("repair") || wc.includes("replacement")) verb = "Replace/repair";
+  else if (wc.includes("demolition")) verb = "Demolition";
+  else verb = p.workClass;
+
+  const bt = (p.buildingType ?? "")
+    .replace(/\/Duplex/i, "")
+    .replace(/Multifamily/i, "multifamily")
+    .replace(/^Commercial$/i, "commercial")
+    .toLowerCase()
+    .trim();
+
+  const items = p.fixtures
+    .split(/,\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const fx = items.slice(0, 3).join(", ").toLowerCase();
+  const extra = items.length > 3 ? `, +${items.length - 3} more` : "";
+
+  const head = bt ? `${verb} on ${bt}` : verb;
+  return `${head}: ${fx}${extra}`.slice(0, 120);
+}
+
 const AI_CONCURRENCY = 5;
 
 function mapStatusToEnum(rawStatus: string): LeadStatus {
@@ -142,10 +175,18 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       )
       .map((b) => ({ kind: "backfill" as const, permit: b.permit, existing: b.existing })),
   ];
-  const aiResults = await mapWithConcurrency(aiTargets, AI_CONCURRENCY, async (t) => ({
-    ...t,
-    insight: await analyzePermit(t.permit.originalDescription, t.permit.buildingType),
-  }));
+  const aiResults = await mapWithConcurrency(aiTargets, AI_CONCURRENCY, async (t) => {
+    const insight = await analyzePermit(
+      t.permit.originalDescription,
+      t.permit.buildingType,
+    );
+    // Override AI's verbose echo with a clean deterministic summary when we
+    // have parsed work-class + fixtures from the adapter. Keep AI's trade +
+    // relevance — those still benefit from the model.
+    const local = deterministicSummary(t.permit);
+    if (local) insight.summary = local;
+    return { ...t, insight };
+  });
   const insightByKey = new Map(
     aiResults.map((r) => [`${r.permit.sourceCity}:${r.permit.sourceId}`, r.insight]),
   );
