@@ -4,7 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
 
-const MAP_LIMIT = 200;
+const MAP_LIMIT = 500;
 
 export async function GET(request: Request) {
   const { userId: clerkId } = await auth();
@@ -98,15 +98,41 @@ export async function GET(request: Request) {
       }
     }
 
-    // Fetch one extra row so we can tell the client when results were truncated.
-    const rows = await db.lead.findMany({
-      where: whereClause,
+    // Surface hot leads first, then warm, then cold/null — within each band
+    // sort by recency. Without this, a single just-synced city saturates the
+    // result and the user sees no pins outside its geographic cluster.
+    // Three queries because Prisma can't express "high before medium before
+    // low" alphabetically; this is cheaper than a single oversized fetch+
+    // JS sort once the bbox contains many thousand leads.
+    const remainingAfter = (consumed: number) => Math.max(0, MAP_LIMIT + 1 - consumed);
+    const hot = await db.lead.findMany({
+      where: { ...whereClause, aiRelevance: "high" },
       orderBy: { createdAt: "desc" },
       take: MAP_LIMIT + 1,
     });
+    const warm =
+      remainingAfter(hot.length) > 0
+        ? await db.lead.findMany({
+            where: { ...whereClause, aiRelevance: "medium" },
+            orderBy: { createdAt: "desc" },
+            take: remainingAfter(hot.length),
+          })
+        : [];
+    const cold =
+      remainingAfter(hot.length + warm.length) > 0
+        ? await db.lead.findMany({
+            where: {
+              ...whereClause,
+              OR: [{ aiRelevance: "low" }, { aiRelevance: null }],
+            },
+            orderBy: { createdAt: "desc" },
+            take: remainingAfter(hot.length + warm.length),
+          })
+        : [];
 
-    const hasMore = rows.length > MAP_LIMIT;
-    const leads = hasMore ? rows.slice(0, MAP_LIMIT) : rows;
+    const combined = [...hot, ...warm, ...cold];
+    const hasMore = combined.length > MAP_LIMIT;
+    const leads = hasMore ? combined.slice(0, MAP_LIMIT) : combined;
 
     if (internalUserId) {
       const interactions = await db.userLeadInteraction.findMany({

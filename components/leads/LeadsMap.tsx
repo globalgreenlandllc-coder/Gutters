@@ -546,7 +546,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           )}
           {hasMore && (
             <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 text-xs px-3 py-2 rounded-lg backdrop-blur-md max-w-[260px]">
-              Showing 200 newest — zoom in to see more.
+              Showing 500 best — zoom in to see more.
             </div>
           )}
         </div>
