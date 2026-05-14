@@ -36,7 +36,24 @@ export async function GET(request: Request) {
       whereClause.status = status as LeadStatus;
     }
     if (buildingType && buildingType !== "All") {
-      whereClause.buildingType = buildingType;
+      // "Residential" is treated as an umbrella that matches any residential
+      // class regardless of city-specific labels (Seattle / Bellevue use
+      // "Single Family/Duplex" + "Multifamily"; Pierce / Tacoma use the
+      // broader "Residential" string).
+      if (buildingType === "Residential") {
+        whereClause.buildingType = {
+          in: [
+            "Residential",
+            "Single Family/Duplex",
+            "Single Family Condo Unit",
+            "Multifamily",
+            "Multifamily Residential",
+            "Single Family Residential",
+          ],
+        };
+      } else {
+        whereClause.buildingType = buildingType;
+      }
     }
     if (projectKind && projectKind !== "All") {
       whereClause.projectKind = projectKind;
