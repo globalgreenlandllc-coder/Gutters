@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   X,
   MapPin,
-  Tag,
   DollarSign,
   Calendar,
   Navigation,
@@ -17,6 +16,9 @@ import {
   HardHat,
   ExternalLink,
   Flame,
+  User,
+  Wrench,
+  Hammer,
 } from "lucide-react";
 
 export interface LeadWithInteraction {
@@ -27,7 +29,10 @@ export interface LeadWithInteraction {
   categorizedTrade: string | null;
   buildingType: string | null;
   projectKind: string | null;
+  workClass: string | null;
+  fixtures: string | null;
   contractorName: string | null;
+  ownerName: string | null;
   aiSummary: string | null;
   aiRelevance: string | null;
   status: LeadStatus;
@@ -172,6 +177,9 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
   const contractorSearchUrl = lead.contractorName
     ? `https://www.google.com/search?q=${encodeURIComponent(`${lead.contractorName} ${lead.sourceCity} contractor phone`)}`
     : null;
+  const ownerSearchUrl = lead.ownerName
+    ? `https://www.google.com/search?q=${encodeURIComponent(`${lead.ownerName} ${lead.sourceCity} phone`)}`
+    : null;
   const relevance = lead.aiRelevance && relevanceMeta[lead.aiRelevance] ? relevanceMeta[lead.aiRelevance] : null;
 
   return (
@@ -195,19 +203,22 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           </button>
 
           <div className="flex flex-wrap items-center gap-2 mb-3">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 text-xs font-medium ring-1 ring-emerald-500/30">
-              <Sparkles size={12} />
-              {lead.categorizedTrade ?? "Uncategorized"}
-            </span>
+            {lead.projectKind && lead.projectKind !== "Other" && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-300 text-xs font-medium ring-1 ring-violet-500/30">
+                <Hammer size={12} />
+                {lead.projectKind}
+              </span>
+            )}
             {lead.buildingType && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-300 text-xs font-medium ring-1 ring-sky-500/30">
                 <Building2 size={12} />
                 {lead.buildingType}
               </span>
             )}
-            {lead.projectKind && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-300 text-xs font-medium ring-1 ring-violet-500/30">
-                {lead.projectKind}
+            {lead.categorizedTrade && lead.categorizedTrade !== "Other" && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 text-xs font-medium ring-1 ring-emerald-500/30">
+                <Sparkles size={12} />
+                {lead.categorizedTrade}
               </span>
             )}
             <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${permitMeta.classes}`}>
@@ -263,13 +274,36 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
             </div>
             <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
               <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
-                <Tag size={11} /> Trade
+                <Wrench size={11} /> Work
               </div>
-              <div className="font-semibold text-white text-lg truncate">
-                {lead.categorizedTrade ?? "—"}
+              <div className="font-semibold text-white text-lg truncate" title={lead.workClass ?? undefined}>
+                {lead.workClass ?? lead.projectKind ?? lead.categorizedTrade ?? "—"}
               </div>
             </div>
           </div>
+
+          {/* Parsed fixtures / items involved */}
+          {lead.fixtures && (
+            <div>
+              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2 flex items-center gap-1.5">
+                <Wrench size={11} /> Items in this permit
+              </h4>
+              <div className="flex flex-wrap gap-1.5">
+                {lead.fixtures
+                  .split(/,\s*/)
+                  .filter(Boolean)
+                  .slice(0, 12)
+                  .map((f, i) => (
+                    <span
+                      key={i}
+                      className="text-[11px] px-2 py-1 rounded-md bg-slate-900/80 border border-slate-800 text-slate-300"
+                    >
+                      {f.trim()}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {/* Quick actions */}
           <div className="grid grid-cols-2 gap-2">
@@ -311,13 +345,30 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
             </div>
           </div>
 
-          {/* Contact paths — contractor + owner lookup */}
-          {(lead.contractorName || ownerUrl) && (
+          {/* Contact paths — owner, contractor, parcel viewer */}
+          {(lead.ownerName || lead.contractorName || ownerUrl) && (
             <div>
               <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
                 Contact Paths
               </h4>
               <div className="space-y-2">
+                {lead.ownerName && (
+                  <a
+                    href={ownerSearchUrl ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <User size={14} className="text-emerald-300 shrink-0" />
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Property owner</span>
+                        <span className="truncate">{lead.ownerName}</span>
+                      </span>
+                    </span>
+                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                  </a>
+                )}
                 {lead.contractorName && (
                   <a
                     href={contractorSearchUrl ?? "#"}
@@ -345,7 +396,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                     <span className="flex items-center gap-2 min-w-0">
                       <Building2 size={14} className="text-sky-300 shrink-0" />
                       <span className="flex flex-col min-w-0">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Owner lookup</span>
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Parcel records</span>
                         <span className="truncate">County parcel viewer</span>
                       </span>
                     </span>

@@ -343,8 +343,51 @@ export const tacomaDataset: ArcgisDataset = {
 
 // ─── Bellevue, WA (ArcGIS) ───────────────────────────────────────────────────
 // City of Bellevue publishes building permits via ArcGIS Online with rich
-// fields including OWNER, CONTRACTOR, APPLICANT, NEIGHBORHOODAREA. FOLDERGROUP
-// distinguishes building permits from right-of-way/utility/fire/etc.
+// fields including OWNER, CONTRACTOR, APPLICANT, NEIGHBORHOODAREA.
+//
+// CRITICAL: Bellevue's PROJECTDESCRIPTION follows a template:
+//   "A {BUILDING_CLASS} {WORK_CLASS} {MODIFIER} Project Involving ({FIXTURES})"
+// The PERMITTYPE codes (BN, BF, BK, …) are sub-trade categories (plumbing,
+// electrical, fireplace) — NOT new-vs-remodel signals. The real project-kind
+// signal is the WORK_CLASS phrase inside the description.
+const BELLEVUE_WORK_CLASSES = [
+  "New Structure",
+  "Addition to Existing Structure",
+  "Alteration to Existing Structure",
+  "Repair or Replacement",
+  "Demolition",
+];
+function parseBellevueDescription(desc: unknown): {
+  buildingClass?: string;
+  workClass?: string;
+  modifier?: string;
+  fixtures?: string;
+} | null {
+  if (typeof desc !== "string" || !desc) return null;
+  // Build alternation pattern once and capture the work class verbatim.
+  const workPattern = BELLEVUE_WORK_CLASSES.map((w) => w.replace(/\s/g, "\\s")).join("|");
+  const re = new RegExp(
+    `^A\\s+(.+?)\\s+(${workPattern})(?:\\s+(None|Electrical|Mechanical|Low\\s*Voltage\\s*Only|Plumbing))?(?:\\s+Project\\s+Involving\\s*\\(([^)]+)\\))?`,
+    "i",
+  );
+  const m = desc.match(re);
+  if (!m) return null;
+  return {
+    buildingClass: m[1]?.trim(),
+    workClass: m[2]?.trim(),
+    modifier: m[3]?.trim() || "None",
+    fixtures: m[4]?.trim(),
+  };
+}
+function bellevueProjectKindFromWorkClass(workClass: string | undefined): string | undefined {
+  if (!workClass) return undefined;
+  if (/^new structure$/i.test(workClass)) return "New Construction";
+  if (/^addition/i.test(workClass)) return "Remodel/Addition";
+  if (/^alteration/i.test(workClass)) return "Remodel/Addition";
+  if (/^demolition$/i.test(workClass)) return "Demolition";
+  if (/^repair or replacement$/i.test(workClass)) return "Other";
+  return undefined;
+}
 function classifyBellevueSubtype(raw: unknown): string | undefined {
   if (typeof raw !== "string" || !raw || raw === "None") return undefined;
   if (/single\s*family/i.test(raw)) return "Single Family/Duplex";
@@ -352,20 +395,6 @@ function classifyBellevueSubtype(raw: unknown): string | undefined {
   if (/commercial|office|hotel/i.test(raw)) return "Commercial";
   if (/nonresidential/i.test(raw)) return "Commercial";
   return raw;
-}
-function inferBellevueProjectKind(permitType: unknown, desc: unknown): string | undefined {
-  // PERMITTYPE codes: BN=New, BA=Addition, BR=Remodel, BD=Demolition,
-  // BF=Misc/Electrical, BT=Tenant, BE=Electrical, BM=Mechanical, BP=Plumbing
-  if (typeof permitType === "string") {
-    const t = permitType.toUpperCase().trim();
-    if (t === "BN" || t.endsWith(" BN")) return "New Construction";
-    if (t === "BA" || t.endsWith(" BA")) return "Remodel/Addition";
-    if (t === "BR" || t.endsWith(" BR")) return "Remodel/Addition";
-    if (t === "BD" || t.endsWith(" BD")) return "Demolition";
-    if (t === "BT" || t.endsWith(" BT")) return "Tenant Improvement";
-  }
-  // Fall back to description keyword scan.
-  return inferProjectKindFromDescription(desc);
 }
 export const bellevueDataset: ArcgisDataset = {
   city: "Bellevue",
@@ -385,7 +414,14 @@ export const bellevueDataset: ArcgisDataset = {
     buildingType: (i) => classifyBellevueSubtype(i.SUBTYPE),
     contractorName: (i) =>
       i.CONTRACTOR && i.CONTRACTOR !== "NONE" ? i.CONTRACTOR : undefined,
-    projectKind: (i) => inferBellevueProjectKind(i.PERMITTYPE, i.PROJECTDESCRIPTION),
+    ownerName: (i) =>
+      i.OWNER && i.OWNER !== "NONE" && i.OWNER !== "None" ? i.OWNER : undefined,
+    projectKind: (i) => {
+      const parsed = parseBellevueDescription(i.PROJECTDESCRIPTION);
+      return bellevueProjectKindFromWorkClass(parsed?.workClass);
+    },
+    workClass: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.workClass,
+    fixtures: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.fixtures,
   },
 };
 

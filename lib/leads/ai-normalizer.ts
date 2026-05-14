@@ -68,14 +68,16 @@ export async function analyzePermit(
       messages: [
         {
           role: "system",
-          content: `You analyze construction permits for a gutter installation business that also tracks adjacent trades (roofing, framing, siding, windows).
+          content: `You analyze building permits for a gutter installation business that also tracks adjacent trades (roofing, framing, siding, windows).
 
-Given a municipal permit description (and optional building type), return JSON with:
-- "trade": ONE of "Roofing" | "Gutters" | "Framing" | "Siding" | "Windows" | "General" | "Other". Pick the PRIMARY trade involved.
-- "summary": 8-15 word plain-English summary a salesperson can scan. No marketing fluff, no caps lock.
-- "relevance": "high" | "medium" | "low". HIGH = new home construction, full reroof, large addition, or anything where gutters will almost certainly be installed/replaced. MEDIUM = remodel, siding, window replacement, partial reroof. LOW = mechanical/electrical/plumbing only, signage, demolition without rebuild, minor interior work.
+Permit descriptions are often template-generated and verbose. Distill them into clean, scannable English. Drop boilerplate like "A Single Family Residential ... Project Involving (...)". Decode fixture lists into normal language.
 
-Return ONLY valid JSON.`,
+Return JSON with these exact keys:
+- "trade": ONE of "Roofing" | "Gutters" | "Framing" | "Siding" | "Windows" | "General" | "Other". Pick the PRIMARY trade. New construction with no specific trade emphasis is "Framing" or "General".
+- "summary": 6–14 words, plain natural English, no caps lock, no marketing words. Lead with the WORK ACTION not the building type. Example tone: "New 4-bedroom single family home with garage" / "Water heater swap, no other work" / "Kitchen + bath remodel, electrical pulled".
+- "relevance": "high" | "medium" | "low". HIGH = ground-up new build, full reroof, full re-side, large addition with new exterior surfaces. MEDIUM = significant remodel, partial reroof, window swap, ADU/garage build. LOW = water heater swap, electrical-only, plumbing-only, HVAC swap, fireplace insert, interior-only alteration, sign, signage, branch circuit additions.
+
+Return ONLY valid JSON, no markdown.`,
         },
         {
           role: "user",

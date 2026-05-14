@@ -56,7 +56,10 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       originalDescription: true,
       buildingType: true,
       projectKind: true,
+      workClass: true,
+      fixtures: true,
       contractorName: true,
+      ownerName: true,
       aiSummary: true,
       aiRelevance: true,
     },
@@ -95,19 +98,26 @@ async function syncPermits(rawPermits: RawPermitData[]) {
         permit.buildingType !== exist.buildingType &&
         (exist.buildingType == null || STALE_BUILDING_TYPES.has(exist.buildingType));
 
-      // projectKind is stale if currently "Other" but the new value is one
-      // of the canonical specific buckets.
+      // projectKind: now that our adapters are smarter, trust the latest
+      // adapter output. This field isn't operator-editable in the UI so
+      // overwriting is safe — and avoids leaving misclassifications stuck.
       const projectKindIsStale =
-        permit.projectKind != null &&
-        permit.projectKind !== "Other" &&
-        permit.projectKind !== exist.projectKind &&
-        (exist.projectKind == null || exist.projectKind === "Other");
+        permit.projectKind != null && permit.projectKind !== exist.projectKind;
+
+      // Workclass/fixtures are pure source-derived too — always refresh.
+      const workClassIsStale =
+        permit.workClass != null && permit.workClass !== exist.workClass;
+      const fixturesIsStale =
+        permit.fixtures != null && permit.fixtures !== exist.fixtures;
 
       const needsBackfill =
         exist.status !== mappedStatus ||
         buildingTypeIsStale ||
         projectKindIsStale ||
+        workClassIsStale ||
+        fixturesIsStale ||
         (exist.contractorName == null && permit.contractorName != null) ||
+        (exist.ownerName == null && permit.ownerName != null) ||
         exist.aiSummary == null ||
         exist.aiRelevance == null;
       if (needsBackfill) {
@@ -118,11 +128,18 @@ async function syncPermits(rawPermits: RawPermitData[]) {
     }
   }
 
-  // For new permits AND existing-but-missing-AI ones, run analyzePermit once.
+  // For new permits AND existing-but-stale-AI ones, run analyzePermit once.
+  // Stale = missing summary/relevance OR work class has changed (which
+  // usually means our previous summary was based on a misclassification).
   const aiTargets = [
     ...newPermits.map((p) => ({ kind: "new" as const, permit: p })),
     ...backfillTargets
-      .filter((b) => b.existing.aiSummary == null || b.existing.aiRelevance == null)
+      .filter(
+        (b) =>
+          b.existing.aiSummary == null ||
+          b.existing.aiRelevance == null ||
+          (b.permit.workClass != null && b.permit.workClass !== b.existing.workClass),
+      )
       .map((b) => ({ kind: "backfill" as const, permit: b.permit, existing: b.existing })),
   ];
   const aiResults = await mapWithConcurrency(aiTargets, AI_CONCURRENCY, async (t) => ({
@@ -146,7 +163,10 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       aiRelevance: insight.relevance,
       buildingType: permit.buildingType ?? null,
       projectKind: permit.projectKind ?? null,
+      workClass: permit.workClass ?? null,
+      fixtures: permit.fixtures ?? null,
       contractorName: permit.contractorName ?? null,
+      ownerName: permit.ownerName ?? null,
       status: mapStatusToEnum(permit.status),
       latitude: permit.latitude,
       longitude: permit.longitude,
@@ -180,13 +200,14 @@ async function syncPermits(rawPermits: RawPermitData[]) {
         permit.buildingType !== ex.buildingType &&
         (ex.buildingType == null || STALE_BUILDING_TYPES.has(ex.buildingType));
 
-      // Overwrite projectKind when we now have a specific value replacing
-      // a null/"Other".
+      // Trust adapter output for source-derived fields; fill operator-
+      // editable fields only when null.
       const shouldUpdateProjectKind =
-        permit.projectKind != null &&
-        permit.projectKind !== "Other" &&
-        permit.projectKind !== ex.projectKind &&
-        (ex.projectKind == null || ex.projectKind === "Other");
+        permit.projectKind != null && permit.projectKind !== ex.projectKind;
+      const shouldUpdateWorkClass =
+        permit.workClass != null && permit.workClass !== ex.workClass;
+      const shouldUpdateFixtures =
+        permit.fixtures != null && permit.fixtures !== ex.fixtures;
 
       return db.lead.update({
         where: { id: ex.id },
@@ -194,12 +215,21 @@ async function syncPermits(rawPermits: RawPermitData[]) {
           status: mappedStatus,
           ...(shouldUpdateBuildingType ? { buildingType: permit.buildingType } : {}),
           ...(shouldUpdateProjectKind ? { projectKind: permit.projectKind } : {}),
-          // Only fill nulls for fields that may have been touched/edited.
+          ...(shouldUpdateWorkClass ? { workClass: permit.workClass } : {}),
+          ...(shouldUpdateFixtures ? { fixtures: permit.fixtures } : {}),
           ...(ex.contractorName == null && permit.contractorName
             ? { contractorName: permit.contractorName }
             : {}),
-          ...(ex.aiSummary == null && insight ? { aiSummary: insight.summary } : {}),
-          ...(ex.aiRelevance == null && insight ? { aiRelevance: insight.relevance } : {}),
+          ...(ex.ownerName == null && permit.ownerName
+            ? { ownerName: permit.ownerName }
+            : {}),
+          // Re-run AI when the work-class changed — old summary may be wrong.
+          ...((ex.aiSummary == null || shouldUpdateWorkClass) && insight
+            ? { aiSummary: insight.summary }
+            : {}),
+          ...((ex.aiRelevance == null || shouldUpdateWorkClass) && insight
+            ? { aiRelevance: insight.relevance }
+            : {}),
         },
       });
     }),

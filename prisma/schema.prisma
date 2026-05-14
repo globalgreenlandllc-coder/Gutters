@@ -487,6 +487,9 @@ model Lead {
   buildingType        String?      // "Residential", "Commercial", "Multi-family", …
   projectKind         String?      // "New Construction" | "Remodel/Addition" | "Tenant Improvement" | "Demolition" | "Other"
   contractorName     String?      // Company doing the permitted work, if disclosed
+  ownerName           String?      // Property owner, when the feed publishes it
+  fixtures            String?      // Comma-separated work items / fixtures
+  workClass           String?      // Raw work-class from source (e.g. "New Structure")
   aiSummary           String?      @db.Text  // Plain-English one-liner from the AI
   aiRelevance         String?      // "high" | "medium" | "low" — gutter-business relevance
   status              LeadStatus   @default(UNKNOWN)

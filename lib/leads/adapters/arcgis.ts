@@ -25,7 +25,10 @@ export interface ArcgisDataset {
     value?: (item: any) => number | undefined;
     buildingType?: (item: any) => string | undefined;
     contractorName?: (item: any) => string | undefined;
+    ownerName?: (item: any) => string | undefined;
     projectKind?: (item: any) => string | undefined;
+    workClass?: (item: any) => string | undefined;
+    fixtures?: (item: any) => string | undefined;
   };
 }
 
@@ -112,7 +115,10 @@ export async function fetchArcgisPermits(
         projectValue: dataset.fields.value?.(props),
         buildingType: dataset.fields.buildingType?.(props),
         contractorName: dataset.fields.contractorName?.(props),
+        ownerName: dataset.fields.ownerName?.(props),
         projectKind: dataset.fields.projectKind?.(props),
+        workClass: dataset.fields.workClass?.(props),
+        fixtures: dataset.fields.fixtures?.(props),
       });
     }
 

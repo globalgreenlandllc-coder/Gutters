@@ -13,7 +13,10 @@ export interface RawPermitData {
   projectValue?: number;
   buildingType?: string;
   contractorName?: string;
+  ownerName?: string;
   projectKind?: string;
+  workClass?: string;     // Raw work-class text from source
+  fixtures?: string;      // Parsed comma-separated work items
 }
 
 export interface SocrataDataset {
@@ -34,7 +37,10 @@ export interface SocrataDataset {
     value?: (item: any) => number | undefined;
     buildingType?: (item: any) => string | undefined;
     contractorName?: (item: any) => string | undefined;
+    ownerName?: (item: any) => string | undefined;
     projectKind?: (item: any) => string | undefined;
+    workClass?: (item: any) => string | undefined;
+    fixtures?: (item: any) => string | undefined;
   };
 }
 
@@ -87,7 +93,10 @@ export async function fetchSocrataPermits(
         projectValue: dataset.fields.value?.(item),
         buildingType: dataset.fields.buildingType?.(item),
         contractorName: dataset.fields.contractorName?.(item),
+        ownerName: dataset.fields.ownerName?.(item),
         projectKind: dataset.fields.projectKind?.(item),
+        workClass: dataset.fields.workClass?.(item),
+        fixtures: dataset.fields.fixtures?.(item),
       });
     }
 
