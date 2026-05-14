@@ -53,7 +53,11 @@ export async function analyzePermit(
   description: string,
   buildingType?: string,
 ): Promise<PermitInsight> {
-  const apiKey = await getActiveApiKey("OPENAI");
+  // Prefer the admin-console key (so it can be rotated without redeploying),
+  // but fall back to a standard OPENAI_API_KEY env var so the same code path
+  // works in environments that haven't been onboarded to the admin console
+  // yet (e.g. early Vercel previews, CI, or scripted backfills).
+  const apiKey = (await getActiveApiKey("OPENAI")) ?? process.env.OPENAI_API_KEY ?? null;
 
   if (!apiKey) return fallbackInsight(description);
 
