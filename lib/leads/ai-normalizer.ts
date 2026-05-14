@@ -1,9 +1,5 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "", // Ensure you add this to your .env
-});
-
 export type CategorizedTrade = "Roofing" | "Gutters" | "Framing" | "Siding" | "Windows" | "General" | "Other";
 
 export async function normalizePermitDescription(description: string): Promise<CategorizedTrade> {
@@ -19,6 +15,10 @@ export async function normalizePermitDescription(description: string): Promise<C
   }
 
   try {
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
