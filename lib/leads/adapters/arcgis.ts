@@ -29,6 +29,31 @@ export interface ArcgisDataset {
   };
 }
 
+// Returns [lng, lat] for any GeoJSON geometry by averaging vertices. Returns
+// [NaN, NaN] if the geometry shape is unrecognized or empty.
+function computeCentroid(geom: any): [number, number] {
+  if (!geom || !geom.type) return [NaN, NaN];
+  const type = geom.type;
+  if (type === "Point") {
+    const c = geom.coordinates;
+    return [Number(c?.[0]), Number(c?.[1])];
+  }
+  const ringForPolygon = (poly: any[]): number[][] =>
+    Array.isArray(poly?.[0]) ? poly[0] : [];
+  let coords: number[][] = [];
+  if (type === "Polygon") {
+    coords = ringForPolygon(geom.coordinates);
+  } else if (type === "MultiPolygon") {
+    coords = ringForPolygon(geom.coordinates?.[0]);
+  } else if (type === "LineString") {
+    coords = geom.coordinates ?? [];
+  }
+  if (!coords.length) return [NaN, NaN];
+  let sx = 0, sy = 0;
+  for (const [x, y] of coords) { sx += Number(x); sy += Number(y); }
+  return [sx / coords.length, sy / coords.length];
+}
+
 export async function fetchArcgisPermits(
   dataset: ArcgisDataset,
   limit: number = 50,
@@ -63,10 +88,15 @@ export async function fetchArcgisPermits(
 
       const propLat = dataset.fields.latitude?.(props);
       const propLng = dataset.fields.longitude?.(props);
+
+      // Geometry can be Point, Polygon, or MultiPolygon. For non-point shapes
+      // we use the centroid as the pin location.
+      const [centroidLng, centroidLat] = computeCentroid(geom);
+
       const lat =
-        propLat != null && isFinite(propLat) ? propLat : geom?.coordinates?.[1];
+        propLat != null && isFinite(propLat) ? propLat : centroidLat;
       const lng =
-        propLng != null && isFinite(propLng) ? propLng : geom?.coordinates?.[0];
+        propLng != null && isFinite(propLng) ? propLng : centroidLng;
 
       const sourceId = dataset.fields.sourceId(props);
       if (!sourceId || !isFinite(Number(lat)) || !isFinite(Number(lng))) continue;

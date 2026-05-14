@@ -76,20 +76,37 @@ async function syncPermits(rawPermits: RawPermitData[]) {
     const exist = existingMap.get(key);
     const mappedStatus = mapStatusToEnum(permit.status);
     if (exist) {
-      // "Stale" buildingType: earlier ingests stored the broad mapped value
-      // ("Residential"/"Non-Residential"). Replace with the granular
-      // permitclass when the new value is more specific.
+      // "Stale" buildingType: earlier adapter versions stored either the
+      // mapped bucket ("Residential"/"Non-Residential") or Tacoma's
+      // permit-category text ("Building", "Right-of-Way", etc.) instead of
+      // the real building class. Replace those when we have a fresh value.
+      const STALE_BUILDING_TYPES = new Set([
+        "Residential",
+        "Non-Residential",
+        "Building",
+        "Right-of-Way",
+        "ePermit",
+        "Utility Connection",
+        "Site",
+        "Sign",
+      ]);
       const buildingTypeIsStale =
         permit.buildingType != null &&
         permit.buildingType !== exist.buildingType &&
-        (exist.buildingType == null ||
-          exist.buildingType === "Residential" ||
-          exist.buildingType === "Non-Residential");
+        (exist.buildingType == null || STALE_BUILDING_TYPES.has(exist.buildingType));
+
+      // projectKind is stale if currently "Other" but the new value is one
+      // of the canonical specific buckets.
+      const projectKindIsStale =
+        permit.projectKind != null &&
+        permit.projectKind !== "Other" &&
+        permit.projectKind !== exist.projectKind &&
+        (exist.projectKind == null || exist.projectKind === "Other");
 
       const needsBackfill =
         exist.status !== mappedStatus ||
         buildingTypeIsStale ||
-        (exist.projectKind == null && permit.projectKind != null) ||
+        projectKindIsStale ||
         (exist.contractorName == null && permit.contractorName != null) ||
         exist.aiSummary == null ||
         exist.aiRelevance == null;
@@ -148,21 +165,35 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       const insight = insightByKey.get(insightKey);
       // Overwrite buildingType if we now have a more specific value (e.g.
       // "Single Family/Duplex" replacing the old broad "Residential").
+      const STALE_BUILDING_TYPES = new Set([
+        "Residential",
+        "Non-Residential",
+        "Building",
+        "Right-of-Way",
+        "ePermit",
+        "Utility Connection",
+        "Site",
+        "Sign",
+      ]);
       const shouldUpdateBuildingType =
         permit.buildingType != null &&
         permit.buildingType !== ex.buildingType &&
-        (ex.buildingType == null ||
-          ex.buildingType === "Residential" ||
-          ex.buildingType === "Non-Residential");
+        (ex.buildingType == null || STALE_BUILDING_TYPES.has(ex.buildingType));
+
+      // Overwrite projectKind when we now have a specific value replacing
+      // a null/"Other".
+      const shouldUpdateProjectKind =
+        permit.projectKind != null &&
+        permit.projectKind !== "Other" &&
+        permit.projectKind !== ex.projectKind &&
+        (ex.projectKind == null || ex.projectKind === "Other");
 
       return db.lead.update({
         where: { id: ex.id },
         data: {
           status: mappedStatus,
           ...(shouldUpdateBuildingType ? { buildingType: permit.buildingType } : {}),
-          ...(ex.projectKind == null && permit.projectKind
-            ? { projectKind: permit.projectKind }
-            : {}),
+          ...(shouldUpdateProjectKind ? { projectKind: permit.projectKind } : {}),
           // Only fill nulls for fields that may have been touched/edited.
           ...(ex.contractorName == null && permit.contractorName
             ? { contractorName: permit.contractorName }

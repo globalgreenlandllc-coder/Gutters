@@ -283,6 +283,35 @@ export const austinDataset: SocrataDataset = {
 
 // ─── Tacoma, WA (ArcGIS) ─────────────────────────────────────────────────────
 // City of Tacoma publishes Accela permit data through ArcGIS Hub.
+// Tacoma's schema is unusual: permit_subtype carries the building class
+// ("Residential", "Commercial", "Utility", …) and permit_type is the permit
+// category ("Building", "Right-of-Way", …). The project kind (new vs
+// remodel) is only in the free-text description, so we keyword-extract it.
+function inferProjectKindFromDescription(desc: unknown): string | undefined {
+  if (typeof desc !== "string" || !desc) return undefined;
+  const v = desc.toLowerCase();
+  if (/\b(demoli|wreck|deconstruct)/i.test(desc)) return "Demolition";
+  if (/\b(tenant\s+impr|t\.?i\.?\b)/i.test(desc)) return "Tenant Improvement";
+  if (
+    /\b(new\s+(single|sfr|residential|construction|building|structure|dwell|home|house))/i.test(desc) ||
+    /\bconstruct(ion)?\s+(of\s+)?(a\s+)?new\b/i.test(desc) ||
+    /\bbuild\s+new\b/i.test(desc)
+  ) {
+    return "New Construction";
+  }
+  if (
+    v.includes("remodel") ||
+    v.includes("addition") ||
+    v.includes("alteration") ||
+    v.includes("renovation") ||
+    v.includes("repair") ||
+    v.includes("reroof") ||
+    v.includes("re-roof")
+  ) {
+    return "Remodel/Addition";
+  }
+  return undefined;
+}
 export const tacomaDataset: ArcgisDataset = {
   city: "Tacoma",
   layerUrl:
@@ -298,13 +327,109 @@ export const tacomaDataset: ArcgisDataset = {
     latitude: (i) => num(i.latitude),
     longitude: (i) => num(i.longitude),
     value: (i) => intOrUndef(i.valuation),
-    // permit_type is "Site"/"Building"/etc. — coarse but the only signal.
-    buildingType: (i) => i.permit_type,
+    // permit_subtype carries the building class — Residential / Commercial /
+    // Utility / Wastewater / etc.
+    buildingType: (i) =>
+      typeof i.permit_subtype === "string" && i.permit_subtype !== "NA"
+        ? i.permit_subtype
+        : undefined,
     contractorName: (i) =>
       i.applicant_name && i.applicant_name !== "No Primary Applicant Available"
         ? i.applicant_name
         : undefined,
-    projectKind: (i) => normalizeGenericProjectKind(i.permit_subtype),
+    projectKind: (i) => inferProjectKindFromDescription(i.description),
+  },
+};
+
+// ─── Bellevue, WA (ArcGIS) ───────────────────────────────────────────────────
+// City of Bellevue publishes building permits via ArcGIS Online with rich
+// fields including OWNER, CONTRACTOR, APPLICANT, NEIGHBORHOODAREA. FOLDERGROUP
+// distinguishes building permits from right-of-way/utility/fire/etc.
+function classifyBellevueSubtype(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw || raw === "None") return undefined;
+  if (/single\s*family/i.test(raw)) return "Single Family/Duplex";
+  if (/multifamily/i.test(raw)) return "Multifamily";
+  if (/commercial|office|hotel/i.test(raw)) return "Commercial";
+  if (/nonresidential/i.test(raw)) return "Commercial";
+  return raw;
+}
+function inferBellevueProjectKind(permitType: unknown, desc: unknown): string | undefined {
+  // PERMITTYPE codes: BN=New, BA=Addition, BR=Remodel, BD=Demolition,
+  // BF=Misc/Electrical, BT=Tenant, BE=Electrical, BM=Mechanical, BP=Plumbing
+  if (typeof permitType === "string") {
+    const t = permitType.toUpperCase().trim();
+    if (t === "BN" || t.endsWith(" BN")) return "New Construction";
+    if (t === "BA" || t.endsWith(" BA")) return "Remodel/Addition";
+    if (t === "BR" || t.endsWith(" BR")) return "Remodel/Addition";
+    if (t === "BD" || t.endsWith(" BD")) return "Demolition";
+    if (t === "BT" || t.endsWith(" BT")) return "Tenant Improvement";
+  }
+  // Fall back to description keyword scan.
+  return inferProjectKindFromDescription(desc);
+}
+export const bellevueDataset: ArcgisDataset = {
+  city: "Bellevue",
+  layerUrl:
+    "https://services1.arcgis.com/EYzEZbDhXZjURPbP/arcgis/rest/services/Bellevue_Permits/FeatureServer/0",
+  where: "FOLDERGROUP='Building' AND ISSUEDDATE IS NOT NULL",
+  orderBy: "ISSUEDDATE DESC",
+  fields: {
+    sourceId: (i) => i.PERMITNUMBER,
+    address: (i) =>
+      [i.SITEADDRESS, i.CITY, i.STATE, i.ZIPCODE].filter(Boolean).join(", ") ||
+      "Unknown Address",
+    description: (i) =>
+      i.PROJECTDESCRIPTION ?? i.PROJECTNAME ?? "No description provided",
+    status: (i) => i.PERMITSTATUS ?? "Issued",
+    // Lat/lng come from geometry — centroid handled by the generic adapter.
+    buildingType: (i) => classifyBellevueSubtype(i.SUBTYPE),
+    contractorName: (i) =>
+      i.CONTRACTOR && i.CONTRACTOR !== "NONE" ? i.CONTRACTOR : undefined,
+    projectKind: (i) => inferBellevueProjectKind(i.PERMITTYPE, i.PROJECTDESCRIPTION),
+  },
+};
+
+// ─── Renton, WA (ArcGIS MapServer) ───────────────────────────────────────────
+// City of Renton publishes permits as a single MapServer layer that includes
+// many categories. Filter out non-construction inspections.
+function classifyRentonKind(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const v = raw.toLowerCase();
+  if (v.includes("single family")) return "Single Family/Duplex";
+  if (v.includes("duplex")) return "Single Family/Duplex";
+  if (v.includes("multifamily")) return "Multifamily";
+  if (v.includes("commercial")) return "Commercial";
+  if (v.includes("mixed use")) return "Commercial";
+  if (v.includes("adu") || v.includes("accessory dwelling")) return "Single Family/Duplex";
+  return raw;
+}
+function classifyRentonProjectKind(kind: unknown, workClass: unknown): string | undefined {
+  const k = (typeof kind === "string" ? kind : "").toLowerCase();
+  if (k.includes("demolition")) return "Demolition";
+  // KIND values like "Single Family", "Multifamily", "Commercial" without
+  // "demolition" are typically new construction permits in Renton.
+  if (k === "single family" || k.includes("multifamily") || k.includes("commercial") || k.includes("duplex") || k.includes("adu")) {
+    return "New Construction";
+  }
+  return inferProjectKindFromDescription(workClass);
+}
+export const rentonDataset: ArcgisDataset = {
+  city: "Renton",
+  layerUrl:
+    "https://gismaps.rentonwa.gov/as03/rest/services/Operational/PermitsAndConstruction/MapServer/41",
+  where:
+    "STATUS = 'Issued' AND KIND NOT IN ('Adult Family Home', 'Mobile Home (in a park)')",
+  orderBy: "ISSUEDATE DESC",
+  fields: {
+    sourceId: (i) => i.PERMITNUMBER,
+    address: (i) =>
+      i.LOCATION || (i.PID ? `Parcel ${i.PID}` : "Unknown Address"),
+    description: (i) =>
+      i.DESCRIPTION || i.PROJECT_NAME || i.WORKCLASS || "No description provided",
+    status: (i) => i.STATUS ?? "Issued",
+    value: (i) => intOrUndef(i.VALUE),
+    buildingType: (i) => classifyRentonKind(i.KIND),
+    projectKind: (i) => classifyRentonProjectKind(i.KIND, i.WORKCLASS),
   },
 };
 
@@ -363,16 +488,22 @@ export type RegistryEntry = SocrataRegistryEntry | ArcgisRegistryEntry;
 
 export const cityRegistry: RegistryEntry[] = [
   // ─── Washington State ─────────────────────────────────────────────────
-  { kind: "socrata", dataset: seattleDataset, enabled: true, limit: 50 },
-  { kind: "socrata", dataset: pierceCountyDataset, enabled: true, limit: 50 },
-  { kind: "arcgis", dataset: tacomaDataset, enabled: true, limit: 50 },
-  { kind: "arcgis", dataset: spokaneCountyDataset, enabled: true, limit: 50 },
+  { kind: "socrata", dataset: seattleDataset, enabled: true, limit: 200 },
+  { kind: "socrata", dataset: pierceCountyDataset, enabled: true, limit: 200 },
+  { kind: "arcgis", dataset: tacomaDataset, enabled: true, limit: 200 },
+  { kind: "arcgis", dataset: bellevueDataset, enabled: true, limit: 200 },
+  // Renton's layer 41 has rich attributes but LOCATION (street address) is
+  // populated on only ~22 of ~11,000 records — addresses are stored on a
+  // separate parcels layer that we'd need to cross-reference. Disabled
+  // until that join is built.
+  { kind: "arcgis", dataset: rentonDataset, enabled: false, limit: 50 },
+  { kind: "arcgis", dataset: spokaneCountyDataset, enabled: true, limit: 200 },
   //
   // ─── Other US metros ─────────────────────────────────────────────────
-  { kind: "socrata", dataset: sanFranciscoDataset, enabled: true, limit: 50 },
-  { kind: "socrata", dataset: newYorkDataset, enabled: true, limit: 50 },
-  { kind: "socrata", dataset: chicagoDataset, enabled: true, limit: 50 },
-  { kind: "socrata", dataset: austinDataset, enabled: true, limit: 50 },
+  { kind: "socrata", dataset: sanFranciscoDataset, enabled: true, limit: 200 },
+  { kind: "socrata", dataset: newYorkDataset, enabled: true, limit: 200 },
+  { kind: "socrata", dataset: chicagoDataset, enabled: true, limit: 200 },
+  { kind: "socrata", dataset: austinDataset, enabled: true, limit: 200 },
   // LA needs a geocoding pipeline before it can plot pins — see comment above.
   { kind: "socrata", dataset: losAngelesDataset, enabled: false, limit: 50 },
 ];
