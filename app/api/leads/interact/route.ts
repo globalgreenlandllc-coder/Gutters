@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { PrismaClient, InteractionStatus } from "@prisma/client";
+import { InteractionStatus } from "@prisma/client";
 import { auth } from "@clerk/nextjs/server";
 
-const prisma = new PrismaClient();
+import { db } from "@/lib/db";
 
 export async function POST(request: Request) {
   const { userId: clerkId } = await auth();
@@ -14,31 +14,26 @@ export async function POST(request: Request) {
   try {
     const { leadId, status, notes } = await request.json();
 
-    if (!leadId || !status) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    if (!leadId || !status || !(status in InteractionStatus)) {
+      return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
     }
 
-    const user = await prisma.user.findUnique({ where: { clerkId } });
+    const user = await db.user.findUnique({ where: { clerkId } });
     if (!user) {
       return NextResponse.json({ error: "User not found in DB" }, { status: 404 });
     }
 
-    // Upsert the interaction
-    const interaction = await prisma.userLeadInteraction.upsert({
+    const interaction = await db.userLeadInteraction.upsert({
       where: {
-        userId_leadId: {
-          userId: user.id,
-          leadId: leadId,
-        },
+        userId_leadId: { userId: user.id, leadId },
       },
       update: {
         status: status as InteractionStatus,
         ...(notes !== undefined && { notes }),
-        updatedAt: new Date(),
       },
       create: {
         userId: user.id,
-        leadId: leadId,
+        leadId,
         status: status as InteractionStatus,
         ...(notes !== undefined && { notes }),
       },

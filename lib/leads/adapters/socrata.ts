@@ -1,6 +1,7 @@
-import { normalizePermitDescription } from "../ai-normalizer";
+// Generic Socrata adapter. Most US city open-data portals run on Socrata, so
+// every city only needs to declare an endpoint + a tiny field-mapping config
+// to plug in. Dataset field names vary city-to-city — see cities.ts.
 
-// A standardized interface for any permit data we pull
 export interface RawPermitData {
   sourceId: string;
   sourceCity: string;
@@ -10,64 +11,89 @@ export interface RawPermitData {
   latitude: number;
   longitude: number;
   projectValue?: number;
+  buildingType?: string;
+  contractorName?: string;
+  projectKind?: string;
 }
 
-// Example: Seattle Building Permits via Socrata
-// Endpoint: https://data.seattle.gov/resource/76t5-zqzr.json
-// Note: In a real production app, you might want to use a Socrata App Token to avoid rate limits.
-export async function fetchSocrataPermits(limit: number = 50): Promise<RawPermitData[]> {
-  try {
-    // We are querying permits from the last few days to find new ones, limiting for demo
-    const url = `https://data.seattle.gov/resource/76t5-zqzr.json?$limit=${limit}&$order=issue_date DESC`;
-    
-    const response = await fetch(url, {
-      // headers: { "X-App-Token": process.env.SOCRATA_APP_TOKEN || "" }
-    });
+export interface SocrataDataset {
+  city: string;
+  endpoint: string;
+  // Optional Socrata `$order` value, e.g. "issue_date DESC".
+  orderBy?: string;
+  // Optional Socrata `$where` SoQL filter. Used to scope ingestion to
+  // issued permits so we only spend AI tokens on actionable leads.
+  where?: string;
+  fields: {
+    sourceId: (item: any) => string | undefined;
+    address: (item: any) => string;
+    description: (item: any) => string;
+    status: (item: any) => string;
+    latitude: (item: any) => number;
+    longitude: (item: any) => number;
+    value?: (item: any) => number | undefined;
+    buildingType?: (item: any) => string | undefined;
+    contractorName?: (item: any) => string | undefined;
+    projectKind?: (item: any) => string | undefined;
+  };
+}
 
+export async function fetchSocrataPermits(
+  dataset: SocrataDataset,
+  limit: number = 50,
+  // Single app token works across every Socrata-powered city. Pulled from
+  // the admin console (provider SOCRATA) by the caller and passed in.
+  appToken?: string | null,
+): Promise<RawPermitData[]> {
+  try {
+    const url = new URL(dataset.endpoint);
+    url.searchParams.set("$limit", String(limit));
+    if (dataset.orderBy) url.searchParams.set("$order", dataset.orderBy);
+    if (dataset.where) url.searchParams.set("$where", dataset.where);
+
+    const headers: Record<string, string> = {};
+    if (appToken) headers["X-App-Token"] = appToken;
+
+    const response = await fetch(url.toString(), { headers });
     if (!response.ok) {
-      console.error("Failed to fetch Socrata permits", response.status);
+      console.error(
+        `[Socrata:${dataset.city}] Fetch failed (${response.status})`,
+      );
       return [];
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as unknown[];
+    if (!Array.isArray(data)) {
+      console.error(`[Socrata:${dataset.city}] Unexpected response shape`);
+      return [];
+    }
 
     const permits: RawPermitData[] = [];
-
     for (const item of data) {
-      // Socrata JSON mapping depends on the specific dataset.
-      // For Seattle's building permits, fields typically look like:
-      // permitnum, originaladdress1, description, statuscurrent, latitude, longitude, value
-      
-      const sourceId = item.permitnum;
-      const address = item.originaladdress1 || item.address || "Unknown Address";
-      const originalDescription = item.description || "No description provided";
-      const status = item.statuscurrent || "UNKNOWN";
-      
-      const lat = parseFloat(item.latitude);
-      const lng = parseFloat(item.longitude);
-      
-      const projectValue = item.value ? parseInt(item.value, 10) : undefined;
+      const sourceId = dataset.fields.sourceId(item);
+      const lat = dataset.fields.latitude(item);
+      const lng = dataset.fields.longitude(item);
 
-      // Skip invalid coordinates
-      if (!sourceId || isNaN(lat) || isNaN(lng)) {
-        continue;
-      }
+      if (!sourceId || isNaN(lat) || isNaN(lng)) continue;
 
       permits.push({
         sourceId,
-        sourceCity: "Seattle", // Hardcoded for this specific dataset
-        address,
-        originalDescription,
-        status,
+        sourceCity: dataset.city,
+        address: dataset.fields.address(item),
+        originalDescription: dataset.fields.description(item),
+        status: dataset.fields.status(item),
         latitude: lat,
         longitude: lng,
-        projectValue,
+        projectValue: dataset.fields.value?.(item),
+        buildingType: dataset.fields.buildingType?.(item),
+        contractorName: dataset.fields.contractorName?.(item),
+        projectKind: dataset.fields.projectKind?.(item),
       });
     }
 
     return permits;
   } catch (error) {
-    console.error("Socrata Adapter Error:", error);
+    console.error(`[Socrata:${dataset.city}] Adapter error:`, error);
     return [];
   }
 }

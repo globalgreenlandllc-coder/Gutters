@@ -10,4 +10,5 @@ export const ALL_PROVIDERS: ApiKeyProvider[] = [
   "RESEND",
   "STRIPE_SECRET",
   "STRIPE_WEBHOOK",
+  "SOCRATA",
 ];

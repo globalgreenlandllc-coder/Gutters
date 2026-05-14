@@ -77,6 +77,11 @@ const PROVIDER_META: Record<
     sub: "Signing secret (whsec_…) for /api/webhooks/stripe",
     tone: "rose",
   },
+  SOCRATA: {
+    label: "Socrata",
+    sub: "App token for city open-data permit feeds (rate-limit bump)",
+    tone: "accent",
+  },
 };
 
 type Phase =

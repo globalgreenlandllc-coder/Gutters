@@ -388,6 +388,7 @@ enum ApiKeyProvider {
   RESEND
   STRIPE_SECRET
   STRIPE_WEBHOOK
+  SOCRATA
 }
 
 model ApiKey {
@@ -483,10 +484,15 @@ model Lead {
   address             String
   originalDescription String       @db.Text
   categorizedTrade    String?      // e.g. "Roofing", "Gutters", "Framing"
+  buildingType        String?      // "Residential", "Commercial", "Multi-family", …
+  projectKind         String?      // "New Construction" | "Remodel/Addition" | "Tenant Improvement" | "Demolition" | "Other"
+  contractorName     String?      // Company doing the permitted work, if disclosed
+  aiSummary           String?      @db.Text  // Plain-English one-liner from the AI
+  aiRelevance         String?      // "high" | "medium" | "low" — gutter-business relevance
   status              LeadStatus   @default(UNKNOWN)
   latitude            Float
   longitude           Float
-  projectValue        Int?         // in cents
+  projectValue        Int?         // raw dollars, as reported by the source permit feed
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -495,6 +501,8 @@ model Lead {
   @@unique([sourceCity, sourceId]) // Prevents duplicate imports from the same city
   @@index([latitude, longitude])
   @@index([categorizedTrade, status])
+  @@index([buildingType])
+  @@index([projectKind])
   @@map("leads")
 }
 

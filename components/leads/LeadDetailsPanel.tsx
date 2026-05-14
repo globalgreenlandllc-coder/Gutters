@@ -2,8 +2,22 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { LeadStatus, InteractionStatus } from "@prisma/client";
-import { useState } from "react";
-import { X, MapPin, Tag, Building, Clock, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  X,
+  MapPin,
+  Tag,
+  DollarSign,
+  Calendar,
+  Navigation,
+  Copy,
+  Check,
+  Sparkles,
+  Building2,
+  HardHat,
+  ExternalLink,
+  Flame,
+} from "lucide-react";
 
 export interface LeadWithInteraction {
   id: string;
@@ -11,10 +25,16 @@ export interface LeadWithInteraction {
   address: string;
   originalDescription: string;
   categorizedTrade: string | null;
+  buildingType: string | null;
+  projectKind: string | null;
+  contractorName: string | null;
+  aiSummary: string | null;
+  aiRelevance: string | null;
   status: LeadStatus;
   latitude: number;
   longitude: number;
   projectValue: number | null;
+  createdAt?: string;
   interaction: {
     status: InteractionStatus;
     notes: string | null;
@@ -27,138 +47,364 @@ interface LeadDetailsPanelProps {
   onUpdateInteraction: (leadId: string, status: InteractionStatus, notes: string) => void;
 }
 
+const interactionMeta: Record<
+  InteractionStatus,
+  { label: string; text: string; bg: string; ring: string; dot: string }
+> = {
+  UNREAD: {
+    label: "Unread",
+    text: "text-red-300",
+    bg: "bg-red-500/10",
+    ring: "ring-red-500/40",
+    dot: "bg-red-400",
+  },
+  CONTACTED: {
+    label: "Contacted",
+    text: "text-emerald-300",
+    bg: "bg-emerald-500/10",
+    ring: "ring-emerald-500/40",
+    dot: "bg-emerald-400",
+  },
+  VISITED: {
+    label: "Visited",
+    text: "text-blue-300",
+    bg: "bg-blue-500/10",
+    ring: "ring-blue-500/40",
+    dot: "bg-blue-400",
+  },
+  BIDDING: {
+    label: "Bidding",
+    text: "text-amber-300",
+    bg: "bg-amber-500/10",
+    ring: "ring-amber-500/40",
+    dot: "bg-amber-400",
+  },
+  NOT_INTERESTED: {
+    label: "Not interested",
+    text: "text-slate-300",
+    bg: "bg-slate-500/10",
+    ring: "ring-slate-500/40",
+    dot: "bg-slate-400",
+  },
+};
+
+const leadStatusMeta: Record<LeadStatus, { label: string; classes: string }> = {
+  APPLIED: { label: "Applied", classes: "text-indigo-300 bg-indigo-500/10 ring-indigo-500/30" },
+  UNDER_REVIEW: { label: "Under Review", classes: "text-amber-300 bg-amber-500/10 ring-amber-500/30" },
+  ISSUED: { label: "Issued", classes: "text-emerald-300 bg-emerald-500/10 ring-emerald-500/30" },
+  INSPECTION: { label: "Inspection", classes: "text-blue-300 bg-blue-500/10 ring-blue-500/30" },
+  FINALED: { label: "Finaled", classes: "text-slate-300 bg-slate-500/10 ring-slate-500/30" },
+  UNKNOWN: { label: "Unknown", classes: "text-slate-400 bg-slate-500/10 ring-slate-500/30" },
+};
+
+const relevanceMeta: Record<string, { label: string; classes: string; flames: number }> = {
+  high: { label: "Hot lead", classes: "text-orange-300 bg-orange-500/10 ring-orange-500/40", flames: 3 },
+  medium: { label: "Warm lead", classes: "text-amber-300 bg-amber-500/10 ring-amber-500/30", flames: 2 },
+  low: { label: "Cold lead", classes: "text-slate-400 bg-slate-500/10 ring-slate-500/30", flames: 1 },
+};
+
+// Build a per-city owner-lookup deep link. Most counties expose a free parcel
+// viewer that accepts the property address as a query string.
+function ownerLookupUrl(sourceCity: string, address: string): string | null {
+  const q = encodeURIComponent(address);
+  switch (sourceCity) {
+    case "Seattle":
+      // King County parcel viewer
+      return `https://gismaps.kingcounty.gov/parcelviewer2/?address=${q}`;
+    case "San Francisco":
+      return `https://sfplanninggis.org/pim/?address=${q}`;
+    case "New York":
+      return `https://propertyinformationportal.nyc.gov/?address=${q}`;
+    case "Los Angeles":
+      return `https://assessor.lacounty.gov/?address=${q}`;
+    case "Chicago":
+      return `https://www.cookcountyassessor.com/search?search_term=${q}`;
+    case "Austin":
+      return `https://search.tcadcentral.org/?address=${q}`;
+    default:
+      return null;
+  }
+}
+
 export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }: LeadDetailsPanelProps) {
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(lead?.interaction?.notes ?? "");
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setNotes(lead?.interaction?.notes ?? "");
+  }, [lead?.id, lead?.interaction?.notes]);
+
+  const daysSince = useMemo(() => {
+    if (!lead?.createdAt) return null;
+    const ms = Date.now() - new Date(lead.createdAt).getTime();
+    return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+  }, [lead?.createdAt]);
 
   if (!lead) return null;
 
-  const currentInteractionStatus = lead.interaction?.status || InteractionStatus.UNREAD;
-  const currentNotes = lead.interaction?.notes || "";
+  const currentStatus = lead.interaction?.status ?? InteractionStatus.UNREAD;
+  const statusMeta = interactionMeta[currentStatus];
+  const permitMeta = leadStatusMeta[lead.status];
 
-  const handleStatusChange = async (status: InteractionStatus) => {
-    setIsUpdating(true);
-    await onUpdateInteraction(lead.id, status, notes || currentNotes);
-    setIsUpdating(false);
+  const handleStatusChange = (status: InteractionStatus) => {
+    onUpdateInteraction(lead.id, status, notes);
   };
+
+  const handleSaveNotes = () => {
+    onUpdateInteraction(lead.id, currentStatus, notes);
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1600);
+  };
+
+  const handleCopyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(lead.address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.error("Copy failed", e);
+    }
+  };
+
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lead.latitude},${lead.longitude}`;
+  const ownerUrl = ownerLookupUrl(lead.sourceCity, lead.address);
+  const contractorSearchUrl = lead.contractorName
+    ? `https://www.google.com/search?q=${encodeURIComponent(`${lead.contractorName} ${lead.sourceCity} contractor phone`)}`
+    : null;
+  const relevance = lead.aiRelevance && relevanceMeta[lead.aiRelevance] ? relevanceMeta[lead.aiRelevance] : null;
 
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", damping: 20, stiffness: 200 }}
-        className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col z-50 text-slate-200"
+        key={lead.id}
+        initial={{ x: "100%", opacity: 0.6 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: "100%", opacity: 0 }}
+        transition={{ type: "spring", damping: 26, stiffness: 220 }}
+        className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-slate-950 border-l border-slate-800/80 shadow-2xl flex flex-col z-50 text-slate-200"
       >
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 backdrop-blur-md">
-          <h2 className="text-lg font-semibold text-white">Lead Details</h2>
-          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition">
-            <X size={20} />
+        {/* Hero header */}
+        <div className="relative px-5 pt-5 pb-6 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-b border-slate-800/80">
+          <button
+            onClick={onClose}
+            aria-label="Close panel"
+            className="absolute top-3 right-3 p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition"
+          >
+            <X size={18} />
           </button>
+
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 text-xs font-medium ring-1 ring-emerald-500/30">
+              <Sparkles size={12} />
+              {lead.categorizedTrade ?? "Uncategorized"}
+            </span>
+            {lead.buildingType && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-300 text-xs font-medium ring-1 ring-sky-500/30">
+                <Building2 size={12} />
+                {lead.buildingType}
+              </span>
+            )}
+            {lead.projectKind && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-300 text-xs font-medium ring-1 ring-violet-500/30">
+                {lead.projectKind}
+              </span>
+            )}
+            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${permitMeta.classes}`}>
+              {permitMeta.label}
+            </span>
+            {relevance && (
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${relevance.classes}`}
+                title={`AI-scored relevance for gutter business: ${relevance.label}`}
+              >
+                {Array.from({ length: relevance.flames }).map((_, i) => (
+                  <Flame key={i} size={11} />
+                ))}
+                {relevance.label}
+              </span>
+            )}
+          </div>
+
+          <h3 className="text-xl font-semibold text-white leading-tight tracking-tight">
+            {lead.address}
+          </h3>
+          <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+            <MapPin size={14} />
+            <span>{lead.sourceCity}</span>
+            {daysSince !== null && (
+              <>
+                <span className="text-slate-700">•</span>
+                <Calendar size={12} className="text-slate-500" />
+                <span>{daysSince === 0 ? "Today" : `${daysSince}d ago`}</span>
+              </>
+            )}
+          </div>
+
+          <div
+            className={`mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ring-1 ${statusMeta.bg} ${statusMeta.text} ${statusMeta.ring}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
+            {statusMeta.label}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* Header Info */}
-          <div>
-            <div className="flex items-center gap-2 text-emerald-400 mb-2">
-              <Tag size={16} />
-              <span className="font-semibold">{lead.categorizedTrade || "Uncategorized"}</span>
-            </div>
-            <h3 className="text-xl font-bold text-white mb-1">{lead.address}</h3>
-            <div className="flex items-center gap-2 text-slate-400 text-sm">
-              <MapPin size={14} />
-              <span>{lead.sourceCity}</span>
-            </div>
-          </div>
-
-          {/* Details Grid */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-slate-800 p-3 rounded-lg">
-              <div className="text-slate-400 text-xs flex items-center gap-1 mb-1">
-                <Clock size={12} /> Status
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          {/* Stat cards */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+                <DollarSign size={11} /> Est. Value
               </div>
-              <div className="font-medium text-white">{lead.status.replace("_", " ")}</div>
-            </div>
-            <div className="bg-slate-800 p-3 rounded-lg">
-              <div className="text-slate-400 text-xs flex items-center gap-1 mb-1">
-                <Building size={12} /> Est. Value
+              <div className="font-semibold text-white text-lg">
+                {lead.projectValue ? `$${lead.projectValue.toLocaleString()}` : "—"}
               </div>
-              <div className="font-medium text-white">
-                {lead.projectValue ? `$${(lead.projectValue).toLocaleString()}` : "N/A"}
+            </div>
+            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+                <Tag size={11} /> Trade
+              </div>
+              <div className="font-semibold text-white text-lg truncate">
+                {lead.categorizedTrade ?? "—"}
               </div>
             </div>
           </div>
 
-          {/* Description */}
+          {/* Quick actions */}
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href={directionsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 px-3 py-2.5 rounded-xl transition"
+            >
+              <Navigation size={14} />
+              Directions
+            </a>
+            <button
+              onClick={handleCopyAddress}
+              className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 px-3 py-2.5 rounded-xl transition"
+            >
+              {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+              {copied ? "Copied" : "Copy address"}
+            </button>
+          </div>
+
+          {/* AI summary callout */}
+          {lead.aiSummary && (
+            <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/30 p-3 rounded-xl">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-300 font-semibold mb-1">
+                <Sparkles size={11} /> AI Summary
+              </div>
+              <p className="text-sm text-slate-200 leading-relaxed">{lead.aiSummary}</p>
+            </div>
+          )}
+
+          {/* Permit description */}
           <div>
-            <h4 className="text-sm font-semibold text-slate-300 mb-2">Permit Description</h4>
-            <div className="bg-slate-800/50 p-3 rounded-lg text-sm text-slate-400 leading-relaxed">
+            <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Original Permit Description
+            </h4>
+            <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl text-sm text-slate-300 leading-relaxed">
               {lead.originalDescription}
             </div>
           </div>
 
-          <hr className="border-slate-800" />
+          {/* Contact paths — contractor + owner lookup */}
+          {(lead.contractorName || ownerUrl) && (
+            <div>
+              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+                Contact Paths
+              </h4>
+              <div className="space-y-2">
+                {lead.contractorName && (
+                  <a
+                    href={contractorSearchUrl ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <HardHat size={14} className="text-amber-300 shrink-0" />
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Contractor</span>
+                        <span className="truncate">{lead.contractorName}</span>
+                      </span>
+                    </span>
+                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                  </a>
+                )}
+                {ownerUrl && (
+                  <a
+                    href={ownerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Building2 size={14} className="text-sky-300 shrink-0" />
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Owner lookup</span>
+                        <span className="truncate">County parcel viewer</span>
+                      </span>
+                    </span>
+                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
 
-          {/* CRM Actions */}
+          {/* CRM status segmented control */}
           <div>
-            <h4 className="text-sm font-semibold text-slate-300 mb-3">Your Action</h4>
-            
-            <div className="space-y-2">
-              <button 
-                onClick={() => handleStatusChange(InteractionStatus.CONTACTED)}
-                disabled={isUpdating}
-                className={`w-full py-2.5 px-4 rounded-lg font-medium transition flex items-center justify-between ${
-                  currentInteractionStatus === InteractionStatus.CONTACTED 
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50" 
-                  : "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                }`}
-              >
-                Mark as Contacted
-                {currentInteractionStatus === InteractionStatus.CONTACTED && <ChevronRight size={16} />}
-              </button>
-              
-              <button 
-                onClick={() => handleStatusChange(InteractionStatus.VISITED)}
-                disabled={isUpdating}
-                className={`w-full py-2.5 px-4 rounded-lg font-medium transition flex items-center justify-between ${
-                  currentInteractionStatus === InteractionStatus.VISITED 
-                  ? "bg-blue-500/20 text-blue-400 border border-blue-500/50" 
-                  : "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                }`}
-              >
-                Mark as Visited
-                {currentInteractionStatus === InteractionStatus.VISITED && <ChevronRight size={16} />}
-              </button>
-
-              <button 
-                onClick={() => handleStatusChange(InteractionStatus.NOT_INTERESTED)}
-                disabled={isUpdating}
-                className={`w-full py-2.5 px-4 rounded-lg font-medium transition flex items-center justify-between ${
-                  currentInteractionStatus === InteractionStatus.NOT_INTERESTED 
-                  ? "bg-red-500/20 text-red-400 border border-red-500/50" 
-                  : "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                }`}
-              >
-                Not Interested
-                {currentInteractionStatus === InteractionStatus.NOT_INTERESTED && <ChevronRight size={16} />}
-              </button>
+            <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Your Status
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(interactionMeta) as InteractionStatus[]).map((s) => {
+                const m = interactionMeta[s];
+                const active = currentStatus === s;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => handleStatusChange(s)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ring-1 ${
+                      active
+                        ? `${m.bg} ${m.text} ${m.ring}`
+                        : "bg-slate-900 text-slate-400 ring-slate-800 hover:bg-slate-800 hover:text-slate-200"
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${active ? m.dot : "bg-slate-600"}`} />
+                    {m.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* Notes */}
           <div>
-            <h4 className="text-sm font-semibold text-slate-300 mb-2">Private Notes</h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+                Private Notes
+              </h4>
+              {savedFlash && (
+                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <Check size={11} /> Saved
+                </span>
+              )}
+            </div>
             <textarea
-              value={notes || currentNotes}
+              value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add notes about this lead..."
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition resize-none"
               rows={4}
             />
             <button
-              onClick={() => handleStatusChange(currentInteractionStatus)}
-              className="mt-2 text-xs text-emerald-400 hover:text-emerald-300 transition"
+              onClick={handleSaveNotes}
+              className="mt-2 w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm font-medium py-2 rounded-lg ring-1 ring-emerald-500/30 transition"
             >
               Save Notes
             </button>
