@@ -22,6 +22,8 @@ import {
   Trash2,
   Wrench,
   Sparkles,
+  MapPin,
+  Activity,
 } from "lucide-react";
 import LeadDetailsPanel, { LeadWithInteraction } from "./LeadDetailsPanel";
 import LeadsSidebar, {
@@ -46,6 +48,21 @@ type Cluster = {
   count: number;
   hotCount: number;
 };
+
+/**
+ * Translate a project value into a marker diameter (in px) on a log
+ * scale. Projects span ~$5K → $5M+, so a linear scale would render
+ * every residential permit the same and the big multifamily / new-build
+ * projects wouldn't pop. log10($5K)≈3.7, log10($5M)≈6.7 — we map that
+ * 3-decade range onto 28–52 px. Anything off the bottom (no value
+ * reported) renders at the minimum so it's still visible.
+ */
+function markerSizePx(value: number | null | undefined): number {
+  if (!value || value <= 0) return 28;
+  const v = Math.log10(value);
+  const norm = Math.max(0, Math.min(1, (v - 3.7) / 3));
+  return Math.round(28 + norm * 24);
+}
 
 function clusterLeads(
   leads: LeadWithInteraction[],
@@ -531,6 +548,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [zoom, setZoom] = useState(11);
   const [sort, setSort] = useState<SortMode>("relevance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [viewMode, setViewMode] = useState<"pins" | "heatmap">("pins");
   const bboxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sidebarRef = useRef<LeadsSidebarHandle>(null);
 
@@ -710,7 +728,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] w-full bg-slate-950">
-      <APIProvider apiKey={apiKey}>
+      <APIProvider apiKey={apiKey} libraries={["visualization"]}>
         <LeadsSidebar
           ref={sidebarRef}
           leads={sortedLeads}
@@ -770,17 +788,43 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             isLoading={isLoading}
           />
 
-          {/* Result indicator (top-right of map area) */}
-          <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2 pointer-events-none">
+          {/* Result indicator + view-mode toggle (top-right of map) */}
+          <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
+            <div className="pointer-events-auto inline-flex rounded-xl border border-slate-800 bg-slate-900/90 p-1 shadow-xl backdrop-blur-md">
+              <button
+                onClick={() => setViewMode("pins")}
+                title="Show individual leads"
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  viewMode === "pins"
+                    ? "bg-emerald-500/15 text-emerald-200 ring-1 ring-inset ring-emerald-500/40"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <MapPin size={12} />
+                Pins
+              </button>
+              <button
+                onClick={() => setViewMode("heatmap")}
+                title="Show density heatmap (weighted by project value)"
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  viewMode === "heatmap"
+                    ? "bg-orange-500/15 text-orange-200 ring-1 ring-inset ring-orange-500/40"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Activity size={12} />
+                Heatmap
+              </button>
+            </div>
             {resultCount !== null && isLoading && (
-              <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 text-slate-300 text-xs px-3 py-2 rounded-lg shadow-xl">
+              <div className="pointer-events-none rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-2 text-xs text-slate-300 shadow-xl backdrop-blur-md">
                 <span className="flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" /> Searching…
                 </span>
               </div>
             )}
             {hasMore && (
-              <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 text-xs px-3 py-2 rounded-lg backdrop-blur-md max-w-[260px]">
+              <div className="pointer-events-none max-w-[260px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 backdrop-blur-md">
                 Showing 500 best — zoom in to see more.
               </div>
             )}
@@ -809,18 +853,29 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             {/* Pans to selected lead — only when selection ID changes */}
             <MapPanner target={selectedLead} />
 
+            {viewMode === "heatmap" && <HeatmapLayer leads={leads} />}
+
             {/* Cluster badges (zoom < 14) */}
-            {clusters.map((c) => (
-              <ClusterMarker key={c.id} cluster={c} />
-            ))}
+            {viewMode === "pins" &&
+              clusters.map((c) => <ClusterMarker key={c.id} cluster={c} />)}
 
             {/* Individual markers */}
-            {unclustered.map((lead) => {
+            {viewMode === "pins" &&
+              unclustered.map((lead) => {
               const color = getPinColor(lead.interaction?.status);
               const Icon = pickMarkerIcon(lead);
               const isHot = lead.aiRelevance === "high";
               const isHovered = hoveredLead?.id === lead.id;
               const isSelected = selectedLead?.id === lead.id;
+              // Value-driven base size; hover / select bump it slightly
+              // for visual feedback without overriding the value cue.
+              const baseSize = markerSizePx(lead.projectValue);
+              const size = isSelected
+                ? baseSize + 8
+                : isHovered
+                  ? baseSize + 4
+                  : baseSize;
+              const iconSize = Math.round(size * 0.45);
               return (
                 <AdvancedMarker
                   key={lead.id}
@@ -838,15 +893,21 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                     <div
                       className={`flex items-center justify-center rounded-full border-2 border-white shadow-lg transition-all ${
                         isSelected
-                          ? "h-11 w-11 ring-4 ring-emerald-400/70"
+                          ? "ring-4 ring-emerald-400/70"
                           : isHovered
-                            ? "h-10 w-10 ring-4 ring-cyan-400/60"
-                            : "h-9 w-9"
-                      } ${isHot && !isSelected && !isHovered ? "ring-2 ring-orange-400/70" : ""}`}
-                      style={{ backgroundColor: color }}
+                            ? "ring-4 ring-cyan-400/60"
+                            : isHot
+                              ? "ring-2 ring-orange-400/70"
+                              : ""
+                      }`}
+                      style={{
+                        backgroundColor: color,
+                        width: size,
+                        height: size,
+                      }}
                     >
                       <Icon
-                        size={isSelected ? 18 : 16}
+                        size={iconSize}
                         className="text-white"
                         strokeWidth={2.5}
                       />
@@ -997,4 +1058,65 @@ function ClusterMarker({ cluster }: { cluster: Cluster }) {
       </div>
     </AdvancedMarker>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/*   HeatmapLayer — density view weighted by project value            */
+/*                                                                    */
+/*   The Google Maps visualization library has no first-class React   */
+/*   wrapper in @vis.gl/react-google-maps, so we drive it imperatively:*/
+/*   construct google.maps.visualization.HeatmapLayer, attach it via  */
+/*   setMap, and tear down on unmount or input change.                */
+/* ------------------------------------------------------------------ */
+function HeatmapLayer({ leads }: { leads: LeadWithInteraction[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    // The visualization library is loaded via APIProvider's `libraries`
+    // prop; on first mount it may not have finished injecting yet so
+    // guard accordingly. Re-runs of this effect will pick it up.
+    const g = typeof window !== "undefined"
+      ? (window as unknown as { google?: typeof google }).google
+      : undefined;
+    const viz = g?.maps?.visualization;
+    if (!viz) return;
+
+    // Weight each point by log(value). Same log scale used for marker
+    // sizing — keeps the visual story consistent between modes. Leads
+    // without a value get weight=1 so they still register on the map.
+    const data = leads.map((lead) => {
+      const v = lead.projectValue ?? 0;
+      const weight = v > 0 ? Math.max(1, Math.log10(v)) : 1;
+      return {
+        location: new g!.maps.LatLng(lead.latitude, lead.longitude),
+        weight,
+      };
+    });
+
+    const layer = new viz.HeatmapLayer({
+      data,
+      map,
+      // Empirically tuned: at default zoom the radius reads as
+      // "neighborhood-sized" without bleeding into a single solid blob
+      // over Bellevue.
+      radius: 28,
+      opacity: 0.75,
+      // Default gradient is blue→red. We override to a green→amber→red
+      // ramp so the heatmap visually echoes the sidebar's
+      // Cold→Warm→Hot relevance vocabulary.
+      gradient: [
+        "rgba(16, 185, 129, 0)",
+        "rgba(16, 185, 129, 0.65)",
+        "rgba(132, 204, 22, 0.75)",
+        "rgba(234, 179, 8, 0.85)",
+        "rgba(249, 115, 22, 0.95)",
+        "rgba(239, 68, 68, 1)",
+      ],
+    });
+
+    return () => {
+      layer.setMap(null);
+    };
+  }, [map, leads]);
+  return null;
 }
