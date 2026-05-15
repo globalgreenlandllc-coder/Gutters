@@ -496,6 +496,7 @@ model Lead {
   latitude            Float
   longitude           Float
   projectValue        Int?         // raw dollars, as reported by the source permit feed
+  issuedDate          DateTime?    // When the municipality issued the permit (from source feed)
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -506,6 +507,7 @@ model Lead {
   @@index([categorizedTrade, status])
   @@index([buildingType])
   @@index([projectKind])
+  @@index([issuedDate])
   @@map("leads")
 }
 

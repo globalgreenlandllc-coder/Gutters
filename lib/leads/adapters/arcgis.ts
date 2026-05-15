@@ -29,6 +29,7 @@ export interface ArcgisDataset {
     projectKind?: (item: any) => string | undefined;
     workClass?: (item: any) => string | undefined;
     fixtures?: (item: any) => string | undefined;
+    issuedDate?: (item: any) => Date | undefined;
   };
 }
 
@@ -119,6 +120,7 @@ export async function fetchArcgisPermits(
         projectKind: dataset.fields.projectKind?.(props),
         workClass: dataset.fields.workClass?.(props),
         fixtures: dataset.fields.fixtures?.(props),
+        issuedDate: dataset.fields.issuedDate?.(props),
       });
     }
 

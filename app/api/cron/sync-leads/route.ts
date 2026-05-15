@@ -93,6 +93,7 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       fixtures: true,
       contractorName: true,
       ownerName: true,
+      issuedDate: true,
       aiSummary: true,
       aiRelevance: true,
     },
@@ -151,6 +152,7 @@ async function syncPermits(rawPermits: RawPermitData[]) {
         fixturesIsStale ||
         (exist.contractorName == null && permit.contractorName != null) ||
         (exist.ownerName == null && permit.ownerName != null) ||
+        (exist.issuedDate == null && permit.issuedDate != null) ||
         exist.aiSummary == null ||
         exist.aiRelevance == null;
       if (needsBackfill) {
@@ -208,6 +210,7 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       fixtures: permit.fixtures ?? null,
       contractorName: permit.contractorName ?? null,
       ownerName: permit.ownerName ?? null,
+      issuedDate: permit.issuedDate ?? null,
       status: mapStatusToEnum(permit.status),
       latitude: permit.latitude,
       longitude: permit.longitude,
@@ -263,6 +266,9 @@ async function syncPermits(rawPermits: RawPermitData[]) {
             : {}),
           ...(ex.ownerName == null && permit.ownerName
             ? { ownerName: permit.ownerName }
+            : {}),
+          ...(ex.issuedDate == null && permit.issuedDate
+            ? { issuedDate: permit.issuedDate }
             : {}),
           // Re-run AI when the work-class changed — old summary may be wrong.
           ...((ex.aiSummary == null || shouldUpdateWorkClass) && insight

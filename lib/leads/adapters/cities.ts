@@ -8,6 +8,20 @@ const intOrUndef = (v: unknown): number | undefined => {
   const n = parseInt(String(v), 10);
   return isNaN(n) ? undefined : n;
 };
+// Parses date from ISO string (Socrata calendar_date) or epoch milliseconds
+// (ArcGIS attribute). Returns undefined on anything unparseable.
+const toDate = (v: unknown): Date | undefined => {
+  if (v == null || v === "") return undefined;
+  if (typeof v === "number") {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? undefined : d;
+  }
+  if (typeof v === "string") {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? undefined : d;
+  }
+  return undefined;
+};
 
 // Canonical project-kind vocabulary used across all cities so the map filter
 // stays simple. Each adapter normalizes its city's permit-type text into one
@@ -82,6 +96,7 @@ export const seattleDataset: SocrataDataset = {
     buildingType: (i) => i.permitclass ?? i.permitclassmapped,
     contractorName: (i) => i.contractorcompanyname,
     projectKind: (i) => normalizeSeattlePermitType(i.permittypedesc),
+    issuedDate: (i) => toDate(i.issueddate),
   },
 };
 
@@ -107,6 +122,7 @@ export const sanFranciscoDataset: SocrataDataset = {
     // Existing/proposed use is the closest signal for building type
     buildingType: (i) => i.proposed_use ?? i.existing_use,
     projectKind: (i) => normalizeGenericProjectKind(i.permit_type_definition),
+    issuedDate: (i) => toDate(i.issued_date),
   },
 };
 
@@ -148,6 +164,7 @@ export const newYorkDataset: SocrataDataset = {
     // "GC" means general contractor — most valuable contact for gutter sub-bids.
     contractorName: (i) => i.permittee_s_business_name,
     projectKind: (i) => normalizeNycJobType(i.job_type),
+    issuedDate: (i) => toDate(i.issuance_date),
   },
 };
 
@@ -187,6 +204,7 @@ export const chicagoDataset: SocrataDataset = {
         ? i.contact_1_name
         : undefined,
     projectKind: (i) => normalizeChicagoPermitType(i.permit_type),
+    issuedDate: (i) => toDate(i.issue_date),
   },
 };
 
@@ -216,6 +234,7 @@ export const losAngelesDataset: SocrataDataset = {
     buildingType: (i) => i.permit_sub_type,
     contractorName: (i) => i.contractors_business_name,
     projectKind: (i) => normalizeGenericProjectKind(i.permit_type),
+    issuedDate: (i) => toDate(i.issue_date),
   },
 };
 
@@ -246,6 +265,7 @@ export const pierceCountyDataset: SocrataDataset = {
     value: (i) => intOrUndef(i.buildingvaluation),
     buildingType: (i) => normalizePiercePermitType(i.applicationtype),
     projectKind: (i) => normalizeGenericProjectKind(i.worktype),
+    issuedDate: (i) => toDate(i.issueddate),
   },
 };
 
@@ -278,6 +298,7 @@ export const austinDataset: SocrataDataset = {
     buildingType: (i) => i.permit_class_mapped ?? i.permit_class,
     contractorName: (i) => i.contractor_company_name ?? i.applicant_org,
     projectKind: (i) => normalizeAustinWorkClass(i.work_class),
+    issuedDate: (i) => toDate(i.issue_date),
   },
 };
 
@@ -338,6 +359,7 @@ export const tacomaDataset: ArcgisDataset = {
         ? i.applicant_name
         : undefined,
     projectKind: (i) => inferProjectKindFromDescription(i.description),
+    issuedDate: (i) => toDate(i.issued_date),
   },
 };
 
@@ -422,6 +444,7 @@ export const bellevueDataset: ArcgisDataset = {
     },
     workClass: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.workClass,
     fixtures: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.fixtures,
+    issuedDate: (i) => toDate(i.ISSUEDDATE),
   },
 };
 
@@ -502,6 +525,7 @@ export const spokaneCountyDataset: ArcgisDataset = {
     // Lat/lng only available via geometry — adapter falls back automatically.
     buildingType: (i) => classifySpokanePermitType(i.Permit_Type),
     projectKind: (i) => classifySpokaneProjectKind(i.Permit_Type),
+    issuedDate: (i) => toDate(i.Issued_Date),
   },
 };
 

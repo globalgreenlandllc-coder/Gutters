@@ -17,6 +17,7 @@ export interface RawPermitData {
   projectKind?: string;
   workClass?: string;     // Raw work-class text from source
   fixtures?: string;      // Parsed comma-separated work items
+  issuedDate?: Date;      // When the municipality issued the permit
 }
 
 export interface SocrataDataset {
@@ -41,6 +42,7 @@ export interface SocrataDataset {
     projectKind?: (item: any) => string | undefined;
     workClass?: (item: any) => string | undefined;
     fixtures?: (item: any) => string | undefined;
+    issuedDate?: (item: any) => Date | undefined;
   };
 }
 
@@ -97,6 +99,7 @@ export async function fetchSocrataPermits(
         projectKind: dataset.fields.projectKind?.(item),
         workClass: dataset.fields.workClass?.(item),
         fixtures: dataset.fields.fixtures?.(item),
+        issuedDate: dataset.fields.issuedDate?.(item),
       });
     }
 

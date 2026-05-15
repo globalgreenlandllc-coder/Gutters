@@ -39,6 +39,7 @@ export interface LeadWithInteraction {
   latitude: number;
   longitude: number;
   projectValue: number | null;
+  issuedDate: string | null;
   createdAt?: string;
   interaction: {
     status: InteractionStatus;
@@ -140,11 +141,27 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
     setNotes(lead?.interaction?.notes ?? "");
   }, [lead?.id, lead?.interaction?.notes]);
 
-  const daysSince = useMemo(() => {
-    if (!lead?.createdAt) return null;
-    const ms = Date.now() - new Date(lead.createdAt).getTime();
-    return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
-  }, [lead?.createdAt]);
+  // Prefer the actual permit-issue date from the city feed; fall back to
+  // our own ingest timestamp if the source didn't publish one.
+  const issuedInfo = useMemo(() => {
+    const raw = lead?.issuedDate ?? lead?.createdAt;
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+    const days = Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)));
+    const ago =
+      days === 0
+        ? "Today"
+        : days === 1
+        ? "Yesterday"
+        : days < 7
+        ? `${days}d ago`
+        : days < 60
+        ? `${Math.round(days / 7)}w ago`
+        : `${Math.round(days / 30)}mo ago`;
+    const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return { ago, dateStr, isPermitIssueDate: !!lead?.issuedDate };
+  }, [lead?.issuedDate, lead?.createdAt]);
 
   if (!lead) return null;
 
@@ -243,11 +260,13 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
             <MapPin size={14} />
             <span>{lead.sourceCity}</span>
-            {daysSince !== null && (
+            {issuedInfo && (
               <>
                 <span className="text-slate-700">•</span>
                 <Calendar size={12} className="text-slate-500" />
-                <span>{daysSince === 0 ? "Today" : `${daysSince}d ago`}</span>
+                <span title={issuedInfo.isPermitIssueDate ? `Permit issued ${issuedInfo.dateStr}` : `Indexed ${issuedInfo.dateStr}`}>
+                  {issuedInfo.isPermitIssueDate ? "Issued" : "Indexed"} {issuedInfo.ago}
+                </span>
               </>
             )}
           </div>
@@ -263,20 +282,28 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* Stat cards */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-2">
             <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
               <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
                 <DollarSign size={11} /> Est. Value
               </div>
-              <div className="font-semibold text-white text-lg">
+              <div className="font-semibold text-white text-base">
                 {lead.projectValue ? `$${lead.projectValue.toLocaleString()}` : "—"}
+              </div>
+            </div>
+            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+                <Calendar size={11} /> Issued
+              </div>
+              <div className="font-semibold text-white text-base truncate" title={issuedInfo?.dateStr}>
+                {lead.issuedDate ? issuedInfo?.dateStr : "—"}
               </div>
             </div>
             <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
               <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
                 <Wrench size={11} /> Work
               </div>
-              <div className="font-semibold text-white text-lg truncate" title={lead.workClass ?? undefined}>
+              <div className="font-semibold text-white text-base truncate" title={lead.workClass ?? undefined}>
                 {lead.workClass ?? lead.projectKind ?? lead.categorizedTrade ?? "—"}
               </div>
             </div>
