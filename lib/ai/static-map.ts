@@ -14,6 +14,9 @@ export type SatImage = {
    *  whether we got Mapbox (Maxar Vivid, refreshed annually) or Google
    *  Static Maps (variable freshness, often older in suburbs). */
   source: "mapbox" | "google";
+  /** When the primary provider failed and we fell back, this captures the
+   *  reason. null when the primary served the tile successfully. */
+  primaryFailureReason: string | null;
 };
 
 export type SatImageOutcome =
@@ -43,7 +46,16 @@ export async function fetchSatelliteImage(
   if (mapboxOutcome.ok) return mapboxOutcome;
 
   const googleOutcome = await fetchFromGoogle(lat, lng, zoom, size);
-  if (googleOutcome.ok) return googleOutcome;
+  if (googleOutcome.ok) {
+    // Stamp the Mapbox failure reason on the Google result so the run
+    // notes can show *why* we silently fell back — otherwise the only
+    // signal is the source label and the user is left guessing
+    // (invalid token? out of quota? no row in vault?).
+    return {
+      ok: true,
+      image: { ...googleOutcome.image, primaryFailureReason: mapboxOutcome.reason },
+    };
+  }
 
   return {
     ok: false,
@@ -113,6 +125,7 @@ async function fetchFromMapbox(
       centerLat: lat,
       centerLng: lng,
       source: "mapbox",
+      primaryFailureReason: null,
     },
   };
 }
@@ -164,6 +177,7 @@ async function fetchFromGoogle(
         centerLat: lat,
         centerLng: lng,
         source: "google",
+        primaryFailureReason: null,
       },
     };
   } catch (e) {

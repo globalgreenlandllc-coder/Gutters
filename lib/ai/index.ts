@@ -181,6 +181,11 @@ export async function runAIEstimatePipeline(
       notes.push(
         `Fetched ${image.width}×${image.height} satellite tile via ${providerLabel} @ z${image.zoom}`,
       );
+      if (image.primaryFailureReason) {
+        notes.push(
+          `Mapbox primary failed (${image.primaryFailureReason}) — fell back to Google`,
+        );
+      }
     } else {
       notes.push(`Satellite tile fetch failed — ${imgOutcome.reason}`);
     }
@@ -385,7 +390,20 @@ export async function runAIEstimatePipeline(
       ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
       : (buildingPointPx ?? undefined);
     const samOutcome = await segmentRoofViaSam(workImage, samPoint);
-    if (samOutcome.ok && samOutcome.polygon.points.length >= 8) {
+    // Gate SAM acceptance on areaFraction. A real residential roof, tightly
+    // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
+    // locked onto a sub-region (one gable, a high-contrast plane, a
+    // chimney) rather than the whole footprint — we'd render a tiny eave
+    // run that the contractor would have to redraw entirely. Fall through
+    // to the Solar mask in that case; the Solar polygon traces wall
+    // outlines and is robust against multi-gable hip roofs that confuse
+    // SAM's box prompt.
+    const SAM_MIN_AREA_FRACTION = 0.15;
+    if (
+      samOutcome.ok &&
+      samOutcome.polygon.points.length >= 8 &&
+      samOutcome.polygon.areaFraction >= SAM_MIN_AREA_FRACTION
+    ) {
       const translatedPoints = samOutcome.polygon.points.map(translatePoint);
       // Collapse the SAM mask's pixel-stair jaggies into architectural
       // corners BEFORE classification. The raw boundary trace has ~400
@@ -437,9 +455,11 @@ export async function runAIEstimatePipeline(
       }
       classifiedEaveLatLng = classifyRingViaAzimuth(ring);
     } else if (samOutcome.ok) {
-      notes.push(
-        `SAM 2 polygon too small (${samOutcome.polygon.points.length} verts) — trying Solar fallback`,
-      );
+      const reason =
+        samOutcome.polygon.points.length < 8
+          ? `${samOutcome.polygon.points.length} verts`
+          : `${(samOutcome.polygon.areaFraction * 100).toFixed(1)}% coverage (need ≥${(SAM_MIN_AREA_FRACTION * 100).toFixed(0)}% — likely segmented one wing not whole roof)`;
+      notes.push(`SAM 2 rejected: ${reason} — trying Solar fallback`);
     } else {
       notes.push(`SAM 2 failed — ${samOutcome.reason}; trying Solar fallback`);
     }
