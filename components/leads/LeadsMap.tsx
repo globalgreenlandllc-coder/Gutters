@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { APIProvider, Map, AdvancedMarker, Pin, useMap } from "@vis.gl/react-google-maps";
+import {
+  APIProvider,
+  Map,
+  AdvancedMarker,
+  InfoWindow,
+  useMap,
+} from "@vis.gl/react-google-maps";
 import { InteractionStatus, LeadStatus } from "@prisma/client";
 import {
   Loader2,
@@ -13,6 +19,9 @@ import {
   Inbox,
   SlidersHorizontal,
   X,
+  Trash2,
+  Wrench,
+  Sparkles,
 } from "lucide-react";
 import LeadDetailsPanel, { LeadWithInteraction } from "./LeadDetailsPanel";
 
@@ -28,6 +37,7 @@ interface FilterState {
   projectKind: string;
   developmentType: string;
   relevance: string;
+  stage: string;
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -38,6 +48,20 @@ const DEFAULT_FILTERS: FilterState = {
   projectKind: "All",
   developmentType: "All",
   relevance: "All",
+  // Default to "last 12 months" — old finished projects are rarely
+  // actionable. User can pick "All time" or a narrower stage band.
+  stage: "last-12-months",
+};
+
+// Friendly labels for stage values. Used in dropdowns and active chips.
+const STAGE_LABELS: Record<string, string> = {
+  "all": "All time",
+  "last-30-days": "Just issued (<30d)",
+  "30-90-days": "Foundation / framing (30–90d)",
+  "90-180-days": "Mid-build (3–6mo)",
+  "180-365-days": "Late stage (6–12mo)",
+  "last-12-months": "Active (last 12mo)",
+  "older-than-12-months": "Likely complete (>12mo)",
 };
 
 type PresetId =
@@ -114,6 +138,7 @@ function buildActiveChips(
     setBuilding: (v: string) => void;
     setProject: (v: string) => void;
     setDevelopment: (v: string) => void;
+    setStage: (v: string) => void;
     setRelevance: (v: string) => void;
   },
 ) {
@@ -148,6 +173,13 @@ function buildActiveChips(
       clear: () => updaters.setDevelopment("All"),
     });
   }
+  if (current.stage !== DEFAULT_FILTERS.stage) {
+    chips.push({
+      key: "stage",
+      label: STAGE_LABELS[current.stage] ?? current.stage,
+      clear: () => updaters.setStage(DEFAULT_FILTERS.stage),
+    });
+  }
   if (current.trade !== "All") {
     chips.push({
       key: "trade",
@@ -180,6 +212,7 @@ interface MapControlsProps {
   setBuildingTypeFilter: (v: string) => void;
   setProjectKindFilter: (v: string) => void;
   setDevelopmentTypeFilter: (v: string) => void;
+  setStageFilter: (v: string) => void;
   setRelevanceFilter: (v: string) => void;
   applyPreset: (preset: Preset) => void;
   clearAll: () => void;
@@ -195,6 +228,7 @@ function MapControls({
   setBuildingTypeFilter,
   setProjectKindFilter,
   setDevelopmentTypeFilter,
+  setStageFilter,
   setRelevanceFilter,
   applyPreset,
   clearAll,
@@ -220,6 +254,7 @@ function MapControls({
     setBuilding: setBuildingTypeFilter,
     setProject: setProjectKindFilter,
     setDevelopment: setDevelopmentTypeFilter,
+    setStage: setStageFilter,
     setRelevance: setRelevanceFilter,
   });
   const activeCount = chips.length;
@@ -318,6 +353,16 @@ function MapControls({
           </select>
           <select
             className={selectBase}
+            value={filters.stage}
+            onChange={(e) => setStageFilter(e.target.value)}
+            title="Approximates how far along construction is, based on how long ago the permit was issued."
+          >
+            {Object.entries(STAGE_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+          <select
+            className={selectBase}
             value={filters.relevance}
             onChange={(e) => setRelevanceFilter(e.target.value)}
           >
@@ -401,6 +446,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [leads, setLeads] = useState<LeadWithInteraction[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [selectedLead, setSelectedLead] = useState<LeadWithInteraction | null>(null);
+  const [hoveredLead, setHoveredLead] = useState<LeadWithInteraction | null>(null);
   const [bbox, setBbox] = useState<string>("");
   const [tradeFilter, setTradeFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState<LeadStatus | "All">("All");
@@ -408,6 +454,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [buildingTypeFilter, setBuildingTypeFilter] = useState("All");
   const [projectKindFilter, setProjectKindFilter] = useState("All");
   const [developmentTypeFilter, setDevelopmentTypeFilter] = useState("All");
+  const [stageFilter, setStageFilter] = useState<string>(DEFAULT_FILTERS.stage);
   const [relevanceFilter, setRelevanceFilter] = useState("All");
   const [isLoading, setIsLoading] = useState(false);
   const [resultCount, setResultCount] = useState<number | null>(null);
@@ -437,6 +484,13 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         if (developmentTypeFilter !== "All") {
           url.searchParams.set("developmentType", developmentTypeFilter);
         }
+        if (stageFilter && stageFilter !== DEFAULT_FILTERS.stage) {
+          url.searchParams.set("stage", stageFilter);
+        } else if (stageFilter === DEFAULT_FILTERS.stage) {
+          // Send the default explicitly so the server's default and the
+          // client's default stay in sync if either changes.
+          url.searchParams.set("stage", stageFilter);
+        }
         if (relevanceFilter !== "All") {
           url.searchParams.set("relevance", relevanceFilter);
         }
@@ -454,7 +508,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         setIsLoading(false);
       }
     },
-    [bbox, tradeFilter, statusFilter, interactionFilter, buildingTypeFilter, projectKindFilter, developmentTypeFilter, relevanceFilter],
+    [bbox, tradeFilter, statusFilter, interactionFilter, buildingTypeFilter, projectKindFilter, developmentTypeFilter, stageFilter, relevanceFilter],
   );
 
   // Auto-fetch whenever any filter or the (debounced) bbox changes.
@@ -513,6 +567,23 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     }
   };
 
+  // Picks a marker glyph by priority: relevance first, then development /
+  // project kind. The glyph + interaction color together communicate type AND
+  // status at a glance.
+  const pickMarkerIcon = (lead: LeadWithInteraction): typeof Home => {
+    const pk = lead.projectKind ?? "";
+    const dt = lead.developmentType ?? "";
+    if (pk === "Demolition") return Trash2;
+    if (pk === "New Construction") {
+      if (dt === "Multifamily" || dt === "Condo" || dt === "Townhouse") return Building2;
+      return Home;
+    }
+    if (dt === "Multifamily" || dt === "Condo") return Building2;
+    if (lead.aiRelevance === "high") return Flame;
+    if (pk === "Remodel/Addition") return Wrench;
+    return Sparkles;
+  };
+
   const getPinColor = (interactionStatus?: InteractionStatus) => {
     switch (interactionStatus) {
       case InteractionStatus.CONTACTED:
@@ -539,6 +610,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             buildingType: buildingTypeFilter,
             projectKind: projectKindFilter,
             developmentType: developmentTypeFilter,
+            stage: stageFilter,
             relevance: relevanceFilter,
           }}
           setTradeFilter={setTradeFilter}
@@ -547,6 +619,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           setBuildingTypeFilter={setBuildingTypeFilter}
           setProjectKindFilter={setProjectKindFilter}
           setDevelopmentTypeFilter={setDevelopmentTypeFilter}
+          setStageFilter={setStageFilter}
           setRelevanceFilter={setRelevanceFilter}
           applyPreset={(p) => {
             // Reset all to default, then apply the preset's patch atomically.
@@ -556,6 +629,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             setBuildingTypeFilter(p.patch.buildingType ?? "All");
             setProjectKindFilter(p.patch.projectKind ?? "All");
             setDevelopmentTypeFilter(p.patch.developmentType ?? "All");
+            setStageFilter(p.patch.stage ?? DEFAULT_FILTERS.stage);
             setRelevanceFilter(p.patch.relevance ?? "All");
           }}
           clearAll={() => {
@@ -565,6 +639,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             setBuildingTypeFilter("All");
             setProjectKindFilter("All");
             setDevelopmentTypeFilter("All");
+            setStageFilter(DEFAULT_FILTERS.stage);
             setRelevanceFilter("All");
           }}
           onSearch={handleManualSearch}
@@ -609,19 +684,82 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             bboxDebounceRef.current = setTimeout(() => setBbox(next), BBOX_DEBOUNCE_MS);
           }}
         >
-          {leads.map((lead) => (
-            <AdvancedMarker
-              key={lead.id}
-              position={{ lat: lead.latitude, lng: lead.longitude }}
-              onClick={() => setSelectedLead(lead)}
+          {leads.map((lead) => {
+            const color = getPinColor(lead.interaction?.status);
+            const Icon = pickMarkerIcon(lead);
+            const isHot = lead.aiRelevance === "high";
+            return (
+              <AdvancedMarker
+                key={lead.id}
+                position={{ lat: lead.latitude, lng: lead.longitude }}
+                onClick={() => setSelectedLead(lead)}
+              >
+                <div
+                  className="relative cursor-pointer"
+                  onMouseEnter={() => setHoveredLead(lead)}
+                  onMouseLeave={() => setHoveredLead((h) => (h?.id === lead.id ? null : h))}
+                >
+                  <div
+                    className={`w-9 h-9 rounded-full border-2 border-white shadow-lg flex items-center justify-center transition-transform hover:scale-110 ${
+                      isHot ? "ring-2 ring-orange-400/70" : ""
+                    }`}
+                    style={{ backgroundColor: color }}
+                  >
+                    <Icon size={16} className="text-white" strokeWidth={2.5} />
+                  </div>
+                  {isHot && (
+                    <span
+                      className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-orange-500 ring-2 ring-white animate-pulse"
+                      aria-hidden
+                    />
+                  )}
+                </div>
+              </AdvancedMarker>
+            );
+          })}
+          {hoveredLead && hoveredLead.id !== selectedLead?.id && (
+            <InfoWindow
+              position={{ lat: hoveredLead.latitude, lng: hoveredLead.longitude }}
+              pixelOffset={[0, -28]}
+              disableAutoPan
+              headerDisabled
             >
-              <Pin
-                background={getPinColor(lead.interaction?.status)}
-                borderColor="rgba(0,0,0,0.5)"
-                glyphColor="#fff"
-              />
-            </AdvancedMarker>
-          ))}
+              <div className="text-slate-900 max-w-[280px] -m-1">
+                <div className="font-semibold text-sm leading-tight mb-1">
+                  {hoveredLead.address}
+                </div>
+                <div className="flex flex-wrap gap-1 mb-1">
+                  {hoveredLead.developmentType && (
+                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-800 font-medium">
+                      {hoveredLead.developmentType}
+                      {hoveredLead.housingUnits != null && hoveredLead.housingUnits > 0 &&
+                        ` · ${hoveredLead.housingUnits}u`}
+                    </span>
+                  )}
+                  {hoveredLead.projectKind && hoveredLead.projectKind !== "Other" && (
+                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 font-medium">
+                      {hoveredLead.projectKind}
+                    </span>
+                  )}
+                  {hoveredLead.aiRelevance === "high" && (
+                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-medium">
+                      🔥 Hot
+                    </span>
+                  )}
+                </div>
+                {hoveredLead.aiSummary && (
+                  <div className="text-[11px] text-slate-700 leading-snug mb-1">
+                    {hoveredLead.aiSummary}
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-500">
+                  {hoveredLead.sourceCity}
+                  {hoveredLead.issuedDate && ` · issued ${new Date(hoveredLead.issuedDate).toLocaleDateString()}`}
+                  {hoveredLead.projectValue ? ` · $${hoveredLead.projectValue.toLocaleString()}` : ""}
+                </div>
+              </div>
+            </InfoWindow>
+          )}
         </Map>
       </APIProvider>
 

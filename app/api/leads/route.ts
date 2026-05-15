@@ -19,6 +19,14 @@ export async function GET(request: Request) {
   const developmentType = url.searchParams.get("developmentType");
   const relevance = url.searchParams.get("relevance");
   const minUnits = url.searchParams.get("minUnits");
+  // Issue-date range in days-ago. Caller passes either:
+  //   ?stage=<preset>  — convenient (see STAGE_RANGES below)
+  //   ?issuedAfter=<ISO>&issuedBefore=<ISO>  — explicit
+  // Default behavior is "active" (last 12 months), so old/finished
+  // permits don't dominate the map. Pass stage=all to opt out.
+  const stage = url.searchParams.get("stage") ?? "last-12-months";
+  const issuedAfterParam = url.searchParams.get("issuedAfter");
+  const issuedBeforeParam = url.searchParams.get("issuedBefore");
 
   try {
     const whereClause: Prisma.LeadWhereInput = {};
@@ -71,6 +79,48 @@ export async function GET(request: Request) {
     }
     if (relevance && relevance !== "All") {
       whereClause.aiRelevance = relevance;
+    }
+
+    // Stage / issued-date filter. Preset → (minDaysAgo, maxDaysAgo).
+    // maxDaysAgo=Infinity means "no upper bound" (anything older than the
+    // minDaysAgo cutoff).
+    const STAGE_RANGES: Record<string, { min: number; max: number } | null> = {
+      "all": null,
+      "last-30-days": { min: 0, max: 30 },
+      "30-90-days": { min: 30, max: 90 },
+      "90-180-days": { min: 90, max: 180 },
+      "180-365-days": { min: 180, max: 365 },
+      "last-12-months": { min: 0, max: 365 },
+      "older-than-12-months": { min: 365, max: Infinity },
+    };
+
+    const daysToDate = (days: number): Date =>
+      new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    let issuedGte: Date | undefined;
+    let issuedLte: Date | undefined;
+
+    // Explicit params override the preset.
+    if (issuedAfterParam) {
+      const d = new Date(issuedAfterParam);
+      if (!isNaN(d.getTime())) issuedGte = d;
+    }
+    if (issuedBeforeParam) {
+      const d = new Date(issuedBeforeParam);
+      if (!isNaN(d.getTime())) issuedLte = d;
+    }
+    if (!issuedGte && !issuedLte) {
+      const range = STAGE_RANGES[stage];
+      if (range) {
+        issuedLte = daysToDate(range.min); // newer cutoff
+        if (range.max !== Infinity) issuedGte = daysToDate(range.max); // older cutoff
+      }
+    }
+    if (issuedGte || issuedLte) {
+      whereClause.issuedDate = {
+        ...(issuedGte ? { gte: issuedGte } : {}),
+        ...(issuedLte ? { lte: issuedLte } : {}),
+      };
     }
 
     // Interaction filter requires an authenticated user — silently ignore otherwise.
