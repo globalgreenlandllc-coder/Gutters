@@ -356,126 +356,32 @@ export function lineLengthFt(line: EditableLine) {
 }
 
 /**
- * Recreational roof-structure annotation: blue RIDGE labels (solid line)
- * and green VALLEY labels (dashed line) over the satellite image.
- *
- * The perimeter is intentionally NOT rendered here — the cyan eaves
- * already trace the building outline, and a second perimeter from a
- * separate vision call almost always disagrees with the eave polygon
- * (different model, different math), looking like a random white
- * outline floating off the building. Just show the inside structure
- * lines that the eaves layer can't show on its own.
+ * Visual roof-structure annotation. We now draw the clean outer perimeter 
+ * of the building footprint instead of rendering messy internal ridges/valleys.
  */
 export function RoofStructureOverlay({
   structure,
 }: {
   structure: RoofStructure;
 }) {
-  if (
-    structure.ridges.length === 0 &&
-    structure.valleys.length === 0
-  ) {
+  if (structure.perimeter.length === 0) {
     return null;
   }
   return (
     <g pointerEvents="none">
-      {structure.ridges.map((ridge, i) => (
-        <RoofLineWithLabel
-          key={ridge.id}
-          line={ridge}
-          stroke="#ffffff"
-          dashed={false}
-          strokeWidth={2.5}
-          labelFill="#1e3a8a"
-          labelText={ridge.label ?? "RIDGE"}
-          delay={0.4 + i * 0.08}
-        />
-      ))}
-      {structure.valleys.map((valley, i) => (
-        <RoofLineWithLabel
-          key={valley.id}
-          line={valley}
-          stroke="#e5e7eb"
-          dashed
-          strokeWidth={2.5}
-          labelFill="#0f5132"
-          labelText={valley.label ?? "VALLEY"}
-          delay={0.55 + i * 0.08}
-        />
-      ))}
-    </g>
-  );
-}
-
-function RoofLineWithLabel({
-  line,
-  stroke,
-  dashed,
-  strokeWidth,
-  labelFill,
-  labelText,
-  delay,
-}: {
-  line: RoofStructureLine;
-  stroke: string;
-  dashed: boolean;
-  strokeWidth: number;
-  labelFill: string;
-  labelText: string;
-  delay: number;
-}) {
-  if (line.points.length < 2) return null;
-  const a = line.points[0];
-  const b = line.points[line.points.length - 1];
-  const cx = (a.x + b.x) / 2;
-  const cy = (a.y + b.y) / 2;
-  const lineD = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
-  const w = Math.max(46, labelText.length * 7 + 14);
-  const h = 18;
-  return (
-    <g>
       <motion.path
-        d={lineD}
+        d={closedPathD(structure.perimeter)}
         fill="none"
-        stroke={stroke}
-        strokeWidth={strokeWidth}
+        stroke="rgba(255, 255, 255, 0.45)"
+        strokeWidth={3}
         strokeLinecap="round"
-        strokeDasharray={dashed ? "8 6" : undefined}
+        strokeLinejoin="round"
         opacity={0.9}
         initial={{ pathLength: 0, opacity: 0 }}
         animate={{ pathLength: 1, opacity: 0.9 }}
-        transition={{ duration: 0.6, delay, ease: "easeOut" }}
-        style={{ filter: "drop-shadow(0 0 3px rgba(0,0,0,0.5))" }}
+        transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
+        style={{ filter: "drop-shadow(0 0 4px rgba(0,0,0,0.5))" }}
       />
-      <motion.g
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.4, delay: delay + 0.2 }}
-      >
-        <rect
-          x={cx - w / 2}
-          y={cy - h / 2}
-          width={w}
-          height={h}
-          rx={5}
-          fill={labelFill}
-          stroke="rgba(255,255,255,0.85)"
-          strokeWidth={1}
-          style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.45))" }}
-        />
-        <text
-          x={cx}
-          y={cy + 4}
-          textAnchor="middle"
-          fill="white"
-          fontSize={11}
-          fontWeight={700}
-          letterSpacing={0.6}
-          fontFamily="ui-sans-serif, system-ui, sans-serif"
-        >
-          {labelText}
-        </text>
-      </motion.g>
     </g>
   );
 }

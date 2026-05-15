@@ -673,14 +673,7 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
       <div className="flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
         <span className="h-2 w-2 rounded-full bg-white" />
-        <span>Perimeter</span>
-        <span className="mx-1 h-3 w-px bg-white/25" />
-        <span className="rounded px-1.5 py-0.5 bg-blue-700/80 uppercase tracking-wider text-[10px]">
-          Ridge
-        </span>
-        <span className="rounded px-1.5 py-0.5 bg-emerald-700/80 uppercase tracking-wider text-[10px]">
-          Valley
-        </span>
+        <span>Perimeter Outline</span>
         <span className="mx-1 h-3 w-px bg-white/25" />
         <span className={cn(lowConfidence ? "text-amber-300" : "text-white/70")}>
           {lowConfidence ? "Visual approx — verify before estimating" : `Approximation · ${pct}% conf`}
