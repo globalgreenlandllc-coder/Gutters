@@ -608,6 +608,55 @@ export const rentonDataset: ArcgisDataset = {
   },
 };
 
+// ─── Mercer Island, WA (ArcGIS) ──────────────────────────────────────────────
+// City of Mercer Island runs its own CPD permit-activity MapServer.
+// Schema: ADDRESSLABEL, APPLIED (epoch ms), PERMITDESCRIPTION, PERMITNOTES,
+// PERMITSTATUS, PERMITSUBTYPE, PERMITTYPE, PERMIT_NO + Point geometry.
+// No explicit ISSUED date — use APPLIED as the closest signal.
+function classifyMercerSubtype(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const v = raw.toUpperCase();
+  if (v.startsWith("SF") || v.startsWith("SFR")) return "Single Family/Duplex";
+  if (v.startsWith("MULTI")) return "Multifamily";
+  if (v.startsWith("COMM")) return "Commercial";
+  return undefined;
+}
+function classifyMercerProjectKind(subtype: unknown, desc: unknown): string | undefined {
+  const s = typeof subtype === "string" ? subtype.toUpperCase() : "";
+  if (s.includes("NEW")) return "New Construction";
+  if (s.includes("ALT") || s.includes("ADD") || s.includes("R&M") || s.includes("REMODEL")) {
+    return "Remodel/Addition";
+  }
+  if (s.includes("DEM") || s.includes("DEMO")) return "Demolition";
+  return inferProjectKindFromDescription(desc);
+}
+export const mercerIslandDataset: ArcgisDataset = {
+  city: "Mercer Island",
+  layerUrl:
+    "https://chgis1.mercergov.org/arcgis/rest/services/AGSOnlineMapsApps/cpdPermitActivity/MapServer/0",
+  // Filter out pre-issued permits: leaves ACTIVE, READY TO ISSUE,
+  // COMPLETE, APPROVED. Excludes IN REVIEW / INTAKE / COMPLETENESS CHECK.
+  where: "PERMITSTATUS NOT IN ('IN REVIEW', 'INTAKE SCREENING', 'COMPLETENESS CHECK')",
+  orderBy: "APPLIED DESC",
+  fields: {
+    sourceId: (i) => i.PERMIT_NO,
+    address: (i) => i.ADDRESSLABEL ? `${i.ADDRESSLABEL}, Mercer Island, WA` : "Unknown Address",
+    description: (i) =>
+      [i.PERMITDESCRIPTION, i.PERMITNOTES].filter(Boolean).join(" — ") ||
+      "No description provided",
+    status: (i) => i.PERMITSTATUS ?? "Active",
+    // Lat/lng come from geometry — centroid handled by the generic adapter.
+    buildingType: (i) => classifyMercerSubtype(i.PERMITSUBTYPE),
+    projectKind: (i) => classifyMercerProjectKind(i.PERMITSUBTYPE, i.PERMITDESCRIPTION),
+    issuedDate: (i) => toDate(i.APPLIED),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: `${i.PERMITDESCRIPTION ?? ""} ${i.PERMITNOTES ?? ""}`,
+        buildingType: classifyMercerSubtype(i.PERMITSUBTYPE),
+      }),
+  },
+};
+
 // ─── Spokane County, WA (ArcGIS) ─────────────────────────────────────────────
 // County-wide feed; covers Spokane City + outlying areas.
 function classifySpokanePermitType(rawType: unknown): string | undefined {
@@ -673,6 +722,7 @@ export const cityRegistry: RegistryEntry[] = [
   { kind: "socrata", dataset: pierceCountyDataset, enabled: true, limit: 200 },
   { kind: "arcgis", dataset: tacomaDataset, enabled: true, limit: 200 },
   { kind: "arcgis", dataset: bellevueDataset, enabled: true, limit: 200 },
+  { kind: "arcgis", dataset: mercerIslandDataset, enabled: true, limit: 200 },
   // Renton's layer 41 has rich attributes but LOCATION (street address) is
   // populated on only ~22 of ~11,000 records — addresses are stored on a
   // separate parcels layer that we'd need to cross-reference. Disabled
