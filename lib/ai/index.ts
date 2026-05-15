@@ -9,8 +9,8 @@ import {
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
-import { getDsmFromSolar } from "./solar-dsm";
-import { classifyEdgeWithDsm, ringCentroid } from "./edge-classifier";
+
+import { classifyEdgeWithAzimuth, ringCentroid, type ClassifiedEdge } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
@@ -354,10 +354,9 @@ export async function runAIEstimatePipeline(
           `Solar mask (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${result.polygon.points.length} polygon verts → bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y})`,
         );
 
-        // Try to classify edges using the DSM. If DSM is unavailable
+        // Classify edges using Solar API Azimuths. If segments are unavailable
         // we fall through with all polygon edges as candidate eaves.
-        const dsm = await getDsmFromSolar(geocoded.lat, geocoded.lng);
-        if (dsm.ok) {
+        if (solarRoofSegments.length > 0) {
           const ring = result.ringLatLng;
           const centroid = ringCentroid(ring);
           const eaves: ClassifiedEdge[] = [];
@@ -366,17 +365,17 @@ export async function runAIEstimatePipeline(
           for (let i = 0; i < ring.length - 1; i++) {
             const a = ring[i];
             const b = ring[i + 1];
-            const cls = classifyEdgeWithDsm({ a, b }, dsm, centroid);
+            const cls = classifyEdgeWithAzimuth({ a, b }, solarRoofSegments, centroid);
             if (cls.kind === "eave") eaves.push({ a, b });
             else if (cls.kind === "rake") rakeCount++;
             else unknownCount++;
           }
           classifiedEaveLatLng = eaves;
           notes.push(
-            `DSM filter: ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
+            `Azimuth filter: ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
           );
         } else {
-          notes.push(`DSM unavailable — using all polygon edges as eaves: ${dsm.reason}`);
+          notes.push(`No Solar roof segments available — using all polygon edges as eaves`);
         }
       } else {
         notes.push(

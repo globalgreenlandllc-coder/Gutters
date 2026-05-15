@@ -163,3 +163,95 @@ export function ringCentroid(
   }
   return { lat: sumLat / ring.length, lng: sumLng / ring.length };
 }
+
+/**
+ * Classify a roof-perimeter edge mathematically using Solar API Azimuths.
+ * If the outward normal angle of the edge matches the direction water flows
+ * down the nearest roof segment (azimuth), it's an eave.
+ */
+export function classifyEdgeWithAzimuth(
+  edge: { a: { lat: number; lng: number }; b: { lat: number; lng: number } },
+  solarSegments: Array<{ center: { lat: number; lng: number } | null; azimuthDegrees: number; pitchDegrees: number }>,
+  centroid: { lat: number; lng: number },
+): ClassifiedEdge {
+  const midLat = (edge.a.lat + edge.b.lat) / 2;
+  const midLng = (edge.a.lng + edge.b.lng) / 2;
+
+  // Local meters-per-degree at the edge's latitude
+  const M_PER_DEG_LAT = 110_540;
+  const M_PER_DEG_LNG = 111_320 * Math.cos((midLat * Math.PI) / 180);
+
+  // Edge vector in meters
+  const edgeDx = (edge.b.lng - edge.a.lng) * M_PER_DEG_LNG;
+  const edgeDy = (edge.b.lat - edge.a.lat) * M_PER_DEG_LAT;
+  const edgeLen = Math.hypot(edgeDx, edgeDy);
+  
+  if (edgeLen < 1e-6) {
+    return { a: edge.a, b: edge.b, kind: "unknown", reason: "zero-length edge" };
+  }
+
+  // 1. Calculate Perpendicular Vector
+  let perpDx = -edgeDy;
+  let perpDy = edgeDx;
+
+  // 2. Ensure it points OUTWARD from the polygon centroid
+  const toCentDx = (centroid.lng - midLng) * M_PER_DEG_LNG;
+  const toCentDy = (centroid.lat - midLat) * M_PER_DEG_LAT;
+  // If dot product is positive, the normal points TOWARDS the centroid (inward). Flip it.
+  if (perpDx * toCentDx + perpDy * toCentDy > 0) {
+    perpDx = -perpDx;
+    perpDy = -perpDy;
+  }
+
+  // 3. Convert outward normal vector to compass azimuth
+  // 0 = North (+Y), 90 = East (+X)
+  const mathAngle = Math.atan2(perpDy, perpDx) * (180 / Math.PI);
+  const normalAzimuth = (90 - mathAngle + 360) % 360;
+
+  // 4. Find the nearest Solar Roof Segment to the midpoint
+  let nearestSegment = null;
+  let minDistance = Infinity;
+
+  for (const seg of solarSegments) {
+    if (!seg.center) continue;
+    const distDx = (seg.center.lng - midLng) * M_PER_DEG_LNG;
+    const distDy = (seg.center.lat - midLat) * M_PER_DEG_LAT;
+    const distM = Math.hypot(distDx, distDy);
+    
+    if (distM < minDistance) {
+      minDistance = distM;
+      nearestSegment = seg;
+    }
+  }
+
+  if (!nearestSegment) {
+    return { a: edge.a, b: edge.b, kind: "unknown", reason: "No nearest solar segment found" };
+  }
+
+  // Flat roofs (pitch < 5 degrees) usually need gutters everywhere, or parapet caps. 
+  // We'll mark them as eaves so they are visible.
+  if (nearestSegment.pitchDegrees < 5) {
+    return { 
+      a: edge.a, b: edge.b, kind: "eave", 
+      reason: `flat roof nearest segment (pitch ${nearestSegment.pitchDegrees}°) - defaulting to eave` 
+    };
+  }
+
+  // 5. Compare Normal Azimuth to Roof Segment Azimuth
+  let diff = Math.abs(nearestSegment.azimuthDegrees - normalAzimuth);
+  diff = Math.min(diff, 360 - diff); // Account for 0/360 wraparound
+
+  // If the outward normal of the edge matches the direction water flows down the roof, it's an eave.
+  // We use a generous threshold (±60 degrees) because polygons are often jagged approximations.
+  if (diff <= 65) {
+    return { 
+      a: edge.a, b: edge.b, kind: "eave", 
+      reason: `normal ${Math.round(normalAzimuth)}° aligns with roof azimuth ${Math.round(nearestSegment.azimuthDegrees)}° (diff ${Math.round(diff)}°)` 
+    };
+  }
+
+  return { 
+    a: edge.a, b: edge.b, kind: "rake", 
+    reason: `normal ${Math.round(normalAzimuth)}° misaligned with roof azimuth ${Math.round(nearestSegment.azimuthDegrees)}° (diff ${Math.round(diff)}°)` 
+  };
+}
