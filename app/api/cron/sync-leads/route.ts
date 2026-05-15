@@ -316,25 +316,32 @@ export async function GET(request: Request) {
     // Fetch all city feeds in parallel, then sync them serially so DB writes
     // from one city don't race with another's existence check.
     const fetched = await Promise.all(
-      enabled.map(async (entry) => ({
-        entry,
-        permits:
-          entry.kind === "arcgis"
-            ? await fetchArcgisPermits(entry.dataset, entry.limit)
-            : await fetchSocrataPermits(entry.dataset, entry.limit, socrataToken),
-      })),
+      enabled.map(async (entry) => {
+        let permits: RawPermitData[];
+        if (entry.kind === "arcgis") {
+          permits = await fetchArcgisPermits(entry.dataset, entry.limit);
+        } else if (entry.kind === "socrata") {
+          permits = await fetchSocrataPermits(entry.dataset, entry.limit, socrataToken);
+        } else {
+          // custom — bespoke async fetcher (geocoding, parcel join, etc.)
+          permits = await entry.fetch(entry.limit);
+        }
+        return { entry, permits };
+      }),
     );
 
     for (const { entry, permits } of fetched) {
+      const cityLabel =
+        entry.kind === "custom" ? entry.city : entry.dataset.city;
       const { added, updated } = await syncPermits(permits);
       perCity.push({
-        city: entry.dataset.city,
+        city: cityLabel,
         fetched: permits.length,
         added,
         updated,
       });
       console.log(
-        `[Sync Worker] ${entry.dataset.city}: fetched=${permits.length}, added=${added}, updated=${updated}`,
+        `[Sync Worker] ${cityLabel}: fetched=${permits.length}, added=${added}, updated=${updated}`,
       );
     }
 

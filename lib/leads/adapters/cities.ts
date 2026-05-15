@@ -1,5 +1,7 @@
 import { SocrataDataset } from "./socrata";
 import { ArcgisDataset } from "./arcgis";
+import { geocodeAddress } from "../geocoder";
+import { RawPermitData } from "./socrata";
 
 // Tiny helpers for the inevitable string-typed Socrata fields.
 const num = (v: unknown): number => parseFloat(String(v));
@@ -608,6 +610,49 @@ export const rentonDataset: ArcgisDataset = {
   },
 };
 
+// ─── Redmond, WA (ArcGIS) ────────────────────────────────────────────────────
+// City of Redmond publishes CIP permits via gis.redmond.gov. Rich schema
+// with Address + WorkClass + ProjectStatus + ProjectDesc fields.
+function classifyRedmondWorkClass(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const v = raw.toLowerCase();
+  if (v.includes("single") || v.includes("residential")) return "Single Family/Duplex";
+  if (v.includes("multi") || v.includes("multifamily")) return "Multifamily";
+  if (v.includes("commercial") || v.includes("mixed")) return "Commercial";
+  return undefined;
+}
+export const redmondDataset: ArcgisDataset = {
+  city: "Redmond",
+  layerUrl: "https://gis.redmond.gov/arcgis/rest/services/Projects/CIPProjects/MapServer/4",
+  where: "1=1", // Redmond's feed already filters to active CIP permits
+  orderBy: "ObjectID DESC",
+  fields: {
+    sourceId: (i) => i.PERMITNUMBER ?? i.PermitID,
+    address: (i) =>
+      [i.Address, i.CITY, i.STATE, i.ZIPCODE].filter(Boolean).join(", ") || "Unknown Address",
+    description: (i) =>
+      [i.ProjectName, i.ProjectDesc].filter(Boolean).join(" — ") || "No description provided",
+    status: (i) => i.ProjectStatus ?? "Under Review",
+    // Polygon geometry — centroid handled by the generic adapter.
+    buildingType: (i) => classifyRedmondWorkClass(i.WorkClass),
+    projectKind: (i) => {
+      const p = (typeof i.PermitType === "string" ? i.PermitType : "").toLowerCase();
+      if (p.includes("new") || p.includes("construction")) return "New Construction";
+      if (p.includes("addition") || p.includes("alteration") || p.includes("remodel")) {
+        return "Remodel/Addition";
+      }
+      if (p.includes("tenant")) return "Tenant Improvement";
+      if (p.includes("demoli")) return "Demolition";
+      return inferProjectKindFromDescription(`${i.ProjectName ?? ""} ${i.ProjectDesc ?? ""}`);
+    },
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: `${i.ProjectName ?? ""} ${i.ProjectDesc ?? ""}`,
+        buildingType: classifyRedmondWorkClass(i.WorkClass),
+      }),
+  },
+};
+
 // ─── Mercer Island, WA (ArcGIS) ──────────────────────────────────────────────
 // City of Mercer Island runs its own CPD permit-activity MapServer.
 // Schema: ADDRESSLABEL, APPLIED (epoch ms), PERMITDESCRIPTION, PERMITNOTES,
@@ -699,6 +744,237 @@ export const spokaneCountyDataset: ArcgisDataset = {
   },
 };
 
+// ─── Kenmore, WA (ArcGIS + geocoding) ────────────────────────────────────────
+// Kenmore's Trakit_Permits MapServer publishes rich permit data but stores
+// addresses as text only — geometry is null on every record. This custom
+// fetcher geocodes each address via Google Maps so pins can plot.
+const KENMORE_PERMITS_URL =
+  "https://gwa.kenmorewa.gov/arcgis/rest/services/Trakit_Permits/MapServer/12";
+function classifyKenmorePermitType(t: unknown): string | undefined {
+  if (typeof t !== "string") return undefined;
+  const v = t.toUpperCase();
+  if (v.includes("SINGLE FAMILY") || v.startsWith("SF")) return "Single Family/Duplex";
+  if (v.includes("MULTI")) return "Multifamily";
+  if (v.includes("COMMERCIAL") || v.includes("COM")) return "Commercial";
+  return undefined;
+}
+function classifyKenmoreProjectKind(t: unknown, desc: unknown): string | undefined {
+  const v = typeof t === "string" ? t.toUpperCase() : "";
+  if (v.includes("NEW") || v.includes("SFR-N") || v.includes("ADDITION")) {
+    return v.includes("ADDITION") ? "Remodel/Addition" : "New Construction";
+  }
+  if (v.includes("REMODEL") || v.includes("ALTER") || v.includes("R&M")) return "Remodel/Addition";
+  if (v.includes("DEMOLITION") || v.includes("DEMO")) return "Demolition";
+  return inferProjectKindFromDescription(desc);
+}
+export async function fetchKenmorePermits(limit: number): Promise<RawPermitData[]> {
+  const url = new URL(`${KENMORE_PERMITS_URL}/query`);
+  url.searchParams.set("where", "STATUS = 'ISSUED' OR STATUS = 'FINALED'");
+  url.searchParams.set("outFields", "*");
+  url.searchParams.set("resultRecordCount", String(limit));
+  url.searchParams.set("orderByFields", "ISSUED DESC");
+  url.searchParams.set("f", "json");
+
+  let raw: any;
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      console.error(`[Kenmore] fetch failed (${res.status})`);
+      return [];
+    }
+    raw = await res.json();
+  } catch (e) {
+    console.error("[Kenmore] fetch error", e);
+    return [];
+  }
+  const features: any[] = Array.isArray(raw?.features) ? raw.features : [];
+
+  // Geocode in parallel (bounded), then map to RawPermitData.
+  const out: RawPermitData[] = [];
+  const geo = await Promise.all(
+    features.map(async (f) => {
+      const a = f?.attributes ?? {};
+      const addr = a.SITE_ADDR
+        ? `${a.SITE_ADDR}${a.SITE_UNIT_NO ? ` ${a.SITE_UNIT_NO}` : ""}, Kenmore, WA`
+        : null;
+      if (!addr) return null;
+      const loc = await geocodeAddress(addr);
+      return loc ? { a, addr, loc } : null;
+    }),
+  );
+
+  for (const g of geo) {
+    if (!g) continue;
+    const { a, addr, loc } = g;
+    out.push({
+      sourceId: a.PERMIT_NO ?? a.RECORDID,
+      sourceCity: "Kenmore",
+      address: addr,
+      originalDescription: a.DESCRIPTION ?? a.TYPE ?? "No description provided",
+      status: a.STATUS ?? "Issued",
+      latitude: loc.lat,
+      longitude: loc.lng,
+      projectValue: typeof a.JOBVALUE === "number" ? Math.round(a.JOBVALUE) : undefined,
+      buildingType: classifyKenmorePermitType(a.PermitType),
+      contractorName: a.CONTRACTOR_NAME && a.CONTRACTOR_NAME !== "NONE" ? a.CONTRACTOR_NAME : undefined,
+      ownerName: a.OWNER_NAME && a.OWNER_NAME !== "NONE" ? a.OWNER_NAME : undefined,
+      projectKind: classifyKenmoreProjectKind(a.PermitType, a.DESCRIPTION),
+      issuedDate: typeof a.ISSUED === "number" ? new Date(a.ISSUED) : undefined,
+      developmentType: classifyDevelopmentType({
+        description: a.DESCRIPTION,
+        buildingType: classifyKenmorePermitType(a.PermitType),
+      }),
+    });
+  }
+  return out;
+}
+
+// ─── Renton, WA (ArcGIS + parcel-address join) ───────────────────────────────
+// Renton's permit layer 41 has PID but no street address; the address sits
+// on a separate Addresses layer 6 keyed by PID. This custom fetcher does a
+// targeted IN-clause lookup against Addresses for just the permit-PID set,
+// then enriches each permit with its address.
+const RENTON_PERMITS_URL =
+  "https://gismaps.rentonwa.gov/as03/rest/services/Operational/PermitsAndConstruction/MapServer/41";
+const RENTON_ADDRESSES_URL =
+  "https://gismaps.rentonwa.gov/as03/rest/services/Operational/Property/MapServer/6";
+
+export async function fetchRentonPermits(limit: number): Promise<RawPermitData[]> {
+  // 1. Fetch permits.
+  const permitsUrl = new URL(`${RENTON_PERMITS_URL}/query`);
+  permitsUrl.searchParams.set(
+    "where",
+    "STATUS = 'Issued' AND KIND NOT IN ('Adult Family Home', 'Mobile Home (in a park)')",
+  );
+  permitsUrl.searchParams.set("outFields", "*");
+  permitsUrl.searchParams.set("resultRecordCount", String(limit));
+  permitsUrl.searchParams.set("orderByFields", "ISSUEDATE DESC");
+  permitsUrl.searchParams.set("f", "geojson");
+  permitsUrl.searchParams.set("outSR", "4326");
+  permitsUrl.searchParams.set("returnGeometry", "true");
+
+  let permitsData: any;
+  try {
+    const res = await fetch(permitsUrl.toString());
+    if (!res.ok) {
+      console.error(`[Renton] permits fetch failed (${res.status})`);
+      return [];
+    }
+    permitsData = await res.json();
+  } catch (e) {
+    console.error("[Renton] permits fetch error", e);
+    return [];
+  }
+  const features: any[] = Array.isArray(permitsData?.features) ? permitsData.features : [];
+
+  // 2. Collect distinct PIDs.
+  const pidSet = new Set<string>();
+  for (const f of features) {
+    const pid = f?.properties?.PID;
+    if (pid != null) pidSet.add(String(pid));
+  }
+  if (pidSet.size === 0) return [];
+
+  // 3. Bulk fetch addresses for those PIDs only.
+  const pidList = Array.from(pidSet)
+    .map((p) => `'${p.replace(/'/g, "''")}'`)
+    .join(",");
+  const addrUrl = new URL(`${RENTON_ADDRESSES_URL}/query`);
+  addrUrl.searchParams.set("where", `PID IN (${pidList})`);
+  addrUrl.searchParams.set("outFields", "PID,FULLADDR,PSTLCITY,PSTLSTATE,PSTLZIP5");
+  addrUrl.searchParams.set("returnGeometry", "false");
+  addrUrl.searchParams.set("f", "json");
+
+  const addrByPid = new Map<string, { fullAddr: string; city?: string; zip?: string }>();
+  try {
+    const r = await fetch(addrUrl.toString());
+    if (r.ok) {
+      const data = await r.json();
+      for (const f of data?.features ?? []) {
+        const a = f.attributes ?? {};
+        if (!a.PID) continue;
+        const existing = addrByPid.get(String(a.PID));
+        // Prefer entries where FULLADDR is populated.
+        if (!existing || (!existing.fullAddr && a.FULLADDR)) {
+          addrByPid.set(String(a.PID), {
+            fullAddr: a.FULLADDR ?? "",
+            city: a.PSTLCITY,
+            zip: a.PSTLZIP5,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[Renton] addresses fetch error", e);
+  }
+
+  // Helpers for centroid (mirrors what's in arcgis.ts).
+  const centroidOf = (geom: any): [number, number] => {
+    if (!geom || !geom.type) return [NaN, NaN];
+    if (geom.type === "Point") return [Number(geom.coordinates?.[0]), Number(geom.coordinates?.[1])];
+    let coords: number[][] = [];
+    if (geom.type === "Polygon") coords = geom.coordinates?.[0] ?? [];
+    else if (geom.type === "MultiPolygon") coords = geom.coordinates?.[0]?.[0] ?? [];
+    if (!coords.length) return [NaN, NaN];
+    let sx = 0, sy = 0;
+    for (const [x, y] of coords) { sx += x; sy += y; }
+    return [sx / coords.length, sy / coords.length];
+  };
+
+  // 4. Merge permits with addresses.
+  const out: RawPermitData[] = [];
+  for (const f of features) {
+    const p = f.properties ?? {};
+    const pid = p.PID != null ? String(p.PID) : "";
+    const addrEntry = addrByPid.get(pid);
+    const fullAddr = addrEntry?.fullAddr?.trim() || "";
+    if (!fullAddr) continue; // skip parcel-only records
+
+    const [lng, lat] = centroidOf(f.geometry);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+
+    const kind = (typeof p.KIND === "string" ? p.KIND : "").toLowerCase();
+    const buildingType = kind.includes("single family")
+      ? "Single Family/Duplex"
+      : kind.includes("multifamily")
+      ? "Multifamily"
+      : kind.includes("duplex")
+      ? "Single Family/Duplex"
+      : kind.includes("commercial")
+      ? "Commercial"
+      : undefined;
+
+    const workClass = typeof p.WORKCLASS === "string" ? p.WORKCLASS : "";
+    const projectKind =
+      /^new$/i.test(workClass) || /single family residence|commercial building|garage/i.test(workClass)
+        ? "New Construction"
+        : /alteration|addition|remodel/i.test(workClass)
+        ? "Remodel/Addition"
+        : /demolition/i.test(workClass)
+        ? "Demolition"
+        : inferProjectKindFromDescription(`${p.DESCRIPTION ?? ""} ${workClass}`);
+
+    out.push({
+      sourceId: p.PERMITNUMBER ?? p.IVRNUMBER,
+      sourceCity: "Renton",
+      address: `${fullAddr}${addrEntry?.city ? `, ${addrEntry.city}` : ", Renton"}, WA${addrEntry?.zip ? ` ${addrEntry.zip}` : ""}`,
+      originalDescription: p.DESCRIPTION || workClass || p.PROJECT_NAME || "No description provided",
+      status: p.STATUS ?? "Issued",
+      latitude: lat,
+      longitude: lng,
+      projectValue: typeof p.VALUE === "number" && p.VALUE > 0 ? Math.round(p.VALUE) : undefined,
+      buildingType,
+      projectKind,
+      issuedDate: typeof p.ISSUEDATE === "number" ? new Date(p.ISSUEDATE) : undefined,
+      developmentType: classifyDevelopmentType({
+        description: `${p.DESCRIPTION ?? ""} ${workClass}`,
+        buildingType,
+      }),
+    });
+  }
+  return out;
+}
+
 // Registry — flip the `enabled` flag on each city to turn it on. Disabled
 // ones don't get fetched by the cron, but the config stays here for easy
 // re-enabling once you've verified its field names against the live API.
@@ -714,7 +990,16 @@ export interface ArcgisRegistryEntry {
   enabled: boolean;
   limit: number;
 }
-export type RegistryEntry = SocrataRegistryEntry | ArcgisRegistryEntry;
+// Bespoke async fetcher — used by cities that need custom enrichment
+// (geocoding, parcel joins) before they fit the RawPermitData shape.
+export interface CustomRegistryEntry {
+  kind: "custom";
+  city: string;
+  fetch: (limit: number) => Promise<RawPermitData[]>;
+  enabled: boolean;
+  limit: number;
+}
+export type RegistryEntry = SocrataRegistryEntry | ArcgisRegistryEntry | CustomRegistryEntry;
 
 export const cityRegistry: RegistryEntry[] = [
   // ─── Washington State ─────────────────────────────────────────────────
@@ -723,11 +1008,11 @@ export const cityRegistry: RegistryEntry[] = [
   { kind: "arcgis", dataset: tacomaDataset, enabled: true, limit: 200 },
   { kind: "arcgis", dataset: bellevueDataset, enabled: true, limit: 200 },
   { kind: "arcgis", dataset: mercerIslandDataset, enabled: true, limit: 200 },
-  // Renton's layer 41 has rich attributes but LOCATION (street address) is
-  // populated on only ~22 of ~11,000 records — addresses are stored on a
-  // separate parcels layer that we'd need to cross-reference. Disabled
-  // until that join is built.
-  { kind: "arcgis", dataset: rentonDataset, enabled: false, limit: 50 },
+  { kind: "arcgis", dataset: redmondDataset, enabled: true, limit: 200 },
+  { kind: "custom", city: "Kenmore", fetch: fetchKenmorePermits, enabled: true, limit: 100 },
+  { kind: "custom", city: "Renton", fetch: fetchRentonPermits, enabled: true, limit: 200 },
+  // Old generic-adapter Renton config retired in favor of the parcel-join
+  // custom fetcher above.
   { kind: "arcgis", dataset: spokaneCountyDataset, enabled: true, limit: 200 },
   //
   // ─── Other US metros ─────────────────────────────────────────────────
