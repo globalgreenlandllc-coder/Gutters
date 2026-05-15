@@ -10,11 +10,5 @@ export const metadata: Metadata = {
 export default async function LeadsPage() {
   const googleMapsKey = await getActiveApiKey("GOOGLE_MAPS");
 
-  return (
-    <div className="w-full h-screen flex flex-col">
-      <main className="flex-1 overflow-hidden relative">
-        <LeadsMap apiKey={googleMapsKey || "dummy_key"} />
-      </main>
-    </div>
-  );
+  return <LeadsMap apiKey={googleMapsKey || "dummy_key"} />;
 }

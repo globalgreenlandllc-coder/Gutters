@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   APIProvider,
-  Map,
+  Map as GoogleMap,
   AdvancedMarker,
   InfoWindow,
   useMap,
@@ -24,6 +24,75 @@ import {
   Sparkles,
 } from "lucide-react";
 import LeadDetailsPanel, { LeadWithInteraction } from "./LeadDetailsPanel";
+import LeadsSidebar, {
+  type LeadsSidebarHandle,
+  type SortMode,
+} from "./LeadsSidebar";
+
+/* ------------------------------------------------------------------ */
+/*   Grid-based marker clustering                                     */
+/*                                                                    */
+/*   Bin leads into a lat/lng grid whose cell size scales with the    */
+/*   current map zoom. Cells holding >=3 leads render as a single     */
+/*   cluster badge; cells with <3 render as individual markers.       */
+/*                                                                    */
+/*   Above zoom 14, clustering disengages entirely (the user has      */
+/*   zoomed in far enough that overlap isn't an issue).               */
+/* ------------------------------------------------------------------ */
+type Cluster = {
+  id: string;
+  lat: number;
+  lng: number;
+  count: number;
+  hotCount: number;
+};
+
+function clusterLeads(
+  leads: LeadWithInteraction[],
+  zoom: number,
+): { clusters: Cluster[]; unclustered: LeadWithInteraction[] } {
+  if (zoom >= 14) return { clusters: [], unclustered: leads };
+  // Cell size halves with each zoom level — mirrors how a single
+  // screen-pixel maps to fewer real-world degrees as you zoom in. The
+  // 0.06 base was tuned empirically against Seattle-area density.
+  const gridDeg = 0.06 / Math.pow(2, Math.max(0, zoom - 10));
+  const buckets = new Map<string, LeadWithInteraction[]>();
+  for (const lead of leads) {
+    const bx = Math.floor(lead.longitude / gridDeg);
+    const by = Math.floor(lead.latitude / gridDeg);
+    const key = `${bx},${by}`;
+    let arr = buckets.get(key);
+    if (!arr) {
+      arr = [];
+      buckets.set(key, arr);
+    }
+    arr.push(lead);
+  }
+  const clusters: Cluster[] = [];
+  const unclustered: LeadWithInteraction[] = [];
+  for (const [key, arr] of buckets.entries()) {
+    if (arr.length >= 3) {
+      let sumLat = 0;
+      let sumLng = 0;
+      let hot = 0;
+      for (const l of arr) {
+        sumLat += l.latitude;
+        sumLng += l.longitude;
+        if (l.aiRelevance === "high") hot++;
+      }
+      clusters.push({
+        id: `c-${key}`,
+        lat: sumLat / arr.length,
+        lng: sumLng / arr.length,
+        count: arr.length,
+        hotCount: hot,
+      });
+    } else {
+      for (const l of arr) unclustered.push(l);
+    }
+  }
+  return { clusters, unclustered };
+}
 
 const BBOX_DEBOUNCE_MS = 400;
 
@@ -459,7 +528,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [relevanceFilter, setRelevanceFilter] = useState("All");
   const [isLoading, setIsLoading] = useState(false);
   const [resultCount, setResultCount] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(11);
+  const [sort, setSort] = useState<SortMode>("relevance");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const bboxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarRef = useRef<LeadsSidebarHandle>(null);
 
   // Single source of truth for fetching. Caller can pass a bbox override so
   // the "Search this area" button can use the LIVE map bounds without waiting
@@ -600,168 +673,255 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     }
   };
 
+  // Sorted view for the sidebar. The map always renders all leads; the
+  // sidebar shows them in the contractor's chosen priority order.
+  const sortedLeads = useMemo(() => {
+    const arr = [...leads];
+    const relRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    if (sort === "relevance") {
+      arr.sort((a, b) => {
+        const ra = relRank[a.aiRelevance ?? ""] ?? 3;
+        const rb = relRank[b.aiRelevance ?? ""] ?? 3;
+        if (ra !== rb) return ra - rb;
+        // Tiebreaker: newer issued date first.
+        const da = a.issuedDate ? new Date(a.issuedDate).getTime() : 0;
+        const db = b.issuedDate ? new Date(b.issuedDate).getTime() : 0;
+        return db - da;
+      });
+    } else if (sort === "newest") {
+      arr.sort((a, b) => {
+        const da = a.issuedDate ? new Date(a.issuedDate).getTime() : 0;
+        const db = b.issuedDate ? new Date(b.issuedDate).getTime() : 0;
+        return db - da;
+      });
+    } else {
+      // "value"
+      arr.sort((a, b) => (b.projectValue ?? 0) - (a.projectValue ?? 0));
+    }
+    return arr;
+  }, [leads, sort]);
+
+  // Cluster at the current zoom. Memo so we only recompute when leads or
+  // zoom actually change — onBoundsChanged fires constantly during pan.
+  const { clusters, unclustered } = useMemo(
+    () => clusterLeads(leads, zoom),
+    [leads, zoom],
+  );
+
   return (
-    <div className="relative w-full h-[calc(100vh-4rem)] bg-slate-950 flex flex-col">
+    <div className="flex h-[calc(100vh-4rem)] w-full bg-slate-950">
       <APIProvider apiKey={apiKey}>
-        <MapControls
-          filters={{
-            trade: tradeFilter,
-            status: statusFilter,
-            interactionStatus: interactionFilter,
-            buildingType: buildingTypeFilter,
-            projectKind: projectKindFilter,
-            developmentType: developmentTypeFilter,
-            stage: stageFilter,
-            relevance: relevanceFilter,
-          }}
-          setTradeFilter={setTradeFilter}
-          setStatusFilter={setStatusFilter}
-          setInteractionFilter={setInteractionFilter}
-          setBuildingTypeFilter={setBuildingTypeFilter}
-          setProjectKindFilter={setProjectKindFilter}
-          setDevelopmentTypeFilter={setDevelopmentTypeFilter}
-          setStageFilter={setStageFilter}
-          setRelevanceFilter={setRelevanceFilter}
-          applyPreset={(p) => {
-            // Reset all to default, then apply the preset's patch atomically.
-            setTradeFilter(p.patch.trade ?? "All");
-            setStatusFilter(p.patch.status ?? "All");
-            setInteractionFilter(p.patch.interactionStatus ?? "All");
-            setBuildingTypeFilter(p.patch.buildingType ?? "All");
-            setProjectKindFilter(p.patch.projectKind ?? "All");
-            setDevelopmentTypeFilter(p.patch.developmentType ?? "All");
-            setStageFilter(p.patch.stage ?? DEFAULT_FILTERS.stage);
-            setRelevanceFilter(p.patch.relevance ?? "All");
-          }}
-          clearAll={() => {
-            setTradeFilter("All");
-            setStatusFilter("All");
-            setInteractionFilter("All");
-            setBuildingTypeFilter("All");
-            setProjectKindFilter("All");
-            setDevelopmentTypeFilter("All");
-            setStageFilter(DEFAULT_FILTERS.stage);
-            setRelevanceFilter("All");
-          }}
-          onSearch={handleManualSearch}
+        <LeadsSidebar
+          ref={sidebarRef}
+          leads={sortedLeads}
+          hoveredLeadId={hoveredLead?.id ?? null}
+          selectedLeadId={selectedLead?.id ?? null}
+          onHover={setHoveredLead}
+          onSelect={setSelectedLead}
           isLoading={isLoading}
+          hasMore={hasMore}
+          sort={sort}
+          onSortChange={setSort}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
         />
 
-        {/* Result indicator (top-right) */}
-        <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
-          {resultCount !== null && (
-            <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 text-slate-300 text-xs px-3 py-2 rounded-lg shadow-xl">
-              {isLoading ? (
+        <div className="relative flex-1">
+          <MapControls
+            filters={{
+              trade: tradeFilter,
+              status: statusFilter,
+              interactionStatus: interactionFilter,
+              buildingType: buildingTypeFilter,
+              projectKind: projectKindFilter,
+              developmentType: developmentTypeFilter,
+              stage: stageFilter,
+              relevance: relevanceFilter,
+            }}
+            setTradeFilter={setTradeFilter}
+            setStatusFilter={setStatusFilter}
+            setInteractionFilter={setInteractionFilter}
+            setBuildingTypeFilter={setBuildingTypeFilter}
+            setProjectKindFilter={setProjectKindFilter}
+            setDevelopmentTypeFilter={setDevelopmentTypeFilter}
+            setStageFilter={setStageFilter}
+            setRelevanceFilter={setRelevanceFilter}
+            applyPreset={(p) => {
+              setTradeFilter(p.patch.trade ?? "All");
+              setStatusFilter(p.patch.status ?? "All");
+              setInteractionFilter(p.patch.interactionStatus ?? "All");
+              setBuildingTypeFilter(p.patch.buildingType ?? "All");
+              setProjectKindFilter(p.patch.projectKind ?? "All");
+              setDevelopmentTypeFilter(p.patch.developmentType ?? "All");
+              setStageFilter(p.patch.stage ?? DEFAULT_FILTERS.stage);
+              setRelevanceFilter(p.patch.relevance ?? "All");
+            }}
+            clearAll={() => {
+              setTradeFilter("All");
+              setStatusFilter("All");
+              setInteractionFilter("All");
+              setBuildingTypeFilter("All");
+              setProjectKindFilter("All");
+              setDevelopmentTypeFilter("All");
+              setStageFilter(DEFAULT_FILTERS.stage);
+              setRelevanceFilter("All");
+            }}
+            onSearch={handleManualSearch}
+            isLoading={isLoading}
+          />
+
+          {/* Result indicator (top-right of map area) */}
+          <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2 pointer-events-none">
+            {resultCount !== null && isLoading && (
+              <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 text-slate-300 text-xs px-3 py-2 rounded-lg shadow-xl">
                 <span className="flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" /> Searching…
                 </span>
-              ) : (
-                <span>
-                  <span className="text-white font-semibold">{resultCount}</span>{" "}
-                  {resultCount === 1 ? "lead" : "leads"} in view
-                </span>
-              )}
-            </div>
-          )}
-          {hasMore && (
-            <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 text-xs px-3 py-2 rounded-lg backdrop-blur-md max-w-[260px]">
-              Showing 500 best — zoom in to see more.
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+            {hasMore && (
+              <div className="bg-amber-500/10 border border-amber-500/40 text-amber-300 text-xs px-3 py-2 rounded-lg backdrop-blur-md max-w-[260px]">
+                Showing 500 best — zoom in to see more.
+              </div>
+            )}
+          </div>
 
-        <Map
-          defaultCenter={{ lat: 47.6062, lng: -122.3321 }}
-          defaultZoom={11}
-          mapId="DEMO_MAP_ID"
-          disableDefaultUI={true}
-          onBoundsChanged={(e) => {
-            const bounds = e.map.getBounds();
-            if (!bounds) return;
-            const ne = bounds.getNorthEast();
-            const sw = bounds.getSouthWest();
-            const next = `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
-            if (bboxDebounceRef.current) clearTimeout(bboxDebounceRef.current);
-            bboxDebounceRef.current = setTimeout(() => setBbox(next), BBOX_DEBOUNCE_MS);
-          }}
-        >
-          {leads.map((lead) => {
-            const color = getPinColor(lead.interaction?.status);
-            const Icon = pickMarkerIcon(lead);
-            const isHot = lead.aiRelevance === "high";
-            return (
-              <AdvancedMarker
-                key={lead.id}
-                position={{ lat: lead.latitude, lng: lead.longitude }}
-                onClick={() => setSelectedLead(lead)}
-              >
-                <div
-                  className="relative cursor-pointer"
-                  onMouseEnter={() => setHoveredLead(lead)}
-                  onMouseLeave={() => setHoveredLead((h) => (h?.id === lead.id ? null : h))}
+          <GoogleMap
+            defaultCenter={{ lat: 47.6062, lng: -122.3321 }}
+            defaultZoom={11}
+            mapId="DEMO_MAP_ID"
+            disableDefaultUI={true}
+            onBoundsChanged={(e) => {
+              const bounds = e.map.getBounds();
+              if (!bounds) return;
+              const z = e.map.getZoom();
+              if (typeof z === "number") setZoom(z);
+              const ne = bounds.getNorthEast();
+              const sw = bounds.getSouthWest();
+              const next = `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
+              if (bboxDebounceRef.current) clearTimeout(bboxDebounceRef.current);
+              bboxDebounceRef.current = setTimeout(
+                () => setBbox(next),
+                BBOX_DEBOUNCE_MS,
+              );
+            }}
+          >
+            {/* Pans to selected lead — only when selection ID changes */}
+            <MapPanner target={selectedLead} />
+
+            {/* Cluster badges (zoom < 14) */}
+            {clusters.map((c) => (
+              <ClusterMarker key={c.id} cluster={c} />
+            ))}
+
+            {/* Individual markers */}
+            {unclustered.map((lead) => {
+              const color = getPinColor(lead.interaction?.status);
+              const Icon = pickMarkerIcon(lead);
+              const isHot = lead.aiRelevance === "high";
+              const isHovered = hoveredLead?.id === lead.id;
+              const isSelected = selectedLead?.id === lead.id;
+              return (
+                <AdvancedMarker
+                  key={lead.id}
+                  position={{ lat: lead.latitude, lng: lead.longitude }}
+                  onClick={() => setSelectedLead(lead)}
+                  zIndex={isSelected ? 1000 : isHovered ? 500 : isHot ? 100 : 1}
                 >
                   <div
-                    className={`w-9 h-9 rounded-full border-2 border-white shadow-lg flex items-center justify-center transition-transform hover:scale-110 ${
-                      isHot ? "ring-2 ring-orange-400/70" : ""
-                    }`}
-                    style={{ backgroundColor: color }}
+                    className="relative cursor-pointer"
+                    onMouseEnter={() => setHoveredLead(lead)}
+                    onMouseLeave={() =>
+                      setHoveredLead((h) => (h?.id === lead.id ? null : h))
+                    }
                   >
-                    <Icon size={16} className="text-white" strokeWidth={2.5} />
+                    <div
+                      className={`flex items-center justify-center rounded-full border-2 border-white shadow-lg transition-all ${
+                        isSelected
+                          ? "h-11 w-11 ring-4 ring-emerald-400/70"
+                          : isHovered
+                            ? "h-10 w-10 ring-4 ring-cyan-400/60"
+                            : "h-9 w-9"
+                      } ${isHot && !isSelected && !isHovered ? "ring-2 ring-orange-400/70" : ""}`}
+                      style={{ backgroundColor: color }}
+                    >
+                      <Icon
+                        size={isSelected ? 18 : 16}
+                        className="text-white"
+                        strokeWidth={2.5}
+                      />
+                    </div>
+                    {isHot && !isSelected && (
+                      <span
+                        className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-orange-500 ring-2 ring-white animate-pulse"
+                        aria-hidden
+                      />
+                    )}
                   </div>
-                  {isHot && (
-                    <span
-                      className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-orange-500 ring-2 ring-white animate-pulse"
-                      aria-hidden
-                    />
-                  )}
-                </div>
-              </AdvancedMarker>
-            );
-          })}
-          {hoveredLead && hoveredLead.id !== selectedLead?.id && (
-            <InfoWindow
-              position={{ lat: hoveredLead.latitude, lng: hoveredLead.longitude }}
-              pixelOffset={[0, -28]}
-              disableAutoPan
-              headerDisabled
-            >
-              <div className="text-slate-900 max-w-[280px] -m-1">
-                <div className="font-semibold text-sm leading-tight mb-1">
-                  {hoveredLead.address}
-                </div>
-                <div className="flex flex-wrap gap-1 mb-1">
-                  {hoveredLead.developmentType && (
-                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-800 font-medium">
-                      {hoveredLead.developmentType}
-                      {hoveredLead.housingUnits != null && hoveredLead.housingUnits > 0 &&
-                        ` · ${hoveredLead.housingUnits}u`}
-                    </span>
-                  )}
-                  {hoveredLead.projectKind && hoveredLead.projectKind !== "Other" && (
-                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 font-medium">
-                      {hoveredLead.projectKind}
-                    </span>
-                  )}
-                  {hoveredLead.aiRelevance === "high" && (
-                    <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-medium">
-                      🔥 Hot
-                    </span>
-                  )}
-                </div>
-                {hoveredLead.aiSummary && (
-                  <div className="text-[11px] text-slate-700 leading-snug mb-1">
-                    {hoveredLead.aiSummary}
+                </AdvancedMarker>
+              );
+            })}
+
+            {/* Hover preview (only when a marker is hovered AND it's
+                visible as an individual pin — clusters don't get a
+                preview because they represent many leads). */}
+            {hoveredLead &&
+              hoveredLead.id !== selectedLead?.id &&
+              unclustered.some((l) => l.id === hoveredLead.id) && (
+                <InfoWindow
+                  position={{
+                    lat: hoveredLead.latitude,
+                    lng: hoveredLead.longitude,
+                  }}
+                  pixelOffset={[0, -28]}
+                  disableAutoPan
+                  headerDisabled
+                >
+                  <div className="text-slate-900 max-w-[280px] -m-1">
+                    <div className="font-semibold text-sm leading-tight mb-1">
+                      {hoveredLead.address}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {hoveredLead.developmentType && (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-800 font-medium">
+                          {hoveredLead.developmentType}
+                          {hoveredLead.housingUnits != null &&
+                            hoveredLead.housingUnits > 0 &&
+                            ` · ${hoveredLead.housingUnits}u`}
+                        </span>
+                      )}
+                      {hoveredLead.projectKind &&
+                        hoveredLead.projectKind !== "Other" && (
+                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 font-medium">
+                            {hoveredLead.projectKind}
+                          </span>
+                        )}
+                      {hoveredLead.aiRelevance === "high" && (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-medium">
+                          🔥 Hot
+                        </span>
+                      )}
+                    </div>
+                    {hoveredLead.aiSummary && (
+                      <div className="text-[11px] text-slate-700 leading-snug mb-1">
+                        {hoveredLead.aiSummary}
+                      </div>
+                    )}
+                    <div className="text-[10px] text-slate-500">
+                      {hoveredLead.sourceCity}
+                      {hoveredLead.issuedDate &&
+                        ` · issued ${new Date(
+                          hoveredLead.issuedDate,
+                        ).toLocaleDateString()}`}
+                      {hoveredLead.projectValue
+                        ? ` · $${hoveredLead.projectValue.toLocaleString()}`
+                        : ""}
+                    </div>
                   </div>
-                )}
-                <div className="text-[10px] text-slate-500">
-                  {hoveredLead.sourceCity}
-                  {hoveredLead.issuedDate && ` · issued ${new Date(hoveredLead.issuedDate).toLocaleDateString()}`}
-                  {hoveredLead.projectValue ? ` · $${hoveredLead.projectValue.toLocaleString()}` : ""}
-                </div>
-              </div>
-            </InfoWindow>
-          )}
-        </Map>
+                </InfoWindow>
+              )}
+          </GoogleMap>
+        </div>
       </APIProvider>
 
       {selectedLead && (
@@ -772,5 +932,69 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         />
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*   MapPanner — pans the map to a target lead whenever its ID changes */
+/* ------------------------------------------------------------------ */
+function MapPanner({ target }: { target: LeadWithInteraction | null }) {
+  const map = useMap();
+  const lastIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!map || !target) {
+      lastIdRef.current = target?.id ?? null;
+      return;
+    }
+    if (lastIdRef.current === target.id) return;
+    lastIdRef.current = target.id;
+    map.panTo({ lat: target.latitude, lng: target.longitude });
+  }, [map, target]);
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*   ClusterMarker — circular count badge; click zooms in + pans      */
+/* ------------------------------------------------------------------ */
+function ClusterMarker({ cluster }: { cluster: Cluster }) {
+  const map = useMap();
+  // Visual size scales mildly with count so a 50-lead cluster reads as
+  // bigger than a 5-lead one without dominating the map.
+  const size = Math.min(64, 36 + Math.log2(cluster.count) * 6);
+  const fontSize = cluster.count >= 100 ? 13 : cluster.count >= 10 ? 14 : 16;
+  const hot = cluster.hotCount > 0;
+  return (
+    <AdvancedMarker
+      position={{ lat: cluster.lat, lng: cluster.lng }}
+      onClick={() => {
+        if (!map) return;
+        const z = map.getZoom() ?? 11;
+        map.panTo({ lat: cluster.lat, lng: cluster.lng });
+        // Zoom in by 2 — usually breaks the cluster apart enough to see
+        // its constituents but doesn't fly past street-level detail.
+        map.setZoom(Math.min(z + 2, 18));
+      }}
+      zIndex={50}
+    >
+      <div
+        className="relative flex cursor-pointer items-center justify-center rounded-full text-white font-bold shadow-xl ring-4 ring-white/80 transition hover:scale-110"
+        style={{
+          width: size,
+          height: size,
+          fontSize,
+          background: hot
+            ? "radial-gradient(circle at 30% 30%, #fb923c, #ea580c 70%)"
+            : "radial-gradient(circle at 30% 30%, #34d399, #059669 70%)",
+        }}
+        title={`${cluster.count} leads — click to zoom in`}
+      >
+        {cluster.count}
+        {hot && (
+          <span className="absolute -top-1 -right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-orange-500 text-[8px] font-bold ring-2 ring-white">
+            {cluster.hotCount > 9 ? "9+" : cluster.hotCount}
+          </span>
+        )}
+      </div>
+    </AdvancedMarker>
   );
 }
