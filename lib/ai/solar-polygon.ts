@@ -29,6 +29,13 @@ export type SolarPolygonResult = {
    *  — used by the DSM edge classifier so it can sample heights in the
    *  DSM's native coordinate system. */
   ringLatLng: Array<{ lat: number; lng: number }>;
+  /** Diagnostic — surfaced as a note in the run log so we can tell at a
+   *  glance whether the polygon was rectilinearized or fell back to the
+   *  jagged Douglas–Peucker output. */
+  cleanup:
+    | { kind: "ortho"; vertCount: number }
+    | { kind: "simplified"; vertCount: number; reason: string }
+    | { kind: "raw"; vertCount: number; reason: string };
 };
 
 type Pt = { x: number; y: number };
@@ -143,16 +150,18 @@ export function polygonFromSolarMask(
 
   if (downsampled.length < 8) return null;
 
-  // 5. Architectural cleanup. The raw boundary follows mask pixels (0.5m
-  // squares) and looks jagged — Gemini-style clean rectilinear lines come
-  // from two passes:
-  //   a) Douglas–Peucker collapses near-colinear noise. Epsilon ≈ 0.3m in
-  //      image-pixel space (6 px at zoom-20 ≈ 0.3m on the ground): keeps
-  //      architectural corners — bays, garage steps, dormers — while
-  //      dropping sub-foot mask zigzag.
+  // 5. Architectural cleanup. The raw boundary follows mask pixels (0.5 m
+  // squares) and looks jagged — clean rectilinear lines come from two
+  // passes:
+  //   a) Douglas–Peucker collapses near-colinear noise. Epsilon = 10 px,
+  //      which at zoom-20 scale=2 (~0.05 m/px ≈ 2 in/px) is ~20 in / 1.7
+  //      ft on the ground. Was 6 px (~1 ft) — too tight to collapse the
+  //      single-mask-pixel (~0.5 m) jaggies that produce the stair-steps
+  //      we kept seeing at corners; 10 px hits them without losing real
+  //      bump-outs (porches, bays, garage steps are all ≥3 ft).
   //   b) Orthogonal regularization: snap edges to the dominant building
   //      axis ± 90° so walls become straight, like an architectural plan.
-  const SIMPLIFY_EPSILON_PX = 6;
+  const SIMPLIFY_EPSILON_PX = 10;
   const simplified = simplify(downsampled, SIMPLIFY_EPSILON_PX);
   // Try ortho regularization, but reject it on three failure modes
   // common on complex 15+-vertex hip+gable polygons:
@@ -167,24 +176,52 @@ export function polygonFromSolarMask(
   const MAX_VERTEX_DRIFT_PX = 40;
   const MIN_AREA_RATIO = 0.85;
   let cleaned: Pt[];
+  let cleanup: SolarPolygonResult["cleanup"];
   if (simplified.length >= 4) {
     const ortho = orthogonalizePolygon(simplified);
+    const orthoSelfX = polygonSelfIntersects(ortho);
+    const orthoVertChange = ortho.length !== simplified.length;
+    const orthoArea =
+      polygonArea(ortho) / Math.max(1, polygonArea(simplified));
+    const orthoDrift = maxPairwiseDist(simplified, ortho);
     const orthoOk =
       ortho.length >= 4 &&
-      !polygonSelfIntersects(ortho) &&
-      ortho.length === simplified.length &&
-      polygonArea(ortho) / Math.max(1, polygonArea(simplified)) >=
-        MIN_AREA_RATIO &&
-      maxPairwiseDist(simplified, ortho) <= MAX_VERTEX_DRIFT_PX;
+      !orthoSelfX &&
+      !orthoVertChange &&
+      orthoArea >= MIN_AREA_RATIO &&
+      orthoDrift <= MAX_VERTEX_DRIFT_PX;
     if (orthoOk) {
       cleaned = ortho;
+      cleanup = { kind: "ortho", vertCount: ortho.length };
     } else if (!polygonSelfIntersects(simplified)) {
       cleaned = simplified;
+      const why = orthoSelfX
+        ? "ortho self-intersected"
+        : orthoVertChange
+          ? `ortho vert count changed (${simplified.length}→${ortho.length})`
+          : orthoArea < MIN_AREA_RATIO
+            ? `ortho area shrunk to ${(orthoArea * 100).toFixed(0)}%`
+            : `ortho drifted ${orthoDrift.toFixed(0)} px`;
+      cleanup = {
+        kind: "simplified",
+        vertCount: simplified.length,
+        reason: why,
+      };
     } else {
       cleaned = downsampled;
+      cleanup = {
+        kind: "raw",
+        vertCount: downsampled.length,
+        reason: "DP polygon self-intersected",
+      };
     }
   } else {
     cleaned = simplified;
+    cleanup = {
+      kind: "simplified",
+      vertCount: simplified.length,
+      reason: "too few verts for ortho",
+    };
   }
   if (cleaned.length < 4) return null;
 
@@ -234,7 +271,7 @@ export function polygonFromSolarMask(
     ringObjects.push(ringObjects[0]);
   }
 
-  return { polygon, ringLatLng: ringObjects };
+  return { polygon, ringLatLng: ringObjects, cleanup };
 }
 
 /* ------------------------------------------------------------------ */

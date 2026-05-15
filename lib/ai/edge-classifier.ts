@@ -242,8 +242,10 @@ export function classifyEdgeWithAzimuth(
   diff = Math.min(diff, 360 - diff); // Account for 0/360 wraparound
 
   // If the outward normal of the edge matches the direction water flows down the roof, it's an eave.
-  // We use a generous threshold (±60 degrees) because polygons are often jagged approximations.
-  if (diff <= 65) {
+  // Tight ±35° threshold — the SAM-2 traced perimeter has perfectly sharp
+  // 90° corners, so a real eave's outward normal lines up with the Solar
+  // segment azimuth within a few degrees. Anything beyond that is a rake.
+  if (diff <= 35) {
     return { 
       a: edge.a, b: edge.b, kind: "eave", 
       reason: `normal ${Math.round(normalAzimuth)}° aligns with roof azimuth ${Math.round(nearestSegment.azimuthDegrees)}° (diff ${Math.round(diff)}°)` 

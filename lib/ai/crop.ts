@@ -69,6 +69,7 @@ export function cropSatImageToBox(
       zoom: image.zoom,
       centerLat: image.centerLat,
       centerLng: image.centerLng,
+      source: image.source,
     },
     offset: { x: x1, y: y1 },
     size: { width: w, height: h },

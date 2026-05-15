@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
+  Hash,
   Layers,
   Maximize2,
   MountainSnow,
@@ -62,6 +63,11 @@ export function AerialCanvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [showRoofStructure, setShowRoofStructure] = useState(true);
+  // null = "auto": labels are shown but tiny crowded ones are skipped. The
+  // user can force them all-on or all-off with the toolbar toggle.
+  const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
+    "auto",
+  );
   const [drag, setDrag] = useState<
     | { kind: "vertex"; lineId: string; index: number }
     | { kind: "downspout"; id: string }
@@ -76,6 +82,26 @@ export function AerialCanvas({
     () => Math.round(eaves.reduce((acc, l) => acc + lineLengthFt(l), 0)),
     [eaves],
   );
+
+  // Decide which eaves get an always-visible LF label. In "off" mode none
+  // do (selected still renders its own larger label). In "on" mode all do.
+  // "auto" hides labels under a length threshold that climbs as the
+  // perimeter gets more crowded — keeps the long walls labeled but stops
+  // tiny jog segments from stacking on top of each other.
+  const labelVisibleIds = useMemo(() => {
+    if (showLfLabels === "off") return new Set<string>();
+    if (showLfLabels === "on") return new Set(eaves.map((l) => l.id));
+    const lengths = eaves.map((l) => lineLengthFt(l));
+    const totalSegments = lengths.length;
+    const tinyCount = lengths.filter((ft) => ft < 10).length;
+    const crowded = totalSegments >= 12 && tinyCount / totalSegments >= 0.4;
+    const threshold = crowded ? 12 : 6;
+    const ids = new Set<string>();
+    eaves.forEach((l, i) => {
+      if (lengths[i] >= threshold) ids.add(l.id);
+    });
+    return ids;
+  }, [eaves, showLfLabels]);
 
   const selectedDownspout = useMemo(
     () => downspouts.find((d) => d.id === selectedId) ?? null,
@@ -212,6 +238,12 @@ export function AerialCanvas({
         roofStructureAvailable={!!roofStructure}
         showRoofStructure={showRoofStructure}
         onToggleRoofStructure={() => setShowRoofStructure((s) => !s)}
+        lfLabelMode={showLfLabels}
+        onCycleLfLabels={() =>
+          setShowLfLabels((m) =>
+            m === "auto" ? "off" : m === "off" ? "on" : "auto",
+          )
+        }
       />
       <Legend
         totalEaveLF={totalEaveLF}
@@ -310,12 +342,14 @@ export function AerialCanvas({
                     }}
                   />
                 ))}
-              <LineLabel
-                line={line}
-                theme={theme}
-                emphasized={isSelected}
-                animationDelay={0.6 + i * 0.06}
-              />
+              {(labelVisibleIds.has(line.id) || isSelected || isHover) && (
+                <LineLabel
+                  line={line}
+                  theme={theme}
+                  emphasized={isSelected}
+                  animationDelay={0.6 + i * 0.06}
+                />
+              )}
             </g>
           );
         })}
@@ -558,6 +592,8 @@ function Toolbar({
   roofStructureAvailable,
   showRoofStructure,
   onToggleRoofStructure,
+  lfLabelMode,
+  onCycleLfLabels,
 }: {
   tool: Tool;
   setTool: (t: Tool) => void;
@@ -568,6 +604,8 @@ function Toolbar({
   roofStructureAvailable: boolean;
   showRoofStructure: boolean;
   onToggleRoofStructure: () => void;
+  lfLabelMode: "auto" | "on" | "off";
+  onCycleLfLabels: () => void;
 }) {
   const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
     { id: "select", icon: MousePointer2, label: "Select" },
@@ -662,6 +700,32 @@ function Toolbar({
           <MountainSnow className="h-4 w-4" />
         </button>
       )}
+      <button
+        onClick={onCycleLfLabels}
+        title={
+          lfLabelMode === "auto"
+            ? "LF labels: auto (hides crowded short segments)"
+            : lfLabelMode === "on"
+              ? "LF labels: all visible"
+              : "LF labels: hidden"
+        }
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          lfLabelMode === "off"
+            ? tactical
+              ? "text-cyan-200/40 hover:bg-cyan-500/10 hover:text-cyan-100"
+              : "text-zinc-300 hover:bg-zinc-100 hover:text-zinc-700"
+            : lfLabelMode === "on"
+              ? tactical
+                ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-inset ring-cyan-400/50"
+                : "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
+              : tactical
+                ? "text-cyan-200/80 hover:bg-cyan-500/10 hover:text-cyan-100"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+        )}
+      >
+        <Hash className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -787,10 +851,6 @@ function LineLabel({
   const a = line.points[0];
   const b = line.points[line.points.length - 1];
   const len = Math.round(lineLengthFt(line));
-
-  // Skip the always-on label for tiny segments — they'd visually clutter
-  // the perimeter without adding info. Selected segments still show.
-  if (!emphasized && len < 6) return null;
 
   const tactical = theme === "tactical";
   const w = emphasized ? 60 : 44;

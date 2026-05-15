@@ -42,6 +42,11 @@ const PROVIDER_META: Record<
     sub: "High-res aerial imagery + roof pitch",
     tone: "sky",
   },
+  MAPBOX: {
+    label: "Mapbox",
+    sub: "Primary satellite tiles (Maxar Vivid) — sharper than Google in suburbs",
+    tone: "sky",
+  },
   OPENAI: {
     label: "OpenAI",
     sub: "GPT-4o vision for roof segmentation",

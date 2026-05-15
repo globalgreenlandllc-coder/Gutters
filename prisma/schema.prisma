@@ -381,6 +381,7 @@ model ImpersonationSession {
 enum ApiKeyProvider {
   GOOGLE_MAPS
   GOOGLE_SOLAR
+  MAPBOX
   OPENAI
   FAL
   NEARMAP

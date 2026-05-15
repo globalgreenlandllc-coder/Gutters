@@ -10,7 +10,7 @@ import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
 
-import { classifyEdgeWithAzimuth, ringCentroid, type ClassifiedEdge } from "./edge-classifier";
+import { classifyEdgeWithAzimuth, ringCentroid } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
 import { segmentEavesViaVision } from "./vision";
 import {
@@ -22,6 +22,7 @@ import {
   buildEditableLines,
   countCorners,
   eavesFromRoofPolygon,
+  imagePixelToLatLng,
   latLngToImagePixel,
   measurementsFromVision,
   pixelLengthToFeet,
@@ -29,6 +30,7 @@ import {
   placeDownspoutsOnPolygon,
   pointInPolygon,
   polylineLengthPx,
+  simplify,
   transformToCanvas,
 } from "./geometry";
 import {
@@ -174,11 +176,13 @@ export async function runAIEstimatePipeline(
     });
     if (imgOutcome.ok) {
       image = imgOutcome.image;
+      const providerLabel =
+        image.source === "mapbox" ? "Mapbox (Maxar Vivid)" : "Google Static Maps";
       notes.push(
-        `Fetched ${image.width}×${image.height} satellite tile @ z${image.zoom}`,
+        `Fetched ${image.width}×${image.height} satellite tile via ${providerLabel} @ z${image.zoom}`,
       );
     } else {
-      notes.push(`Static Maps fetch failed — ${imgOutcome.reason}`);
+      notes.push(`Satellite tile fetch failed — ${imgOutcome.reason}`);
     }
   } else {
     notes.push("Skipped aerial fetch (mock geocode)");
@@ -328,17 +332,122 @@ export async function runAIEstimatePipeline(
     return projected;
   };
 
-  // 4a. PRIMARY: Google Solar API building mask (GeoTIFF) + DSM-based
-  // edge classifier. Pre-segmented server-side by Google. The mask gives
-  // us the building footprint; the DSM lets us tell eaves from rakes by
-  // elevation analysis at each polygon edge.
+  // 4. Build the roof footprint polygon + classify edges as eaves vs rakes.
+  //
+  // PRIMARY: SAM 2 via fal.ai. It traces the high-resolution satellite
+  // image directly, producing crisp 90° architectural corners. Sharp
+  // corners are critical for the azimuth-based eave/rake classifier — a
+  // wall traced at the actual slab angle gives an outward-normal that
+  // aligns with the Solar segment's down-slope azimuth within a few
+  // degrees on eaves and is way off on rakes.
+  //
+  // FALLBACK: Google Solar API building mask (GeoTIFF). Cheap and works
+  // when the address has Solar coverage, but the mask is a low-res
+  // pixelated blob — tracing it tends to round corners and warp wall
+  // angles, which causes the azimuth math to flag rakes as eaves.
   let roofPolygon: RoofPolygon | null = null;
   type ClassifiedEdge = {
     a: { lat: number; lng: number };
     b: { lat: number; lng: number };
   };
   let classifiedEaveLatLng: ClassifiedEdge[] | null = null;
+
+  // Helper used by both source paths. Returns null when no Solar segments
+  // are available (caller falls through with all polygon edges as eaves).
+  const classifyRingViaAzimuth = (
+    ring: { lat: number; lng: number }[],
+  ): ClassifiedEdge[] | null => {
+    if (solarRoofSegments.length === 0) {
+      notes.push(`No Solar roof segments available — using all polygon edges as eaves`);
+      return null;
+    }
+    const centroid = ringCentroid(ring);
+    const eaves: ClassifiedEdge[] = [];
+    let rakeCount = 0;
+    let unknownCount = 0;
+    for (let i = 0; i < ring.length - 1; i++) {
+      const a = ring[i];
+      const b = ring[i + 1];
+      const cls = classifyEdgeWithAzimuth({ a, b }, solarRoofSegments, centroid);
+      if (cls.kind === "eave") eaves.push({ a, b });
+      else if (cls.kind === "rake") rakeCount++;
+      else unknownCount++;
+    }
+    notes.push(
+      `Azimuth filter (±35°): ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
+    );
+    return eaves;
+  };
+
+  // 4a. PRIMARY: SAM 2 high-res segmentation.
   if (image) {
+    const samPoint = didCrop
+      ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
+      : (buildingPointPx ?? undefined);
+    const samOutcome = await segmentRoofViaSam(workImage, samPoint);
+    if (samOutcome.ok && samOutcome.polygon.points.length >= 8) {
+      const translatedPoints = samOutcome.polygon.points.map(translatePoint);
+      // Collapse the SAM mask's pixel-stair jaggies into architectural
+      // corners BEFORE classification. The raw boundary trace has ~400
+      // points per roof; without this the azimuth filter runs over
+      // dozens of 6–12 LF stub edges that aren't real walls (each one
+      // ends up rendered as a separate cyan LF label in the canvas).
+      // epsilon ≈ 8 px @ zoom-20 ≈ 4 ft — anything tighter is mask noise.
+      const rawCount = translatedPoints.length;
+      const simplifiedPoints = simplify(translatedPoints, 8);
+      const finalPoints =
+        simplifiedPoints.length >= 4 ? simplifiedPoints : translatedPoints;
+      roofPolygon = {
+        points: finalPoints,
+        bbox: {
+          x: samOutcome.polygon.bbox.x + cropOffset.x,
+          y: samOutcome.polygon.bbox.y + cropOffset.y,
+          width: samOutcome.polygon.bbox.width,
+          height: samOutcome.polygon.bbox.height,
+        },
+        areaFraction: samOutcome.polygon.areaFraction,
+      };
+      notes.push(
+        `SAM 2 (primary): ${rawCount} raw → ${finalPoints.length} simplified verts, covers ${(
+          roofPolygon.areaFraction * 100
+        ).toFixed(1)}% of crop`,
+      );
+
+      // Project the SIMPLIFIED pixel-space polygon back into lat/lng so
+      // the azimuth classifier sees architectural corners instead of mask
+      // stair-steps. Same input shape the Solar path uses.
+      const ring: { lat: number; lng: number }[] = finalPoints.map((p) =>
+        imagePixelToLatLng(
+          p.x,
+          p.y,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        ),
+      );
+      // Ensure the ring is closed (first == last) for the classifier.
+      if (
+        ring.length > 0 &&
+        (ring[0].lat !== ring[ring.length - 1].lat ||
+          ring[0].lng !== ring[ring.length - 1].lng)
+      ) {
+        ring.push(ring[0]);
+      }
+      classifiedEaveLatLng = classifyRingViaAzimuth(ring);
+    } else if (samOutcome.ok) {
+      notes.push(
+        `SAM 2 polygon too small (${samOutcome.polygon.points.length} verts) — trying Solar fallback`,
+      );
+    } else {
+      notes.push(`SAM 2 failed — ${samOutcome.reason}; trying Solar fallback`);
+    }
+  }
+
+  // 4b. FALLBACK: Google Solar building mask. Only fetched when SAM 2
+  // didn't produce a usable polygon.
+  if (image && !roofPolygon) {
     const solarMask = await getRoofMaskFromSolar(geocoded.lat, geocoded.lng);
     if (solarMask.ok) {
       const result = polygonFromSolarMask(
@@ -350,69 +459,23 @@ export async function runAIEstimatePipeline(
       );
       if (result && result.polygon.points.length >= 8) {
         roofPolygon = result.polygon;
+        const cleanupLabel =
+          result.cleanup.kind === "ortho"
+            ? `ortho ✓ (${result.cleanup.vertCount} verts)`
+            : result.cleanup.kind === "simplified"
+              ? `ortho ✗ (${result.cleanup.reason}) — using DP-simplified ${result.cleanup.vertCount} verts`
+              : `ortho ✗ + DP ✗ (${result.cleanup.reason}) — raw ${result.cleanup.vertCount} verts`;
         notes.push(
-          `Solar mask (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF, ${result.polygon.points.length} polygon verts → bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y})`,
+          `Solar mask fallback (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF → ${cleanupLabel}, bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y})`,
         );
-
-        // Classify edges using Solar API Azimuths. If segments are unavailable
-        // we fall through with all polygon edges as candidate eaves.
-        if (solarRoofSegments.length > 0) {
-          const ring = result.ringLatLng;
-          const centroid = ringCentroid(ring);
-          const eaves: ClassifiedEdge[] = [];
-          let rakeCount = 0;
-          let unknownCount = 0;
-          for (let i = 0; i < ring.length - 1; i++) {
-            const a = ring[i];
-            const b = ring[i + 1];
-            const cls = classifyEdgeWithAzimuth({ a, b }, solarRoofSegments, centroid);
-            if (cls.kind === "eave") eaves.push({ a, b });
-            else if (cls.kind === "rake") rakeCount++;
-            else unknownCount++;
-          }
-          classifiedEaveLatLng = eaves;
-          notes.push(
-            `Azimuth filter: ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
-          );
-        } else {
-          notes.push(`No Solar roof segments available — using all polygon edges as eaves`);
-        }
+        classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
       } else {
         notes.push(
-          `Solar mask polygon too small (${result?.polygon.points.length ?? 0} verts) — trying SAM`,
+          `Solar mask polygon too small (${result?.polygon.points.length ?? 0} verts)`,
         );
       }
     } else {
       notes.push(`Solar mask unavailable — ${solarMask.reason}`);
-    }
-  }
-
-  // 4b. FALLBACK: SAM 2 via fal.ai. Only runs when Solar mask wasn't
-  // available (no Solar coverage for the address, or GeoTIFF decode
-  // failed).
-  if (image && !roofPolygon) {
-    const samPoint = didCrop
-      ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
-      : (buildingPointPx ?? undefined);
-    const samOutcome = await segmentRoofViaSam(workImage, samPoint);
-    if (samOutcome.ok) {
-      roofPolygon = {
-        points: samOutcome.polygon.points.map(translatePoint),
-        bbox: {
-          x: samOutcome.polygon.bbox.x + cropOffset.x,
-          y: samOutcome.polygon.bbox.y + cropOffset.y,
-          width: samOutcome.polygon.bbox.width,
-          height: samOutcome.polygon.bbox.height,
-        },
-        areaFraction: samOutcome.polygon.areaFraction,
-      };
-      notes.push(
-        `SAM 2: roof polygon ${roofPolygon.points.length} verts, covers ${(
-          roofPolygon.areaFraction * 100
-        ).toFixed(1)}% of crop`,
-      );
-    } else {
-      notes.push(`SAM 2 failed — ${samOutcome.reason}`);
     }
   }
 
