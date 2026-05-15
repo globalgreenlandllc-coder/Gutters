@@ -117,10 +117,24 @@ export async function GET(request: Request) {
       }
     }
     if (issuedGte || issuedLte) {
-      whereClause.issuedDate = {
-        ...(issuedGte ? { gte: issuedGte } : {}),
-        ...(issuedLte ? { lte: issuedLte } : {}),
+      // Include leads where issuedDate is unknown — many city feeds don't
+      // publish a date (Redmond, ~half of Austin). Excluding them by default
+      // hides ~600+ otherwise-valid leads when any stage filter is on.
+      // For "older-than-12-months" we intentionally still exclude nulls
+      // since we can't determine if those are old.
+      const includeNulls = stage !== "older-than-12-months";
+      const dateClause = {
+        issuedDate: {
+          ...(issuedGte ? { gte: issuedGte } : {}),
+          ...(issuedLte ? { lte: issuedLte } : {}),
+        },
       };
+      whereClause.AND = [
+        ...(Array.isArray(whereClause.AND) ? whereClause.AND : []),
+        includeNulls
+          ? { OR: [dateClause, { issuedDate: null }] }
+          : dateClause,
+      ];
     }
 
     // Interaction filter requires an authenticated user — silently ignore otherwise.

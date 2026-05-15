@@ -625,7 +625,8 @@ export const redmondDataset: ArcgisDataset = {
   city: "Redmond",
   layerUrl: "https://gis.redmond.gov/arcgis/rest/services/Projects/CIPProjects/MapServer/4",
   where: "1=1", // Redmond's feed already filters to active CIP permits
-  orderBy: "ObjectID DESC",
+  // STARTDATE is the closest field to a permit issue date Redmond publishes.
+  orderBy: "STARTDATE DESC",
   fields: {
     sourceId: (i) => i.PERMITNUMBER ?? i.PermitID,
     address: (i) =>
@@ -650,6 +651,7 @@ export const redmondDataset: ArcgisDataset = {
         description: `${i.ProjectName ?? ""} ${i.ProjectDesc ?? ""}`,
         buildingType: classifyRedmondWorkClass(i.WorkClass),
       }),
+    issuedDate: (i) => toDate(i.STARTDATE),
   },
 };
 
