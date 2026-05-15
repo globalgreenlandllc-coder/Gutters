@@ -30,6 +30,8 @@ export interface ArcgisDataset {
     workClass?: (item: any) => string | undefined;
     fixtures?: (item: any) => string | undefined;
     issuedDate?: (item: any) => Date | undefined;
+    housingUnits?: (item: any) => number | undefined;
+    developmentType?: (item: any) => string | undefined;
   };
 }
 
@@ -121,6 +123,8 @@ export async function fetchArcgisPermits(
         workClass: dataset.fields.workClass?.(props),
         fixtures: dataset.fields.fixtures?.(props),
         issuedDate: dataset.fields.issuedDate?.(props),
+        housingUnits: dataset.fields.housingUnits?.(props),
+        developmentType: dataset.fields.developmentType?.(props),
       });
     }
 

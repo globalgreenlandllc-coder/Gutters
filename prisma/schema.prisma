@@ -497,6 +497,8 @@ model Lead {
   longitude           Float
   projectValue        Int?         // raw dollars, as reported by the source permit feed
   issuedDate          DateTime?    // When the municipality issued the permit (from source feed)
+  housingUnits        Int?         // # of dwelling units the permit creates / affects
+  developmentType     String?      // "Single Family" | "Duplex" | "Townhouse" | "Condo" | "Multifamily" | "Plat" | "Short Plat" | "ADU" | …
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -508,6 +510,7 @@ model Lead {
   @@index([buildingType])
   @@index([projectKind])
   @@index([issuedDate])
+  @@index([developmentType])
   @@map("leads")
 }
 

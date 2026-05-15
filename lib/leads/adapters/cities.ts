@@ -23,6 +23,58 @@ const toDate = (v: unknown): Date | undefined => {
   return undefined;
 };
 
+// Cross-city classifier for the kind of residential development a permit
+// represents. Heuristics over the source description + structured fields.
+export function classifyDevelopmentType(args: {
+  description?: unknown;
+  buildingType?: unknown;
+  workClass?: unknown;
+  units?: number;
+}): string | undefined {
+  const desc = typeof args.description === "string" ? args.description.toLowerCase() : "";
+  const bt = typeof args.buildingType === "string" ? args.buildingType.toLowerCase() : "";
+  const wc = typeof args.workClass === "string" ? args.workClass.toLowerCase() : "";
+  const units = args.units;
+
+  // ADU / DADU detection first — they overlap with SFR but are a distinct lead.
+  if (
+    /\bdadu\b/.test(desc) ||
+    /\badu\b/.test(desc) ||
+    /\baccessory\s+dwelling/.test(desc) ||
+    /\b(detached|attached)\s+accessory\s+dwelling/.test(desc)
+  ) {
+    return "ADU";
+  }
+
+  // Plats / short plats (subdivision permits). Common in Seattle land-use.
+  if (/\bshort\s*plat\b/.test(desc)) return "Short Plat";
+  if (/\bsubdivid/.test(desc) && /\bparcel\b/.test(desc)) return /\bshort\b/.test(desc) ? "Short Plat" : "Plat";
+  if (/\bplat\b/.test(desc) && !/replat/.test(desc)) return "Plat";
+
+  // Townhouse / rowhouse
+  if (/\btownhouse|townhome|row\s*house|rowhouse\b/.test(desc)) return "Townhouse";
+
+  // Condo — Bellevue labels these explicitly in SUBTYPE.
+  if (bt.includes("condo")) return "Condo";
+  if (/\bcondominium|condo\b/.test(desc)) return "Condo";
+
+  // Duplex
+  if (bt.includes("duplex") || units === 2) return "Duplex";
+
+  // Multifamily — explicit building class OR >2 units
+  if (bt.includes("multifamily") || (units != null && units > 2)) return "Multifamily";
+
+  // Single family — explicit building class OR 1 unit on residential
+  if (bt.includes("single family") || (bt.startsWith("residential") && units === 1)) {
+    return "Single Family";
+  }
+
+  // Commercial detection (so we don't mis-classify it as residential)
+  if (bt.includes("commercial") || bt.includes("nonresidential")) return undefined;
+
+  return undefined;
+}
+
 // Canonical project-kind vocabulary used across all cities so the map filter
 // stays simple. Each adapter normalizes its city's permit-type text into one
 // of these buckets.
@@ -97,6 +149,17 @@ export const seattleDataset: SocrataDataset = {
     contractorName: (i) => i.contractorcompanyname,
     projectKind: (i) => normalizeSeattlePermitType(i.permittypedesc),
     issuedDate: (i) => toDate(i.issueddate),
+    housingUnits: (i) => {
+      const added = intOrUndef(i.housingunitsadded);
+      if (added != null && added > 0) return added;
+      return intOrUndef(i.housingunits);
+    },
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.description,
+        buildingType: i.permitclass ?? i.permitclassmapped,
+        units: intOrUndef(i.housingunitsadded) ?? intOrUndef(i.housingunits),
+      }),
   },
 };
 
@@ -123,6 +186,13 @@ export const sanFranciscoDataset: SocrataDataset = {
     buildingType: (i) => i.proposed_use ?? i.existing_use,
     projectKind: (i) => normalizeGenericProjectKind(i.permit_type_definition),
     issuedDate: (i) => toDate(i.issued_date),
+    housingUnits: (i) => intOrUndef(i.proposed_units) ?? intOrUndef(i.existing_units),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.description,
+        buildingType: i.proposed_use ?? i.existing_use,
+        units: intOrUndef(i.proposed_units),
+      }),
   },
 };
 
@@ -165,6 +235,11 @@ export const newYorkDataset: SocrataDataset = {
     contractorName: (i) => i.permittee_s_business_name,
     projectKind: (i) => normalizeNycJobType(i.job_type),
     issuedDate: (i) => toDate(i.issuance_date),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: `${i.job_type ?? ""} ${i.permit_type ?? ""} ${i.work_type ?? ""}`,
+        buildingType: i.residential === "YES" ? "Residential" : "Non-Residential",
+      }),
   },
 };
 
@@ -205,6 +280,11 @@ export const chicagoDataset: SocrataDataset = {
         : undefined,
     projectKind: (i) => normalizeChicagoPermitType(i.permit_type),
     issuedDate: (i) => toDate(i.issue_date),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.work_description,
+        buildingType: typeof i.permit_type === "string" ? i.permit_type.replace(/^PERMIT - /, "") : undefined,
+      }),
   },
 };
 
@@ -266,6 +346,13 @@ export const pierceCountyDataset: SocrataDataset = {
     buildingType: (i) => normalizePiercePermitType(i.applicationtype),
     projectKind: (i) => normalizeGenericProjectKind(i.worktype),
     issuedDate: (i) => toDate(i.issueddate),
+    housingUnits: (i) => intOrUndef(i.dwellingunits),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.workdescription,
+        buildingType: normalizePiercePermitType(i.applicationtype),
+        units: intOrUndef(i.dwellingunits),
+      }),
   },
 };
 
@@ -299,6 +386,13 @@ export const austinDataset: SocrataDataset = {
     contractorName: (i) => i.contractor_company_name ?? i.applicant_org,
     projectKind: (i) => normalizeAustinWorkClass(i.work_class),
     issuedDate: (i) => toDate(i.issue_date),
+    housingUnits: (i) => intOrUndef(i.housing_units),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.description,
+        buildingType: i.permit_class_mapped ?? i.permit_class,
+        units: intOrUndef(i.housing_units),
+      }),
   },
 };
 
@@ -360,6 +454,13 @@ export const tacomaDataset: ArcgisDataset = {
         : undefined,
     projectKind: (i) => inferProjectKindFromDescription(i.description),
     issuedDate: (i) => toDate(i.issued_date),
+    housingUnits: (i) => intOrUndef(i.housing_units),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.description,
+        buildingType: i.permit_subtype,
+        units: intOrUndef(i.housing_units),
+      }),
   },
 };
 
@@ -445,6 +546,21 @@ export const bellevueDataset: ArcgisDataset = {
     workClass: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.workClass,
     fixtures: (i) => parseBellevueDescription(i.PROJECTDESCRIPTION)?.fixtures,
     issuedDate: (i) => toDate(i.ISSUEDDATE),
+    housingUnits: (i) => intOrUndef(i.DWELLINGUNITSCREATED) ?? intOrUndef(i.HOTELMOTELUNITSCREATED),
+    developmentType: (i) => {
+      // Bellevue is unique: SUBTYPE explicitly tags condo units, and
+      // NUMBEROFLOTS > 1 indicates a plat / subdivision project.
+      const sub = typeof i.SUBTYPE === "string" ? i.SUBTYPE.toLowerCase() : "";
+      const lots = intOrUndef(i.NUMBEROFLOTS);
+      if (lots != null && lots > 1) return "Plat";
+      if (sub.includes("condo")) return "Condo";
+      const units = intOrUndef(i.DWELLINGUNITSCREATED);
+      return classifyDevelopmentType({
+        description: i.PROJECTDESCRIPTION,
+        buildingType: classifyBellevueSubtype(i.SUBTYPE),
+        units,
+      });
+    },
   },
 };
 
@@ -526,6 +642,11 @@ export const spokaneCountyDataset: ArcgisDataset = {
     buildingType: (i) => classifySpokanePermitType(i.Permit_Type),
     projectKind: (i) => classifySpokaneProjectKind(i.Permit_Type),
     issuedDate: (i) => toDate(i.Issued_Date),
+    developmentType: (i) =>
+      classifyDevelopmentType({
+        description: i.Project_Description,
+        buildingType: classifySpokanePermitType(i.Permit_Type),
+      }),
   },
 };
 

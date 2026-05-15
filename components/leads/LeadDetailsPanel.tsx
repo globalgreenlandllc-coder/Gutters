@@ -19,6 +19,7 @@ import {
   User,
   Wrench,
   Hammer,
+  Home,
 } from "lucide-react";
 
 export interface LeadWithInteraction {
@@ -40,6 +41,8 @@ export interface LeadWithInteraction {
   longitude: number;
   projectValue: number | null;
   issuedDate: string | null;
+  housingUnits: number | null;
+  developmentType: string | null;
   createdAt?: string;
   interaction: {
     status: InteractionStatus;
@@ -226,7 +229,18 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                 {lead.projectKind}
               </span>
             )}
-            {lead.buildingType && (
+            {lead.developmentType && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-fuchsia-500/10 text-fuchsia-300 text-xs font-medium ring-1 ring-fuchsia-500/30">
+                <Home size={12} />
+                {lead.developmentType}
+                {lead.housingUnits != null && lead.housingUnits > 0 && (
+                  <span className="ml-1 px-1 rounded bg-fuchsia-500/20 text-fuchsia-200">
+                    {lead.housingUnits}×
+                  </span>
+                )}
+              </span>
+            )}
+            {lead.buildingType && lead.buildingType !== lead.developmentType && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-300 text-xs font-medium ring-1 ring-sky-500/30">
                 <Building2 size={12} />
                 {lead.buildingType}
@@ -282,7 +296,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* Stat cards */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
               <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
                 <DollarSign size={11} /> Est. Value
@@ -297,6 +311,16 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
               </div>
               <div className="font-semibold text-white text-base truncate" title={issuedInfo?.dateStr}>
                 {lead.issuedDate ? issuedInfo?.dateStr : "—"}
+              </div>
+            </div>
+            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+                <Home size={11} /> Units planned
+              </div>
+              <div className="font-semibold text-white text-base">
+                {lead.housingUnits != null && lead.housingUnits > 0
+                  ? `${lead.housingUnits} ${lead.housingUnits === 1 ? "unit" : "units"}`
+                  : "—"}
               </div>
             </div>
             <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">

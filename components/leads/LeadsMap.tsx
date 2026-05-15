@@ -26,6 +26,7 @@ interface FilterState {
   interactionStatus: InteractionStatus | "All";
   buildingType: string;
   projectKind: string;
+  developmentType: string;
   relevance: string;
 }
 
@@ -35,6 +36,7 @@ const DEFAULT_FILTERS: FilterState = {
   interactionStatus: "All",
   buildingType: "All",
   projectKind: "All",
+  developmentType: "All",
   relevance: "All",
 };
 
@@ -43,6 +45,7 @@ type PresetId =
   | "sfd-remodels"
   | "new-homes"
   | "commercial-builds"
+  | "townhouses-plats"
   | "unread";
 
 interface Preset {
@@ -78,6 +81,12 @@ const PRESETS: Preset[] = [
     patch: { buildingType: "Commercial", projectKind: "New Construction" },
   },
   {
+    id: "townhouses-plats",
+    label: "Townhouses & plats",
+    Icon: Hammer,
+    patch: { developmentType: "Townhouse" },
+  },
+  {
     id: "unread",
     label: "Unread",
     Icon: Inbox,
@@ -104,6 +113,7 @@ function buildActiveChips(
     setInteraction: (v: InteractionStatus | "All") => void;
     setBuilding: (v: string) => void;
     setProject: (v: string) => void;
+    setDevelopment: (v: string) => void;
     setRelevance: (v: string) => void;
   },
 ) {
@@ -129,6 +139,13 @@ function buildActiveChips(
       key: "buildingType",
       label: labelMap[current.buildingType] ?? current.buildingType,
       clear: () => updaters.setBuilding("All"),
+    });
+  }
+  if (current.developmentType !== "All") {
+    chips.push({
+      key: "developmentType",
+      label: current.developmentType,
+      clear: () => updaters.setDevelopment("All"),
     });
   }
   if (current.trade !== "All") {
@@ -162,6 +179,7 @@ interface MapControlsProps {
   setInteractionFilter: (v: InteractionStatus | "All") => void;
   setBuildingTypeFilter: (v: string) => void;
   setProjectKindFilter: (v: string) => void;
+  setDevelopmentTypeFilter: (v: string) => void;
   setRelevanceFilter: (v: string) => void;
   applyPreset: (preset: Preset) => void;
   clearAll: () => void;
@@ -176,6 +194,7 @@ function MapControls({
   setInteractionFilter,
   setBuildingTypeFilter,
   setProjectKindFilter,
+  setDevelopmentTypeFilter,
   setRelevanceFilter,
   applyPreset,
   clearAll,
@@ -200,6 +219,7 @@ function MapControls({
     setInteraction: setInteractionFilter,
     setBuilding: setBuildingTypeFilter,
     setProject: setProjectKindFilter,
+    setDevelopment: setDevelopmentTypeFilter,
     setRelevance: setRelevanceFilter,
   });
   const activeCount = chips.length;
@@ -280,6 +300,21 @@ function MapControls({
             <option value="Commercial">Commercial</option>
             <option value="Institutional">Institutional</option>
             <option value="Industrial">Industrial</option>
+          </select>
+          <select
+            className={selectBase}
+            value={filters.developmentType}
+            onChange={(e) => setDevelopmentTypeFilter(e.target.value)}
+          >
+            <option value="All">All development types</option>
+            <option value="Single Family">Single Family</option>
+            <option value="Duplex">Duplex</option>
+            <option value="Townhouse">Townhouse</option>
+            <option value="Condo">Condo</option>
+            <option value="Multifamily">Multifamily</option>
+            <option value="ADU">ADU / DADU</option>
+            <option value="Plat">Plat</option>
+            <option value="Short Plat">Short Plat</option>
           </select>
           <select
             className={selectBase}
@@ -372,6 +407,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [interactionFilter, setInteractionFilter] = useState<InteractionStatus | "All">("All");
   const [buildingTypeFilter, setBuildingTypeFilter] = useState("All");
   const [projectKindFilter, setProjectKindFilter] = useState("All");
+  const [developmentTypeFilter, setDevelopmentTypeFilter] = useState("All");
   const [relevanceFilter, setRelevanceFilter] = useState("All");
   const [isLoading, setIsLoading] = useState(false);
   const [resultCount, setResultCount] = useState<number | null>(null);
@@ -398,6 +434,9 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         if (projectKindFilter !== "All") {
           url.searchParams.set("projectKind", projectKindFilter);
         }
+        if (developmentTypeFilter !== "All") {
+          url.searchParams.set("developmentType", developmentTypeFilter);
+        }
         if (relevanceFilter !== "All") {
           url.searchParams.set("relevance", relevanceFilter);
         }
@@ -415,7 +454,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         setIsLoading(false);
       }
     },
-    [bbox, tradeFilter, statusFilter, interactionFilter, buildingTypeFilter, projectKindFilter, relevanceFilter],
+    [bbox, tradeFilter, statusFilter, interactionFilter, buildingTypeFilter, projectKindFilter, developmentTypeFilter, relevanceFilter],
   );
 
   // Auto-fetch whenever any filter or the (debounced) bbox changes.
@@ -499,6 +538,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             interactionStatus: interactionFilter,
             buildingType: buildingTypeFilter,
             projectKind: projectKindFilter,
+            developmentType: developmentTypeFilter,
             relevance: relevanceFilter,
           }}
           setTradeFilter={setTradeFilter}
@@ -506,6 +546,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           setInteractionFilter={setInteractionFilter}
           setBuildingTypeFilter={setBuildingTypeFilter}
           setProjectKindFilter={setProjectKindFilter}
+          setDevelopmentTypeFilter={setDevelopmentTypeFilter}
           setRelevanceFilter={setRelevanceFilter}
           applyPreset={(p) => {
             // Reset all to default, then apply the preset's patch atomically.
@@ -514,6 +555,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             setInteractionFilter(p.patch.interactionStatus ?? "All");
             setBuildingTypeFilter(p.patch.buildingType ?? "All");
             setProjectKindFilter(p.patch.projectKind ?? "All");
+            setDevelopmentTypeFilter(p.patch.developmentType ?? "All");
             setRelevanceFilter(p.patch.relevance ?? "All");
           }}
           clearAll={() => {
@@ -522,6 +564,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             setInteractionFilter("All");
             setBuildingTypeFilter("All");
             setProjectKindFilter("All");
+            setDevelopmentTypeFilter("All");
             setRelevanceFilter("All");
           }}
           onSearch={handleManualSearch}

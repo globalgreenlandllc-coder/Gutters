@@ -16,7 +16,9 @@ export async function GET(request: Request) {
   const interactionStatus = url.searchParams.get("interactionStatus");
   const buildingType = url.searchParams.get("buildingType");
   const projectKind = url.searchParams.get("projectKind");
+  const developmentType = url.searchParams.get("developmentType");
   const relevance = url.searchParams.get("relevance");
+  const minUnits = url.searchParams.get("minUnits");
 
   try {
     const whereClause: Prisma.LeadWhereInput = {};
@@ -57,6 +59,15 @@ export async function GET(request: Request) {
     }
     if (projectKind && projectKind !== "All") {
       whereClause.projectKind = projectKind;
+    }
+    if (developmentType && developmentType !== "All") {
+      whereClause.developmentType = developmentType;
+    }
+    if (minUnits) {
+      const n = parseInt(minUnits, 10);
+      if (!isNaN(n) && n > 0) {
+        whereClause.housingUnits = { gte: n };
+      }
     }
     if (relevance && relevance !== "All") {
       whereClause.aiRelevance = relevance;

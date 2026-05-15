@@ -94,6 +94,8 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       contractorName: true,
       ownerName: true,
       issuedDate: true,
+      housingUnits: true,
+      developmentType: true,
       aiSummary: true,
       aiRelevance: true,
     },
@@ -153,6 +155,8 @@ async function syncPermits(rawPermits: RawPermitData[]) {
         (exist.contractorName == null && permit.contractorName != null) ||
         (exist.ownerName == null && permit.ownerName != null) ||
         (exist.issuedDate == null && permit.issuedDate != null) ||
+        (exist.housingUnits == null && permit.housingUnits != null) ||
+        (exist.developmentType == null && permit.developmentType != null) ||
         exist.aiSummary == null ||
         exist.aiRelevance == null;
       if (needsBackfill) {
@@ -211,6 +215,8 @@ async function syncPermits(rawPermits: RawPermitData[]) {
       contractorName: permit.contractorName ?? null,
       ownerName: permit.ownerName ?? null,
       issuedDate: permit.issuedDate ?? null,
+      housingUnits: permit.housingUnits ?? null,
+      developmentType: permit.developmentType ?? null,
       status: mapStatusToEnum(permit.status),
       latitude: permit.latitude,
       longitude: permit.longitude,
@@ -269,6 +275,12 @@ async function syncPermits(rawPermits: RawPermitData[]) {
             : {}),
           ...(ex.issuedDate == null && permit.issuedDate
             ? { issuedDate: permit.issuedDate }
+            : {}),
+          ...(ex.housingUnits == null && permit.housingUnits != null
+            ? { housingUnits: permit.housingUnits }
+            : {}),
+          ...(ex.developmentType == null && permit.developmentType
+            ? { developmentType: permit.developmentType }
             : {}),
           // Re-run AI when the work-class changed — old summary may be wrong.
           ...((ex.aiSummary == null || shouldUpdateWorkClass) && insight

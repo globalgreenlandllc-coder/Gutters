@@ -18,6 +18,8 @@ export interface RawPermitData {
   workClass?: string;     // Raw work-class text from source
   fixtures?: string;      // Parsed comma-separated work items
   issuedDate?: Date;      // When the municipality issued the permit
+  housingUnits?: number;  // # dwelling units the permit creates/affects
+  developmentType?: string; // Normalized: "Single Family" | "Duplex" | "Townhouse" | "Condo" | "Multifamily" | "Plat" | "Short Plat" | "ADU" | …
 }
 
 export interface SocrataDataset {
@@ -43,6 +45,8 @@ export interface SocrataDataset {
     workClass?: (item: any) => string | undefined;
     fixtures?: (item: any) => string | undefined;
     issuedDate?: (item: any) => Date | undefined;
+    housingUnits?: (item: any) => number | undefined;
+    developmentType?: (item: any) => string | undefined;
   };
 }
 
@@ -100,6 +104,8 @@ export async function fetchSocrataPermits(
         workClass: dataset.fields.workClass?.(item),
         fixtures: dataset.fields.fixtures?.(item),
         issuedDate: dataset.fields.issuedDate?.(item),
+        housingUnits: dataset.fields.housingUnits?.(item),
+        developmentType: dataset.fields.developmentType?.(item),
       });
     }
 
