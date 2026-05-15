@@ -143,7 +143,7 @@ function detectedToCanvasRoofStructure(
 
   return {
     perimeter: footprintImagePx 
-      ? toCanvas(footprintImagePx) 
+      ? transformToCanvas(footprintImagePx, imageWidth, imageHeight)
       : detected ? toCanvas(detected.perimeter) : [],
     ridges,
     valleys,
