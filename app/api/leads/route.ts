@@ -82,14 +82,15 @@ export async function GET(request: Request) {
     }
 
     // Stage / issued-date filter. Preset → (minDaysAgo, maxDaysAgo).
-    // maxDaysAgo=Infinity means "no upper bound" (anything older than the
-    // minDaysAgo cutoff).
+    // CUMULATIVE: each broader range strictly contains the narrower ones
+    // (last-90-days INCLUDES last-30-days, etc.) — matches user intuition
+    // that "permits issued in the past 3 months" includes the past 30 days.
+    // maxDaysAgo=Infinity means "no upper bound" (older-than-12-months).
     const STAGE_RANGES: Record<string, { min: number; max: number } | null> = {
       "all": null,
       "last-30-days": { min: 0, max: 30 },
-      "30-90-days": { min: 30, max: 90 },
-      "90-180-days": { min: 90, max: 180 },
-      "180-365-days": { min: 180, max: 365 },
+      "last-90-days": { min: 0, max: 90 },
+      "last-180-days": { min: 0, max: 180 },
       "last-12-months": { min: 0, max: 365 },
       "older-than-12-months": { min: 365, max: Infinity },
     };

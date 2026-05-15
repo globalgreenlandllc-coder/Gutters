@@ -53,15 +53,16 @@ const DEFAULT_FILTERS: FilterState = {
   stage: "last-12-months",
 };
 
-// Friendly labels for stage values. Used in dropdowns and active chips.
+// Friendly labels for stage values. Cumulative ranges — each one INCLUDES
+// the narrower options below it so picking a longer window strictly shows
+// more leads.
 const STAGE_LABELS: Record<string, string> = {
   "all": "All time",
-  "last-30-days": "Just issued (<30d)",
-  "30-90-days": "Foundation / framing (30–90d)",
-  "90-180-days": "Mid-build (3–6mo)",
-  "180-365-days": "Late stage (6–12mo)",
-  "last-12-months": "Active (last 12mo)",
-  "older-than-12-months": "Likely complete (>12mo)",
+  "last-30-days": "Last 30 days",
+  "last-90-days": "Last 3 months",
+  "last-180-days": "Last 6 months",
+  "last-12-months": "Last 12 months",
+  "older-than-12-months": "Older than 12 months",
 };
 
 type PresetId =
