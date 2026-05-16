@@ -20,8 +20,12 @@ const TABS: { id: Tab; label: string; icon: typeof Layers }[] = [
 
 export function PricingPanel({
   measurements,
+  address,
 }: {
   measurements: Measurements;
+  /** Threaded through to Summary so its "Send to client" button can hand
+   *  the live takeoff (address + measurements) off to /proposal. */
+  address?: string;
 }) {
   const [tab, setTab] = useState<Tab>("materials");
   const [config, setConfig] = useState<EstimateConfig>({
@@ -108,6 +112,8 @@ export function PricingPanel({
                 items={items}
                 adjustments={adjustments}
                 onAdjust={setAdjustments}
+                address={address}
+                measurements={measurements}
               />
             )}
           </motion.div>

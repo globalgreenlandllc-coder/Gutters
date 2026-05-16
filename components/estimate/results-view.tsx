@@ -40,7 +40,7 @@ export function ResultsView({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <TopBar address={address} />
+      <TopBar address={address} measurements={measurements} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -75,7 +75,7 @@ export function ResultsView({
           <div className="lg:sticky lg:top-[72px] lg:self-start">
             <div className="rounded-2xl border border-zinc-200 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
-                <PricingPanel measurements={measurements} />
+                <PricingPanel measurements={measurements} address={address} />
               </div>
             </div>
           </div>

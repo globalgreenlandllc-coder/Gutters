@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { blankProposal, type Proposal } from "@/lib/proposal-mock";
+import {
+  clearEstimateHandoff,
+  readEstimateHandoff,
+} from "@/lib/estimate-handoff";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { ProposalTopBar } from "@/components/proposal/proposal-top-bar";
 import { CoverSection } from "@/components/proposal/cover-section";
@@ -27,6 +31,24 @@ function Inner() {
   const [proposal, setProposal] = useState<Proposal>(blankProposal);
   const [preview, setPreview] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [handoffApplied, setHandoffApplied] = useState(false);
+
+  // On mount, consume any handoff written by the estimate flow — replace
+  // sampleMeasurements with the contractor's real takeoff so packages
+  // and totals reflect the actual job, not a stock template. Consumed
+  // once and cleared so refreshing /proposal doesn't reapply stale data.
+  useEffect(() => {
+    const handoff = readEstimateHandoff();
+    if (handoff) {
+      setProposal((p) => ({
+        ...p,
+        address: handoff.address,
+        measurements: handoff.measurements,
+      }));
+      clearEstimateHandoff();
+    }
+    setHandoffApplied(true);
+  }, []);
 
   useEffect(() => {
     setProposal((p) => ({
@@ -51,6 +73,10 @@ function Inner() {
     profile.payments.stripeUrl,
     profile.payments.squareUrl,
   ]);
+
+  // Avoid a one-frame flash of the sample numbers while we read
+  // localStorage. handoffApplied flips true on the first mount effect.
+  if (!handoffApplied) return null;
 
   function download() {
     if (typeof window !== "undefined") window.print();

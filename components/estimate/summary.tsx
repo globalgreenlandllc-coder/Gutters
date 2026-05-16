@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
-import type { LineItem } from "@/lib/types";
+import type { LineItem, Measurements } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { writeEstimateHandoff } from "@/lib/estimate-handoff";
 
 export type Adjustments = {
   markupPct: number;
@@ -18,12 +19,24 @@ export function Summary({
   items,
   adjustments,
   onAdjust,
+  address,
+  measurements,
 }: {
   items: LineItem[];
   adjustments: Adjustments;
   onAdjust: (a: Adjustments) => void;
+  /** Hand off to /proposal so the proposal flow boots from the real
+   *  takeoff instead of sampleMeasurements. */
+  address?: string;
+  measurements?: Measurements;
 }) {
   const router = useRouter();
+  const handoffAndGo = () => {
+    if (address && measurements) {
+      writeEstimateHandoff({ address, measurements });
+    }
+    router.push("/proposal");
+  };
   const subtotal = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
   const markup = subtotal * (adjustments.markupPct / 100);
   const afterMarkup = subtotal + markup;
@@ -90,14 +103,14 @@ export function Summary({
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button className="flex-1" onClick={() => router.push("/proposal")}>
+        <Button className="flex-1" onClick={handoffAndGo}>
           <Send className="h-4 w-4" />
           Send to client
         </Button>
         <Button
           variant="secondary"
           className="flex-1"
-          onClick={() => router.push("/proposal")}
+          onClick={handoffAndGo}
         >
           <FileText className="h-4 w-4" />
           Preview proposal

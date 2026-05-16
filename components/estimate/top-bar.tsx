@@ -6,9 +6,27 @@ import { ArrowLeft, Download, Send } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { writeEstimateHandoff } from "@/lib/estimate-handoff";
+import type { Measurements } from "@/lib/types";
 
-export function TopBar({ address }: { address: string }) {
+export function TopBar({
+  address,
+  measurements,
+}: {
+  address: string;
+  /** Live measurements snapshot. Optional because some call sites (e.g.
+   *  a future read-only embed) don't have it — when absent, the proposal
+   *  flow falls back to its blank template, same as before this prop
+   *  existed. */
+  measurements?: Measurements;
+}) {
   const router = useRouter();
+  const handoffAndGo = () => {
+    if (measurements) {
+      writeEstimateHandoff({ address, measurements });
+    }
+    router.push("/proposal");
+  };
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-4 px-4">
@@ -44,12 +62,12 @@ export function TopBar({ address }: { address: string }) {
             variant="secondary"
             size="sm"
             className="hidden sm:inline-flex"
-            onClick={() => router.push("/proposal")}
+            onClick={handoffAndGo}
           >
             <Download className="h-4 w-4" />
             PDF
           </Button>
-          <Button size="sm" onClick={() => router.push("/proposal")}>
+          <Button size="sm" onClick={handoffAndGo}>
             <Send className="h-4 w-4" />
             Send proposal
           </Button>
