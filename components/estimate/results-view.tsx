@@ -61,6 +61,7 @@ export function ResultsView({
             <div className="min-h-[520px] flex-1">
               <AerialCanvas
                 eaves={eaves}
+                rakes={initial.rakes}
                 downspouts={downspouts}
                 onEavesChange={setEaves}
                 onDownspoutsChange={setDownspouts}

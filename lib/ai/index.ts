@@ -50,6 +50,11 @@ export type EstimateResult = {
   geocoded: GeocodeResult;
   measurements: Measurements;
   eaves: EditableLine[];
+  /** Edges the classifier identified as rakes (sloped gable edges that
+   *  do NOT get gutters). Rendered on the canvas as gray-dashed
+   *  "no-gutter" lines so the contractor can verify what was excluded
+   *  rather than wondering whether the AI quietly dropped real eaves. */
+  rakes: EditableLine[];
   downspouts: Downspout[];
   source: "ai" | "mock" | "partial";
   durationMs: number;
@@ -356,6 +361,12 @@ export async function runAIEstimatePipeline(
     b: { lat: number; lng: number };
   };
   let classifiedEaveLatLng: ClassifiedEdge[] | null = null;
+  // Rakes are retained (not just counted) so the canvas can render them
+  // as gray-dashed "no-gutter" edges. Surfaces what the AI excluded so
+  // the contractor can verify the classification — a missing eave is
+  // expensive, but a rake the contractor can't see being excluded is a
+  // trust problem.
+  let classifiedRakeLatLng: ClassifiedEdge[] = [];
 
   // Helper used by both source paths. Returns null when no Solar segments
   // are available (caller falls through with all polygon edges as eaves).
@@ -368,18 +379,19 @@ export async function runAIEstimatePipeline(
     }
     const centroid = ringCentroid(ring);
     const eaves: ClassifiedEdge[] = [];
-    let rakeCount = 0;
+    const rakes: ClassifiedEdge[] = [];
     let unknownCount = 0;
     for (let i = 0; i < ring.length - 1; i++) {
       const a = ring[i];
       const b = ring[i + 1];
       const cls = classifyEdgeWithAzimuth({ a, b }, solarRoofSegments, centroid);
       if (cls.kind === "eave") eaves.push({ a, b });
-      else if (cls.kind === "rake") rakeCount++;
+      else if (cls.kind === "rake") rakes.push({ a, b });
       else unknownCount++;
     }
+    classifiedRakeLatLng = rakes;
     notes.push(
-      `Azimuth filter (±35°): ${eaves.length} eaves, ${rakeCount} rakes dropped, ${unknownCount} unknown`,
+      `Azimuth filter (±50°): ${eaves.length} eaves, ${rakes.length} rakes, ${unknownCount} unknown`,
     );
     return eaves;
   };
@@ -533,6 +545,7 @@ export async function runAIEstimatePipeline(
     };
 
     let eaves: EditableLine[] = [];
+    let rakes: EditableLine[] = [];
     let totalEaveLF = 0;
     let sourceLabel = "polygon-edges";
 
@@ -594,6 +607,37 @@ export async function runAIEstimatePipeline(
           kind: "eave" as const,
           points: transformToCanvas([a, b], image.width, image.height),
         }));
+        // Project the rakes the classifier flagged so the canvas can
+        // render them as gray-dashed "no-gutter" edges. Same pixel
+        // transform as eaves; we don't enforce MIN_EAVE_FT here since
+        // showing a 1-ft rake stub still helps the contractor verify
+        // the AI didn't quietly drop a real eave.
+        rakes = classifiedRakeLatLng
+          .map((edge, i) => {
+            const a = latLngToImagePixel(
+              edge.a.lat,
+              edge.a.lng,
+              geocoded.lat,
+              geocoded.lng,
+              image.zoom,
+              image.width,
+              image.height,
+            );
+            const b = latLngToImagePixel(
+              edge.b.lat,
+              edge.b.lng,
+              geocoded.lat,
+              geocoded.lng,
+              image.zoom,
+              image.width,
+              image.height,
+            );
+            return {
+              id: `dsm-rake-${i}`,
+              kind: "rake" as const,
+              points: transformToCanvas([a, b], image.width, image.height),
+            };
+          });
         totalEaveLF = dsmLF * 1.08;
         sourceLabel = "DSM-classified";
       } else {
@@ -634,7 +678,7 @@ export async function runAIEstimatePipeline(
       });
 
       notes.push(
-        `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts`,
+        `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts${rakes.length > 0 ? `, ${rakes.length} rakes (no gutter)` : ""}`,
       );
 
       const roofStructure = await resolveRoofStructure();
@@ -642,6 +686,7 @@ export async function runAIEstimatePipeline(
         geocoded,
         measurements,
         eaves,
+        rakes,
         downspouts,
         source: "ai",
         durationMs: Date.now() - t0,
@@ -720,6 +765,10 @@ export async function runAIEstimatePipeline(
         geocoded,
         measurements,
         eaves,
+        // Vision path doesn't classify rakes — it only traces gutter
+        // candidates. Contractor sees all candidates as cyan eaves; no
+        // dashed-rake overlay because we don't know which were excluded.
+        rakes: [],
         downspouts,
         source: "ai",
         durationMs: Date.now() - t0,
@@ -747,6 +796,7 @@ export async function runAIEstimatePipeline(
     geocoded,
     measurements: sampleMeasurements,
     eaves: sampleEaves,
+    rakes: [],
     downspouts: sampleDownspouts,
     source: image ? "partial" : "mock",
     durationMs: Date.now() - t0,

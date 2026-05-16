@@ -43,6 +43,7 @@ export { lineLengthFt };
 
 export function AerialCanvas({
   eaves,
+  rakes = [],
   downspouts,
   onEavesChange,
   onDownspoutsChange,
@@ -50,6 +51,9 @@ export function AerialCanvas({
   roofStructure,
 }: {
   eaves: EditableLine[];
+  /** Edges the classifier flagged as rakes (no-gutter). Rendered as
+   *  gray-dashed lines for verification; non-interactive. */
+  rakes?: EditableLine[];
   downspouts: Downspout[];
   onEavesChange: (next: EditableLine[]) => void;
   onDownspoutsChange: (next: Downspout[]) => void;
@@ -63,6 +67,7 @@ export function AerialCanvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [showRoofStructure, setShowRoofStructure] = useState(true);
+  const [showRakes, setShowRakes] = useState(true);
   // null = "auto": labels are shown but tiny crowded ones are skipped. The
   // user can force them all-on or all-off with the toolbar toggle.
   const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
@@ -238,6 +243,9 @@ export function AerialCanvas({
         roofStructureAvailable={!!roofStructure}
         showRoofStructure={showRoofStructure}
         onToggleRoofStructure={() => setShowRoofStructure((s) => !s)}
+        rakesAvailable={rakes.length > 0}
+        showRakes={showRakes}
+        onToggleRakes={() => setShowRakes((s) => !s)}
         lfLabelMode={showLfLabels}
         onCycleLfLabels={() =>
           setShowLfLabels((m) =>
@@ -246,6 +254,7 @@ export function AerialCanvas({
         }
       />
       <Legend
+        rakeCount={rakes.length}
         totalEaveLF={totalEaveLF}
         downspoutCount={downspouts.length}
         theme={theme}
@@ -288,6 +297,29 @@ export function AerialCanvas({
         {roofStructure && showRoofStructure && (
           <RoofStructureOverlay structure={roofStructure} />
         )}
+
+        {/* Rakes — gray-dashed "no-gutter" lines for verification.
+            Rendered BEFORE eaves so cyan eaves draw over the gray when
+            the AI classified the same edge two ways (rare but
+            possible). Non-interactive — the contractor doesn't edit
+            rakes; they confirm visually or ignore. */}
+        {showRakes &&
+          rakes.map((line) => (
+            <motion.path
+              key={line.id}
+              d={pathFor(line)}
+              stroke={theme === "tactical" ? "#94a3b8" : "#64748b"}
+              strokeWidth={2}
+              strokeDasharray="6 5"
+              strokeLinecap="round"
+              fill="none"
+              opacity={0.7}
+              pointerEvents="none"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 0.7 }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+            />
+          ))}
 
         {eaves.map((line, i) => {
           const isSelected = selectedId === line.id;
@@ -592,6 +624,9 @@ function Toolbar({
   roofStructureAvailable,
   showRoofStructure,
   onToggleRoofStructure,
+  rakesAvailable,
+  showRakes,
+  onToggleRakes,
   lfLabelMode,
   onCycleLfLabels,
 }: {
@@ -604,6 +639,9 @@ function Toolbar({
   roofStructureAvailable: boolean;
   showRoofStructure: boolean;
   onToggleRoofStructure: () => void;
+  rakesAvailable: boolean;
+  showRakes: boolean;
+  onToggleRakes: () => void;
   lfLabelMode: "auto" | "on" | "off";
   onCycleLfLabels: () => void;
 }) {
@@ -700,6 +738,41 @@ function Toolbar({
           <MountainSnow className="h-4 w-4" />
         </button>
       )}
+      {rakesAvailable && (
+        <button
+          onClick={onToggleRakes}
+          title={
+            showRakes
+              ? "Hide rakes (gray dashed — no gutter)"
+              : "Show rakes (gray dashed — no gutter)"
+          }
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-lg transition",
+            showRakes
+              ? tactical
+                ? "bg-slate-700/50 text-slate-200 ring-1 ring-inset ring-slate-500/50"
+                : "bg-slate-200 text-slate-700 ring-1 ring-inset ring-slate-300"
+              : tactical
+                ? "text-cyan-200/70 hover:bg-slate-700/30 hover:text-slate-200"
+                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          {/* Slash icon: communicates "excluded" — gutters slash. */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="5" y1="19" x2="19" y2="5" strokeDasharray="3 2" />
+          </svg>
+        </button>
+      )}
       <button
         onClick={onCycleLfLabels}
         title={
@@ -749,10 +822,12 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
 
 function Legend({
   totalEaveLF,
+  rakeCount,
   downspoutCount,
   theme,
 }: {
   totalEaveLF: number;
+  rakeCount: number;
   downspoutCount: number;
   theme: CanvasTheme;
 }) {
@@ -785,6 +860,42 @@ function Legend({
           {totalEaveLF} LF
         </span>
       </div>
+      {rakeCount > 0 && (
+        <>
+          <div
+            className={cn(
+              "h-4 w-px",
+              tactical ? "bg-cyan-500/30" : "bg-zinc-200",
+            )}
+          />
+          <div
+            className="flex items-center gap-1.5"
+            title="Rakes — sloped roof edges with no gutter, dashed gray on the canvas"
+          >
+            <span
+              className={cn(
+                "inline-flex h-0.5 w-4",
+                tactical ? "bg-slate-400" : "bg-slate-500",
+              )}
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(to right, currentColor 0 4px, transparent 4px 7px)",
+              }}
+            />
+            <span className={tactical ? "text-slate-300" : "text-slate-600"}>
+              Rakes
+            </span>
+            <span
+              className={cn(
+                "font-semibold tabular-nums",
+                tactical ? "text-slate-200" : "text-slate-700",
+              )}
+            >
+              {rakeCount}
+            </span>
+          </div>
+        </>
+      )}
       <div className={cn("h-4 w-px", tactical ? "bg-cyan-500/30" : "bg-zinc-200")} />
       <div className="flex items-center gap-1.5">
         <span
