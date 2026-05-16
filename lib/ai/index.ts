@@ -569,7 +569,26 @@ export async function runAIEstimatePipeline(
         imageSpaceEdges.push([a, b]);
         dsmLF += ft;
       }
-      if (imageSpaceEdges.length >= 3) {
+      // Coverage gate: when the azimuth filter strips more than half the
+      // perimeter, the result reads as a handful of disconnected eave
+      // stubs floating around an otherwise unmarked roof — useless to
+      // the contractor and embarrassing in the UI. In that case we
+      // discard the classification and treat EVERY polygon edge as a
+      // candidate eave; the contractor deletes the rakes manually with
+      // 1-click each. Better to show too much than to hide real eaves.
+      let totalPolygonLF = 0;
+      for (let i = 0; i < roofPolygon.points.length; i++) {
+        const a = roofPolygon.points[i];
+        const b = roofPolygon.points[(i + 1) % roofPolygon.points.length];
+        totalPolygonLF += pixelLengthToFeet(
+          Math.hypot(b.x - a.x, b.y - a.y),
+          geocoded.lat,
+          image.zoom,
+        );
+      }
+      const coverage = totalPolygonLF > 0 ? dsmLF / totalPolygonLF : 0;
+      const MIN_COVERAGE = 0.5; // keep classification only if it retains ≥50% of perimeter
+      if (imageSpaceEdges.length >= 3 && coverage >= MIN_COVERAGE) {
         eaves = imageSpaceEdges.map(([a, b], i) => ({
           id: `dsm-eave-${i}`,
           kind: "eave" as const,
@@ -578,8 +597,12 @@ export async function runAIEstimatePipeline(
         totalEaveLF = dsmLF * 1.08;
         sourceLabel = "DSM-classified";
       } else {
+        const why =
+          imageSpaceEdges.length < 3
+            ? `kept ${imageSpaceEdges.length} edge(s)`
+            : `kept only ${(coverage * 100).toFixed(0)}% of perimeter (need ≥${MIN_COVERAGE * 100}%)`;
         notes.push(
-          `DSM kept only ${imageSpaceEdges.length} edge(s) — using all ${roofPolygon.points.length} polygon edges instead`,
+          `DSM ${why} — falling back to all ${roofPolygon.points.length} polygon edges`,
         );
       }
     }
@@ -590,7 +613,11 @@ export async function runAIEstimatePipeline(
       totalEaveLF = fallback.lf;
     }
 
-    if (eaves.length >= 3) {
+    // Bumped from ≥3 to ≥5. Three eaves on a residential roof almost
+    // never represents a real takeoff — it's an L-shape stub at best.
+    // Below this floor we'd rather fall through to GPT-4o vision than
+    // ship a sparse answer the contractor can't trust.
+    if (eaves.length >= 5) {
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
         eaves,
@@ -655,6 +682,9 @@ export async function runAIEstimatePipeline(
           segmentation.confidence * 100,
         )}% confidence`,
       );
+      if (segmentation.scaleReference) {
+        notes.push(`Vision scale ref: ${segmentation.scaleReference}`);
+      }
       if (segmentation.notes) notes.push(`Vision note: ${segmentation.notes}`);
 
       // Translate eaves from cropped → original image space

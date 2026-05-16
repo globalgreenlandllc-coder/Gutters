@@ -241,11 +241,16 @@ export function classifyEdgeWithAzimuth(
   let diff = Math.abs(nearestSegment.azimuthDegrees - normalAzimuth);
   diff = Math.min(diff, 360 - diff); // Account for 0/360 wraparound
 
-  // If the outward normal of the edge matches the direction water flows down the roof, it's an eave.
-  // Tight ±35° threshold — the SAM-2 traced perimeter has perfectly sharp
-  // 90° corners, so a real eave's outward normal lines up with the Solar
-  // segment azimuth within a few degrees. Anything beyond that is a rake.
-  if (diff <= 35) {
+  // If the outward normal of the edge matches the direction water flows
+  // down the roof, it's an eave. ±50° is the sweet spot:
+  //   - The Solar mask path produces noisy ±15-30° corner jitter; ±35°
+  //     was rejecting half of real eaves on complex hip+gable houses,
+  //     leaving the contractor with 3-4 disconnected segments instead of
+  //     a closed perimeter.
+  //   - The SAM-2 path's crisp corners still resolve well within ±50°.
+  //   - Real rakes typically sit ~90° off the segment azimuth, so there's
+  //     plenty of margin between "true eave" and "true rake".
+  if (diff <= 50) {
     return { 
       a: edge.a, b: edge.b, kind: "eave", 
       reason: `normal ${Math.round(normalAzimuth)}° aligns with roof azimuth ${Math.round(nearestSegment.azimuthDegrees)}° (diff ${Math.round(diff)}°)` 
