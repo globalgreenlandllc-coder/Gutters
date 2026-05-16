@@ -602,8 +602,24 @@ export async function runAIEstimatePipeline(
         );
       }
       const coverage = totalPolygonLF > 0 ? dsmLF / totalPolygonLF : 0;
-      const MIN_COVERAGE = 0.5; // keep classification only if it retains ≥50% of perimeter
-      if (imageSpaceEdges.length >= 3 && coverage >= MIN_COVERAGE) {
+      // Coverage gate is an UPPER-bound sanity check, not a "did we
+      // classify enough" floor. A complex hip+gable roof legitimately
+      // has 30-50% eaves — rejecting that classification just because
+      // it "kept too few edges" forces the contractor to look at every
+      // edge as if it were a gutter. We only fall back when:
+      //   - fewer than 3 edges survived (essentially no classification)
+      //   - OR 100% of the perimeter was classified as eave (the filter
+      //     is broken; this would also make the gray-dashed rake
+      //     verification invisible since there'd be no rakes to show).
+      // Lowered from 0.5 → 0.2 after seeing real-world 46% cases get
+      // rejected even though the 5/7 eave/rake split was correct.
+      const MIN_COVERAGE = 0.2;
+      const MAX_COVERAGE = 0.98;
+      if (
+        imageSpaceEdges.length >= 3 &&
+        coverage >= MIN_COVERAGE &&
+        coverage <= MAX_COVERAGE
+      ) {
         eaves = imageSpaceEdges.map(([a, b], i) => ({
           id: `dsm-eave-${i}`,
           kind: "eave" as const,
@@ -646,7 +662,9 @@ export async function runAIEstimatePipeline(
         const why =
           imageSpaceEdges.length < 3
             ? `kept ${imageSpaceEdges.length} edge(s)`
-            : `kept only ${(coverage * 100).toFixed(0)}% of perimeter (need ≥${MIN_COVERAGE * 100}%)`;
+            : coverage > MAX_COVERAGE
+              ? `classified ${(coverage * 100).toFixed(0)}% as eave (filter likely broken)`
+              : `kept only ${(coverage * 100).toFixed(0)}% of perimeter (need ≥${MIN_COVERAGE * 100}%)`;
         notes.push(
           `DSM ${why} — falling back to all ${roofPolygon.points.length} polygon edges`,
         );
@@ -657,6 +675,39 @@ export async function runAIEstimatePipeline(
       const fallback = buildPolygonEdgeEaves();
       eaves = fallback.eaves;
       totalEaveLF = fallback.lf;
+      // Even in fallback, retain the AI's rake classification so the
+      // contractor can SEE which edges the AI thought weren't gutters.
+      // The cyan all-edges layer shows "treat as candidate"; the
+      // gray-dashed overlay shows "AI's gut: probably not a gutter".
+      // Two visuals competing on the same edge is intentional — the
+      // dashed line draws on top and reads as "review this one".
+      if (classifiedRakeLatLng.length > 0) {
+        rakes = classifiedRakeLatLng.map((edge, i) => {
+          const a = latLngToImagePixel(
+            edge.a.lat,
+            edge.a.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          const b = latLngToImagePixel(
+            edge.b.lat,
+            edge.b.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          return {
+            id: `fallback-rake-${i}`,
+            kind: "rake" as const,
+            points: transformToCanvas([a, b], image.width, image.height),
+          };
+        });
+      }
     }
 
     // Bumped from ≥3 to ≥5. Three eaves on a residential roof almost

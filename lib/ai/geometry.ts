@@ -480,31 +480,56 @@ export function eavesFromRoofPolygon(
 }
 
 /**
+ * Normalize a polygon to counter-clockwise winding so all downstream
+ * geometric math (corner classification, outward-normal computation)
+ * has a deterministic input regardless of how the polygon arrived.
+ *
+ * NOTE: image coords have y pointing DOWN, so the shoelace sign is
+ * INVERTED from the math-class convention (where y points up).
+ *   - Shoelace > 0 in y-down → polygon is CLOCKWISE on screen
+ *   - Shoelace < 0 in y-down → polygon is COUNTER-CLOCKWISE on screen
+ * The previous corner classifier got this backwards and reported
+ * inside/outside in reverse — e.g. a normal hip+gable house showed
+ * "2 outside, 9 inside" when the real ratio was 9 outside, 2 inside.
+ */
+export function ensureCCW<T extends Pt>(polygon: T[]): T[] {
+  if (polygon.length < 3) return polygon;
+  let signedArea = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    signedArea += (b.x - a.x) * (b.y + a.y);
+  }
+  // In y-down image coords, shoelace > 0 means clockwise → reverse it.
+  return signedArea > 0 ? [...polygon].reverse() : polygon;
+}
+
+/**
  * Count outside vs inside corners on the building polygon by signed
  * cross-product at each vertex. Outside = convex (polygon turns
- * outward), inside = concave (polygon turns inward, e.g. an L-shape's
- * notch). This replaces the prior 70/30 heuristic with the actual
- * geometric truth — matters for trim/coupler pricing where outside and
- * inside corners use different parts.
+ * outward, e.g. the four corners of a rectangular wing), inside =
+ * concave (polygon turns inward, e.g. the notch where an L-shape
+ * meets). Replaces the prior 70/30 heuristic with the actual geometric
+ * truth — matters for trim/coupler pricing where outside and inside
+ * corners use different parts.
+ *
+ * Fix vs prior version: normalize to CCW first, then for a CCW polygon
+ * in y-down screen coords, cross < 0 → right turn → OUTSIDE corner.
+ * The previous version flipped that sign and reported the counts
+ * inverted on every real house we tested.
  */
 export function classifyPolygonCorners(
   polygon: RoofPolygon,
   imageWidth: number,
   imageHeight: number,
 ): { outside: number; inside: number } {
-  const pts = simplify(
-    transformToCanvas(polygon.points, imageWidth, imageHeight),
-    6,
+  const pts = ensureCCW(
+    simplify(
+      transformToCanvas(polygon.points, imageWidth, imageHeight),
+      6,
+    ),
   );
   if (pts.length < 3) return { outside: 0, inside: 0 };
-
-  let signedArea = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    signedArea += (b.x - a.x) * (b.y + a.y);
-  }
-  const cwSign = signedArea > 0 ? 1 : -1;
 
   let outside = 0;
   let inside = 0;
@@ -518,7 +543,10 @@ export function classifyPolygonCorners(
     const v2y = next.y - curr.y;
     const cross = v1x * v2y - v1y * v2x;
     if (Math.abs(cross) < 1e-6) continue; // collinear — not a corner
-    if (cross * cwSign > 0) outside++;
+    // CCW polygon, y-down screen coords:
+    //   cross < 0 → right turn at this vertex → OUTSIDE corner
+    //   cross > 0 → left turn → INSIDE corner (concave)
+    if (cross < 0) outside++;
     else inside++;
   }
   return { outside, inside };
