@@ -116,6 +116,103 @@ export function transformToCanvas(
   }));
 }
 
+/**
+ * Merge consecutive eaves whose endpoints touch and whose directions are
+ * within `angleToleranceDeg` of each other. A long architectural wall
+ * traced through 3 near-collinear vertices reads as 3 short eaves in
+ * the canvas; collapsing those into one continuous run matches how a
+ * contractor would actually quote the job (one 38-ft drop, not three
+ * 12/13/13-ft segments).
+ *
+ * Pass-through behavior:
+ *   - Lines with a non-"eave" kind are kept as-is (we don't merge rakes).
+ *   - Multi-vertex polylines (3+ points) are kept as-is.
+ *   - Lines whose endpoints don't connect to a neighbor are kept.
+ */
+export function mergeCollinearEaves(
+  lines: EditableLine[],
+  endpointTolerancePx = 8,
+  angleToleranceDeg = 10,
+): EditableLine[] {
+  if (lines.length < 2) return lines;
+
+  // Only attempt merge on simple 2-vertex eaves. Anything else passes
+  // through unchanged.
+  const merged: EditableLine[] = [];
+  const consumed = new Set<number>();
+  const angleToleranceRad = (angleToleranceDeg * Math.PI) / 180;
+
+  const angleOf = (a: Pt, b: Pt) => Math.atan2(b.y - a.y, b.x - a.x);
+  const distSq = (a: Pt, b: Pt) =>
+    (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+  const tolSq = endpointTolerancePx * endpointTolerancePx;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (consumed.has(i)) continue;
+    const line = lines[i];
+    if (line.kind !== "eave" || line.points.length !== 2) {
+      merged.push(line);
+      continue;
+    }
+    // Greedy merge: extend this line by chaining downstream eaves that
+    // touch its endpoint and share its direction.
+    let chain = [line.points[0], line.points[1]] as [Pt, Pt];
+    consumed.add(i);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const head = chain[0];
+      const tail = chain[1];
+      const tailAngle = angleOf(head, tail);
+      for (let j = 0; j < lines.length; j++) {
+        if (consumed.has(j)) continue;
+        const cand = lines[j];
+        if (cand.kind !== "eave" || cand.points.length !== 2) continue;
+        const candA = cand.points[0];
+        const candB = cand.points[1];
+        const candAngle = angleOf(candA, candB);
+        let diff = Math.abs(((tailAngle - candAngle + Math.PI) % (2 * Math.PI)) - Math.PI);
+        // Eaves are directional but a continuous run can be drawn
+        // either direction — accept 180° flips by folding to [0, π/2].
+        if (diff > Math.PI / 2) diff = Math.PI - diff;
+        if (diff > angleToleranceRad) continue;
+        // Endpoint connectivity: does candA or candB touch our tail?
+        if (distSq(candA, tail) <= tolSq) {
+          chain = [head, candB];
+          consumed.add(j);
+          changed = true;
+          break;
+        }
+        if (distSq(candB, tail) <= tolSq) {
+          chain = [head, candA];
+          consumed.add(j);
+          changed = true;
+          break;
+        }
+        // Or the head — extend backward.
+        if (distSq(candB, head) <= tolSq) {
+          chain = [candA, tail];
+          consumed.add(j);
+          changed = true;
+          break;
+        }
+        if (distSq(candA, head) <= tolSq) {
+          chain = [candB, tail];
+          consumed.add(j);
+          changed = true;
+          break;
+        }
+      }
+    }
+    merged.push({
+      id: line.id, // keep the seed line's id so selection state survives a re-merge
+      kind: "eave",
+      points: [chain[0], chain[1]],
+    });
+  }
+  return merged;
+}
+
 export function buildEditableLines(
   segs: SegmentedEavePolyline[],
   imageWidth: number,
@@ -383,6 +480,51 @@ export function eavesFromRoofPolygon(
 }
 
 /**
+ * Count outside vs inside corners on the building polygon by signed
+ * cross-product at each vertex. Outside = convex (polygon turns
+ * outward), inside = concave (polygon turns inward, e.g. an L-shape's
+ * notch). This replaces the prior 70/30 heuristic with the actual
+ * geometric truth — matters for trim/coupler pricing where outside and
+ * inside corners use different parts.
+ */
+export function classifyPolygonCorners(
+  polygon: RoofPolygon,
+  imageWidth: number,
+  imageHeight: number,
+): { outside: number; inside: number } {
+  const pts = simplify(
+    transformToCanvas(polygon.points, imageWidth, imageHeight),
+    6,
+  );
+  if (pts.length < 3) return { outside: 0, inside: 0 };
+
+  let signedArea = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    signedArea += (b.x - a.x) * (b.y + a.y);
+  }
+  const cwSign = signedArea > 0 ? 1 : -1;
+
+  let outside = 0;
+  let inside = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const prev = pts[(i - 1 + pts.length) % pts.length];
+    const curr = pts[i];
+    const next = pts[(i + 1) % pts.length];
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const cross = v1x * v2y - v1y * v2x;
+    if (Math.abs(cross) < 1e-6) continue; // collinear — not a corner
+    if (cross * cwSign > 0) outside++;
+    else inside++;
+  }
+  return { outside, inside };
+}
+
+/**
  * Walk a polygon's vertices and return only the convex (outside) corners.
  * Convex = the polygon turns "outward" at that vertex when walked clockwise.
  * Outside corners are where downspouts naturally drop.
@@ -450,9 +592,51 @@ export function placeDownspoutsOnPolygon(
   imageHeight: number,
   defaultStories: Stories = 2,
   pxPerFt = 2.4,
+  /** Canvas-space valley polylines from the roof-structure overlay.
+   *  When supplied, each valley's lower endpoint (the higher y in screen
+   *  coords) becomes a high-priority downspout location — valleys
+   *  concentrate flow from two adjacent roof planes, and the bottom of
+   *  the V is where the contractor would naturally drop a leader. */
+  valleys: { points: Pt[] }[] = [],
 ): Downspout[] {
   const heightFt = STORY_HEIGHT_FT[defaultStories];
   const placed: Downspout[] = [];
+
+  // Valley discharge points come first — they're driven by water
+  // physics, not optimization. Pick the LOWER endpoint of each valley
+  // (higher y in screen-down coords) and snap it onto the nearest eave
+  // so the marker visually sits on the gutter line, not floating mid-
+  // roof.
+  let valleyIdx = 0;
+  for (const v of valleys) {
+    if (v.points.length < 2) continue;
+    const a = v.points[0];
+    const b = v.points[v.points.length - 1];
+    const lower = a.y > b.y ? a : b;
+    // Snap to nearest eave endpoint within 40 px so the downspout
+    // visually attaches to the gutter run that catches the discharge.
+    let snapped = lower;
+    let snapDist = 40;
+    for (const line of eaveLines) {
+      if (line.points.length < 2) continue;
+      for (const ep of [
+        line.points[0],
+        line.points[line.points.length - 1],
+      ]) {
+        const d = Math.hypot(ep.x - lower.x, ep.y - lower.y);
+        if (d < snapDist) {
+          snapDist = d;
+          snapped = ep;
+        }
+      }
+    }
+    placed.push({
+      id: `ds-valley-${++valleyIdx}`,
+      x: Math.round(snapped.x),
+      y: Math.round(snapped.y),
+      heightFt,
+    });
+  }
 
   let totalEaveFt = 0;
   for (const line of eaveLines) {
@@ -578,12 +762,20 @@ export function measurementsFromVision(args: {
   downspoutCount: number;
   cornerCount: number;
   stories?: Stories;
+  /** When available, pre-computed outside/inside corner counts from the
+   *  polygon geometry (via classifyPolygonCorners). When absent we fall
+   *  back to a 70/30 split of cornerCount — kept for the vision and
+   *  mock fallback paths where we don't have a polygon. */
+  outsideCorners?: number;
+  insideCorners?: number;
 }): Measurements {
   return {
     eaveLF: Math.round(args.eaveLF),
     rakeLF: Math.round(args.eaveLF * 0.6),
-    outsideCorners: Math.max(4, Math.round(args.cornerCount * 0.7)),
-    insideCorners: Math.max(0, Math.round(args.cornerCount * 0.3)),
+    outsideCorners:
+      args.outsideCorners ?? Math.max(4, Math.round(args.cornerCount * 0.7)),
+    insideCorners:
+      args.insideCorners ?? Math.max(0, Math.round(args.cornerCount * 0.3)),
     endCaps: Math.max(2, Math.round(args.eaveLF / 60)),
     downspoutCount: args.downspoutCount,
     stories: args.stories ?? 2,

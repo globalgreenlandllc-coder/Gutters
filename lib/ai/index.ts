@@ -20,11 +20,13 @@ import {
 import { buildSegmentRidges } from "./segment-ridges";
 import {
   buildEditableLines,
+  classifyPolygonCorners,
   countCorners,
   eavesFromRoofPolygon,
   imagePixelToLatLng,
   latLngToImagePixel,
   measurementsFromVision,
+  mergeCollinearEaves,
   pixelLengthToFeet,
   placeDownspouts,
   placeDownspoutsOnPolygon,
@@ -662,26 +664,64 @@ export async function runAIEstimatePipeline(
     // Below this floor we'd rather fall through to GPT-4o vision than
     // ship a sparse answer the contractor can't trust.
     if (eaves.length >= 5) {
+      // Collapse runs that read as multiple segments on the canvas
+      // (3 near-collinear vertices on one wall = one continuous eave)
+      // before downspout placement and corner counting. Spacing math
+      // wants long-run lengths, not stair-step splits.
+      const beforeMerge = eaves.length;
+      eaves = mergeCollinearEaves(eaves);
+      if (eaves.length < beforeMerge) {
+        notes.push(
+          `Merged collinear eaves: ${beforeMerge} → ${eaves.length} continuous runs`,
+        );
+      }
+
+      // Get the roof structure overlay early — we need its valley list
+      // to weight downspout placement (valleys discharge water onto an
+      // eave below; that's a natural drop point).
+      const roofStructure = await resolveRoofStructure();
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
         eaves,
         image.width,
         image.height,
         estimatedStories,
+        2.4,
+        roofStructure?.valleys ?? [],
       );
+
+      // Replace the 70/30 corner-count heuristic with the actual
+      // outside/inside split from polygon convexity. Falls back to the
+      // heuristic when the polygon is degenerate.
       const cornerCount = countCorners(eaves);
+      const cornerSplit = classifyPolygonCorners(
+        roofPolygon,
+        image.width,
+        image.height,
+      );
       const measurements = measurementsFromVision({
         eaveLF: totalEaveLF,
         downspoutCount: downspouts.length,
         cornerCount,
         stories: estimatedStories,
+        outsideCorners:
+          cornerSplit.outside + cornerSplit.inside > 0
+            ? cornerSplit.outside
+            : undefined,
+        insideCorners:
+          cornerSplit.outside + cornerSplit.inside > 0
+            ? cornerSplit.inside
+            : undefined,
       });
 
       notes.push(
         `Eaves (${sourceLabel}): ${eaves.length} segments, ${downspouts.length} downspouts${rakes.length > 0 ? `, ${rakes.length} rakes (no gutter)` : ""}`,
       );
-
-      const roofStructure = await resolveRoofStructure();
+      if (cornerSplit.outside + cornerSplit.inside > 0) {
+        notes.push(
+          `Corners (polygon geometry): ${cornerSplit.outside} outside, ${cornerSplit.inside} inside`,
+        );
+      }
       return {
         geocoded,
         measurements,
