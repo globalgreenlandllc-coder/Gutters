@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Layers, Receipt, Wallet } from "lucide-react";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { buildLineItems } from "@/lib/pricing";
+import type { EstimateHandoff } from "@/lib/estimate-handoff";
 import { MaterialSelector } from "./material-selector";
 import { PricingTable } from "./pricing-table";
 import { Summary, type Adjustments } from "./summary";
@@ -20,12 +21,13 @@ const TABS: { id: Tab; label: string; icon: typeof Layers }[] = [
 
 export function PricingPanel({
   measurements,
-  address,
+  handoff,
 }: {
   measurements: Measurements;
-  /** Threaded through to Summary so its "Send to client" button can hand
-   *  the live takeoff (address + measurements) off to /proposal. */
-  address?: string;
+  /** Threaded through to Summary so its "Send to client" button can
+   *  hand the live takeoff (address + measurements + eaves + image)
+   *  off to /proposal. */
+  handoff?: Omit<EstimateHandoff, "capturedAt">;
 }) {
   const [tab, setTab] = useState<Tab>("materials");
   const [config, setConfig] = useState<EstimateConfig>({
@@ -112,8 +114,7 @@ export function PricingPanel({
                 items={items}
                 adjustments={adjustments}
                 onAdjust={setAdjustments}
-                address={address}
-                measurements={measurements}
+                handoff={handoff}
               />
             )}
           </motion.div>

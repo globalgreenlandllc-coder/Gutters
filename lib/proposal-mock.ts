@@ -1,4 +1,4 @@
-import type { EstimateConfig, Measurements } from "./types";
+import type { Downspout, EditableLine, EstimateConfig, Measurements } from "./types";
 import { buildLineItems } from "./pricing";
 import { sampleMeasurements } from "./mock-estimate";
 
@@ -36,6 +36,22 @@ export type TermsBlock = {
   enabled: boolean;
 };
 
+/** Live takeoff snapshot carried over from /estimate. Optional —
+ *  proposals created from scratch (without going through the estimate
+ *  flow) don't have it, and the aerial section falls back to a sample
+ *  cartoon roof in that case. */
+export type ProposalTakeoff = {
+  eaves: EditableLine[];
+  rakes: EditableLine[];
+  downspouts: Downspout[];
+  aerial?: {
+    imageDataUrl: string;
+    width: number;
+    height: number;
+    zoom: number;
+  };
+};
+
 export type Proposal = {
   token: string;
   address: string;
@@ -51,6 +67,7 @@ export type Proposal = {
   };
   intro: string;
   measurements: Measurements;
+  takeoff?: ProposalTakeoff;
   packages: Package[];
   photos: Photo[];
   terms: TermsBlock[];

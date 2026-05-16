@@ -6,25 +6,25 @@ import { ArrowLeft, Download, Send } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { writeEstimateHandoff } from "@/lib/estimate-handoff";
-import type { Measurements } from "@/lib/types";
+import {
+  writeEstimateHandoff,
+  type EstimateHandoff,
+} from "@/lib/estimate-handoff";
 
 export function TopBar({
   address,
-  measurements,
+  handoff,
 }: {
   address: string;
-  /** Live measurements snapshot. Optional because some call sites (e.g.
-   *  a future read-only embed) don't have it — when absent, the proposal
-   *  flow falls back to its blank template, same as before this prop
-   *  existed. */
-  measurements?: Measurements;
+  /** Full takeoff snapshot. Optional because some call sites don't have
+   *  it (the proposal page just gets the address) — when absent the
+   *  navigation still works, the proposal flow falls back to its blank
+   *  template. */
+  handoff?: Omit<EstimateHandoff, "capturedAt">;
 }) {
   const router = useRouter();
   const handoffAndGo = () => {
-    if (measurements) {
-      writeEstimateHandoff({ address, measurements });
-    }
+    if (handoff) writeEstimateHandoff(handoff);
     router.push("/proposal");
   };
   return (

@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
-import type { LineItem, Measurements } from "@/lib/types";
+import type { LineItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { writeEstimateHandoff } from "@/lib/estimate-handoff";
+import {
+  writeEstimateHandoff,
+  type EstimateHandoff,
+} from "@/lib/estimate-handoff";
 
 export type Adjustments = {
   markupPct: number;
@@ -19,22 +22,19 @@ export function Summary({
   items,
   adjustments,
   onAdjust,
-  address,
-  measurements,
+  handoff,
 }: {
   items: LineItem[];
   adjustments: Adjustments;
   onAdjust: (a: Adjustments) => void;
   /** Hand off to /proposal so the proposal flow boots from the real
-   *  takeoff instead of sampleMeasurements. */
-  address?: string;
-  measurements?: Measurements;
+   *  takeoff (and renders the satellite image) instead of the stock
+   *  sample. */
+  handoff?: Omit<EstimateHandoff, "capturedAt">;
 }) {
   const router = useRouter();
   const handoffAndGo = () => {
-    if (address && measurements) {
-      writeEstimateHandoff({ address, measurements });
-    }
+    if (handoff) writeEstimateHandoff(handoff);
     router.push("/proposal");
   };
   const subtotal = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);

@@ -44,6 +44,12 @@ function Inner() {
         ...p,
         address: handoff.address,
         measurements: handoff.measurements,
+        takeoff: {
+          eaves: handoff.eaves,
+          rakes: handoff.rakes,
+          downspouts: handoff.downspouts,
+          aerial: handoff.aerial,
+        },
       }));
       clearEstimateHandoff();
     }
@@ -98,7 +104,7 @@ function Inner() {
         <main className="mx-auto grid max-w-[1600px] gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:p-6">
           <div className="space-y-6">
             <CoverSection proposal={proposal} onChange={setProposal} />
-            <AerialSection proposal={proposal} />
+            <AerialSection proposal={proposal} onChange={setProposal} />
             <PackagesSection proposal={proposal} onChange={setProposal} />
             <PhotosSection proposal={proposal} onChange={setProposal} />
             <TermsSection proposal={proposal} onChange={setProposal} />

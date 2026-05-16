@@ -15,6 +15,7 @@ import { PricingPanel } from "./pricing-panel";
 import { Badge } from "@/components/ui/badge";
 import type { Measurements } from "@/lib/types";
 import type { EstimateResult } from "@/lib/ai";
+import type { EstimateHandoff } from "@/lib/estimate-handoff";
 
 export function ResultsView({
   address,
@@ -38,9 +39,21 @@ export function ResultsView({
     downspoutCount: downspouts.length,
   };
 
+  // Single handoff payload — captured at click-time by either button.
+  // Recomputed each render so live edits to eaves / downspouts are
+  // included in whatever the contractor sends to /proposal.
+  const handoff: Omit<EstimateHandoff, "capturedAt"> = {
+    address,
+    measurements,
+    eaves,
+    rakes: initial.rakes,
+    downspouts,
+    aerial: initial.aerial,
+  };
+
   return (
     <div className="flex min-h-screen flex-col">
-      <TopBar address={address} measurements={measurements} />
+      <TopBar address={address} handoff={handoff} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -75,7 +88,7 @@ export function ResultsView({
           <div className="lg:sticky lg:top-[72px] lg:self-start">
             <div className="rounded-2xl border border-zinc-200 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
-                <PricingPanel measurements={measurements} address={address} />
+                <PricingPanel measurements={measurements} handoff={handoff} />
               </div>
             </div>
           </div>

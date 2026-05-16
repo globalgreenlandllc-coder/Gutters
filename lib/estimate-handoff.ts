@@ -1,6 +1,6 @@
 "use client";
 
-import type { Measurements } from "./types";
+import type { Downspout, EditableLine, Measurements } from "./types";
 
 /**
  * Estimate → Proposal handoff via localStorage.
@@ -13,13 +13,35 @@ import type { Measurements } from "./types";
  * answer but a bigger change). The localStorage payload is consumed
  * once on /proposal mount and cleared immediately so a manual refresh
  * doesn't re-apply stale data.
+ *
+ * Payload includes the full takeoff (eaves + rakes + downspouts + the
+ * satellite image data URL) so the proposal can render the *actual*
+ * traced roof instead of a cartoon, and so the contractor can keep
+ * editing eaves/downspouts from inside the proposal view.
  */
 
 const STORAGE_KEY = "gutters:estimate-handoff";
 
+export interface EstimateHandoffAerial {
+  imageDataUrl: string;
+  width: number;
+  height: number;
+  zoom: number;
+}
+
 export interface EstimateHandoff {
   address: string;
   measurements: Measurements;
+  /** Editable lines the contractor will see (cyan in the canvas). */
+  eaves: EditableLine[];
+  /** AI-classified rakes (gray-dashed). Empty when the classifier
+   *  fell back to "all polygon edges as eaves". */
+  rakes: EditableLine[];
+  /** Downspout pins to render on the canvas. */
+  downspouts: Downspout[];
+  /** Background satellite image. Optional because mock/partial estimate
+   *  runs don't always produce one — fall back to the cartoon scene. */
+  aerial?: EstimateHandoffAerial;
   /** ms epoch — used to ignore handoffs older than a few minutes so a
    *  stale tab doesn't hijack a fresh proposal session. */
   capturedAt: number;
@@ -47,7 +69,7 @@ export function readEstimateHandoff(): EstimateHandoff | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as EstimateHandoff;
+    const parsed = JSON.parse(raw) as Partial<EstimateHandoff>;
     if (
       !parsed ||
       typeof parsed.address !== "string" ||
@@ -57,7 +79,18 @@ export function readEstimateHandoff(): EstimateHandoff | null {
       return null;
     }
     if (Date.now() - parsed.capturedAt > MAX_AGE_MS) return null;
-    return parsed;
+    // Lenient defaults for the new fields — a payload written by an
+    // older deploy may not have eaves/rakes/downspouts/aerial. We can
+    // still ship a useful proposal off just address + measurements.
+    return {
+      address: parsed.address,
+      measurements: parsed.measurements,
+      eaves: Array.isArray(parsed.eaves) ? parsed.eaves : [],
+      rakes: Array.isArray(parsed.rakes) ? parsed.rakes : [],
+      downspouts: Array.isArray(parsed.downspouts) ? parsed.downspouts : [],
+      aerial: parsed.aerial,
+      capturedAt: parsed.capturedAt,
+    };
   } catch {
     return null;
   }
