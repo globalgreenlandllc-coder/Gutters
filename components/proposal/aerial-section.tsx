@@ -3,8 +3,9 @@
 import { useMemo } from "react";
 import { Pencil, Ruler, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { AerialCanvas, lineLengthFt } from "@/components/estimate/aerial-canvas";
+import { lineLengthFt } from "@/components/estimate/aerial-canvas";
 import { AerialReadonly } from "@/components/estimate/aerial-shared";
+import { PresentationCanvas } from "./presentation-canvas";
 import { sampleEaves, sampleDownspouts } from "@/lib/mock-estimate";
 import type { Downspout, EditableLine } from "@/lib/types";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -80,26 +81,16 @@ export function AerialSection({
       <div className="space-y-3">
         <div className="relative overflow-hidden rounded-2xl">
           {hasRealTakeoff ? (
-            editable ? (
-              <div className="aspect-[16/10]">
-                <AerialCanvas
-                  eaves={takeoff!.eaves}
-                  rakes={takeoff!.rakes}
-                  downspouts={takeoff!.downspouts}
-                  onEavesChange={handleEavesChange}
-                  onDownspoutsChange={handleDownspoutsChange}
-                  aerialImageUrl={takeoff!.aerial?.imageDataUrl}
-                />
-              </div>
-            ) : (
-              <AerialReadonly
+            <div className="aspect-[16/10]">
+              <PresentationCanvas
                 eaves={takeoff!.eaves}
+                rakes={takeoff!.rakes}
                 downspouts={takeoff!.downspouts}
-                imageDataUrl={takeoff!.aerial?.imageDataUrl}
-                className="aspect-[16/10]"
-                theme="tactical"
+                onEavesChange={editable ? handleEavesChange : undefined}
+                onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
+                aerialImageUrl={takeoff!.aerial?.imageDataUrl}
               />
-            )
+            </div>
           ) : (
             <AerialReadonly
               eaves={sampleEaves}
@@ -115,9 +106,9 @@ export function AerialSection({
             </div>
           )}
           {editable && (
-            <div className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-slate-900/85 px-2.5 py-1 text-[10px] font-medium text-cyan-100 ring-1 ring-inset ring-cyan-400/40 backdrop-blur">
+            <div className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-slate-900/80 px-2.5 py-1 text-[10px] font-medium text-cyan-100/85 ring-1 ring-inset ring-cyan-400/30 backdrop-blur">
               <Pencil className="h-3 w-3" />
-              Editable — totals re-price live
+              Hover an eave to drag a corner — totals re-price live
             </div>
           )}
         </div>
