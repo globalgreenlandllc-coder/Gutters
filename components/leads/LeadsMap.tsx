@@ -606,14 +606,21 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           return;
         }
         if (!res.ok) {
-          // Pull the server-side error message out of the JSON body so the
-          // toast can actually tell us what's wrong. Body may be HTML on
-          // some failure modes; fall back to the generic message there.
+          // Pull the server-side error message + Prisma metadata out of
+          // the JSON body. P2022 (column missing) puts the column name
+          // at meta.column; P2021 puts the table at meta.table. Render
+          // whichever is present so the toast is actually actionable.
           let detail = "";
           try {
-            const body = await res.json();
+            const body = (await res.json()) as {
+              error?: string;
+              code?: string;
+              meta?: { column?: string; table?: string };
+            };
             if (body?.error) detail = ` — ${body.error}`;
             if (body?.code) detail += ` [${body.code}]`;
+            if (body?.meta?.column) detail += ` (column: ${body.meta.column})`;
+            if (body?.meta?.table) detail += ` (table: ${body.meta.table})`;
           } catch {
             // not JSON
           }

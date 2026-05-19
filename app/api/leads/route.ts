@@ -232,20 +232,29 @@ export async function GET(request: Request) {
     return NextResponse.json({ leads, hasMore });
   } catch (error: unknown) {
     console.error("[GET /api/leads] Error:", error);
-    // Surface the actual error in the response body during development
-    // so the client-side toast can show a useful message. In prod we
-    // keep the generic string — but the silent 500 in dev has burned
-    // us too many times to keep it opaque.
-    const isDev = process.env.NODE_ENV !== "production";
+    // Surface the actual error message + Prisma's meta object in BOTH
+    // dev and prod. We're early stage and the masked production toast
+    // ("Failed to fetch leads") cost us multiple debug round-trips for
+    // a class of errors (P2022 column-missing, P2021 table-missing)
+    // that's only meaningful to read in the environment that's broken.
+    // The 500 body is never exposed to end clients — only logged-in
+    // contractors see it via the leads page, so leaking column names
+    // is a non-issue vs the operational benefit of self-diagnosis.
+    const errObj = (error && typeof error === "object" ? error : {}) as {
+      code?: string;
+      meta?: Record<string, unknown>;
+    };
     const message =
       error instanceof Error ? error.message : "Failed to fetch leads";
     return NextResponse.json(
       {
-        error: isDev ? message : "Failed to fetch leads",
-        code:
-          error && typeof error === "object" && "code" in error
-            ? (error as { code?: string }).code
-            : undefined,
+        error: message,
+        code: errObj.code,
+        // P2022 puts the missing column at meta.column; P2021 puts
+        // the missing table at meta.table; P2009 puts validation
+        // failures at meta.failures. Pass meta through so the toast
+        // can render whichever applies.
+        meta: errObj.meta,
       },
       { status: 500 },
     );
