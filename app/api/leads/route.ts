@@ -230,8 +230,24 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({ leads, hasMore });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[GET /api/leads] Error:", error);
-    return NextResponse.json({ error: "Failed to fetch leads" }, { status: 500 });
+    // Surface the actual error in the response body during development
+    // so the client-side toast can show a useful message. In prod we
+    // keep the generic string — but the silent 500 in dev has burned
+    // us too many times to keep it opaque.
+    const isDev = process.env.NODE_ENV !== "production";
+    const message =
+      error instanceof Error ? error.message : "Failed to fetch leads";
+    return NextResponse.json(
+      {
+        error: isDev ? message : "Failed to fetch leads",
+        code:
+          error && typeof error === "object" && "code" in error
+            ? (error as { code?: string }).code
+            : undefined,
+      },
+      { status: 500 },
+    );
   }
 }

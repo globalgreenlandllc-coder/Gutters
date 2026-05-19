@@ -606,8 +606,19 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           return;
         }
         if (!res.ok) {
+          // Pull the server-side error message out of the JSON body so the
+          // toast can actually tell us what's wrong. Body may be HTML on
+          // some failure modes; fall back to the generic message there.
+          let detail = "";
+          try {
+            const body = await res.json();
+            if (body?.error) detail = ` — ${body.error}`;
+            if (body?.code) detail += ` [${body.code}]`;
+          } catch {
+            // not JSON
+          }
           setFetchError(
-            `Lead fetch failed (HTTP ${res.status}). Check the server logs.`,
+            `Lead fetch failed (HTTP ${res.status})${detail}`,
           );
           setLeads([]);
           setResultCount(0);
