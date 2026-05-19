@@ -549,6 +549,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [sort, setSort] = useState<SortMode>("relevance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [viewMode, setViewMode] = useState<"pins" | "heatmap">("pins");
+  // Visible diagnostic when the fetch fails. Without this the map just
+  // looks empty and the user has no way to tell whether (a) no leads
+  // match the filter, (b) the API errored, or (c) the session expired
+  // and the request got redirected to /sign-in.
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const bboxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sidebarRef = useRef<LeadsSidebarHandle>(null);
 
@@ -587,15 +592,39 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           url.searchParams.set("relevance", relevanceFilter);
         }
 
-        const res = await fetch(url.toString());
-        if (res.ok) {
-          const data = await res.json();
-          setLeads(data.leads ?? []);
-          setHasMore(Boolean(data.hasMore));
-          setResultCount(data.leads?.length ?? 0);
+        const res = await fetch(url.toString(), { redirect: "manual" });
+        // Redirect-to-sign-in (Clerk middleware) lands here when the
+        // session expires mid-session. fetch with redirect:"manual"
+        // surfaces this as an opaque response with type "opaqueredirect"
+        // rather than silently following to an HTML page.
+        if (res.type === "opaqueredirect" || res.status === 0) {
+          setFetchError(
+            "Session expired — refresh the page to sign back in.",
+          );
+          setLeads([]);
+          setResultCount(0);
+          return;
         }
+        if (!res.ok) {
+          setFetchError(
+            `Lead fetch failed (HTTP ${res.status}). Check the server logs.`,
+          );
+          setLeads([]);
+          setResultCount(0);
+          return;
+        }
+        const data = await res.json();
+        setFetchError(null);
+        setLeads(data.leads ?? []);
+        setHasMore(Boolean(data.hasMore));
+        setResultCount(data.leads?.length ?? 0);
       } catch (e) {
         console.error("Failed to fetch leads", e);
+        setFetchError(
+          e instanceof Error
+            ? `Network error: ${e.message}`
+            : "Network error fetching leads.",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -828,7 +857,34 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                 Showing 500 best — zoom in to see more.
               </div>
             )}
+            {fetchError && (
+              <div className="pointer-events-none max-w-[320px] rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200 backdrop-blur-md">
+                {fetchError}
+              </div>
+            )}
           </div>
+
+          {/* Center overlay when the fetch succeeded but returned no leads
+              — gives the user something to act on (pan the map / widen
+              the filters) instead of staring at an empty satellite tile. */}
+          {!isLoading &&
+            !fetchError &&
+            resultCount === 0 &&
+            leads.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
+                <div className="pointer-events-auto max-w-sm rounded-2xl border border-slate-700 bg-slate-900/95 px-5 py-4 text-center shadow-2xl backdrop-blur">
+                  <Inbox className="mx-auto h-7 w-7 text-slate-500" />
+                  <div className="mt-2 text-sm font-medium text-white">
+                    No leads in this view
+                  </div>
+                  <p className="mt-1 text-xs leading-snug text-slate-400">
+                    Pan or zoom to a different area, or clear active
+                    filters (e.g. preset chips, date range) to widen the
+                    search.
+                  </p>
+                </div>
+              </div>
+            )}
 
           <GoogleMap
             defaultCenter={{ lat: 47.6062, lng: -122.3321 }}
