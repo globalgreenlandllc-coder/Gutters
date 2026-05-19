@@ -10,6 +10,7 @@ import {
 import Link from "next/link";
 import { getAdminKpis, recentAdminActivity } from "@/app/actions/admin";
 import { Badge } from "@/components/ui/badge";
+import { SyncLeadsButton } from "@/components/admin/sync-leads-button";
 import { formatCurrency } from "@/lib/utils";
 
 export default async function AdminOverviewPage() {
@@ -98,6 +99,9 @@ export default async function AdminOverviewPage() {
                 title="Pricing CMS"
                 body="Edit plans + sync to Stripe."
               />
+            </div>
+            <div className="mt-3">
+              <SyncLeadsButton />
             </div>
           </div>
 
