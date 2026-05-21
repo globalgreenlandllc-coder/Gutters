@@ -87,6 +87,11 @@ const PROVIDER_META: Record<
     sub: "App token for city open-data permit feeds (rate-limit bump)",
     tone: "accent",
   },
+  ANTHROPIC: {
+    label: "Anthropic (Claude)",
+    sub: "Claude vision for reading construction plans → gutter blueprint",
+    tone: "violet",
+  },
 };
 
 type Phase =

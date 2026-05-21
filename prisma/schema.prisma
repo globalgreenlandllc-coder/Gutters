@@ -60,6 +60,7 @@ model User {
   impersonations    ImpersonationSession[] @relation("AdminImpersonator")
   impersonated      ImpersonationSession[] @relation("ImpersonatedUser")
   leadInteractions  UserLeadInteraction[]
+  planAnalyses      PlanAnalysis[]
 
   @@index([role])
   @@index([status])
@@ -206,6 +207,57 @@ model EstimateRun {
   @@index([userId, addressNormalized, createdAt])
   @@index([status])
   @@map("estimate_runs")
+}
+
+// -----------------------------------------------------------------------
+// Plan analyses (PDF/image construction plans → AI gutter blueprint)
+//
+// A contractor uploads a roof plan and Claude returns a structured layout:
+// every gutter run + downspout + excluded rake. We store the original file
+// bytes (base64 in `originalData`) so the renderer can show the source
+// alongside the AI overlay, plus the raw AI JSON in `analysisJson`.
+//
+// `editedJson` is null until the contractor manually edits — keeping the
+// original AI output untouched lets us A/B test prompt changes against
+// real ground-truth contractor corrections.
+// -----------------------------------------------------------------------
+
+enum PlanAnalysisStatus {
+  QUEUED
+  SUCCEEDED
+  FAILED
+}
+
+model PlanAnalysis {
+  id              String              @id @default(cuid())
+  userId          String
+  status          PlanAnalysisStatus  @default(QUEUED)
+  // Source file: filename, mime, raw bytes (base64). PDFs are stored as the
+  // original PDF; we also store the rasterized page images in `pageImages`.
+  filename        String
+  mimeType        String
+  originalData    String?             @db.Text
+  pageImages      Json?               // Array of { dataUrl, width, height, pageIndex }
+  pageCount       Int?
+  // AI output
+  analysisJson    Json?               // Raw Claude response (BlueprintResult)
+  editedJson      Json?               // Contractor-edited version (null until edited)
+  confidence      String?             // "high" | "medium" | "low"
+  // Telemetry
+  modelUsed       String?             // e.g. "claude-sonnet-4-6"
+  inputTokens     Int?
+  outputTokens   Int?
+  cacheHit        Boolean             @default(false)
+  durationMs      Int?
+  errorMessage    String?             @db.Text
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("plan_analyses")
 }
 
 // -----------------------------------------------------------------------
@@ -390,6 +442,7 @@ enum ApiKeyProvider {
   STRIPE_SECRET
   STRIPE_WEBHOOK
   SOCRATA
+  ANTHROPIC
 }
 
 model ApiKey {

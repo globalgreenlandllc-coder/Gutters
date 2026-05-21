@@ -14,6 +14,7 @@
     "db:reset": "prisma migrate reset"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.97.1",
     "@clerk/nextjs": "^7.2.9",
     "@prisma/client": "^5.22.0",
     "@turf/buffer": "^7.3.5",
@@ -25,6 +26,7 @@
     "lucide-react": "^0.460.0",
     "next": "^15.5.4",
     "openai": "^6.37.0",
+    "pdf-to-img": "^6.1.0",
     "pngjs": "^7.0.0",
     "prisma": "^5.22.0",
     "proj4": "^2.20.8",
