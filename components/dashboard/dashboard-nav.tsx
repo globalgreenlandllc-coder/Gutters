@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 const NAV: { href: string; label: string }[] = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/leads", label: "Leads Map" },
+  { href: "/dashboard/blueprints", label: "Blueprints" },
   { href: "/dashboard/proposals", label: "Proposals" },
   { href: "/dashboard/clients", label: "Clients" },
   { href: "/dashboard/settings", label: "Settings" },
