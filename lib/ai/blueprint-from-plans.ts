@@ -72,10 +72,10 @@ You are a senior rain-gutter estimator analyzing residential construction plans
 to produce a complete gutter installation layout for a homeowner proposal.
 
 <task>
-Look at the supplied images (one or more pages from architectural plans). Find
-the ROOF PLAN, identify every roof edge, classify each correctly, then produce
-a precise specification of where to install 5" K-style aluminum gutters and
-3"x4" rectangular downspouts. Output strict JSON, nothing else.
+Look at the supplied document/images (architectural plans, possibly multi-page
+PDF). Find the ROOF PLAN, identify every roof edge, classify each correctly,
+then produce a precise specification of where to install 5" K-style aluminum
+gutters and 3"x4" rectangular downspouts. Output strict JSON, nothing else.
 </task>
 
 <vocabulary>
@@ -108,7 +108,7 @@ DORMER — small projecting roof. Its short eaves DO get gutters; its rakes do n
 <method>
 Follow these steps in order. Think carefully before producing JSON.
 
-1. Locate the roof plan page in the supplied images. If none is visible,
+1. Locate the roof plan page in the supplied document. If none is visible,
    output {"error":"no_roof_plan","reason":"<what you see instead>"} and stop.
 
 2. Trace the building footprint as drawn on the roof plan. If there are
@@ -186,7 +186,7 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
 </output_schema>
 
 <rules>
-- Coordinate origin is TOP-LEFT of the source image, x→right, y→down. Use the
+- Coordinate origin is TOP-LEFT of the source page, x→right, y→down. Use the
   raw pixel coordinates the plan was rendered at; do not rescale.
 - Every excluded perimeter edge MUST appear in excluded_edges with a kind +
   reason. This proves you considered it and rejected it deliberately.
@@ -199,19 +199,31 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
 </rules>
 `.trim();
 
-export type PlanImage = {
-  /** base64 (no data: prefix) */
-  base64: string;
-  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
-};
+/**
+ * One source page or document. Can be:
+ *   - PDF (the whole document — Claude paginates internally, up to 100 pages
+ *     or 32MB)
+ *   - PNG / JPG / WEBP / GIF image
+ *
+ * Anthropic's vision API supports PDF natively so we skip the rasterization
+ * step that broke Vercel's serverless build (pdfjs-dist needs DOM polyfills
+ * that don't exist in Lambda).
+ */
+export type PlanSource =
+  | { kind: "pdf"; base64: string }
+  | {
+      kind: "image";
+      base64: string;
+      mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+    };
 
 const MODEL = "claude-sonnet-4-6";
 
-export async function blueprintFromPlanImages(
-  images: PlanImage[],
+export async function blueprintFromPlanSources(
+  sources: PlanSource[],
 ): Promise<BlueprintResult> {
-  if (images.length === 0) {
-    return { ok: false, reason: "No images supplied" };
+  if (sources.length === 0) {
+    return { ok: false, reason: "No plan sources supplied" };
   }
   const apiKey =
     (await getActiveApiKey("ANTHROPIC")) ?? process.env.ANTHROPIC_API_KEY ?? null;
@@ -221,6 +233,33 @@ export async function blueprintFromPlanImages(
 
   const client = new Anthropic({ apiKey });
   const t0 = Date.now();
+
+  // Build the content blocks: each PDF as a document, each image as an image.
+  const userContent: Anthropic.MessageParam["content"] = [
+    {
+      type: "text",
+      text: "Construction plans attached. Find the roof plan page(s) and return the gutter layout JSON per the schema.",
+    },
+    ...sources.map((s) =>
+      s.kind === "pdf"
+        ? ({
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: s.base64,
+            },
+          } as const)
+        : ({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: s.mediaType,
+              data: s.base64,
+            },
+          } as const),
+    ),
+  ];
 
   try {
     const response = await client.messages.create({
@@ -237,23 +276,7 @@ export async function blueprintFromPlanImages(
         },
       ],
       messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Construction plans attached. Find the roof plan page(s) and return the gutter layout JSON per the schema.",
-            },
-            ...images.map((img) => ({
-              type: "image" as const,
-              source: {
-                type: "base64" as const,
-                media_type: img.mediaType,
-                data: img.base64,
-              },
-            })),
-          ],
-        },
+        { role: "user", content: userContent },
         // Assistant prefill forces the model to start with `{` and produce
         // valid JSON without any "Here is the JSON:" preamble.
         { role: "assistant", content: [{ type: "text", text: "{" }] },
