@@ -21,10 +21,15 @@ export function ResultsView({
   address,
   initial,
   reused,
+  jobType = "replacement",
 }: {
   address: string;
   initial: EstimateResult;
   reused: boolean;
+  /** New construction vs replacement. Affects the proposal scope-of-work
+   *  language downstream; here we surface it as a chip in the top bar so
+   *  the contractor sees what mode they're in. */
+  jobType?: "new" | "replacement";
 }) {
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
@@ -53,7 +58,7 @@ export function ResultsView({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <TopBar address={address} handoff={handoff} />
+      <TopBar address={address} handoff={handoff} jobType={jobType} />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}

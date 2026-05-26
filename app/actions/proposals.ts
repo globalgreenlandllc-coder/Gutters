@@ -226,6 +226,9 @@ export async function saveDraftFromEstimate(args: {
    *  row. The estimate top-bar tracks the returned id locally so repeat
    *  clicks update the same proposal. */
   existingId?: string;
+  /** Whether this is a new-construction job or a replacement. Stored on
+   *  the proposal JSON blob so the scope-of-work language can branch. */
+  jobType?: "new" | "replacement";
 }): Promise<SaveDraftResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
@@ -236,9 +239,15 @@ export async function saveDraftFromEstimate(args: {
   // Compose a Proposal-shaped JSON blob so /proposal can re-hydrate the
   // draft later. We start from the blank template and overlay the live
   // estimate data + the contractor's profile.
-  const draft: Proposal = {
-    ...blankProposal(),
+  // jobType is stored as an extra key on the proposal JSON blob — not in
+  // the typed Proposal shape (which would require a schema migration), but
+  // accessible via `data.jobType` in any downstream code that wants to
+  // branch scope-of-work text on it.
+  const blank = blankProposal();
+  const draft: Proposal & { jobType?: "new" | "replacement" } = {
+    ...blank,
     token: randomBytes(12).toString("hex"),
+    jobType: args.jobType ?? "replacement",
     address: args.address,
     measurements: args.measurements,
     takeoff: {

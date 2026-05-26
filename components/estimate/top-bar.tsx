@@ -29,6 +29,7 @@ type SaveState =
 export function TopBar({
   address,
   handoff,
+  jobType = "replacement",
 }: {
   address: string;
   /** Full takeoff snapshot. Optional because some call sites don't have
@@ -36,6 +37,10 @@ export function TopBar({
    *  navigation still works, the proposal flow falls back to its blank
    *  template. */
   handoff?: Omit<EstimateHandoff, "capturedAt">;
+  /** "new" → new-construction job (no tear-off line item, different
+   *  scope-of-work language). "replacement" → existing house, existing
+   *  gutters being removed. Default is "replacement" — the common case. */
+  jobType?: "new" | "replacement";
 }) {
   const router = useRouter();
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
@@ -64,6 +69,7 @@ export function TopBar({
         // contractor finalizes pricing in /proposal before sending.
         totalCents: 0,
         existingId,
+        jobType,
       });
       if (result.ok) {
         setSave({ kind: "saved", draftId: result.id, at: Date.now() });
@@ -112,6 +118,20 @@ export function TopBar({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-zinc-900">
               {address}
+            </span>
+            <span
+              title={
+                jobType === "new"
+                  ? "New construction — no tear-off line items by default"
+                  : "Replacement — includes tear-off + disposal"
+              }
+            >
+              <Badge
+                tone={jobType === "new" ? "accent" : "neutral"}
+                className="hidden sm:inline-flex"
+              >
+                {jobType === "new" ? "New construction" : "Replacement"}
+              </Badge>
             </span>
             {statusBadge}
           </div>

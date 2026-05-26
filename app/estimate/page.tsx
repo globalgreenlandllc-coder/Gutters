@@ -24,6 +24,12 @@ function EstimateContent() {
   const planId = params.get("planId");
   const addressParam = params.get("address");
   const address = addressParam || SAMPLE_ADDRESS;
+  // Job-type passed in from the QuickStart card; defaults to replacement
+  // (the dominant case). Threaded into ResultsView → proposal so the
+  // contractor's saved draft remembers whether this is new vs replacement.
+  const jobTypeParam = params.get("jobType");
+  const jobType: "new" | "replacement" =
+    jobTypeParam === "new" ? "new" : "replacement";
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [result, setResult] = useState<EstimateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +96,7 @@ function EstimateContent() {
         address={result.geocoded.formatted}
         initial={result}
         reused={reused}
+        jobType={jobType}
       />
     );
   }
