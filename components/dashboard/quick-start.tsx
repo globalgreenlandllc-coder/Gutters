@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { upload } from "@vercel/blob/client";
 import {
   ArrowRight,
   FileUp,
@@ -54,10 +55,24 @@ export function QuickStart() {
     if (!file || uploading) return;
     setUploading(true);
     setError(null);
-    const fd = new FormData();
-    fd.append("file", file);
     try {
-      const res = await fetch("/api/blueprints", { method: "POST", body: fd });
+      // 1. Direct upload to Vercel Blob — bypasses Vercel's 4.5MB
+      //    serverless body limit so real construction PDFs (5-25MB) work.
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/blueprints/upload-url",
+      });
+
+      // 2. Tell our analyzer to pick up the file by URL and run Claude.
+      const res = await fetch("/api/blueprints", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          blobUrl: blob.url,
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+        }),
+      });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Plan analysis failed");

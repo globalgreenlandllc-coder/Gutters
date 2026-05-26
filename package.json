@@ -19,6 +19,7 @@
     "@prisma/client": "^5.22.0",
     "@turf/buffer": "^7.3.5",
     "@turf/helpers": "^7.3.5",
+    "@vercel/blob": "^2.4.0",
     "@vis.gl/react-google-maps": "^1.8.3",
     "clsx": "^2.1.1",
     "framer-motion": "^11.18.2",

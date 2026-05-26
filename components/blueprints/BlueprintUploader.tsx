@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { upload } from "@vercel/blob/client";
 import { Upload, FileText, Loader2, X } from "lucide-react";
 
 export default function BlueprintUploader() {
@@ -32,15 +33,25 @@ export default function BlueprintUploader() {
     if (!file) return;
     setUploading(true);
     setError(null);
-    const fd = new FormData();
-    fd.append("file", file);
     try {
-      const res = await fetch("/api/blueprints", { method: "POST", body: fd });
+      // Step 1: direct upload to Vercel Blob (bypasses serverless 4.5MB cap).
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/blueprints/upload-url",
+      });
+      // Step 2: trigger Claude analysis by URL.
+      const res = await fetch("/api/blueprints", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          blobUrl: blob.url,
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+        }),
+      });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Analysis failed");
-        // Stay on the upload form for failures (the per-id page would only
-        // show the same error). The contractor can re-pick a file and retry.
         return;
       }
       // Successful analyses flow into the unified estimate view — same

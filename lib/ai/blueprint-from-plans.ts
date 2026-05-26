@@ -208,14 +208,20 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
  * Anthropic's vision API supports PDF natively so we skip the rasterization
  * step that broke Vercel's serverless build (pdfjs-dist needs DOM polyfills
  * that don't exist in Lambda).
+ *
+ * URL variants exist to support direct uploads through Vercel Blob: the
+ * browser uploads straight to Blob (bypassing the 4.5MB serverless body
+ * limit), then we hand Claude the resulting public URL.
  */
 export type PlanSource =
   | { kind: "pdf"; base64: string }
+  | { kind: "pdf-url"; url: string }
   | {
       kind: "image";
       base64: string;
       mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
-    };
+    }
+  | { kind: "image-url"; url: string };
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -240,25 +246,38 @@ export async function blueprintFromPlanSources(
       type: "text",
       text: "Construction plans attached. Find the roof plan page(s) and return the gutter layout JSON per the schema.",
     },
-    ...sources.map((s) =>
-      s.kind === "pdf"
-        ? ({
+    ...sources.map((s) => {
+      switch (s.kind) {
+        case "pdf":
+          return {
             type: "document",
             source: {
               type: "base64",
               media_type: "application/pdf",
               data: s.base64,
             },
-          } as const)
-        : ({
+          } as const;
+        case "pdf-url":
+          return {
+            type: "document",
+            source: { type: "url", url: s.url },
+          } as const;
+        case "image":
+          return {
             type: "image",
             source: {
               type: "base64",
               media_type: s.mediaType,
               data: s.base64,
             },
-          } as const),
-    ),
+          } as const;
+        case "image-url":
+          return {
+            type: "image",
+            source: { type: "url", url: s.url },
+          } as const;
+      }
+    }),
   ];
 
   try {

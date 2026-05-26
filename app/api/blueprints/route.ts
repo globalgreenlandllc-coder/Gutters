@@ -26,28 +26,66 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const formData = await request.formData();
-  const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-  }
-  if (file.size === 0) {
-    return NextResponse.json({ error: "Empty file" }, { status: 400 });
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json(
-      { error: `File too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` },
-      { status: 413 },
-    );
+  // Two intake paths:
+  //   1. JSON body with { blobUrl, filename, mimeType } — file already lives
+  //      in Vercel Blob (uploaded directly from the browser bypassing
+  //      Vercel's 4.5MB body limit). Recommended for any real PDF.
+  //   2. multipart/form-data with a `file` field — works for files under
+  //      ~4.5MB (Vercel cap). Kept as a fallback for environments without
+  //      BLOB_READ_WRITE_TOKEN.
+  const contentType = request.headers.get("content-type") ?? "";
+  const isJsonBody = contentType.includes("application/json");
+
+  let filename: string;
+  let mime: string;
+  let blobUrl: string | null = null;
+  let base64: string | null = null;
+  let isPdf = false;
+  let isImage = false;
+
+  if (isJsonBody) {
+    const body = (await request.json()) as {
+      blobUrl?: string;
+      filename?: string;
+      mimeType?: string;
+    };
+    if (!body.blobUrl || !body.filename) {
+      return NextResponse.json(
+        { error: "blobUrl and filename are required" },
+        { status: 400 },
+      );
+    }
+    blobUrl = body.blobUrl;
+    filename = body.filename;
+    mime = body.mimeType ?? "application/octet-stream";
+    isPdf =
+      mime === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
+    isImage = mime.startsWith("image/");
+  } else {
+    const formData = await request.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    }
+    if (file.size === 0) {
+      return NextResponse.json({ error: "Empty file" }, { status: 400 });
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `File too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` },
+        { status: 413 },
+      );
+    }
+    const arrayBuf = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    base64 = buffer.toString("base64");
+    filename = file.name;
+    mime = file.type || "application/octet-stream";
+    isPdf =
+      mime === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    isImage = mime.startsWith("image/");
   }
 
-  const arrayBuf = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuf);
-  const base64 = buffer.toString("base64");
-  const mime = file.type || "application/octet-stream";
-  const isPdf =
-    mime === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-  const isImage = mime.startsWith("image/");
   if (!isPdf && !isImage) {
     return NextResponse.json(
       { error: "Only PDF and image files are supported" },
@@ -60,39 +98,49 @@ export async function POST(request: Request) {
   const analysis = await db.planAnalysis.create({
     data: {
       userId: user.id,
-      filename: file.name,
+      filename,
       mimeType: mime,
+      // Blob URL path: don't duplicate the bytes into the row. URL goes
+      // into pageImages so the detail page can still find a reference.
       originalData: base64,
-      // For PDFs we no longer pre-rasterize — Claude handles paging
-      // natively. For images we keep the single page as a preview source
-      // for the result-page background overlay.
-      pageImages: isPdf
-        ? Prisma.JsonNull
-        : [
-            {
-              pageIndex: 1,
-              base64,
-              mediaType: mime,
-            },
-          ],
+      pageImages: blobUrl
+        ? [{ pageIndex: 1, blobUrl, mediaType: mime }]
+        : isPdf
+          ? Prisma.JsonNull
+          : [
+              {
+                pageIndex: 1,
+                base64,
+                mediaType: mime,
+              },
+            ],
       pageCount: isPdf ? null : 1,
       status: "QUEUED",
     },
   });
 
   try {
-    const source: PlanSource = isPdf
-      ? { kind: "pdf", base64 }
-      : {
-          kind: "image",
-          base64,
-          mediaType: (mime === "image/png" ||
-          mime === "image/jpeg" ||
-          mime === "image/webp" ||
-          mime === "image/gif"
-            ? mime
-            : "image/png") as Extract<PlanSource, { kind: "image" }>["mediaType"],
-        };
+    let source: PlanSource;
+    if (blobUrl) {
+      source = isPdf
+        ? { kind: "pdf-url", url: blobUrl }
+        : { kind: "image-url", url: blobUrl };
+    } else if (base64) {
+      source = isPdf
+        ? { kind: "pdf", base64 }
+        : {
+            kind: "image",
+            base64,
+            mediaType: (mime === "image/png" ||
+            mime === "image/jpeg" ||
+            mime === "image/webp" ||
+            mime === "image/gif"
+              ? mime
+              : "image/png") as Extract<PlanSource, { kind: "image" }>["mediaType"],
+          };
+    } else {
+      throw new Error("No file or blobUrl provided");
+    }
 
     const result = await blueprintFromPlanSources([source]);
     if (!result.ok) {
