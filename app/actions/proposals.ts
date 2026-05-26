@@ -3,10 +3,12 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
+import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderProposalEmail } from "@/lib/email/proposal-template";
-import type { Proposal } from "@/lib/proposal-mock";
+import { blankProposal, type Proposal } from "@/lib/proposal-mock";
+import type { Downspout, EditableLine, Measurements } from "@/lib/types";
 import { getMe } from "./me";
 
 export type SendProposalResult =
@@ -187,4 +189,129 @@ function appBaseUrl(): string {
   const vercel = process.env.VERCEL_URL?.trim();
   if (vercel) return `https://${vercel}`;
   return "http://localhost:3000";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Draft-save from the estimate view                                  */
+/*                                                                     */
+/*  The estimate page used to only have "Send proposal", which forced  */
+/*  contractors to push to /proposal AND fill in client info before    */
+/*  anything got persisted. Save-as-draft persists the takeoff so the  */
+/*  job shows up in /dashboard/proposals (status: DRAFT) without       */
+/*  needing client email yet — the contractor can come back later to   */
+/*  finalize and send.                                                 */
+/* ------------------------------------------------------------------ */
+
+export type SaveDraftResult =
+  | { ok: true; id: string; token: string; status: "DRAFT" }
+  | { ok: false; reason: string };
+
+export async function saveDraftFromEstimate(args: {
+  address: string;
+  measurements: Measurements;
+  eaves: EditableLine[];
+  rakes: EditableLine[];
+  downspouts: Downspout[];
+  aerial?: {
+    imageDataUrl: string;
+    width: number;
+    height: number;
+    zoom: number;
+  };
+  /** Optional total in cents. When the user hasn't picked a package yet
+   *  the estimate view doesn't have a committed total; pass 0 in that
+   *  case — the proposals list will show "Pending" instead of "$0.00". */
+  totalCents?: number;
+  /** When supplied, updates the existing draft instead of creating a new
+   *  row. The estimate top-bar tracks the returned id locally so repeat
+   *  clicks update the same proposal. */
+  existingId?: string;
+}): Promise<SaveDraftResult> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in" };
+  if (!args.address.trim()) {
+    return { ok: false, reason: "Address is required" };
+  }
+
+  // Compose a Proposal-shaped JSON blob so /proposal can re-hydrate the
+  // draft later. We start from the blank template and overlay the live
+  // estimate data + the contractor's profile.
+  const draft: Proposal = {
+    ...blankProposal(),
+    token: randomBytes(12).toString("hex"),
+    address: args.address,
+    measurements: args.measurements,
+    takeoff: {
+      eaves: args.eaves,
+      rakes: args.rakes,
+      downspouts: args.downspouts,
+      aerial: args.aerial,
+    },
+    contractor: {
+      name: me.profile.contractorName || me.user.name,
+      company: me.profile.company,
+      phone: me.profile.phone,
+      email: me.profile.email,
+      license: me.profile.license,
+      stripePaymentUrl: me.profile.payments.stripeUrl ?? null,
+      squarePaymentUrl: me.profile.payments.squareUrl ?? null,
+    },
+  };
+
+  const dataJson = draft as unknown as Prisma.InputJsonValue;
+  const contractorSnap = draft.contractor as unknown as Prisma.InputJsonValue;
+
+  const totalCents = Math.max(0, Math.round(args.totalCents ?? 0));
+
+  // Update path: contractor has clicked Save more than once on this estimate.
+  const existing = args.existingId
+    ? await db.proposal.findFirst({
+        where: { id: args.existingId, userId: me.user.id },
+        select: { id: true, publicToken: true, status: true },
+      })
+    : null;
+
+  // Never downgrade an already-sent proposal back to DRAFT via this path —
+  // the dedicated send action owns the SENT→DRAFT rollback on email failure.
+  if (existing && existing.status !== "DRAFT") {
+    return {
+      ok: false,
+      reason: `Proposal is already ${existing.status.toLowerCase()}; create a new one instead.`,
+    };
+  }
+
+  const row = existing
+    ? await db.proposal.update({
+        where: { id: existing.id },
+        data: {
+          address: args.address,
+          // Don't clobber clientName/clientEmail if the contractor already
+          // typed them into /proposal — those live in the proposal `data`
+          // blob too, but the columns are what the dashboard table reads.
+          totalCents,
+          data: dataJson,
+          contractorSnap,
+        },
+        select: { id: true, publicToken: true },
+      })
+    : await db.proposal.create({
+        data: {
+          userId: me.user.id,
+          publicToken: draft.token,
+          address: args.address,
+          // Empty client info on first save — filled in when the contractor
+          // navigates to /proposal to finalize and send.
+          clientName: "",
+          clientEmail: "",
+          status: "DRAFT",
+          totalCents,
+          data: dataJson,
+          contractorSnap,
+        },
+        select: { id: true, publicToken: true },
+      });
+
+  revalidatePath("/dashboard/proposals");
+
+  return { ok: true, id: row.id, token: row.publicToken, status: "DRAFT" };
 }
