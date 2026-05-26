@@ -3,6 +3,8 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
+import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
+import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { getMe } from "./me";
 
 export type RunEstimateResponse =
@@ -118,9 +120,6 @@ export async function runEstimate(
     runId: created.id,
   };
 }
-
-import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
-import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 
 /**
  * Loads a saved PlanAnalysis (from /dashboard/blueprints upload) and
