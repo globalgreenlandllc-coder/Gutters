@@ -602,22 +602,20 @@ export async function runAIEstimatePipeline(
         );
       }
       const coverage = totalPolygonLF > 0 ? dsmLF / totalPolygonLF : 0;
-      // Coverage gate is an UPPER-bound sanity check, not a "did we
-      // classify enough" floor. A complex hip+gable roof legitimately
-      // has 30-50% eaves — rejecting that classification just because
-      // it "kept too few edges" forces the contractor to look at every
-      // edge as if it were a gutter. We only fall back when:
-      //   - fewer than 3 edges survived (essentially no classification)
-      //   - OR 100% of the perimeter was classified as eave (the filter
-      //     is broken; this would also make the gray-dashed rake
-      //     verification invisible since there'd be no rakes to show).
-      // Lowered from 0.5 → 0.2 after seeing real-world 46% cases get
-      // rejected even though the 5/7 eave/rake split was correct.
-      const MIN_COVERAGE = 0.2;
+      // Coverage gate is now ONLY an upper-bound sanity check (≈100% of
+      // perimeter classified as eave usually means the azimuth filter
+      // broke — no rakes at all is impossible on a real hip/gable roof).
+      //
+      // Lower-bound gate removed deliberately: when the classifier kept
+      // only 2-3 edges, falling back to "treat every polygon edge as a
+      // gutter" was billing the homeowner for rakes/ridges they don't
+      // get. Better to trust the classifier and surface the rakes the
+      // AI flagged as gray-dashed "no-gutter" lines — the contractor
+      // edits/adds manually from there.
+      const MIN_EDGES = 2;
       const MAX_COVERAGE = 0.98;
       if (
-        imageSpaceEdges.length >= 3 &&
-        coverage >= MIN_COVERAGE &&
+        imageSpaceEdges.length >= MIN_EDGES &&
         coverage <= MAX_COVERAGE
       ) {
         eaves = imageSpaceEdges.map(([a, b], i) => ({
@@ -660,11 +658,9 @@ export async function runAIEstimatePipeline(
         sourceLabel = "DSM-classified";
       } else {
         const why =
-          imageSpaceEdges.length < 3
-            ? `kept ${imageSpaceEdges.length} edge(s)`
-            : coverage > MAX_COVERAGE
-              ? `classified ${(coverage * 100).toFixed(0)}% as eave (filter likely broken)`
-              : `kept only ${(coverage * 100).toFixed(0)}% of perimeter (need ≥${MIN_COVERAGE * 100}%)`;
+          imageSpaceEdges.length < MIN_EDGES
+            ? `kept ${imageSpaceEdges.length} edge(s) — too few to trust`
+            : `classified ${(coverage * 100).toFixed(0)}% as eave (filter likely broken)`;
         notes.push(
           `DSM ${why} — falling back to all ${roofPolygon.points.length} polygon edges`,
         );

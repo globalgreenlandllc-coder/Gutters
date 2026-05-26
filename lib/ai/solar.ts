@@ -126,7 +126,11 @@ export async function getBuildingInsights(
 export function estimateStoriesFromInsights(
   insights: { totalRoofAreaMeters2: number; roofSegments: { pitchDegrees: number }[] } | null,
 ): 1 | 2 | 3 {
-  if (!insights || insights.totalRoofAreaMeters2 === 0) return 2;
+  // Single-story is the majority case for US single-family homes (Census
+  // ACS data: ~62% of detached SFR are 1-story). Defaulting to 2 was
+  // mis-classifying every roof we couldn't read confidently and inflating
+  // downspout drop heights downstream.
+  if (!insights || insights.totalRoofAreaMeters2 === 0) return 1;
   const areaSqFt = insights.totalRoofAreaMeters2 * 10.7639;
   const avgPitch =
     insights.roofSegments.length > 0
@@ -134,10 +138,11 @@ export function estimateStoriesFromInsights(
         insights.roofSegments.length
       : 25;
 
-  // Tiny footprint (<1100 sqft) with steep pitch (>22°) → likely 2+ story
-  // Huge footprint (>2400 sqft) with low pitch (<18°) → likely 1 story
-  if (areaSqFt < 900 && avgPitch > 25) return 3;
-  if (areaSqFt < 1500 && avgPitch > 20) return 2;
-  if (areaSqFt > 2400 && avgPitch < 22) return 1;
-  return 2;
+  // Vertical stacking (2+ stories) leaves a much smaller roof footprint
+  // than the living-area sqft would suggest, AND modern multi-story
+  // homes typically run a steeper pitch (≥6/12 = 26.6°) for shedding
+  // and curb appeal. Both signals together are the signal.
+  if (areaSqFt < 800 && avgPitch > 30) return 3; // tall narrow w/ steep pitch
+  if (areaSqFt < 1200 && avgPitch > 25) return 2; // small footprint + steep
+  return 1; // default to 1-story — contractor can override per downspout
 }
