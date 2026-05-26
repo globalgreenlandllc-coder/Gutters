@@ -192,7 +192,7 @@ export function QuickStart() {
                     Drop a plan, or click to choose
                   </div>
                   <div className="text-xs text-zinc-500">
-                    PDF (multi-page OK) or PNG / JPG · up to 20 MB
+                    PDF (up to 100 pages) or PNG / JPG · up to 32 MB
                   </div>
                 </div>
               </button>

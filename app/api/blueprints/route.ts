@@ -11,7 +11,12 @@ import {
 // Vision-on-plans takes 30-60s. Bump above the default 10s.
 export const maxDuration = 90;
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+// Multipart-fallback cap. The Blob direct-upload path accepts up to 32 MB
+// (Anthropic's PDF limit); this lower number is for the legacy multipart
+// branch which still runs through Vercel's 4.5 MB serverless body limit
+// anyway — keep it at 4 MB so the error is "file too large" rather than
+// the opaque platform 413 you'd otherwise hit.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4 MB
 
 export async function POST(request: Request) {
   const { userId: clerkId } = await auth();

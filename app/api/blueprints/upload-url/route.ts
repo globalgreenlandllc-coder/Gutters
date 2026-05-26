@@ -47,10 +47,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           "image/jpeg",
           "image/webp",
         ],
-        // 25 MB cap — anything bigger is almost certainly a scan that
-        // would be better as a roof-plan-page-only image. Anthropic's
-        // PDF support tops out around 32 MB / 100 pages anyway.
-        maximumSizeInBytes: 25 * 1024 * 1024,
+        // 32 MB is the practical ceiling for our pipeline: it's exactly
+        // Anthropic's PDF input limit (also caps at 100 pages). Going
+        // higher would let the upload succeed but Claude would reject the
+        // analysis call, leaving a stranded blob and a failed
+        // PlanAnalysis row. So we stop the user up-front.
+        // Vercel Blob itself supports far larger objects (multi-GB) —
+        // this is purely an Anthropic constraint.
+        maximumSizeInBytes: 32 * 1024 * 1024,
         // Tokens are short-lived; the upload should start immediately.
         validUntil: Date.now() + 60 * 1000,
         // Pass userId so the upload-completed callback can authorize.

@@ -103,7 +103,7 @@ export default function BlueprintUploader() {
             layout you can drop into a proposal.
           </div>
           <div className="text-slate-500 text-xs mt-2">
-            Up to 20 MB · PNG / JPG / PDF
+            Up to 32 MB · PDF (up to 100 pages) or PNG / JPG
           </div>
         </div>
       </div>
