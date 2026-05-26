@@ -39,14 +39,13 @@ export default function BlueprintUploader() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Analysis failed");
-        // Still navigate to the failed analysis so the user sees the error
-        // and can retry — better UX than dumping them back to the upload form.
-        if (data.id) {
-          router.push(`/dashboard/blueprints/${data.id}`);
-        }
+        // Stay on the upload form for failures (the per-id page would only
+        // show the same error). The contractor can re-pick a file and retry.
         return;
       }
-      router.push(`/dashboard/blueprints/${data.id}`);
+      // Successful analyses flow into the unified estimate view — same
+      // canvas + save/send pipeline as address-based estimates.
+      router.push(`/estimate?planId=${data.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {

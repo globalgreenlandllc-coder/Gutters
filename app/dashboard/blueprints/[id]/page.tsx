@@ -1,12 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, AlertCircle } from "lucide-react";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
-import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
-import BlueprintCanvas from "@/components/blueprints/BlueprintCanvas";
-import BlueprintStats from "@/components/blueprints/BlueprintStats";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -27,22 +24,14 @@ export default async function BlueprintDetailPage({ params }: Props) {
   });
   if (!row) notFound();
 
-  // Extract the first page's image so the canvas can render it as
-  // background. JSON typing is loose because it's a Json column.
-  const pageImages =
-    Array.isArray(row.pageImages)
-      ? (row.pageImages as Array<{
-          pageIndex: number;
-          base64: string;
-          mediaType: string;
-        }>)
-      : [];
-  const firstPage = pageImages[0];
-  const backgroundDataUrl = firstPage
-    ? `data:${firstPage.mediaType};base64,${firstPage.base64}`
-    : undefined;
-
-  const analysis = row.analysisJson as BlueprintAnalysis | null;
+  // Successful analyses now flow into the unified estimate view so the
+  // contractor can edit eaves + downspouts and Save/Send a proposal
+  // exactly the way address-based estimates work. This page stays as
+  // the failed-state viewer (showing the error) and as the legacy
+  // entry point — anything that 404s the modern path will land here.
+  if (row.status === "SUCCEEDED") {
+    redirect(`/estimate?planId=${row.id}`);
+  }
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 py-8 space-y-6">
@@ -90,16 +79,7 @@ export default async function BlueprintDetailPage({ params }: Props) {
           Analysis is still in progress. Refresh this page in a few seconds.
         </div>
       )}
-
-      {row.status === "SUCCEEDED" && analysis && (
-        <>
-          <BlueprintStats analysis={analysis} />
-          <BlueprintCanvas
-            analysis={analysis}
-            backgroundDataUrl={backgroundDataUrl}
-          />
-        </>
-      )}
+      {/* Successful analyses redirect to /estimate?planId=... above. */}
     </div>
   );
 }

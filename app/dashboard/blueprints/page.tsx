@@ -93,7 +93,11 @@ export default async function BlueprintsListPage() {
             return (
               <li key={r.id}>
                 <Link
-                  href={`/dashboard/blueprints/${r.id}`}
+                  href={
+                    r.status === "SUCCEEDED"
+                      ? `/estimate?planId=${r.id}`
+                      : `/dashboard/blueprints/${r.id}`
+                  }
                   className="block rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/60 transition px-4 py-3"
                 >
                   <div className="flex items-center gap-3">

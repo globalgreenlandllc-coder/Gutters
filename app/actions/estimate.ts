@@ -118,3 +118,56 @@ export async function runEstimate(
     runId: created.id,
   };
 }
+
+import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
+import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
+
+/**
+ * Loads a saved PlanAnalysis (from /dashboard/blueprints upload) and
+ * projects it into the same EstimateResult shape /estimate normally
+ * gets from the address pipeline. Lets the contractor edit/save/send
+ * a proposal from a plan exactly the way they would from a satellite-
+ * derived estimate.
+ *
+ * No credit consumed — the blueprint pipeline is free per product call.
+ */
+export async function runEstimateFromPlan(
+  planId: string,
+): Promise<RunEstimateResponse> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in", remaining: 0 };
+
+  const totalCredits = me.credits.included + me.credits.bonus;
+  const remaining = Math.max(totalCredits - me.credits.used, 0);
+
+  const row = await db.planAnalysis.findFirst({
+    where: { id: planId, userId: me.user.id },
+  });
+  if (!row) {
+    return { ok: false, reason: "Plan analysis not found", remaining };
+  }
+  if (row.status !== "SUCCEEDED" || !row.analysisJson) {
+    return {
+      ok: false,
+      reason:
+        row.status === "FAILED"
+          ? row.errorMessage ?? "Plan analysis failed"
+          : "Plan analysis is still in progress",
+      remaining,
+    };
+  }
+
+  const analysis = row.analysisJson as unknown as BlueprintAnalysis;
+  const result = blueprintToEstimateResult(analysis, {
+    filename: row.filename,
+    durationMs: row.durationMs ?? undefined,
+  });
+
+  return {
+    ok: true,
+    result,
+    reused: true, // not chargeable; surface as "reused" in the UI badge
+    remaining,
+    runId: row.id,
+  };
+}

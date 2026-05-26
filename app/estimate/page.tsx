@@ -10,14 +10,20 @@ import { ResultsView } from "@/components/estimate/results-view";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
 import { SAMPLE_ADDRESS } from "@/lib/mock-estimate";
-import { runEstimate } from "@/app/actions/estimate";
+import { runEstimate, runEstimateFromPlan } from "@/app/actions/estimate";
 import type { EstimateResult } from "@/lib/ai";
 
 const MIN_LOADING_MS = 2400;
 
 function EstimateContent() {
   const params = useSearchParams();
-  const address = params.get("address") || SAMPLE_ADDRESS;
+  // Two entry modes:
+  //   ?planId=<id>   — read a previously analyzed construction plan
+  //   ?address=<str> — run the address pipeline (satellite + Solar + SAM-2)
+  // planId wins when both are present.
+  const planId = params.get("planId");
+  const addressParam = params.get("address");
+  const address = addressParam || SAMPLE_ADDRESS;
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [result, setResult] = useState<EstimateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +38,11 @@ function EstimateContent() {
     let cancelled = false;
     const startedAt = Date.now();
 
-    runEstimate(address).then(async (r) => {
+    const run = planId
+      ? runEstimateFromPlan(planId)
+      : runEstimate(address);
+
+    run.then(async (r) => {
       if (cancelled) return;
       const elapsed = Date.now() - startedAt;
       if (elapsed < MIN_LOADING_MS) {
@@ -52,15 +62,23 @@ function EstimateContent() {
     return () => {
       cancelled = true;
     };
-  }, [address, tick]);
+  }, [planId, address, tick]);
+
+  // In plan mode the "address" label is the filename — surfaced by the
+  // server action's geocoded.formatted. Until the result lands we show
+  // a generic plan-mode label so the loading screen doesn't read as a
+  // real address that doesn't match what the contractor uploaded.
+  const headerLabel = planId
+    ? "Analyzing construction plans…"
+    : address;
 
   if (phase === "loading") {
-    return <LoadingState address={address} />;
+    return <LoadingState address={headerLabel} />;
   }
   if (phase === "error") {
     return (
       <ErrorScreen
-        address={address}
+        address={headerLabel}
         reason={error ?? "Unknown error"}
         onRetry={() => setTick((t) => t + 1)}
       />
