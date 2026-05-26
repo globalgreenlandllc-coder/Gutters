@@ -21,6 +21,20 @@ import { db } from "@/lib/db";
  * store is created on the project).
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  // Fail loud + actionable when the Blob store isn't wired up yet.
+  // Without this check the user sees an opaque 500 with no clue how to
+  // fix it. handleUpload() would throw the same error eventually but
+  // wrapped in a stack trace that doesn't surface to the browser.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json(
+      {
+        error:
+          "Vercel Blob isn't configured on this deployment. In your Vercel project: Storage → Create Database → Blob. The BLOB_READ_WRITE_TOKEN env var auto-attaches; redeploy and retry.",
+      },
+      { status: 500 },
+    );
+  }
+
   const { userId: clerkId } = await auth();
   if (!clerkId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -68,6 +82,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     return NextResponse.json(result);
   } catch (e) {
+    // Full stack to Vercel runtime logs; message bubbles to the client so
+    // the contractor doesn't have to dig through logs to know what failed.
+    console.error("[/api/blueprints/upload-url] handleUpload error", e);
     const message = e instanceof Error ? e.message : "upload-url failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
