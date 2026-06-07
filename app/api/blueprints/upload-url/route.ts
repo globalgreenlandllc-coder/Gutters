@@ -20,6 +20,53 @@ import { db } from "@/lib/db";
  * Requires BLOB_READ_WRITE_TOKEN env var (auto-set when a Vercel Blob
  * store is created on the project).
  */
+/**
+ * Diagnostic GET. Hit the route in your browser and you'll see which env
+ * var is missing, whether Clerk auth resolved, and whether the DB user
+ * row was found — without needing the Network tab. No secrets are
+ * returned, just presence/absence flags.
+ */
+export async function GET(): Promise<NextResponse> {
+  let clerkOk = false;
+  let dbOk = false;
+  let clerkErr: string | null = null;
+  let dbErr: string | null = null;
+  let clerkId: string | null = null;
+  try {
+    const a = await auth();
+    clerkId = a.userId ?? null;
+    clerkOk = true;
+  } catch (e) {
+    clerkErr = e instanceof Error ? e.message : String(e);
+  }
+  if (clerkId) {
+    try {
+      const u = await db.user.findUnique({
+        where: { clerkId },
+        select: { id: true },
+      });
+      dbOk = Boolean(u);
+      if (!u) dbErr = "user row not found for this clerkId";
+    } catch (e) {
+      dbErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return NextResponse.json({
+    ok:
+      Boolean(process.env.BLOB_READ_WRITE_TOKEN) &&
+      clerkOk &&
+      Boolean(clerkId) &&
+      dbOk,
+    env: {
+      BLOB_READ_WRITE_TOKEN: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+      DATABASE_URL: Boolean(process.env.DATABASE_URL),
+      CLERK_SECRET_KEY: Boolean(process.env.CLERK_SECRET_KEY),
+    },
+    clerk: { ok: clerkOk, signedIn: Boolean(clerkId), error: clerkErr },
+    db: { ok: dbOk, error: dbErr },
+  });
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   // One outer try/catch so anything thrown — DB cold-start, Clerk hiccup,
   // request.json() on an empty body, handleUpload itself — surfaces as a

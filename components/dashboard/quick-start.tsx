@@ -146,6 +146,41 @@ export function QuickStart() {
     setUploading(true);
     setError(null);
     try {
+      // Pre-flight the upload-url handshake so we can surface the actual
+      // error string instead of @vercel/blob/client's wrapped message.
+      // (The client lib often throws a generic "Vercel Blob: Failed to
+      // retrieve the client token" which hides the real reason — bad
+      // BLOB_READ_WRITE_TOKEN, DB cold-start, missing session, etc.)
+      const diag = await fetch("/api/blueprints/upload-url");
+      if (!diag.ok) {
+        const text = await diag.text();
+        console.error("[QuickStart upload preflight] non-200", diag.status, text);
+        setError(`Upload service is unhealthy (${diag.status}). ${text}`);
+        return;
+      }
+      const diagJson = (await diag.json()) as {
+        ok: boolean;
+        env: { BLOB_READ_WRITE_TOKEN: boolean };
+        clerk: { signedIn: boolean; error: string | null };
+        db: { ok: boolean; error: string | null };
+      };
+      if (!diagJson.env.BLOB_READ_WRITE_TOKEN) {
+        setError(
+          "Vercel Blob is not connected. In Vercel: Storage → Create → Blob, then redeploy.",
+        );
+        return;
+      }
+      if (!diagJson.clerk.signedIn) {
+        setError("Not signed in. Refresh and sign in again.");
+        return;
+      }
+      if (!diagJson.db.ok) {
+        setError(
+          `Database is unreachable: ${diagJson.db.error ?? "unknown"}. Wait 5s and retry.`,
+        );
+        return;
+      }
+
       // 1. Direct upload to Vercel Blob — bypasses Vercel's 4.5MB
       //    serverless body limit so real construction PDFs (5-25MB) work.
       const blob = await upload(file.name, file, {
@@ -170,6 +205,7 @@ export function QuickStart() {
       }
       router.push(`/estimate?planId=${data.id}&jobType=${jobType}`);
     } catch (e) {
+      console.error("[QuickStart upload] threw", e);
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploading(false);
