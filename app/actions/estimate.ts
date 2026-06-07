@@ -32,7 +32,16 @@ export async function runEstimate(
     return { ok: false, reason: "Address is required", remaining: 0 };
   }
 
-  const me = await getMe();
+  // Wrap session lookup so a transient DB / Clerk failure surfaces as a
+  // readable reason string instead of throwing past the page boundary.
+  let me: Awaited<ReturnType<typeof getMe>>;
+  try {
+    me = await getMe();
+  } catch (e) {
+    console.error("[runEstimate] getMe failed", e);
+    const msg = e instanceof Error ? e.message : "Session lookup failed";
+    return { ok: false, reason: msg, remaining: 0 };
+  }
   if (!me) {
     return { ok: false, reason: "Not signed in", remaining: 0 };
   }
@@ -133,7 +142,14 @@ export async function runEstimate(
 export async function runEstimateFromPlan(
   planId: string,
 ): Promise<RunEstimateResponse> {
-  const me = await getMe();
+  let me: Awaited<ReturnType<typeof getMe>>;
+  try {
+    me = await getMe();
+  } catch (e) {
+    console.error("[runEstimateFromPlan] getMe failed", e);
+    const msg = e instanceof Error ? e.message : "Session lookup failed";
+    return { ok: false, reason: msg, remaining: 0 };
+  }
   if (!me) return { ok: false, reason: "Not signed in", remaining: 0 };
 
   const totalCredits = me.credits.included + me.credits.bonus;

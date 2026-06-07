@@ -48,22 +48,36 @@ function EstimateContent() {
       ? runEstimateFromPlan(planId)
       : runEstimate(address);
 
-    run.then(async (r) => {
-      if (cancelled) return;
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < MIN_LOADING_MS) {
-        await new Promise((res) => setTimeout(res, MIN_LOADING_MS - elapsed));
-      }
-      if (cancelled) return;
-      if (r.ok) {
-        setResult(r.result);
-        setReused(r.reused);
-        setPhase("ready");
-      } else {
-        setError(r.reason);
+    run
+      .then(async (r) => {
+        if (cancelled) return;
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < MIN_LOADING_MS) {
+          await new Promise((res) => setTimeout(res, MIN_LOADING_MS - elapsed));
+        }
+        if (cancelled) return;
+        if (r.ok) {
+          setResult(r.result);
+          setReused(r.reused);
+          setPhase("ready");
+        } else {
+          setError(r.reason);
+          setPhase("error");
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        // Server action threw rather than returning {ok:false}. Without
+        // this catch the rejection bubbles to the route's error.tsx as
+        // a generic "Server Components render" 500 with no useful UI.
+        console.error("[/estimate] server action threw", e);
+        const msg =
+          e instanceof Error && e.message
+            ? e.message
+            : "The estimate service is temporarily unavailable. Try again in a few seconds.";
+        setError(msg);
         setPhase("error");
-      }
-    });
+      });
 
     return () => {
       cancelled = true;

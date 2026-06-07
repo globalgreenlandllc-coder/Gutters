@@ -117,6 +117,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } else {
         setSession(shapeSession(me, signedAt, provider));
       }
+    } catch (e) {
+      // Server action threw (DB cold-start, Clerk hiccup, missing env).
+      // Without this catch the rejection propagates to global-error.tsx
+      // as a generic "Server Components render" 500 — wiping the whole
+      // app instead of just leaving the session empty.
+      console.error("[SessionProvider] getMe failed", e);
+      setSession(null);
     } finally {
       setLoading(false);
     }
