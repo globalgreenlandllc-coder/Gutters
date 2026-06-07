@@ -230,6 +230,35 @@ export async function saveDraftFromEstimate(args: {
    *  the proposal JSON blob so the scope-of-work language can branch. */
   jobType?: "new" | "replacement";
 }): Promise<SaveDraftResult> {
+  try {
+    return await saveDraftFromEstimateImpl(args);
+  } catch (e) {
+    // Any throw past this point — DB connection, JSON column overflow,
+    // Clerk session lookup — used to bubble to the page boundary as a
+    // generic "Server Components render" 500. Now it shows up as the
+    // top-bar's red status text.
+    console.error("[saveDraftFromEstimate] threw", e);
+    const msg = e instanceof Error ? e.message : "Save failed";
+    return { ok: false, reason: msg };
+  }
+}
+
+async function saveDraftFromEstimateImpl(args: {
+  address: string;
+  measurements: Measurements;
+  eaves: EditableLine[];
+  rakes: EditableLine[];
+  downspouts: Downspout[];
+  aerial?: {
+    imageDataUrl: string;
+    width: number;
+    height: number;
+    zoom: number;
+  };
+  totalCents?: number;
+  existingId?: string;
+  jobType?: "new" | "replacement";
+}): Promise<SaveDraftResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
   if (!args.address.trim()) {
