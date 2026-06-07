@@ -21,70 +21,58 @@ import { db } from "@/lib/db";
  * store is created on the project).
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  // Fail loud + actionable when the Blob store isn't wired up yet.
-  // Without this check the user sees an opaque 500 with no clue how to
-  // fix it. handleUpload() would throw the same error eventually but
-  // wrapped in a stack trace that doesn't surface to the browser.
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json(
-      {
-        error:
-          "Vercel Blob isn't configured on this deployment. In your Vercel project: Storage → Create Database → Blob. The BLOB_READ_WRITE_TOKEN env var auto-attaches; redeploy and retry.",
-      },
-      { status: 500 },
-    );
-  }
-
-  const { userId: clerkId } = await auth();
-  if (!clerkId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const user = await db.user.findUnique({
-    where: { clerkId },
-    select: { id: true },
-  });
-  if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  const body = (await request.json()) as HandleUploadBody;
+  // One outer try/catch so anything thrown — DB cold-start, Clerk hiccup,
+  // request.json() on an empty body, handleUpload itself — surfaces as a
+  // readable JSON error instead of a bare 500 with no body. Without this,
+  // the browser sees "Failed to load resource: 500" and has no idea why.
   try {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json(
+        {
+          error:
+            "Vercel Blob isn't configured on this deployment. In your Vercel project: Storage → Create Database → Blob. The BLOB_READ_WRITE_TOKEN env var auto-attaches; redeploy and retry.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const { userId: clerkId } = await auth();
+    if (!clerkId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const user = await db.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    });
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const body = (await request.json()) as HandleUploadBody;
     const result = await handleUpload({
       body,
       request,
       onBeforeGenerateToken: async () => ({
-        // PDF + common image types. PDFs are the main use case but raw
-        // photos of a printed plan also need to work.
         allowedContentTypes: [
           "application/pdf",
           "image/png",
           "image/jpeg",
           "image/webp",
         ],
-        // 32 MB is the practical ceiling for our pipeline: it's exactly
-        // Anthropic's PDF input limit (also caps at 100 pages). Going
-        // higher would let the upload succeed but Claude would reject the
-        // analysis call, leaving a stranded blob and a failed
-        // PlanAnalysis row. So we stop the user up-front.
-        // Vercel Blob itself supports far larger objects (multi-GB) —
-        // this is purely an Anthropic constraint.
+        // 32 MB matches Anthropic's PDF input ceiling — going higher just
+        // lets the upload succeed and the analysis fail later.
         maximumSizeInBytes: 32 * 1024 * 1024,
-        // Tokens are short-lived; the upload should start immediately.
         validUntil: Date.now() + 60 * 1000,
-        // Pass userId so the upload-completed callback can authorize.
         tokenPayload: JSON.stringify({ userId: user.id }),
       }),
       onUploadCompleted: async () => {
-        // No-op — we don't persist anything here. The browser will POST
-        // the resulting URL back to /api/blueprints which creates the
-        // PlanAnalysis row and triggers Claude.
+        // No-op: the browser POSTs the resulting URL back to /api/blueprints
+        // which creates the PlanAnalysis row and triggers Claude.
       },
     });
     return NextResponse.json(result);
   } catch (e) {
-    // Full stack to Vercel runtime logs; message bubbles to the client so
-    // the contractor doesn't have to dig through logs to know what failed.
-    console.error("[/api/blueprints/upload-url] handleUpload error", e);
+    console.error("[/api/blueprints/upload-url] error", e);
     const message = e instanceof Error ? e.message : "upload-url failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
