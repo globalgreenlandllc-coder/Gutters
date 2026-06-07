@@ -161,12 +161,23 @@ export function QuickStart() {
       const diagJson = (await diag.json()) as {
         ok: boolean;
         env: { BLOB_READ_WRITE_TOKEN: boolean };
+        blob?: {
+          tokenFound: boolean;
+          tokenSourceVar: string | null;
+          allBlobEnvNames: string[];
+        };
         clerk: { signedIn: boolean; error: string | null };
         db: { ok: boolean; error: string | null };
       };
-      if (!diagJson.env.BLOB_READ_WRITE_TOKEN) {
+      // Look at blob.tokenFound (covers store-prefixed names) rather
+      // than just the canonical BLOB_READ_WRITE_TOKEN flag.
+      const blobOk =
+        diagJson.blob?.tokenFound ?? diagJson.env.BLOB_READ_WRITE_TOKEN;
+      if (!blobOk) {
+        const attached =
+          diagJson.blob?.allBlobEnvNames?.join(", ") || "none";
         setError(
-          "Vercel Blob is not connected. In Vercel: Storage → Create → Blob, then redeploy.",
+          `Vercel Blob token is not attached. Need an env var named BLOB_READ_WRITE_TOKEN (or *_READ_WRITE_TOKEN). Currently attached BLOB vars: ${attached}. Open the Blob store in Vercel → .env.local tab → copy the BLOB_READ_WRITE_TOKEN line into project env vars, then redeploy.`,
         );
         return;
       }

@@ -13,13 +13,32 @@ import { db } from "@/lib/db";
  * we mint here, then post just the resulting URL to /api/blueprints to
  * kick off the Claude analysis.
  *
- * The @vercel/blob/client helper handles both halves of the handshake:
- *   action: "blob.generate-client-token" → we return a token
- *   action: "blob.upload-completed"      → Vercel calls back when upload finished
- *
- * Requires BLOB_READ_WRITE_TOKEN env var (auto-set when a Vercel Blob
- * store is created on the project).
+ * Auth token resolution: Vercel's newer Blob UI sometimes attaches the
+ * token under store-prefixed names (e.g. <STORE_NAME>_READ_WRITE_TOKEN)
+ * instead of the canonical BLOB_READ_WRITE_TOKEN. We accept any env var
+ * matching *_READ_WRITE_TOKEN and pass it explicitly to handleUpload —
+ * BLOB_STORE_ID / BLOB_WEBHOOK_PUBLIC_KEY are NOT auth credentials and
+ * cannot be used for uploads even though Vercel auto-attaches them.
  */
+
+/**
+ * Walks process.env for any variable that looks like a Vercel Blob
+ * read/write token. Canonical name is BLOB_READ_WRITE_TOKEN but Vercel
+ * sometimes prefixes it with the store name. Returns the first match's
+ * value, plus the var name we picked (for diagnostics).
+ */
+function resolveBlobToken(): { token: string | null; varName: string | null } {
+  const direct = process.env.BLOB_READ_WRITE_TOKEN;
+  if (direct) return { token: direct, varName: "BLOB_READ_WRITE_TOKEN" };
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!v) continue;
+    if (k.endsWith("_READ_WRITE_TOKEN") || k.endsWith("_BLOB_READ_WRITE_TOKEN")) {
+      return { token: v, varName: k };
+    }
+  }
+  return { token: null, varName: null };
+}
+
 /**
  * Diagnostic GET. Hit the route in your browser and you'll see which env
  * var is missing, whether Clerk auth resolved, and whether the DB user
@@ -51,16 +70,32 @@ export async function GET(): Promise<NextResponse> {
       dbErr = e instanceof Error ? e.message : String(e);
     }
   }
+
+  // Surface every Blob-prefixed env var by name (presence only — no
+  // values) so the user can see exactly what Vercel attached and figure
+  // out whether a token is hiding under a non-canonical name.
+  const blobEnvNames = Object.keys(process.env)
+    .filter((k) => k.includes("BLOB"))
+    .sort();
+  const { token, varName } = resolveBlobToken();
+
   return NextResponse.json({
-    ok:
-      Boolean(process.env.BLOB_READ_WRITE_TOKEN) &&
-      clerkOk &&
-      Boolean(clerkId) &&
-      dbOk,
+    ok: Boolean(token) && clerkOk && Boolean(clerkId) && dbOk,
     env: {
       BLOB_READ_WRITE_TOKEN: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+      BLOB_STORE_ID: Boolean(process.env.BLOB_STORE_ID),
+      BLOB_WEBHOOK_PUBLIC_KEY: Boolean(process.env.BLOB_WEBHOOK_PUBLIC_KEY),
       DATABASE_URL: Boolean(process.env.DATABASE_URL),
       CLERK_SECRET_KEY: Boolean(process.env.CLERK_SECRET_KEY),
+    },
+    blob: {
+      tokenFound: Boolean(token),
+      // Name of the env var we picked the token from (e.g. it may be a
+      // store-prefixed alias instead of the canonical BLOB_READ_WRITE_TOKEN).
+      tokenSourceVar: varName,
+      // Every BLOB-prefixed env var name on this deployment — useful for
+      // spotting non-standard names Vercel auto-attached.
+      allBlobEnvNames: blobEnvNames,
     },
     clerk: { ok: clerkOk, signedIn: Boolean(clerkId), error: clerkErr },
     db: { ok: dbOk, error: dbErr },
@@ -73,11 +108,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   // readable JSON error instead of a bare 500 with no body. Without this,
   // the browser sees "Failed to load resource: 500" and has no idea why.
   try {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    // Vercel's newer Blob UI sometimes attaches the auth token under a
+    // store-prefixed name (e.g. MYSTORE_READ_WRITE_TOKEN) rather than
+    // the canonical BLOB_READ_WRITE_TOKEN. resolveBlobToken() finds it
+    // wherever it landed. BLOB_STORE_ID and BLOB_WEBHOOK_PUBLIC_KEY are
+    // NOT auth credentials — even if they're attached, we still need a
+    // read/write token to mint upload tokens.
+    const { token: blobToken, varName: blobTokenVar } = resolveBlobToken();
+    if (!blobToken) {
+      const blobNames = Object.keys(process.env)
+        .filter((k) => k.includes("BLOB"))
+        .sort()
+        .join(", ");
       return NextResponse.json(
         {
           error:
-            "Vercel Blob isn't configured on this deployment. In your Vercel project: Storage → Create Database → Blob. The BLOB_READ_WRITE_TOKEN env var auto-attaches; redeploy and retry.",
+            "Vercel Blob read/write token is not attached to this deployment. " +
+            "BLOB_STORE_ID and BLOB_WEBHOOK_PUBLIC_KEY are not auth tokens — " +
+            "we need an env var ending in _READ_WRITE_TOKEN (canonical name " +
+            "BLOB_READ_WRITE_TOKEN). Open your Blob store in Vercel → " +
+            "`.env.local` tab → copy the BLOB_READ_WRITE_TOKEN line and add " +
+            "it to Project Settings → Environment Variables. Then redeploy. " +
+            `Currently attached BLOB-prefixed vars: ${blobNames || "(none)"}.`,
         },
         { status: 500 },
       );
@@ -99,6 +151,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const result = await handleUpload({
       body,
       request,
+      // Pass the token explicitly so the SDK uses whichever env var name
+      // we resolved (handles the store-prefixed case where the SDK's
+      // default BLOB_READ_WRITE_TOKEN lookup would miss it).
+      token: blobToken,
       onBeforeGenerateToken: async () => ({
         allowedContentTypes: [
           "application/pdf",
@@ -110,7 +166,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         // lets the upload succeed and the analysis fail later.
         maximumSizeInBytes: 32 * 1024 * 1024,
         validUntil: Date.now() + 60 * 1000,
-        tokenPayload: JSON.stringify({ userId: user.id }),
+        tokenPayload: JSON.stringify({ userId: user.id, tokenVar: blobTokenVar }),
       }),
       onUploadCompleted: async () => {
         // No-op: the browser POSTs the resulting URL back to /api/blueprints
