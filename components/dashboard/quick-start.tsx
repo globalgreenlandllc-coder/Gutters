@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { upload } from "@vercel/blob/client";
 import {
   ArrowRight,
+  Clock,
   FileUp,
   Hammer,
   Home,
@@ -16,9 +17,46 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getRecentAddresses } from "@/app/actions/estimate";
 
 type Source = "address" | "plans";
 type JobType = "replacement" | "new";
+
+// localStorage key for the address autocomplete recents. Mirrors the
+// server-side list so the dropdown still works for users who haven't
+// successfully run an estimate yet (or while the server action is in
+// flight). Capped at LOCAL_RECENTS_MAX so the dropdown stays readable.
+const LOCAL_RECENTS_KEY = "gutters.recentAddresses";
+const LOCAL_RECENTS_MAX = 8;
+
+function readLocalRecents(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_RECENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((s): s is string => typeof s === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function pushLocalRecent(addr: string) {
+  if (typeof window === "undefined") return;
+  const trimmed = addr.trim();
+  if (!trimmed) return;
+  const existing = readLocalRecents().filter(
+    (a) => a.toLowerCase() !== trimmed.toLowerCase(),
+  );
+  const next = [trimmed, ...existing].slice(0, LOCAL_RECENTS_MAX);
+  try {
+    window.localStorage.setItem(LOCAL_RECENTS_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage may be unavailable (private mode, quota); silently drop.
+  }
+}
 
 export function QuickStart() {
   const router = useRouter();
@@ -31,6 +69,54 @@ export function QuickStart() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Autocomplete state. `recents` is the merged list (server-side past
+  // estimate addresses + localStorage). `highlight` tracks keyboard
+  // focus within the dropdown so Enter selects the active row.
+  const [recents, setRecents] = useState<string[]>([]);
+  const [highlight, setHighlight] = useState(-1);
+  const blurTimer = useRef<number | null>(null);
+
+  // Hydrate localStorage immediately on mount, then fetch the server
+  // copy in the background and merge — server wins on dedupe.
+  useEffect(() => {
+    setRecents(readLocalRecents());
+    let cancelled = false;
+    getRecentAddresses()
+      .then((server) => {
+        if (cancelled) return;
+        const local = readLocalRecents();
+        const seen = new Set<string>();
+        const merged: string[] = [];
+        for (const a of [...server, ...local]) {
+          const k = a.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k);
+          merged.push(a);
+          if (merged.length >= LOCAL_RECENTS_MAX) break;
+        }
+        setRecents(merged);
+      })
+      .catch(() => {
+        // Server action failed (DB cold-start, not signed in). Fall
+        // back to the localStorage list we already loaded — better
+        // than wiping the dropdown.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Filter the dropdown by the current input. Empty input shows everything;
+  // typing narrows by case-insensitive substring (typical autocomplete UX).
+  const suggestions = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return recents;
+    return recents.filter((a) => a.toLowerCase().includes(q));
+  }, [recents, value]);
+
+  const showDropdown =
+    focused && source === "address" && suggestions.length > 0;
 
   // Switching the source toggle to "plans" hints that the user might be on
   // a new build — flip the job-type toggle along with it ONLY if the user
@@ -46,6 +132,10 @@ export function QuickStart() {
   function goAddress(addr?: string) {
     const target = (addr ?? value).trim();
     if (!target) return;
+    // Remember the entered address right away — even if the run fails
+    // later, the user may want to retype/edit it from the dropdown
+    // rather than re-typing from scratch.
+    pushLocalRecent(target);
     router.push(
       `/estimate?address=${encodeURIComponent(target)}&jobType=${jobType}`,
     );
@@ -141,41 +231,121 @@ export function QuickStart() {
 
         {/* Input area swaps based on source */}
         {source === "address" ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              goAddress();
-            }}
-            className={cn(
-              "mt-4 flex h-14 items-center gap-2 rounded-2xl border bg-white pl-4 pr-2 transition",
-              focused
-                ? "border-accent-500 ring-2 ring-accent-500/15"
-                : "border-zinc-200 shadow-sm",
-            )}
-          >
-            <MapPin
+          <div className="relative">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                // Enter while a dropdown row is highlighted picks that row,
+                // otherwise submits whatever's in the input.
+                if (highlight >= 0 && suggestions[highlight]) {
+                  goAddress(suggestions[highlight]);
+                } else {
+                  goAddress();
+                }
+              }}
               className={cn(
-                "h-5 w-5 shrink-0 transition",
-                focused ? "text-accent-600" : "text-zinc-400",
+                "mt-4 flex h-14 items-center gap-2 rounded-2xl border bg-white pl-4 pr-2 transition",
+                focused
+                  ? "border-accent-500 ring-2 ring-accent-500/15"
+                  : "border-zinc-200 shadow-sm",
               )}
-            />
-            <input
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
-              className="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
-            />
-            <button
-              type="submit"
-              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-accent-600 px-4 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 active:translate-y-px"
             >
-              <Sparkles className="h-4 w-4" />
-              Estimate
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </form>
+              <MapPin
+                className={cn(
+                  "h-5 w-5 shrink-0 transition",
+                  focused ? "text-accent-600" : "text-zinc-400",
+                )}
+              />
+              <input
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setHighlight(-1);
+                }}
+                onFocus={() => {
+                  if (blurTimer.current) {
+                    window.clearTimeout(blurTimer.current);
+                    blurTimer.current = null;
+                  }
+                  setFocused(true);
+                }}
+                onBlur={() => {
+                  // Defer so a mousedown on a dropdown row gets to run
+                  // before the dropdown unmounts. setTimeout is the
+                  // standard combobox pattern for this.
+                  blurTimer.current = window.setTimeout(() => {
+                    setFocused(false);
+                    setHighlight(-1);
+                  }, 120);
+                }}
+                onKeyDown={(e) => {
+                  if (!showDropdown) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHighlight((h) =>
+                      h + 1 >= suggestions.length ? 0 : h + 1,
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHighlight((h) =>
+                      h <= 0 ? suggestions.length - 1 : h - 1,
+                    );
+                  } else if (e.key === "Escape") {
+                    setHighlight(-1);
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
+                autoComplete="off"
+                role="combobox"
+                aria-expanded={showDropdown}
+                aria-autocomplete="list"
+                className="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
+              />
+              <button
+                type="submit"
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-accent-600 px-4 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 active:translate-y-px"
+              >
+                <Sparkles className="h-4 w-4" />
+                Estimate
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </form>
+
+            {showDropdown && (
+              <ul
+                role="listbox"
+                className="absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-2xl border border-zinc-200 bg-white py-1.5 shadow-elevated"
+              >
+                <li className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                  Recent addresses
+                </li>
+                {suggestions.map((s, i) => (
+                  <li key={s} role="option" aria-selected={i === highlight}>
+                    <button
+                      type="button"
+                      // mousedown fires before input blur — picks the
+                      // option before the dropdown unmounts.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        goAddress(s);
+                      }}
+                      onMouseEnter={() => setHighlight(i)}
+                      className={cn(
+                        "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition",
+                        i === highlight
+                          ? "bg-accent-50 text-accent-900"
+                          : "text-zinc-700 hover:bg-zinc-50",
+                      )}
+                    >
+                      <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      <span className="truncate">{s}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         ) : (
           <div className="mt-4 space-y-3">
             {!file ? (

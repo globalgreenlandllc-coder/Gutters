@@ -7,6 +7,44 @@ import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { getMe } from "./me";
 
+/**
+ * Most recent unique addresses this contractor has run estimates on.
+ * Powers the autocomplete dropdown on the dashboard's address input —
+ * the same address rarely needs a full retype.
+ *
+ * Returns the *display* form (`row.address`, which is whatever the user
+ * entered, after geocode normalization on success) rather than the
+ * normalized lowercase key, so the dropdown reads the way the user
+ * originally typed it.
+ */
+export async function getRecentAddresses(): Promise<string[]> {
+  let me: Awaited<ReturnType<typeof getMe>>;
+  try {
+    me = await getMe();
+  } catch {
+    return [];
+  }
+  if (!me) return [];
+
+  const rows = await db.estimateRun.findMany({
+    where: { userId: me.user.id, status: "SUCCEEDED" },
+    orderBy: { createdAt: "desc" },
+    select: { address: true, addressNormalized: true },
+    take: 50,
+  });
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rows) {
+    const key = r.addressNormalized || r.address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r.address);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 export type RunEstimateResponse =
   | {
       ok: true;
