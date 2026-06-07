@@ -58,6 +58,7 @@ function BillingSection() {
   const total = (credits?.included ?? 12) + (credits?.bonus ?? 0);
   const remaining = Math.max(total - used, 0);
   const pct = Math.round((used / total) * 100);
+  const isAdmin = session?.user.role === "SUPER_ADMIN";
 
   return (
     <Section
@@ -70,16 +71,16 @@ function BillingSection() {
         <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
           <div className="flex items-baseline justify-between">
             <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">
-              {remaining}
+              {isAdmin ? "Unlimited" : remaining}
             </span>
             <span className="text-xs text-zinc-500">
-              of {total} credits remaining
+              {isAdmin ? "admin account" : `of ${total} credits remaining`}
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
             <div
               className="h-full rounded-full bg-gradient-to-r from-accent-500 to-accent-700"
-              style={{ width: `${100 - pct}%` }}
+              style={{ width: `${isAdmin ? 100 : 100 - pct}%` }}
             />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">

@@ -1,6 +1,7 @@
 "use server";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   IMPERSONATION_MAX_AGE_MS,
@@ -382,6 +383,10 @@ export async function consumeMyCredit(address: string): Promise<{
   const userId = me.user.id;
   const since = new Date(Date.now() - 24 * 3600 * 1000);
   const norm = address.trim().toLowerCase();
+  // SUPER_ADMIN: skip both the per-address cap and the wallet. Mirrors
+  // the bypass in runEstimate; this entry point is hit by some legacy
+  // callers (e.g. mock pathway).
+  const isAdmin = me.user.role === "SUPER_ADMIN";
 
   const recentSame = await db.estimateRun.count({
     where: {
@@ -391,7 +396,7 @@ export async function consumeMyCredit(address: string): Promise<{
     },
   });
 
-  if (recentSame >= 10) {
+  if (!isAdmin && recentSame >= 10) {
     return {
       ok: false,
       reused: false,
@@ -399,6 +404,11 @@ export async function consumeMyCredit(address: string): Promise<{
       reason: "Same address has been re-run 10 times in the last 24 hours.",
     };
   }
+
+  const total = me.credits.included + me.credits.bonus;
+  const remainingHeadline = isAdmin
+    ? Number.POSITIVE_INFINITY
+    : total - me.credits.used;
 
   if (recentSame > 0) {
     await db.estimateRun.create({
@@ -414,12 +424,11 @@ export async function consumeMyCredit(address: string): Promise<{
     return {
       ok: true,
       reused: true,
-      remaining: me.credits.included + me.credits.bonus - me.credits.used,
+      remaining: remainingHeadline,
     };
   }
 
-  const total = me.credits.included + me.credits.bonus;
-  if (me.credits.used >= total) {
+  if (!isAdmin && me.credits.used >= total) {
     return {
       ok: false,
       reused: false,
@@ -428,26 +437,31 @@ export async function consumeMyCredit(address: string): Promise<{
     };
   }
 
-  await db.$transaction([
-    db.creditWallet.update({
-      where: { userId },
-      data: { used: { increment: 1 } },
-    }),
+  const writes: Prisma.PrismaPromise<unknown>[] = [
     db.estimateRun.create({
       data: {
         userId,
         address,
         addressNormalized: norm,
         status: "SUCCEEDED",
-        creditConsumed: true,
+        creditConsumed: !isAdmin,
         reused: false,
       },
     }),
-  ]);
+  ];
+  if (!isAdmin) {
+    writes.push(
+      db.creditWallet.update({
+        where: { userId },
+        data: { used: { increment: 1 } },
+      }),
+    );
+  }
+  await db.$transaction(writes);
 
   return {
     ok: true,
     reused: false,
-    remaining: total - me.credits.used - 1,
+    remaining: isAdmin ? Number.POSITIVE_INFINITY : total - me.credits.used - 1,
   };
 }

@@ -12,11 +12,15 @@ export function CreditsChip() {
   const [open, setOpen] = useState(false);
   if (!session) return null;
 
+  // SUPER_ADMIN has no wallet — render an "Unlimited" pill instead of
+  // the numeric counter so they don't see a misleading 12/12 that
+  // never decrements.
+  const isAdmin = session.user.role === "SUPER_ADMIN";
   const total = session.credits.included + session.credits.bonus;
   const remaining = Math.max(total - session.credits.used, 0);
-  const pct = Math.round((remaining / total) * 100);
-  const low = remaining <= 3;
-  const out = remaining === 0;
+  const pct = isAdmin ? 100 : Math.round((remaining / total) * 100);
+  const low = !isAdmin && remaining <= 3;
+  const out = !isAdmin && remaining === 0;
 
   return (
     <div className="relative">
@@ -42,9 +46,11 @@ export function CreditsChip() {
           )}
         />
         <span className="tabular-nums">
-          {remaining} / {total}
+          {isAdmin ? "∞" : `${remaining} / ${total}`}
         </span>
-        <span className="hidden sm:inline text-zinc-400">credits</span>
+        <span className="hidden sm:inline text-zinc-400">
+          {isAdmin ? "admin" : "credits"}
+        </span>
       </button>
 
       <AnimatePresence>
@@ -63,10 +69,10 @@ export function CreditsChip() {
             >
               <div className="flex items-baseline justify-between">
                 <span className="font-display text-2xl font-semibold tabular-nums text-zinc-900">
-                  {remaining}
+                  {isAdmin ? "Unlimited" : remaining}
                 </span>
                 <span className="text-xs text-zinc-500">
-                  of {total} remaining
+                  {isAdmin ? "admin account" : `of ${total} remaining`}
                 </span>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">

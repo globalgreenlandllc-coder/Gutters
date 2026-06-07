@@ -87,15 +87,22 @@ export async function runEstimate(
   const userId = me.user.id;
   const norm = trimmed.toLowerCase();
   const since = new Date(Date.now() - TWENTY_FOUR_HOURS);
+  // SUPER_ADMIN bypasses both credit accounting and the same-address
+  // daily cap. They're internal users running QA, demos, and bug-repros
+  // — counting those against a 12/month wallet makes the tool unusable
+  // for the team that owns it.
+  const isAdmin = me.user.role === "SUPER_ADMIN";
 
   const totalCredits = me.credits.included + me.credits.bonus;
-  const remainingBefore = Math.max(totalCredits - me.credits.used, 0);
+  const remainingBefore = isAdmin
+    ? Number.POSITIVE_INFINITY
+    : Math.max(totalCredits - me.credits.used, 0);
 
   const recentSame = await db.estimateRun.count({
     where: { userId, addressNormalized: norm, createdAt: { gte: since } },
   });
 
-  if (recentSame >= SAME_ADDRESS_DAILY_LIMIT) {
+  if (!isAdmin && recentSame >= SAME_ADDRESS_DAILY_LIMIT) {
     return {
       ok: false,
       reason: `This address has been re-run ${SAME_ADDRESS_DAILY_LIMIT} times in the last 24 hours.`,
@@ -104,7 +111,7 @@ export async function runEstimate(
   }
 
   const isReused = recentSame > 0;
-  if (!isReused && remainingBefore <= 0) {
+  if (!isAdmin && !isReused && remainingBefore <= 0) {
     return {
       ok: false,
       reason: "Out of credits — top up or wait until your next renewal.",
@@ -131,6 +138,10 @@ export async function runEstimate(
     return { ok: false, reason: message, remaining: remainingBefore };
   }
 
+  // Admins still log the run (we want the audit trail + dashboards) but
+  // creditConsumed is always false so the wallet stays untouched.
+  const consumesCredit = !isReused && !isAdmin;
+
   const writes: Prisma.PrismaPromise<unknown>[] = [
     db.estimateRun.create({
       data: {
@@ -138,14 +149,14 @@ export async function runEstimate(
         address: result.geocoded.formatted,
         addressNormalized: norm,
         status: "SUCCEEDED",
-        creditConsumed: !isReused,
+        creditConsumed: consumesCredit,
         reused: isReused,
         durationMs: result.durationMs,
         measurements: result.measurements as unknown as Prisma.InputJsonValue,
       },
     }),
   ];
-  if (!isReused) {
+  if (consumesCredit) {
     writes.push(
       db.creditWallet.update({
         where: { userId },
@@ -155,9 +166,9 @@ export async function runEstimate(
   }
   const [created] = (await db.$transaction(writes)) as [{ id: string }];
 
-  const remainingAfter = isReused
-    ? remainingBefore
-    : Math.max(remainingBefore - 1, 0);
+  const remainingAfter = consumesCredit
+    ? Math.max(remainingBefore - 1, 0)
+    : remainingBefore;
 
   return {
     ok: true,
