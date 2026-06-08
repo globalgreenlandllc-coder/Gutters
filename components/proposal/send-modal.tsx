@@ -8,6 +8,10 @@ import type { Proposal } from "@/lib/proposal-mock";
 import { sendProposal } from "@/app/actions/proposals";
 import { cn } from "@/lib/utils";
 
+function isPlausibleEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
 export function SendModal({
   open,
   onClose,
@@ -18,12 +22,24 @@ export function SendModal({
   proposal: Proposal;
 }) {
   const [phase, setPhase] = useState<"compose" | "sent">("compose");
+  // Editable client info — seeded from the proposal but the contractor
+  // can correct typos / fill in blanks right before sending. The send
+  // action receives a merged proposal so these values stick.
+  const [clientName, setClientName] = useState(proposal.client.name);
+  const [clientEmail, setClientEmail] = useState(proposal.client.email);
   const [subject, setSubject] = useState(
     `Your gutter proposal — ${proposal.address}`,
   );
-  const [message, setMessage] = useState(
-    `Hi ${proposal.client.name.split(" ")[0]},\n\nAttached is your gutter replacement proposal. Tap below to review the three options, sign, and pay your deposit. Pricing locked for ${proposal.validDays} days.\n\n— ${proposal.contractor.name}`,
+  const firstName = (clientName.trim().split(/\s+/)[0] || "there").replace(
+    /^there$/,
+    "there",
   );
+  const [message, setMessage] = useState(
+    `Hi ${firstName},\n\nAttached is your gutter replacement proposal. Tap below to review the three options, sign, and pay your deposit. Pricing locked for ${proposal.validDays} days.\n\n— ${proposal.contractor.name}`,
+  );
+  // Track whether the user has hand-edited the message; if not, keep
+  // the greeting auto-synced to the client-name field.
+  const [messageDirty, setMessageDirty] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -32,6 +48,16 @@ export function SendModal({
     typeof window !== "undefined"
       ? `${window.location.origin}/p/${proposal.token}`
       : `/p/${proposal.token}`;
+
+  function onClientNameChange(v: string) {
+    setClientName(v);
+    if (!messageDirty) {
+      const first = (v.trim().split(/\s+/)[0] || "there");
+      setMessage(
+        `Hi ${first},\n\nAttached is your gutter replacement proposal. Tap below to review the three options, sign, and pay your deposit. Pricing locked for ${proposal.validDays} days.\n\n— ${proposal.contractor.name}`,
+      );
+    }
+  }
 
   function copy() {
     navigator.clipboard?.writeText(portalUrl).then(() => {
@@ -42,8 +68,33 @@ export function SendModal({
 
   function send() {
     setError(null);
+    const trimmedName = clientName.trim();
+    const trimmedEmail = clientEmail.trim();
+    if (!trimmedName) {
+      setError("Client name is required.");
+      return;
+    }
+    if (!isPlausibleEmail(trimmedEmail)) {
+      setError("Client email looks invalid (need name@domain.tld).");
+      return;
+    }
+    // Send a proposal copy with the edited client info merged in so the
+    // server persists the latest values + uses the new email/name in
+    // the outgoing template.
+    const updated: Proposal = {
+      ...proposal,
+      client: {
+        ...proposal.client,
+        name: trimmedName,
+        email: trimmedEmail,
+      },
+    };
     startTransition(async () => {
-      const res = await sendProposal({ proposal, subject, message });
+      const res = await sendProposal({
+        proposal: updated,
+        subject,
+        message,
+      });
       if (res.ok) {
         setSentPortalUrl(res.portalUrl);
         setPhase("sent");
@@ -103,11 +154,27 @@ export function SendModal({
                 </div>
 
                 <div className="mt-5 space-y-3">
-                  <Row label="To">
+                  <Row label="Client">
                     <input
-                      readOnly
-                      value={`${proposal.client.name} <${proposal.client.email}>`}
-                      className="w-full bg-transparent text-sm text-zinc-900 outline-none"
+                      value={clientName}
+                      onChange={(e) => onClientNameChange(e.target.value)}
+                      placeholder="Full name"
+                      className="w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
+                    />
+                  </Row>
+                  <Row label="Email">
+                    <input
+                      value={clientEmail}
+                      onChange={(e) => setClientEmail(e.target.value)}
+                      placeholder="name@domain.com"
+                      type="email"
+                      autoComplete="off"
+                      className={cn(
+                        "w-full bg-transparent text-sm outline-none placeholder:text-zinc-400",
+                        clientEmail && !isPlausibleEmail(clientEmail)
+                          ? "text-rose-700"
+                          : "text-zinc-900",
+                      )}
                     />
                   </Row>
                   <Row label="Subject">
@@ -120,7 +187,10 @@ export function SendModal({
                   <div className="rounded-lg border border-zinc-200 bg-zinc-50/40 p-3">
                     <textarea
                       value={message}
-                      onChange={(e) => setMessage(e.target.value)}
+                      onChange={(e) => {
+                        setMessage(e.target.value);
+                        setMessageDirty(true);
+                      }}
                       rows={6}
                       className="w-full resize-none bg-transparent text-sm leading-relaxed text-zinc-700 outline-none"
                     />
@@ -177,7 +247,7 @@ export function SendModal({
                     <Mail className="h-4 w-4" />
                     {pending
                       ? "Sending…"
-                      : `Send to ${proposal.client.name.split(" ")[0] || "client"}`}
+                      : `Send to ${clientName.trim().split(/\s+/)[0] || "client"}`}
                   </Button>
                 </div>
               </div>
@@ -195,8 +265,8 @@ export function SendModal({
                   Proposal sent
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
-                  {proposal.client.name} will receive an email and can review,
-                  sign, and pay from the portal.
+                  {clientName.trim() || "Your client"} will receive an email and
+                  can review, sign, and pay from the portal.
                 </p>
                 <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
                   <Button
