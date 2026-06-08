@@ -7,13 +7,10 @@ import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { getMe } from "./me";
 
-// The address pipeline (geocode → Solar API → satellite → SAM-2 →
-// vision edge classifier → ridge merge) typically takes 25-50s end-
-// to-end. Vercel's default function timeout is ~10s, which is what
-// was leaving /estimate stuck on "Building takeoff…" forever — the
-// function would be killed mid-call while the client kept spinning.
-// 90s is the Vercel Pro ceiling without bumping plans.
-export const maxDuration = 90;
+// Note: the 90s function timeout for this server action is set on
+// app/estimate/layout.tsx (maxDuration export). "use server" files
+// can only export async functions, so the duration config has to live
+// alongside the page that triggers it.
 
 /**
  * Most recent unique addresses this contractor has run estimates on.
