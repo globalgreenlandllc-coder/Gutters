@@ -44,6 +44,22 @@ function EstimateContent() {
     let cancelled = false;
     const startedAt = Date.now();
 
+    // Client-side watchdog. The server action has a 90s maxDuration on
+    // Vercel; if no response by 95s, we surface a real error instead
+    // of leaving the user staring at "Building takeoff…" forever.
+    // Most pipeline calls finish in 25-50s so this rarely fires; when
+    // it does, an upstream API (Solar / Anthropic / fal) is hung.
+    const WATCHDOG_MS = 95_000;
+    const watchdog = setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      setError(
+        "The estimate is taking longer than usual to come back. An upstream service " +
+          "(Solar API, satellite imagery, or AI vision) may be slow right now. Try again.",
+      );
+      setPhase("error");
+    }, WATCHDOG_MS);
+
     const run = planId
       ? runEstimateFromPlan(planId)
       : runEstimate(address);
@@ -51,6 +67,7 @@ function EstimateContent() {
     run
       .then(async (r) => {
         if (cancelled) return;
+        clearTimeout(watchdog);
         const elapsed = Date.now() - startedAt;
         if (elapsed < MIN_LOADING_MS) {
           await new Promise((res) => setTimeout(res, MIN_LOADING_MS - elapsed));
@@ -67,6 +84,7 @@ function EstimateContent() {
       })
       .catch((e) => {
         if (cancelled) return;
+        clearTimeout(watchdog);
         // Server action threw rather than returning {ok:false}. Without
         // this catch the rejection bubbles to the route's error.tsx as
         // a generic "Server Components render" 500 with no useful UI.
@@ -81,6 +99,7 @@ function EstimateContent() {
 
     return () => {
       cancelled = true;
+      clearTimeout(watchdog);
     };
   }, [planId, address, tick]);
 
