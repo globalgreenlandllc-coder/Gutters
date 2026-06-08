@@ -1,8 +1,33 @@
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { list } from "@vercel/blob";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
+
+/**
+ * Parses a Vercel Blob token to surface its scope (read-only vs
+ * read-write) and the store ID embedded in it. Lets us tell the user
+ * exactly *why* the Blob backend is rejecting a token that's present
+ * — e.g. "token belongs to store_abc but BLOB_STORE_ID says store_xyz".
+ *
+ * Token format: vercel_blob_<scope>_<storeId>_<secret>
+ *   scope   = "rw" (read-write) or "ro" (read-only)
+ *   storeId = store_XXXXXX-style ID
+ *   secret  = random opaque suffix
+ */
+function parseBlobToken(token: string): {
+  scope: "rw" | "ro" | null;
+  storeIdFromToken: string | null;
+} {
+  // vercel_blob_rw_storeAbCdEfGh_secretStuff
+  const m = /^vercel_blob_(rw|ro)_([A-Za-z0-9]+)_/.exec(token);
+  if (!m) return { scope: null, storeIdFromToken: null };
+  return {
+    scope: m[1] as "rw" | "ro",
+    storeIdFromToken: m[2],
+  };
+}
 
 /**
  * Signed-upload-URL handshake for /api/blueprints.
@@ -79,8 +104,43 @@ export async function GET(): Promise<NextResponse> {
     .sort();
   const { token, varName } = resolveBlobToken();
 
+  // Inspect the token *structurally* before hitting the network — most
+  // "access denied" errors are mismatched store IDs or read-only scope.
+  const parsed = token
+    ? parseBlobToken(token)
+    : { scope: null, storeIdFromToken: null };
+  const envStoreId = process.env.BLOB_STORE_ID || null;
+  const storeIdMatch =
+    parsed.storeIdFromToken && envStoreId
+      ? parsed.storeIdFromToken === envStoreId
+      : null;
+
+  // Live API check — proves the token actually works with the Blob
+  // backend, not just that an env var exists. list({limit:1}) is the
+  // cheapest authenticated call.
+  let liveCheck: { ok: boolean; error: string | null } = {
+    ok: false,
+    error: token ? null : "no token to test",
+  };
+  if (token) {
+    try {
+      await list({ limit: 1, token });
+      liveCheck = { ok: true, error: null };
+    } catch (e) {
+      liveCheck = {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
   return NextResponse.json({
-    ok: Boolean(token) && clerkOk && Boolean(clerkId) && dbOk,
+    ok:
+      Boolean(token) &&
+      clerkOk &&
+      Boolean(clerkId) &&
+      dbOk &&
+      liveCheck.ok,
     env: {
       BLOB_READ_WRITE_TOKEN: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
       BLOB_STORE_ID: Boolean(process.env.BLOB_STORE_ID),
@@ -90,12 +150,15 @@ export async function GET(): Promise<NextResponse> {
     },
     blob: {
       tokenFound: Boolean(token),
-      // Name of the env var we picked the token from (e.g. it may be a
-      // store-prefixed alias instead of the canonical BLOB_READ_WRITE_TOKEN).
       tokenSourceVar: varName,
-      // Every BLOB-prefixed env var name on this deployment — useful for
-      // spotting non-standard names Vercel auto-attached.
       allBlobEnvNames: blobEnvNames,
+      // The next four together pinpoint why the Blob backend may be
+      // rejecting a token that is otherwise present.
+      tokenScope: parsed.scope, // "rw" | "ro" | null
+      tokenStoreId: parsed.storeIdFromToken,
+      envStoreId,
+      storeIdMatch, // true | false | null (null = can't compare)
+      liveCheck,
     },
     clerk: { ok: clerkOk, signedIn: Boolean(clerkId), error: clerkErr },
     db: { ok: dbOk, error: dbErr },
