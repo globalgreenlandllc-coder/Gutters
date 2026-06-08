@@ -14,11 +14,19 @@ export type ProposalListItem = {
   id: string;
   address: string;
   client: string;
+  clientEmail?: string;
   total: number;
   status: ProposalStatus;
   selectedPackage?: string;
   updatedAt: string;
+  /** Total ProposalEvent rows of any kind. Kept for backwards-compat. */
   views: number;
+  /** ProposalEvent rows with kind=VIEWED (i.e. client opened the portal). */
+  viewCount: number;
+  /** Most recent VIEWED event timestamp (ISO), if any. */
+  lastViewedAt?: string;
+  /** First VIEWED event timestamp (ISO), if any. */
+  firstViewedAt?: string;
   paid?: number;
 };
 

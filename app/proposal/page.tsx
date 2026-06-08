@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { blankProposal, type Proposal } from "@/lib/proposal-mock";
 import {
   clearEstimateHandoff,
@@ -17,44 +18,72 @@ import { BuilderSidebar } from "@/components/proposal/builder-sidebar";
 import { SendModal } from "@/components/proposal/send-modal";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
 import { useProfile } from "@/lib/auth-mock";
+import { getMyProposal } from "@/app/actions/dashboard";
 
 export default function ProposalPage() {
   return (
     <AuthGate>
-      <Inner />
+      <Suspense fallback={null}>
+        <Inner />
+      </Suspense>
     </AuthGate>
   );
 }
 
 function Inner() {
+  const params = useSearchParams();
+  const proposalId = params.get("id");
   const profile = useProfile();
   const [proposal, setProposal] = useState<Proposal>(blankProposal);
   const [preview, setPreview] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [handoffApplied, setHandoffApplied] = useState(false);
 
-  // On mount, consume any handoff written by the estimate flow — replace
-  // sampleMeasurements with the contractor's real takeoff so packages
-  // and totals reflect the actual job, not a stock template. Consumed
-  // once and cleared so refreshing /proposal doesn't reapply stale data.
+  // Two ways the editor gets seeded:
+  //   1. ?id=<proposalId> → load the saved row from the DB so the
+  //      contractor can edit / re-send an existing draft. Without this
+  //      the editor was starting from blankProposal and the send modal
+  //      rejected with "Property address is required".
+  //   2. handoff in localStorage → fresh from the /estimate flow.
+  // ?id wins when both are present so a re-opened draft never gets
+  // overwritten by stale handoff data left behind in localStorage.
   useEffect(() => {
-    const handoff = readEstimateHandoff();
-    if (handoff) {
-      setProposal((p) => ({
-        ...p,
-        address: handoff.address,
-        measurements: handoff.measurements,
-        takeoff: {
-          eaves: handoff.eaves,
-          rakes: handoff.rakes,
-          downspouts: handoff.downspouts,
-          aerial: handoff.aerial,
-        },
-      }));
-      clearEstimateHandoff();
+    let cancelled = false;
+    async function init() {
+      if (proposalId) {
+        const loaded = await getMyProposal(proposalId);
+        if (cancelled) return;
+        if (loaded) {
+          setProposal(loaded);
+          // Clear any stale handoff so it doesn't leak into the next
+          // fresh /proposal load.
+          clearEstimateHandoff();
+          setHandoffApplied(true);
+          return;
+        }
+      }
+      const handoff = readEstimateHandoff();
+      if (handoff) {
+        setProposal((p) => ({
+          ...p,
+          address: handoff.address,
+          measurements: handoff.measurements,
+          takeoff: {
+            eaves: handoff.eaves,
+            rakes: handoff.rakes,
+            downspouts: handoff.downspouts,
+            aerial: handoff.aerial,
+          },
+        }));
+        clearEstimateHandoff();
+      }
+      if (!cancelled) setHandoffApplied(true);
     }
-    setHandoffApplied(true);
-  }, []);
+    init();
+    return () => {
+      cancelled = true;
+    };
+  }, [proposalId]);
 
   useEffect(() => {
     setProposal((p) => ({

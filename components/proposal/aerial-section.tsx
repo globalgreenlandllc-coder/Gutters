@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo } from "react";
-import { Pencil, Ruler, Sparkles } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Pencil, Sparkles } from "lucide-react";
 import { lineLengthFt } from "@/components/estimate/aerial-canvas";
 import { AerialReadonly } from "@/components/estimate/aerial-shared";
 import { PresentationCanvas } from "./presentation-canvas";
+import { GutterSystemBreakdown } from "./gutter-system-breakdown";
 import { sampleEaves, sampleDownspouts } from "@/lib/mock-estimate";
 import type { Downspout, EditableLine } from "@/lib/types";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -112,29 +112,20 @@ export function AerialSection({
             </div>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge>
-            <Ruler className="h-3 w-3" />
-            {hasRealTakeoff ? liveEaveLF : proposal.measurements.eaveLF} LF eaves
-          </Badge>
-          {hasRealTakeoff && takeoff!.rakes.length > 0 && (
-            <Badge tone="neutral">
-              {takeoff!.rakes.length} rake{takeoff!.rakes.length === 1 ? "" : "s"} (no gutter)
-            </Badge>
-          )}
-          <Badge tone="neutral">
-            {proposal.measurements.downspoutCount} downspouts
-          </Badge>
-          <Badge tone="neutral">
-            {proposal.measurements.outsideCorners +
-              proposal.measurements.insideCorners}{" "}
-            corners
-          </Badge>
-          <Badge tone="neutral">{proposal.measurements.stories}-story</Badge>
-          <Badge tone="neutral">
-            {proposal.measurements.wasteFactorPct}% waste
-          </Badge>
-        </div>
+        {hasRealTakeoff && (
+          <GutterSystemBreakdown
+            eaves={takeoff!.eaves}
+            rakes={takeoff!.rakes}
+            downspouts={takeoff!.downspouts}
+            measurements={{
+              ...proposal.measurements,
+              eaveLF: liveEaveLF,
+            }}
+            // Default-feature package (e.g. "Pro Shield") since the
+            // proposal model doesn't yet store a selectedPackageId.
+            selectedPackageName={proposal.packages[1]?.name}
+          />
+        )}
       </div>
     </section>
   );

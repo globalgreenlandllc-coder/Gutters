@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getMe } from "./me";
 
 import type { ProposalListItem } from "@/lib/dashboard-mock";
+import type { Proposal } from "@/lib/proposal-mock";
 export type MyProposalRow = ProposalListItem;
 
 export type MyKpis = {
@@ -49,19 +50,80 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
     orderBy: { updatedAt: "desc" },
     include: {
       _count: { select: { events: true } },
+      // Just the VIEWED events so we can compute first/last/count.
+      // Capped at 50 — anything past that is uncommon and we only
+      // care about the latest two timestamps.
+      events: {
+        where: { kind: "VIEWED" },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+        take: 50,
+      },
     },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    address: r.address,
-    client: r.clientName,
-    total: r.totalCents / 100,
-    status: STATUS_TO_UI[r.status as keyof typeof STATUS_TO_UI] ?? "draft",
-    selectedPackage: r.selectedPackageId ?? undefined,
-    updatedAt: r.updatedAt.toISOString(),
-    views: r._count.events,
-    paid: r.paidCents > 0 ? r.paidCents / 100 : undefined,
-  }));
+  return rows.map((r) => {
+    const viewEvents = r.events;
+    return {
+      id: r.id,
+      address: r.address,
+      client: r.clientName,
+      clientEmail: r.clientEmail || undefined,
+      total: r.totalCents / 100,
+      status: STATUS_TO_UI[r.status as keyof typeof STATUS_TO_UI] ?? "draft",
+      selectedPackage: r.selectedPackageId ?? undefined,
+      updatedAt: r.updatedAt.toISOString(),
+      views: r._count.events,
+      viewCount: viewEvents.length,
+      firstViewedAt: viewEvents[0]?.createdAt.toISOString(),
+      lastViewedAt: viewEvents[viewEvents.length - 1]?.createdAt.toISOString(),
+      paid: r.paidCents > 0 ? r.paidCents / 100 : undefined,
+    };
+  });
+}
+
+/**
+ * Loads a proposal by id for the signed-in contractor, returning the
+ * full Proposal JSON shape — same one the /proposal editor + send
+ * modal expect. Powers (a) opening a saved draft for further editing
+ * and (b) the Send-from-list flow on /dashboard/proposals.
+ *
+ * Returns null when the proposal doesn't exist or belongs to someone
+ * else. Doesn't throw on missing — callers redirect or 404.
+ */
+export async function getMyProposal(id: string): Promise<Proposal | null> {
+  let me: Awaited<ReturnType<typeof getMe>>;
+  try {
+    me = await getMe();
+  } catch {
+    return null;
+  }
+  if (!me) return null;
+  const row = await db.proposal.findFirst({
+    where: { id, userId: me.user.id },
+    select: {
+      data: true,
+      address: true,
+      clientName: true,
+      clientEmail: true,
+      publicToken: true,
+    },
+  });
+  if (!row) return null;
+  // The `data` column holds a full Proposal JSON blob (what /proposal
+  // serializes when saving). Overlay the canonical address / client
+  // columns on top in case those were edited via the list-row UI
+  // separately from the JSON blob.
+  const base = (row.data as unknown as Proposal) ?? null;
+  if (!base) return null;
+  return {
+    ...base,
+    token: row.publicToken,
+    address: row.address || base.address,
+    client: {
+      name: row.clientName || base.client?.name || "",
+      email: row.clientEmail || base.client?.email || "",
+    },
+  };
 }
 
 export async function getMyKpis(): Promise<MyKpis> {
