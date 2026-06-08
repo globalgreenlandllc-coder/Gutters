@@ -3,11 +3,14 @@
 import { useMemo, useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  AlertTriangle,
   Check,
   Copy,
   Eye,
   Key,
   Lock,
+  Loader2,
+  Plug,
   RefreshCw,
   ShieldOff,
   Trash2,
@@ -23,8 +26,10 @@ import {
   revealApiKey,
   revokeApiKey,
   rotateApiKey,
+  testApiKey,
   type ApiKeyAuditEntry,
   type ApiKeyRow,
+  type TestApiKeyResult,
 } from "@/app/actions/api-keys";
 import { ALL_PROVIDERS } from "@/lib/api-key-providers";
 
@@ -178,6 +183,7 @@ export function ApiKeysPage({
                 onAdd={() => setPhase({ kind: "add", provider })}
                 onRotate={(row) => setPhase({ kind: "rotate", row })}
                 onReveal={(row) => setPhase({ kind: "reveal", row })}
+                onTest={(row) => testApiKey(row.id)}
                 onRevoke={async (row) => {
                   if (
                     !window.confirm(
@@ -277,6 +283,7 @@ function ProviderCard({
   onRotate,
   onReveal,
   onRevoke,
+  onTest,
 }: {
   provider: ApiKeyProvider;
   label: string;
@@ -288,8 +295,13 @@ function ProviderCard({
   onRotate: (row: ApiKeyRow) => void;
   onReveal: (row: ApiKeyRow) => void;
   onRevoke: (row: ApiKeyRow) => void | Promise<void>;
+  /** Hits a provider endpoint to validate the stored key. RESEND is
+   *  wired today; other providers return "not implemented". */
+  onTest?: (row: ApiKeyRow) => Promise<TestApiKeyResult>;
 }) {
   const [showHistory, setShowHistory] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestApiKeyResult | null>(null);
   return (
     <div
       className={cn(
@@ -357,9 +369,60 @@ function ProviderCard({
         )}
       </div>
 
+      {active && testResult && (
+        <div
+          className={cn(
+            "mt-3 rounded-lg border px-3 py-2 text-xs",
+            testResult.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-rose-200 bg-rose-50 text-rose-800",
+          )}
+        >
+          <div className="flex items-start gap-1.5">
+            {testResult.ok ? (
+              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <div className="font-medium">{testResult.status}</div>
+              {testResult.error && (
+                <div className="mt-0.5 break-words font-mono text-[10px] opacity-80">
+                  {testResult.error}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {active ? (
           <>
+            {onTest && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={testing}
+                onClick={async () => {
+                  setTesting(true);
+                  setTestResult(null);
+                  try {
+                    const r = await onTest(active);
+                    setTestResult(r);
+                  } finally {
+                    setTesting(false);
+                  }
+                }}
+              >
+                {testing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plug className="h-3.5 w-3.5" />
+                )}
+                Test
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

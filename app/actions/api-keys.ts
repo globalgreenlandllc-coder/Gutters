@@ -209,6 +209,99 @@ export async function rotateApiKey(args: {
   return { ok: true, id: created.id };
 }
 
+export type TestApiKeyResult = {
+  ok: boolean;
+  /** Provider-specific human-readable status. */
+  status: string;
+  /** Raw error from the provider, if any. Surface in admin UI. */
+  error: string | null;
+  /** Token fingerprint we tested against — confirms which key was used. */
+  testedFingerprint: string | null;
+};
+
+/**
+ * Validates the stored key for a provider by hitting a lightweight
+ * provider endpoint. Designed for the admin "Test" button so you can
+ * tell *which* problem you're hitting — bad key vs unverified domain
+ * vs network — without composing and sending a real email.
+ *
+ * Resend: GET /api-keys with the stored key as Bearer auth. Returns
+ *   200  → key works, key is valid
+ *   401  → invalid / revoked
+ *   anything else → bubble Resend's `message` back
+ *
+ * Anthropic / OpenAI / Fal etc. — not implemented yet; returns a clear
+ * "not implemented" status so the UI can surface that gracefully.
+ */
+export async function testApiKey(
+  id: string,
+): Promise<TestApiKeyResult> {
+  await requireAdmin();
+  const row = await db.apiKey.findUnique({ where: { id } });
+  if (!row) {
+    return {
+      ok: false,
+      status: "Key not found",
+      error: null,
+      testedFingerprint: null,
+    };
+  }
+  const value = decrypt(row.encryptedValue);
+  if (!value) {
+    return {
+      ok: false,
+      status: "Could not decrypt stored key",
+      error: null,
+      testedFingerprint: row.fingerprint,
+    };
+  }
+
+  if (row.provider === "RESEND") {
+    try {
+      const res = await fetch("https://api.resend.com/api-keys", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${value}`,
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        name?: string;
+      };
+      if (res.ok) {
+        return {
+          ok: true,
+          status: "Resend accepted the key — sending should work",
+          error: null,
+          testedFingerprint: row.fingerprint,
+        };
+      }
+      return {
+        ok: false,
+        status: `Resend rejected the key (HTTP ${res.status})`,
+        error: body.message ?? body.name ?? null,
+        testedFingerprint: row.fingerprint,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        status: "Network error reaching Resend",
+        error: e instanceof Error ? e.message : String(e),
+        testedFingerprint: row.fingerprint,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    status: `Test not implemented for ${row.provider} yet`,
+    error: null,
+    testedFingerprint: row.fingerprint,
+  };
+}
+
 export type ApiKeyAuditEntry = {
   id: string;
   action: string;
