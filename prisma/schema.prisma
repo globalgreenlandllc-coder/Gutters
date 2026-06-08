@@ -61,6 +61,7 @@ model User {
   impersonated      ImpersonationSession[] @relation("ImpersonatedUser")
   leadInteractions  UserLeadInteraction[]
   planAnalyses      PlanAnalysis[]
+  appointments      Appointment[]
 
   @@index([role])
   @@index([status])
@@ -295,6 +296,7 @@ model Proposal {
   user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   events       ProposalEvent[]
   transactions Transaction[]
+  appointments Appointment[]
 
   @@index([userId, status])
   @@index([publicToken])
@@ -557,6 +559,7 @@ model Lead {
   updatedAt           DateTime     @updatedAt
 
   interactions        UserLeadInteraction[]
+  appointments        Appointment[]
 
   @@unique([sourceCity, sourceId]) // Prevents duplicate imports from the same city
   @@index([latitude, longitude])
@@ -590,4 +593,57 @@ model UserLeadInteraction {
 
   @@unique([userId, leadId])
   @@map("user_lead_interactions")
+}
+
+enum AppointmentType {
+  LEAD_VISIT
+  JOB_INSTALL
+  PROPOSAL_MEETING
+  FOLLOW_UP
+  OTHER
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+// Calendar entry. Powers /dashboard/calendar — lead site visits, gutter
+// installs scheduled off a sent proposal, and ad-hoc follow-ups all
+// share this table. leadId / proposalId are optional links back to the
+// source row so the calendar can show "Site visit for X permit" or
+// "Install for Y proposal" with a deep link.
+model Appointment {
+  id          String            @id @default(cuid())
+  userId      String
+  title       String
+  type        AppointmentType   @default(OTHER)
+  status      AppointmentStatus @default(SCHEDULED)
+  startsAt    DateTime
+  endsAt      DateTime
+  address     String?
+  notes       String?           @db.Text
+  // Optional per-event color override. When null the UI picks by type.
+  colorHex    String?
+  // Cached client contact so the calendar tile can show name/phone
+  // without joining; pre-filled from lead/proposal when present.
+  clientName  String?
+  clientPhone String?
+  clientEmail String?
+
+  leadId     String?
+  proposalId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startsAt])
+  @@index([leadId])
+  @@index([proposalId])
+  @@map("appointments")
 }
