@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  DollarSign,
+  Send,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { StatTile } from "@/components/dashboard/stat-tile";
@@ -77,8 +84,14 @@ function Inner() {
           className="flex flex-wrap items-end justify-between gap-3"
         >
           <div>
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-              Welcome back, {session?.user.name.split(" ")[0]}
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+              {greetingTime()}
+            </div>
+            <h1 className="font-display mt-0.5 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+              Welcome back,{" "}
+              <span className="bg-gradient-to-r from-accent-600 to-emerald-500 bg-clip-text text-transparent">
+                {session?.user.name.split(" ")[0]}
+              </span>
             </h1>
             <p className="mt-1 text-sm text-zinc-500">
               {isEmpty
@@ -87,8 +100,11 @@ function Inner() {
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent-500" />
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/60 px-2.5 py-1 text-emerald-700">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              </span>
               All systems healthy
             </span>
           </div>
@@ -101,24 +117,32 @@ function Inner() {
             index={0}
             label="Sent this month"
             value={String(k.sent)}
+            Icon={Send}
+            tone="sky"
             delta={k.sent > 0 ? undefined : "Send your first proposal"}
           />
           <StatTile
             index={1}
             label="Accepted"
             value={String(k.accepted)}
+            Icon={CheckCircle2}
+            tone="emerald"
             delta={k.accepted > 0 ? undefined : "—"}
           />
           <StatTile
             index={2}
             label="Revenue MTD"
             value={formatCurrency(k.revenueMtd)}
+            Icon={DollarSign}
+            tone="emerald"
             delta={k.revenueMtd > 0 ? undefined : "—"}
           />
           <StatTile
             index={3}
             label="Pipeline"
             value={formatCurrency(k.pipelineValue)}
+            Icon={TrendingUp}
+            tone="violet"
             delta={
               k.pipelineValue > 0
                 ? `${Math.round(k.conversion * 100)}% close rate`
@@ -213,4 +237,13 @@ function ConversionCard({ kpis }: { kpis: MyKpis }) {
       </div>
     </div>
   );
+}
+
+function greetingTime(): string {
+  const h = new Date().getHours();
+  if (h < 5) return "Late night";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  if (h < 21) return "Good evening";
+  return "Good night";
 }

@@ -242,15 +242,19 @@ export function QuickStart() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-2xl border border-accent-200 bg-gradient-to-br from-accent-50 via-white to-sky-50 p-6 shadow-card"
+      className="relative overflow-hidden rounded-2xl border border-accent-200/60 bg-gradient-to-br from-accent-50 via-white to-sky-50 p-6 shadow-elevated"
     >
-      <div className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-accent-300/30 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-sky-300/20 blur-3xl" />
+      <div className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-accent-300/40 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-sky-300/30 blur-3xl" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent-400/50 to-transparent" />
 
       <div className="relative">
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-accent-200 bg-white/70 px-2.5 py-0.5 text-xs font-medium text-accent-700 backdrop-blur">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-accent-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-accent-700 shadow-sm backdrop-blur">
           <Sparkles className="h-3 w-3" />
           New estimate
+          <span className="ml-1 inline-flex items-center rounded-md bg-accent-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-accent-800">
+            AI
+          </span>
         </div>
         <h2 className="font-display mt-4 text-balance text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">
           {source === "address"

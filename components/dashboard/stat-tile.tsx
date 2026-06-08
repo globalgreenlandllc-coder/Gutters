@@ -4,6 +4,8 @@ import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
+type IconCmp = React.ComponentType<{ className?: string }>;
+
 export function StatTile({
   label,
   value,
@@ -11,6 +13,8 @@ export function StatTile({
   positive = true,
   spark,
   index = 0,
+  Icon,
+  tone = "emerald",
 }: {
   label: string;
   value: string;
@@ -18,25 +22,67 @@ export function StatTile({
   positive?: boolean;
   spark?: number[];
   index?: number;
+  Icon?: IconCmp;
+  /** Visual tone of the icon chip + accent line. */
+  tone?: "emerald" | "violet" | "sky" | "amber";
 }) {
+  const toneClasses = {
+    emerald: {
+      chipBg: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+      accent: "from-emerald-400 to-emerald-600",
+    },
+    violet: {
+      chipBg: "bg-violet-50 text-violet-700 ring-violet-200",
+      accent: "from-violet-400 to-violet-600",
+    },
+    sky: {
+      chipBg: "bg-sky-50 text-sky-700 ring-sky-200",
+      accent: "from-sky-400 to-sky-600",
+    },
+    amber: {
+      chipBg: "bg-amber-50 text-amber-700 ring-amber-200",
+      accent: "from-amber-400 to-amber-600",
+    },
+  }[tone];
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: index * 0.05 }}
-      className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5 shadow-card"
+      whileHover={{ y: -2 }}
+      className="group relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5 shadow-card transition hover:border-zinc-300 hover:shadow-elevated"
     >
-      <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-        {label}
+      {/* Top-edge accent line, brighter on hover. */}
+      <div
+        className={cn(
+          "absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r opacity-60 transition group-hover:opacity-100",
+          toneClasses.accent,
+        )}
+      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+          {label}
+        </div>
+        {Icon && (
+          <div
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset",
+              toneClasses.chipBg,
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </div>
+        )}
       </div>
-      <div className="mt-2 flex items-end justify-between gap-3">
+      <div className="mt-3 flex items-end justify-between gap-3">
         <div className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
           {value}
         </div>
         {spark && <Sparkline data={spark} positive={positive} />}
       </div>
       {delta && (
-        <div className="mt-1 flex items-center gap-1 text-xs">
+        <div className="mt-1.5 flex items-center gap-1.5 text-xs">
           <span
             className={cn(
               "inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium",

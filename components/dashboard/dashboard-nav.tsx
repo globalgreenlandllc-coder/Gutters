@@ -5,12 +5,18 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
+  CalendarDays,
   ChevronDown,
+  FileSpreadsheet,
+  FileText,
+  LayoutGrid,
   LogOut,
+  MapPin,
   Search,
   Settings,
   ShieldAlert,
   User,
+  Users,
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
@@ -19,14 +25,15 @@ import { CreditsChip } from "./credits-chip";
 import { useSession } from "@/lib/auth-mock";
 import { cn } from "@/lib/utils";
 
-const NAV: { href: string; label: string }[] = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/leads", label: "Leads Map" },
-  { href: "/dashboard/calendar", label: "Calendar" },
-  { href: "/dashboard/blueprints", label: "Blueprints" },
-  { href: "/dashboard/proposals", label: "Proposals" },
-  { href: "/dashboard/clients", label: "Clients" },
-  { href: "/dashboard/settings", label: "Settings" },
+type NavIcon = typeof LayoutGrid;
+const NAV: { href: string; label: string; Icon: NavIcon }[] = [
+  { href: "/dashboard", label: "Overview", Icon: LayoutGrid },
+  { href: "/dashboard/leads", label: "Leads", Icon: MapPin },
+  { href: "/dashboard/calendar", label: "Calendar", Icon: CalendarDays },
+  { href: "/dashboard/blueprints", label: "Blueprints", Icon: FileSpreadsheet },
+  { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
+  { href: "/dashboard/clients", label: "Clients", Icon: Users },
+  { href: "/dashboard/settings", label: "Settings", Icon: Settings },
 ];
 
 export function DashboardNav() {
@@ -42,13 +49,13 @@ export function DashboardNav() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-4 px-4 sm:px-6">
-        <Link href="/dashboard" className="ring-focus rounded-md">
+    <header className="sticky top-0 z-40 border-b border-zinc-200/70 bg-white/80 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
+      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-3 px-4 sm:px-6">
+        <Link href="/dashboard" className="ring-focus rounded-md shrink-0">
           <Logo showSubtitle={false} />
         </Link>
 
-        <nav className="hidden items-center gap-1 md:flex">
+        <nav className="hidden items-center gap-0.5 md:flex">
           {NAV.map((n) => {
             const active =
               n.href === "/dashboard"
@@ -59,13 +66,24 @@ export function DashboardNav() {
                 key={n.href}
                 href={n.href}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-medium transition",
+                  "group relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition",
                   active
-                    ? "bg-zinc-100 text-zinc-900"
-                    : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900",
+                    ? "text-accent-700"
+                    : "text-zinc-500 hover:bg-zinc-100/60 hover:text-zinc-900",
                 )}
               >
+                <n.Icon
+                  className={cn(
+                    "h-4 w-4 transition",
+                    active
+                      ? "text-accent-600"
+                      : "text-zinc-400 group-hover:text-zinc-600",
+                  )}
+                />
                 {n.label}
+                {active && (
+                  <span className="absolute inset-x-2 -bottom-[18px] h-0.5 rounded-full bg-gradient-to-r from-accent-500 to-emerald-400" />
+                )}
               </Link>
             );
           })}
@@ -163,12 +181,13 @@ export function DashboardNav() {
                 key={n.href}
                 href={n.href}
                 className={cn(
-                  "shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition",
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition",
                   active
-                    ? "bg-zinc-100 text-zinc-900"
-                    : "text-zinc-600 hover:bg-zinc-50",
+                    ? "bg-accent-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:bg-zinc-100",
                 )}
               >
+                <n.Icon className="h-3.5 w-3.5" />
                 {n.label}
               </Link>
             );
