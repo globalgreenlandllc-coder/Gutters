@@ -236,70 +236,105 @@ export type TestApiKeyResult = {
 export async function testApiKey(
   id: string,
 ): Promise<TestApiKeyResult> {
-  await requireAdmin();
-  const row = await db.apiKey.findUnique({ where: { id } });
-  if (!row) {
+  try {
+    await requireAdmin();
+  } catch (e) {
     return {
       ok: false,
-      status: "Key not found",
-      error: null,
+      status: "Not authorized",
+      error: e instanceof Error ? e.message : String(e),
       testedFingerprint: null,
     };
   }
-  const value = decrypt(row.encryptedValue);
-  if (!value) {
-    return {
-      ok: false,
-      status: "Could not decrypt stored key",
-      error: null,
-      testedFingerprint: row.fingerprint,
-    };
-  }
 
-  if (row.provider === "RESEND") {
+  try {
+    const row = await db.apiKey.findUnique({ where: { id } });
+    if (!row) {
+      return {
+        ok: false,
+        status: "Key not found",
+        error: null,
+        testedFingerprint: null,
+      };
+    }
+
+    let value: string;
     try {
-      const res = await fetch("https://api.resend.com/api-keys", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${value}`,
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        message?: string;
-        name?: string;
-      };
-      if (res.ok) {
-        return {
-          ok: true,
-          status: "Resend accepted the key — sending should work",
-          error: null,
-          testedFingerprint: row.fingerprint,
-        };
-      }
-      return {
-        ok: false,
-        status: `Resend rejected the key (HTTP ${res.status})`,
-        error: body.message ?? body.name ?? null,
-        testedFingerprint: row.fingerprint,
-      };
+      value = decrypt(row.encryptedValue);
     } catch (e) {
+      // Decrypt fails when the stored ciphertext was written with a
+      // different APP_ENCRYPTION_KEY than the one currently set, or
+      // when the stored value is malformed. Either way, the contractor
+      // needs to Rotate the key in this UI, not file a bug.
       return {
         ok: false,
-        status: "Network error reaching Resend",
+        status: "Could not decrypt stored key (encryption key changed or row corrupt)",
         error: e instanceof Error ? e.message : String(e),
         testedFingerprint: row.fingerprint,
       };
     }
-  }
+    if (!value) {
+      return {
+        ok: false,
+        status: "Stored key is empty",
+        error: null,
+        testedFingerprint: row.fingerprint,
+      };
+    }
 
-  return {
-    ok: false,
-    status: `Test not implemented for ${row.provider} yet`,
-    error: null,
-    testedFingerprint: row.fingerprint,
-  };
+    if (row.provider === "RESEND") {
+      try {
+        const res = await fetch("https://api.resend.com/api-keys", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${value}`,
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          name?: string;
+        };
+        if (res.ok) {
+          return {
+            ok: true,
+            status: "Resend accepted the key — sending should work",
+            error: null,
+            testedFingerprint: row.fingerprint,
+          };
+        }
+        return {
+          ok: false,
+          status: `Resend rejected the key (HTTP ${res.status})`,
+          error: body.message ?? body.name ?? `HTTP ${res.status}`,
+          testedFingerprint: row.fingerprint,
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching Resend",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: row.fingerprint,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      status: `Test not implemented for ${row.provider} yet`,
+      error: null,
+      testedFingerprint: row.fingerprint,
+    };
+  } catch (e) {
+    console.error("[testApiKey] unexpected throw", e);
+    return {
+      ok: false,
+      status: "Unexpected server error during test",
+      error: e instanceof Error ? e.message : String(e),
+      testedFingerprint: null,
+    };
+  }
 }
 
 export type ApiKeyAuditEntry = {
