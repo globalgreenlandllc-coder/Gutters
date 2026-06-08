@@ -148,9 +148,6 @@ export function QuickStart() {
     try {
       // Pre-flight the upload-url handshake so we can surface the actual
       // error string instead of @vercel/blob/client's wrapped message.
-      // (The client lib often throws a generic "Vercel Blob: Failed to
-      // retrieve the client token" which hides the real reason — bad
-      // BLOB_READ_WRITE_TOKEN, DB cold-start, missing session, etc.)
       const diag = await fetch("/api/blueprints/upload-url");
       if (!diag.ok) {
         const text = await diag.text();
@@ -169,18 +166,6 @@ export function QuickStart() {
         clerk: { signedIn: boolean; error: string | null };
         db: { ok: boolean; error: string | null };
       };
-      // Look at blob.tokenFound (covers store-prefixed names) rather
-      // than just the canonical BLOB_READ_WRITE_TOKEN flag.
-      const blobOk =
-        diagJson.blob?.tokenFound ?? diagJson.env.BLOB_READ_WRITE_TOKEN;
-      if (!blobOk) {
-        const attached =
-          diagJson.blob?.allBlobEnvNames?.join(", ") || "none";
-        setError(
-          `Vercel Blob token is not attached. Need an env var named BLOB_READ_WRITE_TOKEN (or *_READ_WRITE_TOKEN). Currently attached BLOB vars: ${attached}. Open the Blob store in Vercel → .env.local tab → copy the BLOB_READ_WRITE_TOKEN line into project env vars, then redeploy.`,
-        );
-        return;
-      }
       if (!diagJson.clerk.signedIn) {
         setError("Not signed in. Refresh and sign in again.");
         return;
@@ -191,24 +176,48 @@ export function QuickStart() {
         );
         return;
       }
+      const blobOk =
+        diagJson.blob?.tokenFound ?? diagJson.env.BLOB_READ_WRITE_TOKEN;
 
-      // 1. Direct upload to Vercel Blob — bypasses Vercel's 4.5MB
-      //    serverless body limit so real construction PDFs (5-25MB) work.
-      const blob = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: "/api/blueprints/upload-url",
-      });
+      // Multipart fallback when Blob isn't configured: anything under
+      // ~4 MB can go straight through Vercel's serverless body limit
+      // via /api/blueprints (multipart). The contractor can keep
+      // analyzing small plans while Blob is being sorted out.
+      const MULTIPART_LIMIT = 4 * 1024 * 1024;
+      const useMultipart = !blobOk;
 
-      // 2. Tell our analyzer to pick up the file by URL and run Claude.
-      const res = await fetch("/api/blueprints", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          blobUrl: blob.url,
-          filename: file.name,
-          mimeType: file.type || "application/octet-stream",
-        }),
-      });
+      if (useMultipart && file.size > MULTIPART_LIMIT) {
+        const attached =
+          diagJson.blob?.allBlobEnvNames?.join(", ") || "none";
+        setError(
+          `This file is ${(file.size / 1024 / 1024).toFixed(1)} MB and Vercel Blob isn't connected, so the 4 MB fallback can't carry it. Either (a) compress / split the PDF under 4 MB, or (b) add BLOB_READ_WRITE_TOKEN in Vercel. Currently attached BLOB vars: ${attached}.`,
+        );
+        return;
+      }
+
+      let res: Response;
+      if (useMultipart) {
+        // Direct multipart upload (no Blob). Stays under Vercel's 4.5 MB
+        // serverless body limit — server-side /api/blueprints handles it.
+        const fd = new FormData();
+        fd.append("file", file);
+        res = await fetch("/api/blueprints", { method: "POST", body: fd });
+      } else {
+        // Blob path — direct browser → Vercel Blob → /api/blueprints with URL.
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/blueprints/upload-url",
+        });
+        res = await fetch("/api/blueprints", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            blobUrl: blob.url,
+            filename: file.name,
+            mimeType: file.type || "application/octet-stream",
+          }),
+        });
+      }
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Plan analysis failed");

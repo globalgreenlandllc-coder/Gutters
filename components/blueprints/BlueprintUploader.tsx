@@ -34,21 +34,53 @@ export default function BlueprintUploader() {
     setUploading(true);
     setError(null);
     try {
-      // Step 1: direct upload to Vercel Blob (bypasses serverless 4.5MB cap).
-      const blob = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: "/api/blueprints/upload-url",
-      });
-      // Step 2: trigger Claude analysis by URL.
-      const res = await fetch("/api/blueprints", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          blobUrl: blob.url,
-          filename: file.name,
-          mimeType: file.type || "application/octet-stream",
-        }),
-      });
+      // Probe whether Vercel Blob is configured. When it isn't, we fall
+      // back to multipart upload through Vercel's 4.5 MB serverless body
+      // limit so small plans can still be analyzed.
+      const diag = await fetch("/api/blueprints/upload-url");
+      const diagJson = diag.ok
+        ? ((await diag.json()) as {
+            blob?: {
+              tokenFound: boolean;
+              allBlobEnvNames: string[];
+            };
+            env: { BLOB_READ_WRITE_TOKEN: boolean };
+          })
+        : null;
+      const blobOk =
+        diagJson?.blob?.tokenFound ?? diagJson?.env.BLOB_READ_WRITE_TOKEN ?? false;
+
+      const MULTIPART_LIMIT = 4 * 1024 * 1024;
+      if (!blobOk && file.size > MULTIPART_LIMIT) {
+        const attached =
+          diagJson?.blob?.allBlobEnvNames?.join(", ") || "none";
+        setError(
+          `This file is ${(file.size / 1024 / 1024).toFixed(1)} MB and Vercel Blob isn't connected, so the 4 MB fallback can't carry it. Compress / split the PDF, or add BLOB_READ_WRITE_TOKEN. Currently attached BLOB vars: ${attached}.`,
+        );
+        return;
+      }
+
+      let res: Response;
+      if (blobOk) {
+        const blob = await upload(file.name, file, {
+          access: "public",
+          handleUploadUrl: "/api/blueprints/upload-url",
+        });
+        res = await fetch("/api/blueprints", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            blobUrl: blob.url,
+            filename: file.name,
+            mimeType: file.type || "application/octet-stream",
+          }),
+        });
+      } else {
+        const fd = new FormData();
+        fd.append("file", file);
+        res = await fetch("/api/blueprints", { method: "POST", body: fd });
+      }
+
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "Analysis failed");
