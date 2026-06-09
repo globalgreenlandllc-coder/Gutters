@@ -71,7 +71,12 @@ export function AerialCanvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [showRoofStructure, setShowRoofStructure] = useState(true);
-  const [showRakes, setShowRakes] = useState(true);
+  // Rakes ship hidden by default. They're informational (the gray-
+  // dashed 'AI says no gutter here' lines), but they painted across
+  // the satellite image and made the trace look noisy after the
+  // takeoff finalized. Contractor can re-enable via the toolbar
+  // toggle if they want to verify what the AI excluded.
+  const [showRakes, setShowRakes] = useState(false);
   // Fullscreen lifts the canvas to the viewport so you can see the
   // full roof while nudging eaves/downspouts. Independent of theme.
   const [fullscreen, setFullscreen] = useState(false);
@@ -228,7 +233,10 @@ export function AerialCanvas({
     fullscreen,
   ]);
 
-  function svgPoint(e: React.PointerEvent): { x: number; y: number } {
+  function svgPoint(e: {
+    clientX: number;
+    clientY: number;
+  }): { x: number; y: number } {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const pt = svg.createSVGPoint();
@@ -853,6 +861,54 @@ export function AerialCanvas({
                     });
                   }
                 }}
+                onDoubleClick={(e) => {
+                  if (tool !== "select") return;
+                  e.stopPropagation();
+                  // Double-click on a line body splits it: insert a new
+                  // vertex at the click point. The new vertex can be
+                  // immediately dragged so the contractor can bend the
+                  // line in a new direction (matches the 'split this
+                  // piece and move it' ask). We project the click onto
+                  // the line first so the vertex lands ON the eave, not
+                  // wherever the mouse happened to be 2px off.
+                  const p = svgPoint(e);
+                  let bestSegIdx = 0;
+                  let bestProj: { x: number; y: number } = line.points[0];
+                  let bestDist = Infinity;
+                  for (let i = 0; i < line.points.length - 1; i++) {
+                    const a = line.points[i];
+                    const b = line.points[i + 1];
+                    const dx = b.x - a.x;
+                    const dy = b.y - a.y;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) continue;
+                    const t = Math.max(
+                      0,
+                      Math.min(
+                        1,
+                        ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2,
+                      ),
+                    );
+                    const proj = { x: a.x + t * dx, y: a.y + t * dy };
+                    const d = Math.hypot(p.x - proj.x, p.y - proj.y);
+                    if (d < bestDist) {
+                      bestDist = d;
+                      bestSegIdx = i;
+                      bestProj = proj;
+                    }
+                  }
+                  const nextPoints = [
+                    ...line.points.slice(0, bestSegIdx + 1),
+                    bestProj,
+                    ...line.points.slice(bestSegIdx + 1),
+                  ];
+                  onEavesChange(
+                    eaves.map((l) =>
+                      l.id === line.id ? { ...l, points: nextPoints } : l,
+                    ),
+                  );
+                  setSelectedId(line.id);
+                }}
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
               />
@@ -875,6 +931,7 @@ export function AerialCanvas({
                     emphasized={false}
                     animationDelay={0.6 + i * 0.06}
                     outsideAnchor={eavesCentroid}
+                    renderScale={renderScale}
                   />
                 )}
               {/* Vertex handles render LAST so they sit on top of any
@@ -1615,6 +1672,7 @@ function LineLabel({
   emphasized = false,
   animationDelay = 0,
   outsideAnchor,
+  renderScale = 1,
 }: {
   line: EditableLine;
   theme: CanvasTheme;
@@ -1626,6 +1684,11 @@ function LineLabel({
    *  this anchor — so labels land OUTSIDE the roof polygon rather
    *  than on top of roof shingles. Pass the eaves' centroid. */
   outsideAnchor?: { x: number; y: number };
+  /** view.width / VIEWBOX_W. We multiply the label's viewBox dims by
+   *  this so it stays the same on-screen size at any zoom. Without
+   *  this, a 60-unit-wide label balloons to fill the screen when the
+   *  contractor zooms in to nudge an eave. */
+  renderScale?: number;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -1633,19 +1696,20 @@ function LineLabel({
   const len = Math.round(lineLengthFt(line));
 
   const tactical = theme === "tactical";
-  const w = emphasized ? 60 : 44;
-  const h = emphasized ? 20 : 16;
-  const fontSize = emphasized ? 11 : 10;
+  // All viewBox sizes scale with the current zoom so the label looks
+  // the same on screen at any zoom. Floors keep the label readable at
+  // extreme zoom-out without going invisible.
+  const w = (emphasized ? 60 : 44) * renderScale;
+  const h = (emphasized ? 20 : 16) * renderScale;
+  const fontSize = (emphasized ? 11 : 10) * renderScale;
 
-  // Offset the label perpendicular to the line so it sits OFF the eave
-  // rather than crossing it. Magnitude bumped from 12-16 → 22-28 so the
-  // label sits comfortably outside the now-thicker eave stroke and
-  // doesn't hide where the line is going. Scales with the eave length
-  // so a very short connector eave still has a readable label distance.
+  // Offset perpendicular to the line so the pill sits OFF the eave.
+  // Same scaling rule: at high zoom, fewer viewBox units = same
+  // screen distance.
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len2 = Math.hypot(dx, dy) || 1;
-  const offsetMag = emphasized ? 28 : 22;
+  const offsetMag = (emphasized ? 28 : 22) * renderScale;
   const nx = (-dy / len2) * offsetMag;
   const ny = (dx / len2) * offsetMag;
 
