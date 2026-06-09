@@ -79,6 +79,11 @@ export function AerialCanvas({
   // reads cleanly under the takeoff. Critical when squinting at a
   // pixelated roof edge to decide where the gutter actually sits.
   const [lowGlow, setLowGlow] = useState(false);
+  // First-time coach mark — fades in after the trace lands so the
+  // contractor knows the AI handed off to them and how to fix it.
+  // Once dismissed, stays dismissed for this canvas mount; can be
+  // re-shown on a fresh estimate run if needed.
+  const [coachOpen, setCoachOpen] = useState(true);
   // null = "auto": labels are shown but tiny crowded ones are skipped. The
   // user can force them all-on or all-off with the toolbar toggle.
   const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
@@ -338,6 +343,66 @@ export function AerialCanvas({
         <RoofStructureBanner confidence={roofStructure.confidence} />
       )}
 
+      {coachOpen && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6, duration: 0.4 }}
+          className={cn(
+            "absolute left-1/2 top-3 z-10 -translate-x-1/2 max-w-[92%]",
+          )}
+        >
+          <div
+            className={cn(
+              "flex items-start gap-2.5 rounded-xl border px-3 py-2 shadow-elevated backdrop-blur",
+              theme === "tactical"
+                ? "border-cyan-400/40 bg-slate-950/85 text-cyan-50"
+                : "border-zinc-200 bg-white/95 text-zinc-800",
+            )}
+          >
+            <span
+              className={cn(
+                "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                theme === "tactical"
+                  ? "bg-cyan-400/20 text-cyan-200 ring-1 ring-inset ring-cyan-300/40"
+                  : "bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200",
+              )}
+            >
+              AI
+            </span>
+            <div className="text-[12px] leading-snug">
+              <div className="font-semibold">
+                AI traced your gutters — finish in the drawing tools.
+              </div>
+              <div
+                className={cn(
+                  "mt-0.5 text-[11px]",
+                  theme === "tactical"
+                    ? "text-cyan-200/85"
+                    : "text-zinc-500",
+                )}
+              >
+                Drag any corner to nudge. Click a gable line and press
+                Delete to remove. Use the + tool to add a run — corners
+                snap onto each other. Totals re-price as you edit.
+              </div>
+            </div>
+            <button
+              onClick={() => setCoachOpen(false)}
+              className={cn(
+                "ml-1 mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition",
+                theme === "tactical"
+                  ? "text-cyan-200/70 hover:bg-cyan-400/15 hover:text-cyan-100"
+                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700",
+              )}
+              aria-label="Dismiss coach mark"
+            >
+              ×
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -419,7 +484,7 @@ export function AerialCanvas({
               <motion.path
                 d={pathFor(line)}
                 stroke={stroke}
-                strokeWidth={isSelected ? 6 : isHover ? 5 : 4}
+                strokeWidth={isSelected ? 9 : isHover ? 8 : 7}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"

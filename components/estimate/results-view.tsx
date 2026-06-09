@@ -33,6 +33,11 @@ export function ResultsView({
 }) {
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
+  // Story count is editable from the property header — homeowners
+  // sometimes second-guess a 2-story call when an attached garage
+  // looks 1-story on satellite. Default seeded from the AI estimate;
+  // contractor overrides with one click.
+  const [stories, setStories] = useState(initial.measurements.stories);
 
   const liveEaveLF = Math.round(
     eaves.reduce((acc, l) => acc + lineLengthFt(l), 0),
@@ -42,6 +47,7 @@ export function ResultsView({
     ...initial.measurements,
     eaveLF: liveEaveLF || initial.measurements.eaveLF,
     downspoutCount: downspouts.length,
+    stories,
   };
 
   // Single handoff payload — captured at click-time by either button.
@@ -75,6 +81,7 @@ export function ResultsView({
               reused={reused}
               durationMs={initial.durationMs}
               notes={initial.notes}
+              onStoriesChange={setStories}
             />
             <div className="min-h-[520px] flex-1">
               <AerialCanvas
@@ -110,6 +117,7 @@ function PropertyHeader({
   reused,
   durationMs,
   notes,
+  onStoriesChange,
 }: {
   address: string;
   measurements: Measurements;
@@ -117,6 +125,10 @@ function PropertyHeader({
   reused: boolean;
   durationMs: number;
   notes: string[];
+  /** Optional callback to override the AI's story-count guess. When
+   *  provided, renders the story segment as a clickable picker so the
+   *  contractor can confirm or correct the AI's call in one tap. */
+  onStoriesChange?: (n: 1 | 2 | 3) => void;
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
@@ -129,10 +141,41 @@ function PropertyHeader({
             </h1>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <span>
-              <span className="text-zinc-700">{measurements.stories}-story</span>{" "}
-              single-family
-            </span>
+            {onStoriesChange ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-zinc-400">
+                  Stories
+                </span>
+                <span className="inline-flex overflow-hidden rounded-full border border-zinc-200 bg-zinc-50/50">
+                  {([1, 2, 3] as const).map((n) => {
+                    const active = measurements.stories === n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => onStoriesChange(n)}
+                        className={
+                          "px-2 py-0.5 text-xs font-semibold tabular-nums transition " +
+                          (active
+                            ? "bg-accent-600 text-white"
+                            : "text-zinc-600 hover:bg-white hover:text-zinc-900")
+                        }
+                        title={`Set to ${n}-story`}
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
+                </span>
+              </span>
+            ) : (
+              <span>
+                <span className="text-zinc-700">
+                  {measurements.stories}-story
+                </span>{" "}
+                single-family
+              </span>
+            )}
             <span>·</span>
             <span>
               <span className="text-zinc-700">

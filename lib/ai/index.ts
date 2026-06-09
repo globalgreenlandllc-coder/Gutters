@@ -569,6 +569,13 @@ export async function runAIEstimatePipeline(
   //     median roof height has a downhill bbox edge that probably needs
   //     its own gutter. Duplicates (an existing perimeter eave already
   //     within 1.5m) are filtered.
+  // Tier-break detector: still computed for diagnostics so we can see
+  // when a multi-tier roof was detected, but no longer adds eaves to
+  // the trace by default. The Solar segment bbox edges weren't real
+  // roof edges — they were axis-aligned rectangles approximating
+  // angular hip planes, so they drew as straight stubs through the
+  // middle of the roof. Contractor adds these eaves manually with the
+  // drawing tool when they exist.
   if (solarRoofSegments.length > 0) {
     const perimeterEdges = (classifiedEaveLatLng ?? []).map((e) => ({
       a: e.a,
@@ -579,28 +586,22 @@ export async function runAIEstimatePipeline(
       perimeterEdges,
     );
     if (tierBreaks.length > 0) {
-      const added = tierBreaks.map((t) => ({ a: t.edge.a, b: t.edge.b }));
-      classifiedEaveLatLng = [...(classifiedEaveLatLng ?? []), ...added];
       const meanStepFt =
         (tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
           tierBreaks.length) *
         3.28084;
       notes.push(
-        `Tier-break detector: +${tierBreaks.length} interior eave${
+        `Tier-break detected: ${tierBreaks.length} upper tier${
           tierBreaks.length === 1 ? "" : "s"
-        } (upper tier averages ${meanStepFt.toFixed(1)} ft above baseline)`,
+        } averaging ${meanStepFt.toFixed(1)} ft above baseline — add interior eaves manually with the drawing tool if needed`,
       );
-    } else if (diag.segmentsWithHeight === 0) {
-      notes.push(
-        `Tier-break detector: Solar API didn't return plane heights for any of ${diag.segmentsTotal} segments — interior tiers can't be auto-detected on this property`,
-      );
-    } else {
+    } else if (diag.segmentsWithHeight > 0) {
       const range =
         diag.heightMax !== null && diag.heightMin !== null
           ? ((diag.heightMax - diag.heightMin) * 3.28084).toFixed(1)
           : "?";
       notes.push(
-        `Tier-break detector: no elevated tiers (${diag.segmentsWithHeight}/${diag.segmentsTotal} segments have height; range ${range} ft, baseline @ ${diag.baselineUsed?.toFixed(2)}m, threshold ${diag.stepThresholdM}m)`,
+        `Tier-break detector: single-tier roof (height range ${range} ft across ${diag.segmentsWithHeight} segments)`,
       );
     }
   }
