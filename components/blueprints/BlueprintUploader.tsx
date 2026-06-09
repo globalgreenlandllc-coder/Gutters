@@ -75,6 +75,45 @@ export default function BlueprintUploader() {
           });
         } catch (blobErr) {
           console.error("[BlueprintUploader] Blob direct upload failed", blobErr);
+          const message =
+            blobErr instanceof Error ? blobErr.message : "Upload failed";
+          // Token-expiry retry: the upload-url route now mints 5-minute
+          // tokens (was 60 s), but if a token still expires mid-upload
+          // we retry once before surfacing the error. A second attempt
+          // gets a fresh token and almost always succeeds.
+          const expired = /token has expired|expired/i.test(message);
+          if (expired) {
+            try {
+              const retry = await upload(file.name, file, {
+                access: "public",
+                handleUploadUrl: "/api/blueprints/upload-url",
+                multipart: true,
+              });
+              res = await fetch("/api/blueprints", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  blobUrl: retry.url,
+                  filename: file.name,
+                  mimeType: file.type || "application/octet-stream",
+                }),
+              });
+              const retryData = await res.json();
+              if (!res.ok) {
+                setError(retryData.error ?? "Analysis failed");
+                return;
+              }
+              router.push(`/estimate?planId=${retryData.id}`);
+              return;
+            } catch (retryErr) {
+              const m2 =
+                retryErr instanceof Error ? retryErr.message : "Upload failed";
+              setError(
+                `Vercel Blob upload failed even after a token refresh: ${m2}. Check your network and try again.`,
+              );
+              return;
+            }
+          }
           if (file.size <= 4 * 1024 * 1024) {
             const fd = new FormData();
             fd.append("file", file);
@@ -87,10 +126,8 @@ export default function BlueprintUploader() {
             router.push(`/estimate?planId=${data.id}`);
             return;
           }
-          const message =
-            blobErr instanceof Error ? blobErr.message : "Upload failed";
           setError(
-            `Direct upload to Vercel Blob failed: ${message}. The file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) for the server-side fallback. Compress / split the PDF or contact support.`,
+            `Direct upload to Vercel Blob failed: ${message}. File is ${(file.size / 1024 / 1024).toFixed(1)} MB; Vercel's serverless body limit caps the fallback at 4 MB. Try compressing the PDF, or contact support if Blob keeps rejecting.`,
           );
           return;
         }
@@ -163,7 +200,7 @@ export default function BlueprintUploader() {
             layout you can drop into a proposal.
           </div>
           <div className="text-slate-500 text-xs mt-2">
-            Up to 32 MB · PDF (up to 100 pages) or PNG / JPG
+            Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
           </div>
         </div>
       </div>

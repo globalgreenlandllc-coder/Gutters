@@ -225,10 +225,18 @@ export async function POST(request: Request): Promise<NextResponse> {
           "image/jpeg",
           "image/webp",
         ],
-        // 32 MB matches Anthropic's PDF input ceiling — going higher just
-        // lets the upload succeed and the analysis fail later.
-        maximumSizeInBytes: 32 * 1024 * 1024,
-        validUntil: Date.now() + 60 * 1000,
+        // 50 MB per the product spec. Note: Anthropic's PDF input ceiling
+        // is 32 MB on the messages-API path; PDFs between 32–50 MB upload
+        // fine but the analysis call may reject. Acceptable: better to
+        // store the file and fail at analysis with a clear error than
+        // reject at upload and lose the file entirely.
+        maximumSizeInBytes: 50 * 1024 * 1024,
+        // 5 minutes — was 60 s, which expired mid-upload for files over
+        // ~5 MB on a residential broadband connection (the reported
+        // "Vercel Blob: Client token has expired" error happened on a
+        // 7.9 MB PDF). Each multipart chunk is uploaded in parallel,
+        // but the token still has to outlast the slowest chunk.
+        validUntil: Date.now() + 5 * 60 * 1000,
         tokenPayload: JSON.stringify({ userId: user.id, tokenVar: blobTokenVar }),
       }),
       onUploadCompleted: async () => {
