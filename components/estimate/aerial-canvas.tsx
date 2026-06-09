@@ -84,6 +84,23 @@ export function AerialCanvas({
   // Once dismissed, stays dismissed for this canvas mount; can be
   // re-shown on a fresh estimate run if needed.
   const [coachOpen, setCoachOpen] = useState(true);
+  // Pan + zoom on the satellite image. `view` is the visible viewBox
+  // window over the full VIEWBOX_W × VIEWBOX_H content space. Wheel
+  // scales (toward cursor), space+drag or right-click+drag pans.
+  const [view, setView] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
+  const [panning, setPanning] = useState<{
+    sx: number;
+    sy: number;
+    vx: number;
+    vy: number;
+  } | null>(null);
+  const resetView = () =>
+    setView({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
   // null = "auto": labels are shown but tiny crowded ones are skipped. The
   // user can force them all-on or all-off with the toolbar toggle.
   const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
@@ -92,6 +109,17 @@ export function AerialCanvas({
   const [drag, setDrag] = useState<
     | { kind: "vertex"; lineId: string; index: number }
     | { kind: "downspout"; id: string }
+    | {
+        kind: "line";
+        lineId: string;
+        /** Where on the line the user grabbed (in viewBox coords) so we
+         *  can apply a delta relative to that grab point on every move. */
+        grabX: number;
+        grabY: number;
+        /** Snapshot of the line's points at grab time — translate from
+         *  these so jitter during the drag doesn't accumulate rounding. */
+        origPoints: { x: number; y: number }[];
+      }
     | null
   >(null);
   const [drawing, setDrawing] = useState<{
@@ -209,6 +237,26 @@ export function AerialCanvas({
                 points: l.points.map((pt, i) =>
                   i === drag.index ? snapped : pt,
                 ),
+              }
+            : l,
+        ),
+      );
+    } else if (drag?.kind === "line") {
+      // Translate the entire line by (cursor − grab) relative to its
+      // grab-time snapshot. Both endpoints move together — same shape,
+      // shifted. Lets the contractor nudge an entire run sideways
+      // without grabbing each corner.
+      const dx = p.x - drag.grabX;
+      const dy = p.y - drag.grabY;
+      onEavesChange(
+        eaves.map((l) =>
+          l.id === drag.lineId
+            ? {
+                ...l,
+                points: drag.origPoints.map((pt) => ({
+                  x: pt.x + dx,
+                  y: pt.y + dy,
+                })),
               }
             : l,
         ),
@@ -343,6 +391,66 @@ export function AerialCanvas({
         <RoofStructureBanner confidence={roofStructure.confidence} />
       )}
 
+      {/* Zoom controls — bottom-right. Mouse-wheel zooms toward cursor;
+          these buttons step in/out by 25% and reset to fit. */}
+      <div
+        className={cn(
+          "absolute bottom-3 right-3 z-10 flex flex-col gap-1 rounded-lg border p-1 shadow-card backdrop-blur",
+          theme === "tactical"
+            ? "border-cyan-500/30 bg-slate-950/80"
+            : "border-zinc-200 bg-white/95",
+        )}
+      >
+        <button
+          onClick={() => {
+            const cx = view.x + view.width / 2;
+            const cy = view.y + view.height / 2;
+            const w = Math.max(VIEWBOX_W / 5, view.width / 1.25);
+            const h = w * (view.height / view.width);
+            setView({ x: cx - w / 2, y: cy - h / 2, width: w, height: h });
+          }}
+          title="Zoom in"
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-md text-lg font-semibold transition",
+            theme === "tactical"
+              ? "text-cyan-200/80 hover:bg-cyan-500/15 hover:text-cyan-100"
+              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          +
+        </button>
+        <button
+          onClick={() => {
+            const cx = view.x + view.width / 2;
+            const cy = view.y + view.height / 2;
+            const w = Math.min(VIEWBOX_W * 4, view.width * 1.25);
+            const h = w * (view.height / view.width);
+            setView({ x: cx - w / 2, y: cy - h / 2, width: w, height: h });
+          }}
+          title="Zoom out"
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-md text-lg font-semibold transition",
+            theme === "tactical"
+              ? "text-cyan-200/80 hover:bg-cyan-500/15 hover:text-cyan-100"
+              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          −
+        </button>
+        <button
+          onClick={resetView}
+          title="Fit to view"
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-md transition",
+            theme === "tactical"
+              ? "text-cyan-200/80 hover:bg-cyan-500/15 hover:text-cyan-100"
+              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
       {coachOpen && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
@@ -382,9 +490,12 @@ export function AerialCanvas({
                     : "text-zinc-500",
                 )}
               >
-                Drag any corner to nudge. Click a gable line and press
-                Delete to remove. Use the + tool to add a run — corners
-                snap onto each other. Totals re-price as you edit.
+                <strong>Select a line</strong>, then drag the body to slide it
+                sideways or grab a corner to extend.{" "}
+                <strong>Add eave</strong> draws a new run.{" "}
+                <strong>Scroll</strong> to zoom, <strong>Shift+drag</strong>{" "}
+                to pan, <strong>Delete</strong> removes the selected line.
+                Totals re-price as you edit.
               </div>
             </div>
             <button
@@ -405,15 +516,68 @@ export function AerialCanvas({
 
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+        viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
         preserveAspectRatio="xMidYMid slice"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
+        onPointerDown={(e) => {
+          // Right-click OR shift+drag on empty space starts a pan.
+          // Doesn't interfere with the eave/downspout drag handlers
+          // because they call e.stopPropagation() on their hits.
+          if (
+            (e.button === 2 || e.shiftKey) &&
+            tool === "select" &&
+            !drag
+          ) {
+            e.preventDefault();
+            setPanning({ sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
+            return;
+          }
+          handlePointerDown(e);
+        }}
+        onPointerMove={(e) => {
+          if (panning && svgRef.current) {
+            const rect = svgRef.current.getBoundingClientRect();
+            const scaleX = view.width / rect.width;
+            const scaleY = view.height / rect.height;
+            setView((v) => ({
+              ...v,
+              x: panning.vx - (e.clientX - panning.sx) * scaleX,
+              y: panning.vy - (e.clientY - panning.sy) * scaleY,
+            }));
+            return;
+          }
+          handlePointerMove(e);
+        }}
+        onPointerUp={(e) => {
+          if (panning) {
+            setPanning(null);
+            return;
+          }
+          handlePointerUp(e);
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        onWheel={(e) => {
+          // Zoom toward the cursor. Wheel up = zoom in, down = out.
+          // Clamp to 0.25× – 5× so the user can't get lost.
+          if (!svgRef.current) return;
+          e.preventDefault();
+          const rect = svgRef.current.getBoundingClientRect();
+          const cursorVX = view.x + ((e.clientX - rect.left) / rect.width) * view.width;
+          const cursorVY = view.y + ((e.clientY - rect.top) / rect.height) * view.height;
+          const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+          const minW = VIEWBOX_W / 5;
+          const maxW = VIEWBOX_W * 4;
+          const nextW = Math.max(minW, Math.min(maxW, view.width * factor));
+          const nextH = nextW * (view.height / view.width);
+          // Anchor the cursor at the same image point post-zoom.
+          const nextX = cursorVX - ((e.clientX - rect.left) / rect.width) * nextW;
+          const nextY = cursorVY - ((e.clientY - rect.top) / rect.height) * nextH;
+          setView({ x: nextX, y: nextY, width: nextW, height: nextH });
+        }}
         className={cn(
           "h-full w-full touch-none select-none",
           tool === "add-eave" && "cursor-crosshair",
           tool === "add-downspout" && "cursor-copy",
+          panning && "cursor-grabbing",
         )}
         style={{ minHeight: 420 }}
       >
@@ -495,11 +659,31 @@ export function AerialCanvas({
                   ease: "easeOut",
                   delay: i * 0.05,
                 }}
-                style={{ filter, cursor: "pointer" }}
+                style={{
+                  filter,
+                  cursor: isSelected ? "move" : "pointer",
+                }}
                 onPointerDown={(e) => {
                   if (tool !== "select") return;
                   e.stopPropagation();
+                  // Selecting the line is always step one. Starting a
+                  // body-drag only kicks in on the SECOND mousedown on
+                  // an already-selected line — first click is "select".
+                  const wasSelected = selectedId === line.id;
                   setSelectedId(line.id);
+                  if (wasSelected) {
+                    const p = svgPoint(e);
+                    setDrag({
+                      kind: "line",
+                      lineId: line.id,
+                      grabX: p.x,
+                      grabY: p.y,
+                      origPoints: line.points.map((pt) => ({
+                        x: pt.x,
+                        y: pt.y,
+                      })),
+                    });
+                  }
                 }}
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
@@ -825,17 +1009,27 @@ function Toolbar({
           onClick={() => setTool(t.id)}
           title={t.label}
           className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-lg transition",
+            "group/tool flex h-10 items-center gap-2 rounded-lg pl-2 pr-2.5 transition",
             tool === t.id
               ? tactical
-                ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-inset ring-cyan-400/50"
+                ? "bg-cyan-500/25 text-cyan-100 ring-1 ring-inset ring-cyan-400/60"
                 : "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
               : tactical
                 ? "text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
                 : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
           )}
         >
-          <t.icon className="h-4 w-4" />
+          <t.icon className="h-4 w-4 shrink-0" />
+          <span
+            className={cn(
+              "text-[11px] font-semibold transition-all",
+              tool === t.id
+                ? "max-w-[120px] opacity-100"
+                : "max-w-0 overflow-hidden opacity-0 group-hover/tool:max-w-[120px] group-hover/tool:opacity-100",
+            )}
+          >
+            {t.label}
+          </span>
         </button>
       ))}
       <div
