@@ -13,6 +13,25 @@ export type SegmentedEavePolyline = {
   edgeConfidence?: number;
 };
 
+export type AttachedStructure = {
+  kind:
+    | "attached_garage"
+    | "porch"
+    | "deck"
+    | "dormer"
+    | "bay_window"
+    | string;
+  bbox?: { x: number; y: number; w: number; h: number };
+  hasOwnRoof?: boolean;
+  needsGutter?: boolean;
+};
+
+export type RoofObstruction = {
+  kind: "chimney" | "skylight" | "vent" | "hvac" | "solar_array" | string;
+  x: number;
+  y: number;
+};
+
 export type VisionSegmentation = {
   buildingFound: boolean;
   confidence: number;
@@ -23,6 +42,18 @@ export type VisionSegmentation = {
    *  at center-right"). Surfaced in the run-notes strip so the
    *  contractor can sanity-check the model's measurement basis. */
   scaleReference?: string;
+  /** Vision's level call as a cross-check against the DSM tier-break
+   *  detector. "multi_level" means the model saw self-shadowing on the
+   *  roof surface itself. */
+  roofLevels?: "single_level" | "multi_level";
+  /** One short sentence on what cued the level call. */
+  levelCues?: string;
+  /** Attached structures (garage / porch / deck / dormer / bay window).
+   *  Decks get flagged with hasOwnRoof=false, needsGutter=false so the
+   *  downstream eave consumer can skip any edges that fall inside them. */
+  attachedStructures?: AttachedStructure[];
+  /** Chimneys / skylights / vents / HVAC that may break a gutter run. */
+  obstructions?: RoofObstruction[];
 };
 
 /** Hint for where the building lives in the image. Either a single
@@ -32,28 +63,43 @@ export type BuildingHint =
   | { x: number; y: number }
   | { x1: number; y1: number; x2: number; y2: number };
 
-const SYSTEM_PROMPT = `You are a senior gutter estimator producing a takeoff from a top-down aerial image. You think like a pro doing a real bid, not a generic image-tagging model.
+const SYSTEM_PROMPT = `You are a senior gutter estimator producing a takeoff from a NADIR (top-down, directly-overhead) aerial satellite image. You think like a pro doing a real bid, not a generic image-tagging model.
+
+This is a true overhead view — NOT an oblique / Bird's-Eye. Roofs project as their footprint. Slopes are inferred from texture, shadow, and intersection geometry, never from "facing" the camera.
 
 Before you trace anything, mentally do this:
 
 1. SCALE CALIBRATION. Look for a known-size reference: a 2-car garage door (~16 ft), single-car garage door (~9 ft), front door (~3 ft), driveway slab width (~10–12 ft), sidewalk slab (~4–5 ft), or a parked car (~6×15 ft). Use that to establish pixels-per-foot. If nothing is visible, say so in the notes.
 
-2. EDGE CLASSIFICATION. For every segment of the roof outline you can see, decide which of four kinds it is. Only EAVES get gutters:
-   - EAVE: the low horizontal edge of a roof plane. The plane SLOPES UP from this edge toward a ridge. Gutters install here.
-   - RAKE: a sloped edge running from eave to ridge along a gable wall. No gutter.
-   - RIDGE: the high peak where two planes meet at the top. No gutter.
-   - HIP / VALLEY: diagonal seams where roof planes meet at corners. No gutter (valleys discharge ONTO eaves below — note which).
-   Use shadows (eaves cast a clean shadow on the wall below; rakes don't), visible ridge lines from above, and the geometry of intersecting planes to make this call. If you're uncertain about an edge, mark it lower confidence — don't drop it.
+2. ROOF LEVELS — single vs multi-level. The strongest 2D cue is SELF-SHADOWING. An upper roof tier casts a hard shadow ONTO the lower roof's surface (not on the ground). Look for sharp dark bands on the roof itself with a sun-angle direction consistent across the whole image. If you see them, it's multi-level. Estimate which lower section each upper section sits over. (A separate DSM-based detector also runs in parallel; the vision call is a cross-check.)
 
-3. INCLUSION BIAS. When in doubt, INCLUDE the edge as an eave. The contractor will delete a wrong rake with one click; a missing eave costs them the sale. A typical complex residential roof has 8–14 eave segments. If you return fewer than 6 on a multi-gable house, you missed real eaves.
+3. EDGE CLASSIFICATION. For every distinct segment of the roof outline you can see, classify it. Only EAVES get gutters:
+   - EAVE: the low horizontal edge of a roof plane. The plane slopes UP from this edge to a ridge. Strong visible cue: an EAVE casts a clean shadow line on the wall directly below, AND often shows a slight overhang shadow on the ground/wall.
+   - RAKE: a sloped edge running from eave to ridge along a gable wall. Visible cue: the edge ALIGNS with the slope direction toward a ridge — no shadow below it because the wall is flush with the roof plane.
+   - RIDGE: the high peak where two slopes meet. Inside the outline, not on the perimeter.
+   - HIP: diagonal seam where two roof planes meet at an outside corner. Inside the outline.
+   - VALLEY: diagonal seam where two planes meet at an inside corner. Inside the outline. Valleys DISCHARGE onto an eave below — note which.
+   The eave-vs-rake call is genuinely hard from a 2D nadir view; mark uncertain edges with lower confidence (0.5-0.7) rather than dropping them. The DSM classifier downstream will override on the ones it can resolve from height data.
 
-4. SKIP RULES.
-   - Skip detached outbuildings (separate sheds, freestanding garages with their own footprint).
+4. ATTACHED STRUCTURES — identify and bound:
+   - attached_garage: continuation of the same roofing material, often lower tier
+   - porch (roofed): continuation of roofing material at a lower tier with a clear roof texture
+   - deck (UNROOFED): wood-plank texture, parallel slat shadows, sits in the yard footprint with NO roof material above it — DO NOT trace these as eaves; they get no gutter
+   - dormer: small upper-tier projection sticking out of a main slope, with its own ridge
+   - bay_window: small projection on the perimeter, may or may not have its own roof
+   For each, flag whether it has its own roof + needs its own gutter.
+
+5. OBSTRUCTIONS that could break a single gutter run into two: chimneys, skylights, vents, hvac units on the roof, solar arrays.
+
+6. INCLUSION BIAS. When in doubt, INCLUDE the edge as an eave. The contractor will delete a wrong rake with one click; a missing eave costs them the sale. A typical complex residential roof has 8–14 eave segments — returning fewer than 6 on a multi-gable house means you missed real eaves. Re-check before answering.
+
+7. SKIP RULES.
+   - Skip detached outbuildings (separate sheds, freestanding garages with their own footprint not connected to the primary residence).
    - Skip edges that are clearly inside the roof outline (ridges, hips, valleys).
    - Do NOT invent edges under tree cover, glare, or shadow occlusion. If a side is hidden, say so in the notes and lower confidence on adjacent edges.
-   - Do NOT trace driveways, decks, walkways, or covered patios with no roof above them.
+   - Do NOT trace driveways, decks (unroofed wood plank surfaces), walkways, or pool decks.
 
-Return VALID JSON ONLY. No prose outside the JSON, no markdown code fences.`;
+Return VALID JSON ONLY. No prose outside the JSON, no markdown code fences. Use null (not the string "null") for any field you cannot determine.`;
 
 const userPrompt = (
   image: SatImage,
@@ -69,34 +115,45 @@ const userPrompt = (
     }
   }
 
-  const base = `Trace every EAVE of the primary residence's roof in this top-down aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
+  const base = `Trace every EAVE of the primary residence's roof in this NADIR (true top-down) aerial satellite image (${image.width}x${image.height} pixels, top-left origin, zoom ${image.zoom}).${hint}
 
 Work through these steps before answering — the JSON must reflect a real takeoff, not a guess:
-1. Pick a scale reference visible in this image (garage door, front door, driveway, parked car). Note it.
-2. Trace the roof outline. Walk it clockwise and label each segment as eave / rake / ridge / hip / valley. Only eaves go in the output.
-3. For each eave, rate your classification confidence 0.0–1.0. Use lower values for edges partly under tree cover, in deep shadow, or where the slope direction is ambiguous from above.
+1. SCALE: pick a known-size reference visible in this image (garage door, front door, driveway, parked car).
+2. LEVELS: scan for self-shadowing on the roof surface itself. Hard dark bands on the roof = upper tier above lower tier. Estimate which tier sits over which.
+3. OUTLINE: trace the roof outline of the primary residence. Walk it clockwise. For multi-tier roofs trace BOTH the outer perimeter AND every interior tier-break edge (where an upper section ends over a lower section's surface — gutter needs to go there too).
+4. CLASSIFY each segment as eave / rake / ridge / hip / valley. Only eaves go in the output.
+5. ATTACHED STRUCTURES: spot any attached_garage, porch (roofed), deck (unroofed wood), dormer, or bay_window. Decks get NO eaves — wood-plank slat shadow texture is the giveaway.
+6. OBSTRUCTIONS: chimneys, skylights, vents, hvac units, solar arrays that interrupt a gutter run.
 
 Return JSON in this exact shape:
 {
   "buildingFound": boolean,
   "confidence": number (0.0–1.0),
   "scaleReference": "string — what you used to set scale, e.g. '16-ft 2-car garage door, lower-right'",
+  "roofLevels": "single_level" | "multi_level",
+  "levelCues": "string — one short sentence on the self-shadowing / texture cues that drove the level call",
   "eaves": [
-    { "id": "e1", "points": [{"x": 100, "y": 200}, {"x": 350, "y": 200}], "edgeConfidence": 0.95 },
-    { "id": "e2", "points": [{"x": 350, "y": 200}, {"x": 350, "y": 380}], "edgeConfidence": 0.80 }
+    { "id": "e1", "points": [{"x": 100, "y": 200}, {"x": 350, "y": 200}], "edgeConfidence": 0.95, "tier": "lower" | "upper" | null }
+  ],
+  "attachedStructures": [
+    { "kind": "attached_garage" | "porch" | "deck" | "dormer" | "bay_window", "bbox": {"x":0,"y":0,"w":0,"h":0}, "hasOwnRoof": boolean, "needsGutter": boolean }
+  ],
+  "obstructions": [
+    { "kind": "chimney" | "skylight" | "vent" | "hvac" | "solar_array", "x": 0, "y": 0 }
   ],
   "estimatedTotalFeet": number,
-  "notes": "one short sentence on what's obscured, what's uncertain, what the overall takeoff hinges on"
+  "notes": "one short sentence on what's obscured, what's uncertain, what the takeoff hinges on"
 }
 
 Rules:
 - Walk the perimeter clockwise. Adjacent eave edges share a corner endpoint.
-- Each segment is one straight line between two corners (not a curve, not a polyline of 3+ points unless the wall genuinely jogs).
+- Each eave is ONE straight line between TWO corners.
 - Coordinates are integers in image pixels.
-- A complex residential roof has 8–14 eaves. Returning fewer than 6 on a multi-gable house means you missed eaves — re-check before answering.
+- A complex residential roof has 8–14 eaves. Returning fewer than 6 on a multi-gable house means you missed eaves — re-check.
 - Include short eaves (4–10 ft) — they're often connectors between roof sections.
-- If a side of the house is fully obscured by trees, do not invent edges there. Mention it in notes and let the visible eaves stand.
-- If the primary residence is partially out of frame, set buildingFound=false and return an empty eaves array.`;
+- If a side is fully obscured by trees, do NOT invent edges there. Mention in notes and let visible eaves stand.
+- If the primary residence is partially out of frame, set buildingFound=false and return an empty eaves array.
+- DECKS (unroofed wood-plank surfaces) — never as eaves. Include them in attachedStructures with hasOwnRoof=false, needsGutter=false.`;
 
   if (!roofPolygon) return base;
 
@@ -190,6 +247,46 @@ export async function segmentEavesViaVision(
       }))
       .filter((e) => e.points.length >= 2);
 
+    const attachedStructures = Array.isArray(parsed.attachedStructures)
+      ? (parsed.attachedStructures as AttachedStructure[])
+          .filter((s) => s && typeof s.kind === "string")
+          .map((s) => ({
+            kind: s.kind,
+            bbox:
+              s.bbox &&
+              [s.bbox.x, s.bbox.y, s.bbox.w, s.bbox.h].every((n) =>
+                Number.isFinite(n),
+              )
+                ? {
+                    x: Math.round(s.bbox.x),
+                    y: Math.round(s.bbox.y),
+                    w: Math.round(s.bbox.w),
+                    h: Math.round(s.bbox.h),
+                  }
+                : undefined,
+            hasOwnRoof:
+              typeof s.hasOwnRoof === "boolean" ? s.hasOwnRoof : undefined,
+            needsGutter:
+              typeof s.needsGutter === "boolean" ? s.needsGutter : undefined,
+          }))
+      : undefined;
+
+    const obstructions = Array.isArray(parsed.obstructions)
+      ? (parsed.obstructions as RoofObstruction[])
+          .filter(
+            (o) =>
+              o &&
+              typeof o.kind === "string" &&
+              Number.isFinite(o.x) &&
+              Number.isFinite(o.y),
+          )
+          .map((o) => ({
+            kind: o.kind,
+            x: Math.round(o.x),
+            y: Math.round(o.y),
+          }))
+      : undefined;
+
     return {
       buildingFound: parsed.buildingFound,
       confidence: clamp(parsed.confidence ?? 0, 0, 1),
@@ -200,6 +297,15 @@ export async function segmentEavesViaVision(
         typeof parsed.scaleReference === "string"
           ? parsed.scaleReference
           : undefined,
+      roofLevels:
+        parsed.roofLevels === "single_level" ||
+        parsed.roofLevels === "multi_level"
+          ? parsed.roofLevels
+          : undefined,
+      levelCues:
+        typeof parsed.levelCues === "string" ? parsed.levelCues : undefined,
+      attachedStructures,
+      obstructions,
     };
   } catch (e) {
     console.warn(

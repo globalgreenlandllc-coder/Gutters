@@ -882,6 +882,36 @@ export async function runAIEstimatePipeline(
           segmentation.confidence * 100,
         )}% confidence`,
       );
+      if (segmentation.roofLevels) {
+        const levelLabel =
+          segmentation.roofLevels === "multi_level"
+            ? "multi-level (vision)"
+            : "single-level (vision)";
+        notes.push(
+          `Roof levels: ${levelLabel}${
+            segmentation.levelCues ? ` — ${segmentation.levelCues}` : ""
+          }`,
+        );
+      }
+      if (segmentation.attachedStructures && segmentation.attachedStructures.length > 0) {
+        const summary = segmentation.attachedStructures
+          .map((s) => {
+            const flag = s.needsGutter === false ? " (no gutter)" : "";
+            return `${s.kind}${flag}`;
+          })
+          .join(", ");
+        notes.push(`Attached: ${summary}`);
+      }
+      if (segmentation.obstructions && segmentation.obstructions.length > 0) {
+        const counts = new Map<string, number>();
+        for (const o of segmentation.obstructions) {
+          counts.set(o.kind, (counts.get(o.kind) ?? 0) + 1);
+        }
+        const summary = [...counts.entries()]
+          .map(([k, n]) => `${n}× ${k}`)
+          .join(", ");
+        notes.push(`Obstructions: ${summary}`);
+      }
       if (segmentation.scaleReference) {
         notes.push(`Vision scale ref: ${segmentation.scaleReference}`);
       }
