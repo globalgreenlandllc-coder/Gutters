@@ -929,12 +929,17 @@ export function AerialCanvas({
                   dots stay clickable even when an label is right there. */}
               {isSelected &&
                 line.points.map((pt, idx) => {
-                  // Zoom-aware sizing: handle stays screen-constant.
-                  // hitR has a floor of 8 so it stays grab-friendly
-                  // even at extreme zoom-out. Visible chip floors at
-                  // 6px so it doesn't disappear at 5× zoom.
-                  const hitR = Math.max(14 * renderScale, 8);
-                  const visibleSize = Math.max(14 * renderScale, 6);
+                  // Pure screen-constant sizing. visibleSize = 14
+                  // viewBox units AT renderScale=1 (default zoom);
+                  // shrinking in lockstep with the zoom so 14 px on
+                  // screen is the constant size at every zoom level.
+                  // No floor on the visible square — at extreme zoom
+                  // we'd rather have a tiny dot than a giant box that
+                  // hides the corner.
+                  // Hit radius gets a small viewBox floor so the
+                  // grab zone stays usable even when zoomed out hard.
+                  const hitR = Math.max(14 * renderScale, 6);
+                  const visibleSize = 14 * renderScale;
                   const half = visibleSize / 2;
                   return (
                     <g key={idx}>
@@ -985,16 +990,16 @@ export function AerialCanvas({
               style={{ cursor: "grab" }}
             >
               {(() => {
-                // Zoom-aware downspout sizes. Floors keep the dots
-                // visible at high zoom without ballooning them.
-                const halo = Math.max(14 * renderScale, 7);
-                const ringR =
-                  Math.max((isSelected ? 8 : lowGlow ? 4.5 : 6) * renderScale, 3);
-                const coreR = Math.max(2.4 * renderScale, 1.2);
-                const schematicR =
-                  Math.max((isSelected ? 12 : 9) * renderScale, 4.5);
-                const schematicCore = Math.max(3.5 * renderScale, 1.5);
-                const schematicStroke = Math.max(2 * renderScale, 0.8);
+                // Pure screen-constant downspout sizes. Drops on
+                // viewBox scaling alone so a downspout reads the same
+                // on screen at default zoom and at 5× zoom rather
+                // than ballooning to fill the roof at high zoom.
+                const halo = 14 * renderScale;
+                const ringR = (isSelected ? 8 : lowGlow ? 4.5 : 6) * renderScale;
+                const coreR = 2.4 * renderScale;
+                const schematicR = (isSelected ? 12 : 9) * renderScale;
+                const schematicCore = 3.5 * renderScale;
+                const schematicStroke = 2 * renderScale;
                 if (theme === "tactical") {
                   return (
                     <>
