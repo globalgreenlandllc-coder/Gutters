@@ -136,10 +136,39 @@ export function AerialCanvas({
     return { x: transformed.x, y: transformed.y };
   }
 
+  // Magnetic-snap helper. When the user is drawing or dragging near an
+  // existing eave's endpoint, pulling the point onto that endpoint
+  // produces clean continuous gutter runs instead of microgaps that
+  // look like a coding error in the final proposal. Snap radius is
+  // generous (16px in viewBox units ≈ a fingertip) since the trace is
+  // rarely off by more than a foot at canvas scale.
+  function snapToCorner(
+    p: { x: number; y: number },
+    excludeLineId: string | null = null,
+  ): { x: number; y: number } {
+    const SNAP_RADIUS = 16;
+    let best: { x: number; y: number } | null = null;
+    let bestDist = SNAP_RADIUS;
+    for (const line of eaves) {
+      if (line.id === excludeLineId) continue;
+      for (const pt of line.points) {
+        const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = pt;
+        }
+      }
+    }
+    return best ?? p;
+  }
+
   function handlePointerDown(e: React.PointerEvent) {
     const p = svgPoint(e);
     if (tool === "add-eave") {
-      setDrawing({ start: p, end: p });
+      // Snap the start point to an existing corner so the new eave
+      // chains seamlessly off the prior trace.
+      const snappedStart = snapToCorner(p);
+      setDrawing({ start: snappedStart, end: snappedStart });
       e.currentTarget.setPointerCapture(e.pointerId);
       return;
     }
@@ -156,16 +185,25 @@ export function AerialCanvas({
   function handlePointerMove(e: React.PointerEvent) {
     const p = svgPoint(e);
     if (drawing) {
-      setDrawing({ ...drawing, end: p });
+      // Live-snap the end as the user drags — they see a magnetic pull
+      // toward existing corners, which makes adding a continuous run
+      // feel like the snap is doing it for them.
+      setDrawing({ ...drawing, end: snapToCorner(p) });
       return;
     }
     if (drag?.kind === "vertex") {
+      // Snap dragged vertex to another eave's endpoint — but exclude
+      // the line we're dragging, otherwise the snap pulls onto our
+      // own opposite endpoint and collapses the eave.
+      const snapped = snapToCorner(p, drag.lineId);
       onEavesChange(
         eaves.map((l) =>
           l.id === drag.lineId
             ? {
                 ...l,
-                points: l.points.map((pt, i) => (i === drag.index ? p : pt)),
+                points: l.points.map((pt, i) =>
+                  i === drag.index ? snapped : pt,
+                ),
               }
             : l,
         ),
@@ -381,8 +419,9 @@ export function AerialCanvas({
               <motion.path
                 d={pathFor(line)}
                 stroke={stroke}
-                strokeWidth={isSelected ? 5 : isHover ? 4 : 3}
+                strokeWidth={isSelected ? 6 : isHover ? 5 : 4}
                 strokeLinecap="round"
+                strokeLinejoin="round"
                 fill="none"
                 initial={{ pathLength: 0, opacity: 0 }}
                 animate={{ pathLength: 1, opacity: 1 }}

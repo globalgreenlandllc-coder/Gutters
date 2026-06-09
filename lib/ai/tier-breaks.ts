@@ -39,8 +39,17 @@ import type { RoofSegment } from "./solar";
  * project them into image-pixel space alongside the perimeter eaves.
  */
 
-const TIER_STEP_M = 0.3; // ~12 inches — minimum perceptible tier drop
-const DEFAULT_DEDUPE_RADIUS_M = 1.5; // skip candidates within ~5 ft of an existing eave
+// Tier-break thresholds have been tightened twice based on real-house
+// runs. The early "find every upper segment" pass was adding 7+ short
+// bbox-edge stubs that drew as crosses in the middle of the roof — bbox
+// edges aren't real eaves, and the detector was inflating LF by 50+ ft
+// on roofs that just have minor ridge variation. Now we only fire on
+// dramatic steps (>3 ft, half a story) AND large segments (>15 m²,
+// roughly a one-car-garage roof minimum).
+const TIER_STEP_M = 0.9; // ~36 inches — dramatic, story-class tier drop
+const DEFAULT_DEDUPE_RADIUS_M = 2.5; // skip candidates within ~8 ft of an existing eave
+const DEFAULT_MIN_SEGMENT_AREA_M2 = 15; // ~160 sqft — drop dormers, chimney caps, small spurs
+const MAX_TIER_BREAK_CANDIDATES = 3; // hard ceiling so worst case isn't 7 cross-marks
 
 type LatLng = { lat: number; lng: number };
 type Edge = { a: LatLng; b: LatLng };
@@ -156,7 +165,7 @@ export function detectTierBreakEaves(
 ): { candidates: TierBreakCandidate[]; diag: TierBreakDiagnostics } {
   const minStep = options.minStepMeters ?? TIER_STEP_M;
   const dedupeR = options.dedupeRadiusM ?? DEFAULT_DEDUPE_RADIUS_M;
-  const minArea = options.minSegmentAreaM2 ?? 6;
+  const minArea = options.minSegmentAreaM2 ?? DEFAULT_MIN_SEGMENT_AREA_M2;
   const minPitch = options.minPitchDeg ?? 5;
   const baselinePct = options.baselinePercentile ?? 0.25;
 
@@ -255,5 +264,13 @@ export function detectTierBreakEaves(
     });
   });
 
-  return { candidates, diag };
+  // Keep only the most prominent tier-breaks (biggest steps). On a
+  // chimney-and-dormer-rich roof Solar can report 8+ "elevated"
+  // segments — drawing every bbox-edge as an eave clutters the trace
+  // with cross-marks. The biggest 3 cover the gutters that actually
+  // matter; rest are dormer/cap noise.
+  candidates.sort((a, b) => b.stepMeters - a.stepMeters);
+  const trimmed = candidates.slice(0, MAX_TIER_BREAK_CANDIDATES);
+
+  return { candidates: trimmed, diag };
 }
