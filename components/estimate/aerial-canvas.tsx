@@ -143,6 +143,13 @@ export function AerialCanvas({
     [eaves],
   );
 
+  // Render scale — inverse of zoom. As the user zooms in (view.width
+  // shrinks), strokes and handles need to render at smaller viewBox
+  // sizes to stay visually constant on screen. Without this, vertex
+  // handles balloon up at 5× zoom and cover the roof corners you're
+  // trying to align to.
+  const renderScale = view.width / VIEWBOX_W;
+
   // Roof centroid in viewBox coords — computed once from all eave
   // endpoints and passed to every label so each label can push itself
   // AWAY from the roof's center (i.e. land on the outside of the
@@ -792,7 +799,9 @@ export function AerialCanvas({
               <motion.path
                 d={pathFor(line)}
                 stroke={stroke}
-                strokeWidth={isSelected ? 5 : isHover ? 4.5 : 3.5}
+                strokeWidth={
+                  (isSelected ? 5 : isHover ? 4.5 : 3.5) * renderScale
+                }
                 // Architectural look: square caps + miter joins give
                 // clean perpendicular intersections instead of the
                 // rounded pill ends + soft corners we had before.
@@ -857,42 +866,45 @@ export function AerialCanvas({
                   the hit area (transparent ring + visible dot) so the
                   dots stay clickable even when an label is right there. */}
               {isSelected &&
-                line.points.map((pt, idx) => (
-                  <g key={idx}>
-                    {/* Transparent hit area — 14px radius so the corner
-                        is grab-friendly even with a label nearby. */}
-                    <circle
-                      cx={pt.x}
-                      cy={pt.y}
-                      r={14}
-                      fill="transparent"
-                      style={{ cursor: "grab" }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setDrag({
-                          kind: "vertex",
-                          lineId: line.id,
-                          index: idx,
-                        });
-                      }}
-                    />
-                    {/* Visible vertex handle — square with rounded
-                        corners. Reads as an architectural corner mark
-                        rather than a fluffy dot, matching the cleaner
-                        line aesthetic. */}
-                    <rect
-                      x={pt.x - 7}
-                      y={pt.y - 7}
-                      width={14}
-                      height={14}
-                      rx={2.5}
-                      fill={t.handleFill}
-                      stroke={t.handleStroke}
-                      strokeWidth={2.5}
-                      pointerEvents="none"
-                    />
-                  </g>
-                ))}
+                line.points.map((pt, idx) => {
+                  // Zoom-aware sizing: handle stays screen-constant.
+                  // hitR has a floor of 8 so it stays grab-friendly
+                  // even at extreme zoom-out. Visible chip floors at
+                  // 6px so it doesn't disappear at 5× zoom.
+                  const hitR = Math.max(14 * renderScale, 8);
+                  const visibleSize = Math.max(14 * renderScale, 6);
+                  const half = visibleSize / 2;
+                  return (
+                    <g key={idx}>
+                      <circle
+                        cx={pt.x}
+                        cy={pt.y}
+                        r={hitR}
+                        fill="transparent"
+                        style={{ cursor: "grab" }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          setDrag({
+                            kind: "vertex",
+                            lineId: line.id,
+                            index: idx,
+                          });
+                        }}
+                      />
+                      <rect
+                        x={pt.x - half}
+                        y={pt.y - half}
+                        width={visibleSize}
+                        height={visibleSize}
+                        rx={2.5 * renderScale}
+                        fill={t.handleFill}
+                        stroke={t.handleStroke}
+                        strokeWidth={2.5 * renderScale}
+                        pointerEvents="none"
+                      />
+                    </g>
+                  );
+                })}
             </g>
           );
         })}
@@ -910,50 +922,61 @@ export function AerialCanvas({
               }}
               style={{ cursor: "grab" }}
             >
-              {theme === "tactical" ? (
-                <>
-                  {/* Static halo (no pulse). The pulse was distracting
-                      and made it hard to read downspout positions on a
-                      cluster of 8-9. A subtle static ring around the
-                      selected/hovered downspout still calls it out. */}
-                  {isSelected && !lowGlow && (
+              {(() => {
+                // Zoom-aware downspout sizes. Floors keep the dots
+                // visible at high zoom without ballooning them.
+                const halo = Math.max(14 * renderScale, 7);
+                const ringR =
+                  Math.max((isSelected ? 8 : lowGlow ? 4.5 : 6) * renderScale, 3);
+                const coreR = Math.max(2.4 * renderScale, 1.2);
+                const schematicR =
+                  Math.max((isSelected ? 12 : 9) * renderScale, 4.5);
+                const schematicCore = Math.max(3.5 * renderScale, 1.5);
+                const schematicStroke = Math.max(2 * renderScale, 0.8);
+                if (theme === "tactical") {
+                  return (
+                    <>
+                      {isSelected && !lowGlow && (
+                        <circle
+                          cx={d.x}
+                          cy={d.y}
+                          r={halo}
+                          fill={t.downspout}
+                          opacity={0.18}
+                          pointerEvents="none"
+                        />
+                      )}
+                      <circle
+                        cx={d.x}
+                        cy={d.y}
+                        r={ringR}
+                        fill={t.downspout}
+                        filter={
+                          lowGlow && !isSelected
+                            ? undefined
+                            : (t.downspoutGlowFilter ?? undefined)
+                        }
+                      />
+                      <circle cx={d.x} cy={d.y} r={coreR} fill={t.downspoutCore} />
+                    </>
+                  );
+                }
+                return (
+                  <>
                     <circle
                       cx={d.x}
                       cy={d.y}
-                      r={14}
-                      fill={t.downspout}
-                      opacity={0.18}
-                      pointerEvents="none"
+                      r={schematicR}
+                      fill="white"
+                      stroke={
+                        isSelected ? t.downspout : "rgba(14,116,144,0.85)"
+                      }
+                      strokeWidth={schematicStroke}
                     />
-                  )}
-                  <circle
-                    cx={d.x}
-                    cy={d.y}
-                    r={isSelected ? 8 : lowGlow ? 4.5 : 6}
-                    fill={t.downspout}
-                    filter={
-                      lowGlow && !isSelected
-                        ? undefined
-                        : (t.downspoutGlowFilter ?? undefined)
-                    }
-                  />
-                  <circle cx={d.x} cy={d.y} r={2.4} fill={t.downspoutCore} />
-                </>
-              ) : (
-                <>
-                  <circle
-                    cx={d.x}
-                    cy={d.y}
-                    r={isSelected ? 12 : 9}
-                    fill="white"
-                    stroke={
-                      isSelected ? t.downspout : "rgba(14,116,144,0.85)"
-                    }
-                    strokeWidth={2}
-                  />
-                  <circle cx={d.x} cy={d.y} r={3.5} fill={t.downspoutCore} />
-                </>
-              )}
+                    <circle cx={d.x} cy={d.y} r={schematicCore} fill={t.downspoutCore} />
+                  </>
+                );
+              })()}
             </g>
           );
         })}
