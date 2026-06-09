@@ -283,19 +283,30 @@ export function AerialCanvas({
   function handlePointerDown(e: React.PointerEvent) {
     const p = svgPoint(e);
     if (tool === "add-eave") {
-      // Snap the start point to an existing corner so the new eave
-      // chains seamlessly off the prior trace.
-      const snappedStart = snapToCorner(p);
-      setDrawing({ start: snappedStart, end: snappedStart });
-      // setPointerCapture can throw on some pointer types — wrap so a
-      // single device quirk doesn't silently break the entire add-eave
-      // flow.
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // Capture is a nice-to-have. The drag tracking still works
-        // because the move/up listeners are on the SVG element itself.
+      const snapped = snapToCorner(p);
+      if (drawing) {
+        // SECOND click — commit the eave from the stored start to here.
+        // Two-click flow matches the contractor's mental model: same
+        // 'click here, click there' rhythm as add-downspout, just two
+        // taps. The old drag-to-draw required a continuous gesture
+        // the user couldn't tell was needed.
+        const len = dist(drawing.start, snapped);
+        const threshold = Math.max(3, view.width * 0.015);
+        if (len > threshold) {
+          const id = `eave-${Date.now()}`;
+          onEavesChange([
+            ...eaves,
+            { id, kind: "eave", points: [drawing.start, snapped] },
+          ]);
+          setSelectedId(id);
+        }
+        setDrawing(null);
+        setTool("select");
+        return;
       }
+      // FIRST click — record the start point. The end point tracks the
+      // cursor via pointermove until the next click commits the eave.
+      setDrawing({ start: snapped, end: snapped });
       return;
     }
     if (tool === "add-downspout") {
@@ -310,10 +321,10 @@ export function AerialCanvas({
 
   function handlePointerMove(e: React.PointerEvent) {
     const p = svgPoint(e);
-    if (drawing) {
-      // Live-snap the end as the user drags — they see a magnetic pull
-      // toward existing corners, which makes adding a continuous run
-      // feel like the snap is doing it for them.
+    if (drawing && tool === "add-eave") {
+      // Live-update the preview end. Works WITHOUT a held drag —
+      // pointermove fires whenever the cursor moves over the SVG so
+      // the preview follows the mouse from click-1 to click-2.
       setDrawing({ ...drawing, end: snapToCorner(p) });
       return;
     }
@@ -361,33 +372,10 @@ export function AerialCanvas({
     }
   }
 
-  function handlePointerUp(e: React.PointerEvent) {
-    if (drawing) {
-      // Threshold scales with the current zoom level: when zoomed in,
-      // a small screen-drag is a small viewBox-drag, so the old fixed
-      // 14-unit floor meant the contractor had to drag what looked
-      // like a long line on-screen to register an eave. Scale to ~2%
-      // of the visible width, with a 3-unit floor so a literal click
-      // still doesn't create a zero-length eave.
-      const threshold = Math.max(3, view.width * 0.015);
-      const len = dist(drawing.start, drawing.end);
-      if (len > threshold) {
-        const id = `eave-${Date.now()}`;
-        onEavesChange([
-          ...eaves,
-          { id, kind: "eave", points: [drawing.start, drawing.end] },
-        ]);
-        setSelectedId(id);
-      }
-      setDrawing(null);
-      setTool("select");
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        // Some browsers throw when releasing capture they no longer hold.
-      }
-      return;
-    }
+  function handlePointerUp() {
+    // Eave drawing is now click-click, not click-and-drag, so we
+    // intentionally don't commit anything on pointer-up. The second
+    // click in handlePointerDown commits the eave.
     setDrag(null);
   }
 
@@ -631,12 +619,13 @@ export function AerialCanvas({
                     : "text-zinc-500",
                 )}
               >
-                <strong>Select a line</strong>, then drag the body to slide it
-                sideways or grab a corner to extend.{" "}
-                <strong>Add eave</strong> draws a new run.{" "}
-                <strong>Scroll</strong> to zoom, <strong>Shift+drag</strong>{" "}
-                to pan, <strong>Delete</strong> removes the selected line.
-                Totals re-price as you edit.
+                <strong>Select a line</strong>, drag the body to slide it
+                or grab a corner to extend. <strong>Double-click</strong> a
+                line to split it. <strong>Add eave</strong>: click once to
+                start, click again to finish. <strong>Scroll</strong> to
+                zoom, <strong>drag empty space</strong> to pan,{" "}
+                <strong>Delete</strong> removes the selected line. Totals
+                re-price as you edit.
               </div>
             </div>
             <button
@@ -717,7 +706,7 @@ export function AerialCanvas({
           }
           handlePointerMove(e);
         }}
-        onPointerUp={(e) => {
+        onPointerUp={() => {
           if (panning) {
             // No real movement → user tapped empty space. Deselect so
             // the contractor can dismiss a selection without having to
@@ -728,7 +717,7 @@ export function AerialCanvas({
             setPanning(null);
             return;
           }
-          handlePointerUp(e);
+          handlePointerUp();
         }}
         onContextMenu={(e) => e.preventDefault()}
         onWheel={(e) => {
