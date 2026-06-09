@@ -101,6 +101,14 @@ export function AerialCanvas({
   } | null>(null);
   const resetView = () =>
     setView({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
+  // Popover anchor in container-pixel coords. Updated by an effect
+  // whenever the selected downspout, pan, or zoom changes — having
+  // it as state means it actually re-renders on view changes, which
+  // an inline IIFE wasn't doing reliably across paint cycles.
+  const [dsPopoverPos, setDsPopoverPos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   // null = "auto": labels are shown but tiny crowded ones are skipped. The
   // user can force them all-on or all-off with the toolbar toggle.
   const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
@@ -156,6 +164,38 @@ export function AerialCanvas({
     () => downspouts.find((d) => d.id === selectedId) ?? null,
     [downspouts, selectedId],
   );
+
+  // Recompute popover anchor whenever the selection or the view
+  // changes. SVG ref is read synchronously inside the effect — it's
+  // guaranteed to be populated by the time selectedDownspout is set
+  // (the user had to click the dot inside the SVG to select it).
+  useEffect(() => {
+    if (!selectedDownspout) {
+      setDsPopoverPos(null);
+      return;
+    }
+    const svg = svgRef.current;
+    if (!svg) {
+      setDsPopoverPos(null);
+      return;
+    }
+    const rect = svg.getBoundingClientRect();
+    const parent = svg.parentElement;
+    const parentRect = parent?.getBoundingClientRect() ?? rect;
+    const xRatio = (selectedDownspout.x - view.x) / view.width;
+    const yRatio = (selectedDownspout.y - view.y) / view.height;
+    setDsPopoverPos({
+      x: rect.left - parentRect.left + xRatio * rect.width,
+      y: rect.top - parentRect.top + yRatio * rect.height,
+    });
+  }, [
+    selectedDownspout,
+    view.x,
+    view.y,
+    view.width,
+    view.height,
+    fullscreen,
+  ]);
 
   function svgPoint(e: React.PointerEvent): { x: number; y: number } {
     const svg = svgRef.current;
@@ -420,7 +460,11 @@ export function AerialCanvas({
         downspoutCount={downspouts.length}
         theme={theme}
       />
-      {roofStructure && showRoofStructure && (
+      {/* Roof-structure banner only shows when no downspout is
+          selected — otherwise it overlaps with the downspout-height
+          popover at the bottom of the canvas, and both are
+          unreadable. */}
+      {roofStructure && showRoofStructure && !selectedDownspout && (
         <RoofStructureBanner confidence={roofStructure.confidence} />
       )}
 
@@ -740,17 +784,21 @@ export function AerialCanvas({
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
               />
-              {/* Render the LF label BEFORE the vertex dots so the dots
-                  stay on top — the label used to cover the endpoint
-                  handles on short eaves, making them unclickable. */}
-              {(labelVisibleIds.has(line.id) || isSelected || isHover) && (
-                <LineLabel
-                  line={line}
-                  theme={theme}
-                  emphasized={isSelected}
-                  animationDelay={0.6 + i * 0.06}
-                />
-              )}
+              {/* LF label policy: show when the line is just hovered or
+                  ambient-labeled, but HIDE when the line is selected.
+                  The contractor is editing — they don't need the LF
+                  reading hovering near the corner handles where they're
+                  trying to click. The total LF is shown in the legend
+                  anyway, and the pricing tab updates live. */}
+              {!isSelected &&
+                (labelVisibleIds.has(line.id) || isHover) && (
+                  <LineLabel
+                    line={line}
+                    theme={theme}
+                    emphasized={false}
+                    animationDelay={0.6 + i * 0.06}
+                  />
+                )}
               {/* Vertex handles render LAST so they sit on top of any
                   LF label that might land near a corner. Also enlarged
                   the hit area (transparent ring + visible dot) so the
@@ -878,31 +926,10 @@ export function AerialCanvas({
             key={selectedDownspout.id}
             downspout={selectedDownspout}
             theme={theme}
-            // Convert the selected downspout's viewBox position into
-            // the container's pixel space so the popover floats right
-            // above it. Falls back to bottom-center when the SVG ref
-            // isn't ready yet (first paint only).
-            position={(() => {
-              const svg = svgRef.current;
-              if (!svg) return undefined;
-              const rect = svg.getBoundingClientRect();
-              const containerRect =
-                svg.parentElement?.getBoundingClientRect() ?? rect;
-              const xRatio =
-                (selectedDownspout.x - view.x) / view.width;
-              const yRatio =
-                (selectedDownspout.y - view.y) / view.height;
-              return {
-                x:
-                  rect.left -
-                  containerRect.left +
-                  xRatio * rect.width,
-                y:
-                  rect.top -
-                  containerRect.top +
-                  yRatio * rect.height,
-              };
-            })()}
+            // Anchored above the selected downspout dot via an effect
+            // that tracks selection + pan/zoom (more reliable than
+            // computing inline every render).
+            position={dsPopoverPos ?? undefined}
             onChangeStories={(s) =>
               onDownspoutsChange(
                 downspouts.map((d) =>
