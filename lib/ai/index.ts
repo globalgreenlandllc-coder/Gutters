@@ -482,6 +482,15 @@ export async function runAIEstimatePipeline(
 
   // 4b. FALLBACK: Google Solar building mask. Only fetched when SAM 2
   // didn't produce a usable polygon.
+  //
+  // Sanity check: the Solar mask sometimes returns ONLY one wing of a
+  // multi-tier roof (the highest tier, since lower planes can be
+  // partially obscured in the DSM). On a 2-story main + 1-story
+  // wraparound this gives a polygon that traces just the main mass and
+  // misses every lower eave. We catch this by comparing the polygon's
+  // bbox area against the image area — if it's <55% of the work image,
+  // we treat the Solar mask as unreliable and fall through to GPT-4o
+  // vision which sees the whole frame.
   if (image && !roofPolygon) {
     const solarMask = await getRoofMaskFromSolar(geocoded.lat, geocoded.lng);
     if (solarMask.ok) {
@@ -493,17 +502,30 @@ export async function runAIEstimatePipeline(
         image.height,
       );
       if (result && result.polygon.points.length >= 8) {
-        roofPolygon = result.polygon;
-        const cleanupLabel =
-          result.cleanup.kind === "ortho"
-            ? `ortho ✓ (${result.cleanup.vertCount} verts)`
-            : result.cleanup.kind === "simplified"
-              ? `ortho ✗ (${result.cleanup.reason}) — using DP-simplified ${result.cleanup.vertCount} verts`
-              : `ortho ✗ + DP ✗ (${result.cleanup.reason}) — raw ${result.cleanup.vertCount} verts`;
-        notes.push(
-          `Solar mask fallback (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF → ${cleanupLabel}, bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y})`,
-        );
-        classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
+        const polygonBboxArea =
+          result.polygon.bbox.width * result.polygon.bbox.height;
+        const workArea = workImage.width * workImage.height;
+        const coverage = polygonBboxArea / workArea;
+        // Threshold: below 55% suggests the mask captured one wing of
+        // a multi-tier roof. Above that, it's probably the whole house.
+        const MASK_COVERAGE_FLOOR = 0.55;
+        if (coverage < MASK_COVERAGE_FLOOR) {
+          notes.push(
+            `Solar mask covered only ${(coverage * 100).toFixed(0)}% of work image (bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px) — likely one wing of a multi-tier roof. Falling through to vision.`,
+          );
+        } else {
+          roofPolygon = result.polygon;
+          const cleanupLabel =
+            result.cleanup.kind === "ortho"
+              ? `ortho ✓ (${result.cleanup.vertCount} verts)`
+              : result.cleanup.kind === "simplified"
+                ? `ortho ✗ (${result.cleanup.reason}) — using DP-simplified ${result.cleanup.vertCount} verts`
+                : `ortho ✗ + DP ✗ (${result.cleanup.reason}) — raw ${result.cleanup.vertCount} verts`;
+          notes.push(
+            `Solar mask fallback (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF → ${cleanupLabel}, bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y}), ${(coverage * 100).toFixed(0)}% coverage`,
+          );
+          classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
+        }
       } else {
         notes.push(
           `Solar mask polygon too small (${result?.polygon.points.length ?? 0} verts)`,
