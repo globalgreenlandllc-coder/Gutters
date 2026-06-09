@@ -140,6 +140,27 @@ export function AerialCanvas({
     [eaves],
   );
 
+  // Roof centroid in viewBox coords — computed once from all eave
+  // endpoints and passed to every label so each label can push itself
+  // AWAY from the roof's center (i.e. land on the outside of the
+  // polygon). Previously labels pushed toward the canvas center, which
+  // put them INSIDE the roof outline — exactly what the contractor
+  // didn't want.
+  const eavesCentroid = useMemo(() => {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const line of eaves) {
+      for (const pt of line.points) {
+        sx += pt.x;
+        sy += pt.y;
+        n++;
+      }
+    }
+    if (n === 0) return { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+    return { x: sx / n, y: sy / n };
+  }, [eaves]);
+
   // Decide which eaves get an always-visible LF label. In "off" mode none
   // do (selected still renders its own larger label). In "on" mode all do.
   // "auto" hides labels under a length threshold that climbs as the
@@ -797,6 +818,7 @@ export function AerialCanvas({
                     theme={theme}
                     emphasized={false}
                     animationDelay={0.6 + i * 0.06}
+                    outsideAnchor={eavesCentroid}
                   />
                 )}
               {/* Vertex handles render LAST so they sit on top of any
@@ -1497,12 +1519,18 @@ function LineLabel({
   theme,
   emphasized = false,
   animationDelay = 0,
+  outsideAnchor,
 }: {
   line: EditableLine;
   theme: CanvasTheme;
   /** Selected eaves render a larger label; non-selected render a compact pill. */
   emphasized?: boolean;
   animationDelay?: number;
+  /** Reference point that's INSIDE the roof outline. The label picks
+   *  the perpendicular direction whose unit vector points AWAY from
+   *  this anchor — so labels land OUTSIDE the roof polygon rather
+   *  than on top of roof shingles. Pass the eaves' centroid. */
+  outsideAnchor?: { x: number; y: number };
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -1526,12 +1554,16 @@ function LineLabel({
   const nx = (-dy / len2) * offsetMag;
   const ny = (dx / len2) * offsetMag;
 
-  // Always offset toward the "inside" of the canvas so labels don't escape
-  // the viewBox on roof corners near the edges of the image.
+  // Pick the perpendicular direction that points AWAY from the roof's
+  // centroid. dot(normal, centroid→midpoint) > 0 means the unsigned
+  // normal already points outward; otherwise flip. Falls back to the
+  // canvas-center heuristic when no anchor is supplied.
   const cx = (a.x + b.x) / 2;
   const cy = (a.y + b.y) / 2;
-  const towardCenter = (cx - VIEWBOX_W / 2) * nx + (cy - VIEWBOX_H / 2) * ny;
-  const sign = towardCenter > 0 ? -1 : 1;
+  const anchor = outsideAnchor ?? { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+  const fromAnchorX = cx - anchor.x;
+  const fromAnchorY = cy - anchor.y;
+  const sign = fromAnchorX * nx + fromAnchorY * ny >= 0 ? 1 : -1;
   const labelCx = cx + nx * sign;
   const labelCy = cy + ny * sign;
 
