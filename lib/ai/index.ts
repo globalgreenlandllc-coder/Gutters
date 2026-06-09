@@ -676,13 +676,14 @@ export async function runAIEstimatePipeline(
         imageSpaceEdges.push([a, b]);
         dsmLF += ft;
       }
-      // Coverage gate: when the azimuth filter strips more than half the
-      // perimeter, the result reads as a handful of disconnected eave
-      // stubs floating around an otherwise unmarked roof — useless to
-      // the contractor and embarrassing in the UI. In that case we
-      // discard the classification and treat EVERY polygon edge as a
-      // candidate eave; the contractor deletes the rakes manually with
-      // 1-click each. Better to show too much than to hide real eaves.
+      // Coverage stats — purely informational now. The previous
+      // upper-bound gate (>98% coverage → "filter likely broken" →
+      // fall back to all polygon edges as eaves) was causing gables
+      // and rakes to be billed as gutters whenever the tier-break
+      // detector added interior eaves (since those increase the
+      // numerator beyond the perimeter denominator). Trust the
+      // classifier's per-edge rake/eave labels; surface coverage in
+      // the notes only.
       let totalPolygonLF = 0;
       for (let i = 0; i < roofPolygon.points.length; i++) {
         const a = roofPolygon.points[i];
@@ -694,22 +695,13 @@ export async function runAIEstimatePipeline(
         );
       }
       const coverage = totalPolygonLF > 0 ? dsmLF / totalPolygonLF : 0;
-      // Coverage gate is now ONLY an upper-bound sanity check (≈100% of
-      // perimeter classified as eave usually means the azimuth filter
-      // broke — no rakes at all is impossible on a real hip/gable roof).
-      //
-      // Lower-bound gate removed deliberately: when the classifier kept
-      // only 2-3 edges, falling back to "treat every polygon edge as a
-      // gutter" was billing the homeowner for rakes/ridges they don't
-      // get. Better to trust the classifier and surface the rakes the
-      // AI flagged as gray-dashed "no-gutter" lines — the contractor
-      // edits/adds manually from there.
       const MIN_EDGES = 2;
-      const MAX_COVERAGE = 0.98;
-      if (
-        imageSpaceEdges.length >= MIN_EDGES &&
-        coverage <= MAX_COVERAGE
-      ) {
+      if (imageSpaceEdges.length >= MIN_EDGES) {
+        if (coverage > 1.05) {
+          notes.push(
+            `DSM eave LF ${(coverage * 100).toFixed(0)}% of perimeter — extra is interior tier-break eaves, not a classifier bug. Keeping DSM classification.`,
+          );
+        }
         eaves = imageSpaceEdges.map(([a, b], i) => ({
           id: `dsm-eave-${i}`,
           kind: "eave" as const,
@@ -749,12 +741,8 @@ export async function runAIEstimatePipeline(
         totalEaveLF = dsmLF * 1.08;
         sourceLabel = "DSM-classified";
       } else {
-        const why =
-          imageSpaceEdges.length < MIN_EDGES
-            ? `kept ${imageSpaceEdges.length} edge(s) — too few to trust`
-            : `classified ${(coverage * 100).toFixed(0)}% as eave (filter likely broken)`;
         notes.push(
-          `DSM ${why} — falling back to all ${roofPolygon.points.length} polygon edges`,
+          `DSM kept ${imageSpaceEdges.length} edge(s) — too few to trust, falling back to all ${roofPolygon.points.length} polygon edges`,
         );
       }
     }

@@ -429,7 +429,7 @@ export function AerialCanvas({
           );
         })}
 
-        {downspouts.map((d, i) => {
+        {downspouts.map((d) => {
           const isSelected = selectedId === d.id;
           return (
             <g
@@ -444,27 +444,17 @@ export function AerialCanvas({
             >
               {theme === "tactical" ? (
                 <>
-                  {/* Pulsing halo gets suppressed in low-glow mode so a
-                      cluster of 8 downspouts doesn't paint over half
-                      the roof while you're trying to read it. */}
-                  {!lowGlow && (
-                    <motion.circle
+                  {/* Static halo (no pulse). The pulse was distracting
+                      and made it hard to read downspout positions on a
+                      cluster of 8-9. A subtle static ring around the
+                      selected/hovered downspout still calls it out. */}
+                  {isSelected && !lowGlow && (
+                    <circle
                       cx={d.x}
                       cy={d.y}
-                      r={isSelected ? 18 : 14}
+                      r={14}
                       fill={t.downspout}
                       opacity={0.18}
-                      initial={{ scale: 0.7, opacity: 0 }}
-                      animate={{
-                        scale: [0.7, 1.3, 0.9],
-                        opacity: [0, 0.4, 0.18],
-                      }}
-                      transition={{
-                        duration: 2.2,
-                        repeat: Infinity,
-                        ease: "easeInOut",
-                        delay: i * 0.15,
-                      }}
                       pointerEvents="none"
                     />
                   )}
