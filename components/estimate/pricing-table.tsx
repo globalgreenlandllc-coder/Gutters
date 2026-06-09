@@ -1,9 +1,77 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import {
+  ArrowDownToLine,
+  CornerDownRight,
+  CornerUpRight,
+  Hammer,
+  HardHat,
+  Layers,
+  Pencil,
+  Plus,
+  Shield,
+  Slash,
+  Trash2,
+  Waves,
+  Zap,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { LineItem } from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
+
+/**
+ * Decorate each line item with a category icon + accent color so the
+ * "Pricing" tab reads as a real BOM rather than a sea of numbers.
+ * Match by canonical id first (set in lib/pricing.ts) and fall back to
+ * a keyword match on the human-readable name for custom line items.
+ */
+function decorate(item: LineItem): {
+  Icon: typeof Layers;
+  tone: { ring: string; bg: string; text: string };
+} {
+  const id = item.id;
+  const name = item.name.toLowerCase();
+  const t = {
+    emerald: {
+      ring: "ring-emerald-200",
+      bg: "bg-emerald-50",
+      text: "text-emerald-700",
+    },
+    sky: { ring: "ring-sky-200", bg: "bg-sky-50", text: "text-sky-700" },
+    violet: {
+      ring: "ring-violet-200",
+      bg: "bg-violet-50",
+      text: "text-violet-700",
+    },
+    amber: {
+      ring: "ring-amber-200",
+      bg: "bg-amber-50",
+      text: "text-amber-700",
+    },
+    zinc: { ring: "ring-zinc-200", bg: "bg-zinc-100", text: "text-zinc-700" },
+    rose: { ring: "ring-rose-200", bg: "bg-rose-50", text: "text-rose-700" },
+  };
+  if (id === "gutter" || /gutter/.test(name))
+    return { Icon: Waves, tone: t.emerald };
+  if (id === "downspouts" || /downspout/.test(name))
+    return { Icon: ArrowDownToLine, tone: t.sky };
+  if (id === "outside-corners" || /outside.*corner/.test(name))
+    return { Icon: CornerUpRight, tone: t.violet };
+  if (id === "inside-corners" || /inside.*corner/.test(name))
+    return { Icon: CornerDownRight, tone: t.violet };
+  if (id === "end-caps" || /end.?cap/.test(name))
+    return { Icon: Slash, tone: t.amber };
+  if (id === "hangers" || /hanger/.test(name))
+    return { Icon: Layers, tone: t.zinc };
+  if (id === "elbows" || /elbow/.test(name))
+    return { Icon: Zap, tone: t.sky };
+  if (id === "labor" || /labor|install/.test(name))
+    return { Icon: HardHat, tone: t.amber };
+  if (/guard|leaf|mesh/.test(name)) return { Icon: Shield, tone: t.emerald };
+  if (/repair|fascia|paint/.test(name))
+    return { Icon: Hammer, tone: t.rose };
+  return { Icon: Pencil, tone: t.zinc };
+}
 
 export function PricingTable({
   items,
@@ -32,21 +100,28 @@ export function PricingTable({
     ]);
   }
 
+  const subtotal = items.reduce(
+    (acc, i) => acc + i.quantity * i.unitPrice,
+    0,
+  );
+
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-      <div className="hidden grid-cols-[minmax(0,1fr)_84px_60px_110px_110px_36px] gap-2 border-b border-zinc-200 px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 sm:grid">
-        <div>Item</div>
-        <div className="text-right">Qty</div>
-        <div className="text-center">Unit</div>
-        <div className="text-right">Unit price</div>
-        <div className="text-right">Total</div>
-        <div />
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+        <span>
+          {items.length} line {items.length === 1 ? "item" : "items"}
+        </span>
+        <span className="font-mono normal-case text-zinc-700">
+          {formatCurrency(subtotal)}{" "}
+          <span className="font-medium tracking-normal text-zinc-400">subtotal</span>
+        </span>
       </div>
 
       <ul>
         <AnimatePresence initial={false}>
           {items.map((item) => {
             const total = item.quantity * item.unitPrice;
+            const { Icon, tone } = decorate(item);
             return (
               <motion.li
                 key={item.id}
@@ -54,54 +129,72 @@ export function PricingTable({
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, height: 0 }}
-                className="border-b border-zinc-100 last:border-0"
+                className="group border-b border-zinc-100 last:border-0 transition hover:bg-zinc-50/40"
               >
-                <div className="grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_84px_60px_110px_110px_36px] sm:items-center">
-                  <div className="min-w-0">
+                <div className="flex items-start gap-2.5 px-3 py-3">
+                  <div
+                    className={cn(
+                      "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset",
+                      tone.bg,
+                      tone.ring,
+                      tone.text,
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+
+                  <div className="min-w-0 flex-1 space-y-1.5">
                     <input
                       value={item.name}
                       onChange={(e) =>
                         update(item.id, { name: e.target.value })
                       }
-                      className="w-full bg-transparent text-sm font-medium text-zinc-900 outline-none"
+                      placeholder="Line item name"
+                      className="w-full bg-transparent text-sm font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 focus:placeholder:text-zinc-300"
                     />
                     {item.description && (
-                      <div className="mt-0.5 truncate text-xs text-zinc-500">
+                      <div className="truncate text-[11px] text-zinc-500">
                         {item.description}
                       </div>
                     )}
-                  </div>
-
-                  <NumInput
-                    value={item.quantity}
-                    onChange={(v) => update(item.id, { quantity: v })}
-                    align="right"
-                    decimals={item.unit === "lot" ? 2 : 0}
-                  />
-
-                  <input
-                    value={item.unit}
-                    onChange={(e) =>
-                      update(item.id, { unit: e.target.value })
-                    }
-                    className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-center text-xs text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
-                  />
-
-                  <NumInput
-                    value={item.unitPrice}
-                    onChange={(v) => update(item.id, { unitPrice: v })}
-                    prefix="$"
-                    align="right"
-                    decimals={2}
-                  />
-
-                  <div className="text-right text-sm font-semibold tabular-nums text-zinc-900">
-                    {formatCurrency(total)}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <NumInput
+                        value={item.quantity}
+                        onChange={(v) => update(item.id, { quantity: v })}
+                        align="right"
+                        decimals={item.unit === "lot" ? 2 : 0}
+                        widthClass="w-16"
+                      />
+                      <input
+                        value={item.unit}
+                        onChange={(e) =>
+                          update(item.id, { unit: e.target.value })
+                        }
+                        className="h-7 w-12 rounded-md border border-zinc-200 bg-white px-1.5 text-center text-xs text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                      />
+                      <span className="text-xs text-zinc-300">×</span>
+                      <NumInput
+                        value={item.unitPrice}
+                        onChange={(v) => update(item.id, { unitPrice: v })}
+                        prefix="$"
+                        align="right"
+                        decimals={2}
+                        widthClass="w-20"
+                      />
+                      <span className="ml-auto inline-flex items-center gap-1.5">
+                        <span className="text-[10px] uppercase tracking-wider text-zinc-400">
+                          Total
+                        </span>
+                        <span className="text-sm font-bold tabular-nums text-zinc-900">
+                          {formatCurrency(total)}
+                        </span>
+                      </span>
+                    </div>
                   </div>
 
                   <button
                     onClick={() => remove(item.id)}
-                    className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-300 opacity-0 transition group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600"
                     aria-label="Remove line item"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -115,7 +208,7 @@ export function PricingTable({
 
       <button
         onClick={addRow}
-        className="flex w-full items-center justify-center gap-2 border-t border-dashed border-zinc-200 px-3 py-2.5 text-xs text-zinc-500 transition hover:bg-zinc-50 hover:text-accent-700"
+        className="flex w-full items-center justify-center gap-2 border-t border-dashed border-zinc-200 px-3 py-2.5 text-xs font-medium text-zinc-500 transition hover:bg-accent-50/50 hover:text-accent-700"
       >
         <Plus className="h-3.5 w-3.5" />
         Add line item
@@ -130,18 +223,21 @@ function NumInput({
   prefix,
   align = "left",
   decimals = 0,
+  widthClass,
 }: {
   value: number;
   onChange: (v: number) => void;
   prefix?: string;
   align?: "left" | "right";
   decimals?: number;
+  widthClass?: string;
 }) {
   return (
     <div
       className={cn(
-        "flex h-8 items-center rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15",
+        "flex h-7 items-center rounded-md border border-zinc-200 bg-white px-1.5 text-xs text-zinc-900 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15",
         align === "right" && "justify-end",
+        widthClass,
       )}
     >
       {prefix && <span className="mr-0.5 text-zinc-400">{prefix}</span>}

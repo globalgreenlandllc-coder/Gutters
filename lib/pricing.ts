@@ -4,6 +4,7 @@ import type {
   GutterMaterial,
   GutterSize,
   GutterStyle,
+  LineItem,
   Measurements,
 } from "./types";
 
@@ -157,7 +158,106 @@ export function buildLineItems(
       unitPrice: Math.round(totalLF * 4 + dsLF * 2 + 250),
       taxable: false,
     },
+    ...accessoryLineItems(measurements, config, totalLF),
   ];
+}
+
+/**
+ * Optional add-on line items derived from config.accessories. Empty
+ * accessories yield an empty array so the base BOM stays clean.
+ *
+ * Pricing assumptions (industry rough numbers, tunable in admin
+ * MaterialDefaults later):
+ *   - Screen guard       $2.50/LF
+ *   - Mesh guard         $4.00/LF
+ *   - Micro-mesh guard   $7.50/LF  (premium tier)
+ *   - Drip edge          $2.20/LF
+ *   - Rain chain         $185 each (single chain replaces one downspout)
+ *   - Ice/snow guards    $6.00/LF (running eaves only)
+ *   - Heat tape          $14/LF eaves + $120 controller
+ */
+function accessoryLineItems(
+  measurements: Measurements,
+  config: EstimateConfig,
+  totalLF: number,
+): LineItem[] {
+  const acc = config.accessories;
+  if (!acc) return [];
+  const out: LineItem[] = [];
+  const eaveLF = measurements.eaveLF;
+
+  if (acc.guard !== "none") {
+    const unit =
+      acc.guard === "screen" ? 2.5 : acc.guard === "mesh" ? 4 : 7.5;
+    const guardLabel =
+      acc.guard === "screen"
+        ? "Screen leaf guards"
+        : acc.guard === "mesh"
+          ? "Mesh leaf guards"
+          : "Micro-mesh leaf guards";
+    out.push({
+      id: "guards",
+      name: guardLabel,
+      description: "Snap-on, fits selected gutter profile",
+      quantity: eaveLF,
+      unit: "LF",
+      unitPrice: unit,
+      taxable: true,
+    });
+  }
+  if (acc.dripEdge) {
+    out.push({
+      id: "drip-edge",
+      name: "Aluminum drip edge",
+      description: "Color-matched, sealed at fascia",
+      quantity: eaveLF,
+      unit: "LF",
+      unitPrice: 2.2,
+      taxable: true,
+    });
+  }
+  if (acc.rainChain) {
+    out.push({
+      id: "rain-chain",
+      name: "Decorative copper rain chain",
+      description: "Replaces one downspout outlet",
+      quantity: 1,
+      unit: "ea",
+      unitPrice: 185,
+      taxable: true,
+    });
+  }
+  if (acc.iceGuard) {
+    out.push({
+      id: "ice-guards",
+      name: "Snow / ice guards",
+      description: "Roof-edge ice dam protection",
+      quantity: eaveLF,
+      unit: "LF",
+      unitPrice: 6,
+      taxable: true,
+    });
+  }
+  if (acc.heatTape) {
+    out.push({
+      id: "heat-tape",
+      name: "Heat tape kit",
+      description: "Self-regulating cable + thermostat controller",
+      quantity: eaveLF,
+      unit: "LF",
+      unitPrice: 14,
+      taxable: true,
+    });
+    out.push({
+      id: "heat-tape-controller",
+      name: "Heat tape controller",
+      quantity: 1,
+      unit: "ea",
+      unitPrice: 120,
+      taxable: true,
+    });
+  }
+  return out;
 }
 
 function labelStyle(s: GutterStyle) {

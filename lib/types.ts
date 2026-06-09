@@ -79,10 +79,32 @@ export type LineItem = {
   taxable: boolean;
 };
 
+/**
+ * Optional add-on products / upgrades the contractor can tack on to
+ * a base gutter system. Drive both the visual preview (the preview
+ * component renders mesh on top of the gutter when guard.kind isn't
+ * "none") and the line items (each enabled accessory adds a row to
+ * buildLineItems).
+ */
+export type GutterAccessories = {
+  /** Top-of-gutter leaf protection. */
+  guard: "none" | "mesh" | "micro-mesh" | "screen";
+  /** Aluminum drip-edge flashing — common upsell on new installs. */
+  dripEdge: boolean;
+  /** Decorative copper rain chain in place of a downspout (kept as
+   *  separate flag; doesn't replace a downspout count, just adds it). */
+  rainChain: boolean;
+  /** Snow / ice guards along eaves in cold climates. */
+  iceGuard: boolean;
+  /** Heat tape kit to prevent ice damming. */
+  heatTape: boolean;
+};
+
 export type EstimateConfig = {
   size: GutterSize;
   style: GutterStyle;
   material: GutterMaterial;
   color: string;
   downspoutSize: DownspoutSize;
+  accessories?: GutterAccessories;
 };
