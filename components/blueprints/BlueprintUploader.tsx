@@ -62,16 +62,19 @@ export default function BlueprintUploader() {
 
       let res: Response;
       if (blobOk) {
-        // Chunked multipart upload to *.public.blob.vercel-storage.com
-        // (proper CORS) instead of the single-shot to vercel.com/api/blob
-        // (no CORS in some deploys). Falls back to server-side multipart
-        // when the file fits the 4 MB body limit.
+        // Single-PUT upload directly to *.public.blob.vercel-storage.com,
+        // which has CORS configured for any origin. The `multipart: true`
+        // path goes through vercel.com/api/blob/mpu — that endpoint does
+        // NOT send Access-Control-Allow-Origin for many custom Vercel
+        // origins (we saw it fail from gutters-nu.vercel.app with
+        // "blocked by CORS policy"). Direct uploads work up to ~5 GB
+        // per request which is plenty above our 50 MB ceiling.
         let blob;
         try {
           blob = await upload(file.name, file, {
             access: "public",
             handleUploadUrl: "/api/blueprints/upload-url",
-            multipart: true,
+            multipart: false,
           });
         } catch (blobErr) {
           console.error("[BlueprintUploader] Blob direct upload failed", blobErr);
@@ -87,7 +90,7 @@ export default function BlueprintUploader() {
               const retry = await upload(file.name, file, {
                 access: "public",
                 handleUploadUrl: "/api/blueprints/upload-url",
-                multipart: true,
+                multipart: false,
               });
               res = await fetch("/api/blueprints", {
                 method: "POST",
