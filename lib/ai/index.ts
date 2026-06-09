@@ -528,22 +528,33 @@ export async function runAIEstimatePipeline(
       a: e.a,
       b: e.b,
     }));
-    const tierBreaks = detectTierBreakEaves(solarRoofSegments, perimeterEdges);
+    const { candidates: tierBreaks, diag } = detectTierBreakEaves(
+      solarRoofSegments,
+      perimeterEdges,
+    );
     if (tierBreaks.length > 0) {
       const added = tierBreaks.map((t) => ({ a: t.edge.a, b: t.edge.b }));
       classifiedEaveLatLng = [...(classifiedEaveLatLng ?? []), ...added];
       const meanStepFt =
-        tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
-        tierBreaks.length *
+        (tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
+          tierBreaks.length) *
         3.28084;
       notes.push(
         `Tier-break detector: +${tierBreaks.length} interior eave${
           tierBreaks.length === 1 ? "" : "s"
         } (upper tier averages ${meanStepFt.toFixed(1)} ft above baseline)`,
       );
-    } else {
+    } else if (diag.segmentsWithHeight === 0) {
       notes.push(
-        `Tier-break detector: no elevated tiers above the baseline roof plane`,
+        `Tier-break detector: Solar API didn't return plane heights for any of ${diag.segmentsTotal} segments — interior tiers can't be auto-detected on this property`,
+      );
+    } else {
+      const range =
+        diag.heightMax !== null && diag.heightMin !== null
+          ? ((diag.heightMax - diag.heightMin) * 3.28084).toFixed(1)
+          : "?";
+      notes.push(
+        `Tier-break detector: no elevated tiers (${diag.segmentsWithHeight}/${diag.segmentsTotal} segments have height; range ${range} ft, baseline @ ${diag.baselineUsed?.toFixed(2)}m, threshold ${diag.stepThresholdM}m)`,
       );
     }
   }

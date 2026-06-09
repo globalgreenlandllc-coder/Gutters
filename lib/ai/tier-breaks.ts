@@ -39,7 +39,7 @@ import type { RoofSegment } from "./solar";
  * project them into image-pixel space alongside the perimeter eaves.
  */
 
-const TIER_STEP_M = 0.45; // ~18 inches — minimum perceptible tier drop
+const TIER_STEP_M = 0.3; // ~12 inches — minimum perceptible tier drop
 const DEFAULT_DEDUPE_RADIUS_M = 1.5; // skip candidates within ~5 ft of an existing eave
 
 type LatLng = { lat: number; lng: number };
@@ -50,6 +50,20 @@ function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
+/**
+ * Percentile (0..1) of a numeric sample. Used so we can pick a low
+ * baseline (e.g. 25th percentile) — that way a roof where most planes
+ * are LOWER than a few tall ridges still flags those ridges as
+ * elevated, instead of letting the median sit halfway up and miss
+ * both ends.
+ */
+function percentile(xs: number[], p: number): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(s.length - 1, Math.floor(p * (s.length - 1))));
+  return s[idx];
 }
 
 function metersPerDegree(lat: number): { mLat: number; mLng: number } {
@@ -113,6 +127,18 @@ export type TierBreakCandidate = {
   segmentIndex: number;
 };
 
+export type TierBreakDiagnostics = {
+  segmentsTotal: number;
+  segmentsWithHeight: number;
+  heightMin: number | null;
+  heightMax: number | null;
+  heightMedian: number | null;
+  baselineUsed: number | null;
+  stepThresholdM: number;
+  /** Segments that cleared the minStep threshold (regardless of dedup). */
+  elevatedCount: number;
+};
+
 export function detectTierBreakEaves(
   segments: RoofSegment[],
   perimeterEaves: Edge[],
@@ -121,19 +147,47 @@ export function detectTierBreakEaves(
     dedupeRadiusM?: number;
     minSegmentAreaM2?: number;
     minPitchDeg?: number;
+    /** Percentile (0..1) to anchor the baseline. Lower = catches more
+     *  tiers as "elevated". 0.25 is a good default — uses the bottom
+     *  quartile so a roof with a few low porch wings doesn't drag the
+     *  median up and make the entire main mass look "flat". */
+    baselinePercentile?: number;
   } = {},
-): TierBreakCandidate[] {
+): { candidates: TierBreakCandidate[]; diag: TierBreakDiagnostics } {
   const minStep = options.minStepMeters ?? TIER_STEP_M;
   const dedupeR = options.dedupeRadiusM ?? DEFAULT_DEDUPE_RADIUS_M;
   const minArea = options.minSegmentAreaM2 ?? 6;
   const minPitch = options.minPitchDeg ?? 5;
+  const baselinePct = options.baselinePercentile ?? 0.25;
 
   const heights: number[] = [];
   for (const s of segments) {
     if (s.planeHeightMeters != null) heights.push(s.planeHeightMeters);
   }
-  if (heights.length === 0) return [];
-  const baseline = median(heights);
+
+  const diag: TierBreakDiagnostics = {
+    segmentsTotal: segments.length,
+    segmentsWithHeight: heights.length,
+    heightMin: heights.length > 0 ? Math.min(...heights) : null,
+    heightMax: heights.length > 0 ? Math.max(...heights) : null,
+    heightMedian: heights.length > 0 ? median(heights) : null,
+    baselineUsed: null,
+    stepThresholdM: minStep,
+    elevatedCount: 0,
+  };
+
+  if (heights.length === 0) {
+    return { candidates: [], diag };
+  }
+
+  // Use the bottom quartile as the baseline so even moderate elevation
+  // qualifies. A house with a 2-story main and a 1-story garage will
+  // have ~50% of segments low + ~50% high; with the median as baseline
+  // every high segment would be a hair-thin step. Anchoring at the 25th
+  // percentile pushes the "ground tier" definition down to the low
+  // porches/wings, so the main mass cleanly counts as elevated.
+  const baseline = percentile(heights, baselinePct);
+  diag.baselineUsed = baseline;
 
   const candidates: TierBreakCandidate[] = [];
 
@@ -144,6 +198,7 @@ export function detectTierBreakEaves(
     if (!seg.center || !seg.boundingBoxNE || !seg.boundingBoxSW) return;
     const step = seg.planeHeightMeters - baseline;
     if (step < minStep) return;
+    diag.elevatedCount++;
 
     // The four bbox corners (NE / NW / SE / SW).
     const ne = seg.boundingBoxNE;
@@ -200,5 +255,5 @@ export function detectTierBreakEaves(
     });
   });
 
-  return candidates;
+  return { candidates, diag };
 }
