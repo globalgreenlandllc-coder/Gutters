@@ -203,11 +203,44 @@ export function QuickStart() {
         fd.append("file", file);
         res = await fetch("/api/blueprints", { method: "POST", body: fd });
       } else {
-        // Blob path — direct browser → Vercel Blob → /api/blueprints with URL.
-        const blob = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/blueprints/upload-url",
-        });
+        // Blob path. Try the chunked-multipart upload first — it uses
+        // *.public.blob.vercel-storage.com which has proper CORS,
+        // unlike the single-shot path which has been hitting CORS on
+        // vercel.com/api/blob in some deploy/store configurations.
+        // If it still fails AND the file is small enough for the
+        // serverless body limit, fall through to the server-side
+        // multipart route so the contractor isn't blocked.
+        let blob;
+        try {
+          blob = await upload(file.name, file, {
+            access: "public",
+            handleUploadUrl: "/api/blueprints/upload-url",
+            multipart: true,
+          });
+        } catch (blobErr) {
+          console.error("[QuickStart] Blob direct upload failed", blobErr);
+          if (file.size <= MULTIPART_LIMIT) {
+            console.warn(
+              "[QuickStart] Blob upload failed; falling back to server-side multipart",
+            );
+            const fd = new FormData();
+            fd.append("file", file);
+            res = await fetch("/api/blueprints", { method: "POST", body: fd });
+            const data = await res.json();
+            if (!res.ok) {
+              setError(data.error ?? "Plan analysis failed");
+              return;
+            }
+            router.push(`/estimate?planId=${data.id}&jobType=${jobType}`);
+            return;
+          }
+          const message =
+            blobErr instanceof Error ? blobErr.message : "Upload failed";
+          setError(
+            `Direct upload to Vercel Blob failed: ${message}. The file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) for the server-side fallback (4 MB ceiling). Try compressing or splitting the PDF, or contact support.`,
+          );
+          return;
+        }
         res = await fetch("/api/blueprints", {
           method: "POST",
           headers: { "content-type": "application/json" },

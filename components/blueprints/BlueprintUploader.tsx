@@ -62,10 +62,38 @@ export default function BlueprintUploader() {
 
       let res: Response;
       if (blobOk) {
-        const blob = await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/blueprints/upload-url",
-        });
+        // Chunked multipart upload to *.public.blob.vercel-storage.com
+        // (proper CORS) instead of the single-shot to vercel.com/api/blob
+        // (no CORS in some deploys). Falls back to server-side multipart
+        // when the file fits the 4 MB body limit.
+        let blob;
+        try {
+          blob = await upload(file.name, file, {
+            access: "public",
+            handleUploadUrl: "/api/blueprints/upload-url",
+            multipart: true,
+          });
+        } catch (blobErr) {
+          console.error("[BlueprintUploader] Blob direct upload failed", blobErr);
+          if (file.size <= 4 * 1024 * 1024) {
+            const fd = new FormData();
+            fd.append("file", file);
+            res = await fetch("/api/blueprints", { method: "POST", body: fd });
+            const data = await res.json();
+            if (!res.ok) {
+              setError(data.error ?? "Analysis failed");
+              return;
+            }
+            router.push(`/estimate?planId=${data.id}`);
+            return;
+          }
+          const message =
+            blobErr instanceof Error ? blobErr.message : "Upload failed";
+          setError(
+            `Direct upload to Vercel Blob failed: ${message}. The file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) for the server-side fallback. Compress / split the PDF or contact support.`,
+          );
+          return;
+        }
         res = await fetch("/api/blueprints", {
           method: "POST",
           headers: { "content-type": "application/json" },
