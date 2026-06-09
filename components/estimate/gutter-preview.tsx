@@ -191,67 +191,83 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
           {/* Sky */}
           <rect x="0" y="0" width="500" height="360" fill="url(#sky)" />
 
-          {/* Roof slope — runs from upper-left down to the gutter eave.
-              Shingle courses are drawn as overlapping horizontal bands. */}
-          <g>
-            <polygon points="80,40 320,140 320,158 80,58" fill="url(#roof)" />
-            {/* Shingle course lines */}
-            {[0, 1, 2, 3, 4].map((i) => {
-              const t = i / 5;
-              const x1 = 80 + (320 - 80) * t;
-              const y1 = 40 + (140 - 40) * t;
-              const x2 = 80 + (320 - 80) * (t + 0.04);
-              const y2 = 40 + (140 - 40) * (t + 0.04);
-              return (
+          {/* Roof slope — ends just above the back of the gutter so it
+              doesn't visually cover the gutter mouth. The eave edge is
+              a tiny shingle overhang past the fascia + drip edge. */}
+          {(() => {
+            const roofStartX = 60;
+            const roofStartY = 30;
+            // Roof ends just above-and-behind the gutter's back wall.
+            // gX is the back-top corner of the gutter; the shingle
+            // overhang sticks out ~10px past the fascia.
+            const roofEndX = gX + 10;
+            const roofEndY = gY - 6;
+            const roofThick = 12;
+            // Perpendicular thickness vector pointing "down-into-roof".
+            const dx = roofEndX - roofStartX;
+            const dy = roofEndY - roofStartY;
+            const len = Math.hypot(dx, dy) || 1;
+            const nx = -dy / len;
+            const ny = dx / len;
+            const p1 = `${roofStartX},${roofStartY}`;
+            const p2 = `${roofEndX},${roofEndY}`;
+            const p3 = `${roofEndX + nx * roofThick},${roofEndY + ny * roofThick}`;
+            const p4 = `${roofStartX + nx * roofThick},${roofStartY + ny * roofThick}`;
+
+            const shingleCount = 12;
+            return (
+              <g>
+                <polygon points={`${p1} ${p2} ${p3} ${p4}`} fill="url(#roof)" />
+                {/* Shingle course lines along the slope */}
+                {Array.from({ length: shingleCount }, (_, i) => {
+                  const t = (i + 1) / (shingleCount + 1);
+                  const sx = roofStartX + dx * t;
+                  const sy = roofStartY + dy * t;
+                  return (
+                    <line
+                      key={`tab-${i}`}
+                      x1={sx}
+                      y1={sy}
+                      x2={sx + nx * 4}
+                      y2={sy + ny * 4}
+                      stroke="rgba(0,0,0,0.55)"
+                      strokeWidth="0.6"
+                    />
+                  );
+                })}
+                {/* Bottom edge highlight at the drip line */}
                 <line
-                  key={`shingle-${i}`}
-                  x1={x1}
-                  y1={y1 + 4}
-                  x2={x2}
-                  y2={y2 + 4}
-                  stroke="rgba(0,0,0,0.35)"
+                  x1={roofStartX}
+                  y1={roofStartY}
+                  x2={roofEndX}
+                  y2={roofEndY}
+                  stroke="rgba(255,255,255,0.15)"
                   strokeWidth="0.8"
                 />
-              );
-            })}
-            {/* Shingle tab notches */}
-            {Array.from({ length: 18 }, (_, i) => {
-              const t = (i + 1) / 19;
-              const x = 80 + (320 - 80) * t;
-              const y = 40 + (140 - 40) * t;
-              return (
-                <line
-                  key={`tab-${i}`}
-                  x1={x}
-                  y1={y}
-                  x2={x + 1.5}
-                  y2={y + 4}
-                  stroke="rgba(0,0,0,0.5)"
-                  strokeWidth="0.5"
-                />
-              );
-            })}
-          </g>
-
-          {/* Snow / ice guards along the roof slope (when enabled) */}
-          {acc?.iceGuard && (
-            <g>
-              {Array.from({ length: 6 }, (_, i) => {
-                const t = 0.2 + i * 0.12;
-                const cx = 80 + (320 - 80) * t;
-                const cy = 40 + (140 - 40) * t;
-                return (
-                  <polygon
-                    key={`ice-${i}`}
-                    points={`${cx - 4},${cy - 1} ${cx + 4},${cy - 1} ${cx},${cy - 9}`}
-                    fill="#e2e8f0"
-                    stroke="rgba(0,0,0,0.4)"
-                    strokeWidth="0.5"
-                  />
-                );
-              })}
-            </g>
-          )}
+                {/* Snow / ice guards along the slope */}
+                {acc?.iceGuard &&
+                  Array.from({ length: 5 }, (_, i) => {
+                    const t = 0.2 + i * 0.14;
+                    const cx = roofStartX + dx * t;
+                    const cy = roofStartY + dy * t;
+                    // The guard sits ON the roof surface — kick it up
+                    // along the negative-normal so it pokes up out of
+                    // the shingles instead of into them.
+                    const gxg = cx - nx * 2;
+                    const gyg = cy - ny * 2;
+                    return (
+                      <polygon
+                        key={`ice-${i}`}
+                        points={`${gxg - 4},${gyg} ${gxg + 4},${gyg} ${gxg - nx * 7},${gyg - ny * 7}`}
+                        fill="#e2e8f0"
+                        stroke="rgba(0,0,0,0.4)"
+                        strokeWidth="0.5"
+                      />
+                    );
+                  })}
+              </g>
+            );
+          })()}
 
           {/* Fascia board — vertical face the gutter mounts to */}
           <rect
