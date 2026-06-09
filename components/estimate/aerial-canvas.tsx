@@ -793,8 +793,12 @@ export function AerialCanvas({
                 d={pathFor(line)}
                 stroke={stroke}
                 strokeWidth={isSelected ? 5 : isHover ? 4.5 : 3.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                // Architectural look: square caps + miter joins give
+                // clean perpendicular intersections instead of the
+                // rounded pill ends + soft corners we had before.
+                strokeLinecap="square"
+                strokeLinejoin="miter"
+                strokeMiterlimit={4}
                 fill="none"
                 initial={{ pathLength: 0, opacity: 0 }}
                 animate={{ pathLength: 1, opacity: 1 }}
@@ -872,11 +876,16 @@ export function AerialCanvas({
                         });
                       }}
                     />
-                    {/* Visible vertex dot. */}
-                    <circle
-                      cx={pt.x}
-                      cy={pt.y}
-                      r={7}
+                    {/* Visible vertex handle — square with rounded
+                        corners. Reads as an architectural corner mark
+                        rather than a fluffy dot, matching the cleaner
+                        line aesthetic. */}
+                    <rect
+                      x={pt.x - 7}
+                      y={pt.y - 7}
+                      width={14}
+                      height={14}
+                      rx={2.5}
                       fill={t.handleFill}
                       stroke={t.handleStroke}
                       strokeWidth={2.5}
@@ -989,6 +998,7 @@ export function AerialCanvas({
               )
             }
             onDelete={deleteSelected}
+            onClose={() => setSelectedId(null)}
           />
         ) : selectedId ? (
           <motion.div
@@ -1040,12 +1050,17 @@ function DownspoutPopover({
   theme,
   onChangeStories,
   onDelete,
+  onClose,
   position,
 }: {
   downspout: Downspout;
   theme: CanvasTheme;
   onChangeStories: (s: Stories) => void;
   onDelete: () => void;
+  /** Dismiss the popover without deleting the downspout — just clears
+   *  the selection. Gives the contractor an obvious X to close out of
+   *  edit mode instead of having to remember Esc. */
+  onClose: () => void;
   /** Pixel coordinates of the selected downspout in the canvas's
    *  rendered space (NOT viewBox space) — so the popover floats
    *  right next to the dot the contractor just tapped. */
@@ -1122,6 +1137,7 @@ function DownspoutPopover({
         </div>
         <button
           onClick={onDelete}
+          title="Delete downspout"
           className={cn(
             "ml-1 rounded-full border px-2 py-1 transition",
             theme === "tactical"
@@ -1130,6 +1146,19 @@ function DownspoutPopover({
           )}
         >
           <Trash2 className="inline h-3 w-3" />
+        </button>
+        <button
+          onClick={onClose}
+          title="Close (Esc)"
+          className={cn(
+            "ml-0.5 flex h-7 w-7 items-center justify-center rounded-full transition",
+            theme === "tactical"
+              ? "text-fuchsia-200/80 hover:bg-fuchsia-500/15 hover:text-white"
+              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+          aria-label="Close downspout editor"
+        >
+          ×
         </button>
       </div>
     </motion.div>
