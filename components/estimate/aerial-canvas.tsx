@@ -70,7 +70,11 @@ export function AerialCanvas({
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [showRoofStructure, setShowRoofStructure] = useState(true);
+  // Roof-structure perimeter (the white outline the AI detected) used
+  // to render by default — useful for verifying the AI's roof
+  // recognition, distracting once the contractor is editing the
+  // gutter trace. Toolbar still has the eye toggle to bring it back.
+  const [showRoofStructure, setShowRoofStructure] = useState(false);
   // Rakes ship hidden by default. They're informational (the gray-
   // dashed 'AI says no gutter here' lines), but they painted across
   // the satellite image and made the trace look noisy after the
@@ -774,19 +778,16 @@ export function AerialCanvas({
             rakes; they confirm visually or ignore. */}
         {showRakes &&
           rakes.map((line) => (
-            <motion.path
+            <path
               key={line.id}
               d={pathFor(line)}
               stroke={theme === "tactical" ? "#94a3b8" : "#64748b"}
-              strokeWidth={2}
-              strokeDasharray="6 5"
+              strokeWidth={2 * renderScale}
+              strokeDasharray={`${6 * renderScale} ${5 * renderScale}`}
               strokeLinecap="round"
               fill="none"
               opacity={0.7}
               pointerEvents="none"
-              initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: 0.7 }}
-              transition={{ duration: 0.6, ease: "easeOut" }}
             />
           ))}
 
@@ -1055,8 +1056,11 @@ export function AerialCanvas({
             x2={drawing.end.x}
             y2={drawing.end.y}
             stroke={t.eave}
-            strokeWidth="3"
-            strokeDasharray="8 5"
+            // Stroke + dash pattern scale with zoom so the in-progress
+            // preview reads the same on screen at any zoom — was
+            // ballooning to a billboard-width dashed line at 5× zoom.
+            strokeWidth={3 * renderScale}
+            strokeDasharray={`${8 * renderScale} ${5 * renderScale}`}
             opacity="0.95"
             style={{
               filter:
