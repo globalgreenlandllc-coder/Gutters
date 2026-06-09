@@ -18,6 +18,7 @@ import {
   type DetectedRoofStructure,
 } from "./roof-structure";
 import { buildSegmentRidges } from "./segment-ridges";
+import { detectTierBreakEaves } from "./tier-breaks";
 import {
   buildEditableLines,
   classifyPolygonCorners,
@@ -510,6 +511,40 @@ export async function runAIEstimatePipeline(
       }
     } else {
       notes.push(`Solar mask unavailable — ${solarMask.reason}`);
+    }
+  }
+
+  // 4c. Tier-break detection: a real roof often has stacked tiers
+  //     (1-story garage wing attached to a 2-story main, dormers, etc.).
+  //     The outer perimeter trace only finds eaves along the building
+  //     footprint — it misses every "upper roof drops onto lower roof"
+  //     situation. We pick those up here using Solar's per-segment
+  //     planeHeightMeters: any segment whose plane sits >18" above the
+  //     median roof height has a downhill bbox edge that probably needs
+  //     its own gutter. Duplicates (an existing perimeter eave already
+  //     within 1.5m) are filtered.
+  if (solarRoofSegments.length > 0) {
+    const perimeterEdges = (classifiedEaveLatLng ?? []).map((e) => ({
+      a: e.a,
+      b: e.b,
+    }));
+    const tierBreaks = detectTierBreakEaves(solarRoofSegments, perimeterEdges);
+    if (tierBreaks.length > 0) {
+      const added = tierBreaks.map((t) => ({ a: t.edge.a, b: t.edge.b }));
+      classifiedEaveLatLng = [...(classifiedEaveLatLng ?? []), ...added];
+      const meanStepFt =
+        tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
+        tierBreaks.length *
+        3.28084;
+      notes.push(
+        `Tier-break detector: +${tierBreaks.length} interior eave${
+          tierBreaks.length === 1 ? "" : "s"
+        } (upper tier averages ${meanStepFt.toFixed(1)} ft above baseline)`,
+      );
+    } else {
+      notes.push(
+        `Tier-break detector: no elevated tiers above the baseline roof plane`,
+      );
     }
   }
 
