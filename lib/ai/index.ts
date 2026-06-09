@@ -519,24 +519,21 @@ export async function runAIEstimatePipeline(
           result.polygon.bbox.width * result.polygon.bbox.height;
         const workArea = workImage.width * workImage.height;
         const coverage = polygonBboxArea / workArea;
-        // Threshold: below 55% suggests the mask captured one wing of
-        // a multi-tier roof. Above that, it's probably the whole house.
-        const MASK_COVERAGE_FLOOR = 0.55;
-        if (coverage < MASK_COVERAGE_FLOOR) {
-          // Reject the polygon but stash its bbox — already in
-          // original-image coords because polygonFromSolarMask
-          // operates on the original image — so we can hand it to
-          // vision as a "look here, not at the lawn" hint.
-          rejectedSolarBboxOriginal = {
-            x: result.polygon.bbox.x,
-            y: result.polygon.bbox.y,
-            width: result.polygon.bbox.width,
-            height: result.polygon.bbox.height,
-          };
-          notes.push(
-            `Solar mask covered only ${(coverage * 100).toFixed(0)}% of work image (bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px) — likely one wing of a multi-tier roof. Passing bbox to vision as a focus hint.`,
-          );
-        } else {
+        // Stash the bbox unconditionally — used as a focus hint for the
+        // vision augmentation pass even when we accept the polygon.
+        rejectedSolarBboxOriginal = {
+          x: result.polygon.bbox.x,
+          y: result.polygon.bbox.y,
+          width: result.polygon.bbox.width,
+          height: result.polygon.bbox.height,
+        };
+        // Lower threshold (was 0.55). A residential building with 120px
+        // of crop padding around it commonly fills only 35–45% of the
+        // work image. Even a "small" Solar mask gives us a real outer
+        // outline we'd otherwise lose entirely. Vision still runs as
+        // augmentation downstream when coverage is on the low end.
+        const MASK_COVERAGE_FLOOR = 0.3;
+        if (coverage >= MASK_COVERAGE_FLOOR) {
           roofPolygon = result.polygon;
           const cleanupLabel =
             result.cleanup.kind === "ortho"
@@ -548,6 +545,10 @@ export async function runAIEstimatePipeline(
             `Solar mask fallback (${solarMask.crsLabel}): ${solarMask.width}×${solarMask.height} GeoTIFF → ${cleanupLabel}, bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px @ (${result.polygon.bbox.x},${result.polygon.bbox.y}), ${(coverage * 100).toFixed(0)}% coverage`,
           );
           classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
+        } else {
+          notes.push(
+            `Solar mask covered only ${(coverage * 100).toFixed(0)}% — below ${(MASK_COVERAGE_FLOOR * 100).toFixed(0)}% floor. Falling through to vision with the bbox as a focus hint.`,
+          );
         }
       } else {
         notes.push(
