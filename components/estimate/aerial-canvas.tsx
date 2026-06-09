@@ -270,8 +270,15 @@ export function AerialCanvas({
 
   function handlePointerUp(e: React.PointerEvent) {
     if (drawing) {
+      // Threshold scales with the current zoom level: when zoomed in,
+      // a small screen-drag is a small viewBox-drag, so the old fixed
+      // 14-unit floor meant the contractor had to drag what looked
+      // like a long line on-screen to register an eave. Scale to ~2%
+      // of the visible width, with a 3-unit floor so a literal click
+      // still doesn't create a zero-length eave.
+      const threshold = Math.max(3, view.width * 0.015);
       const len = dist(drawing.start, drawing.end);
-      if (len > 14) {
+      if (len > threshold) {
         const id = `eave-${Date.now()}`;
         onEavesChange([
           ...eaves,
@@ -281,7 +288,11 @@ export function AerialCanvas({
       }
       setDrawing(null);
       setTool("select");
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // Some browsers throw when releasing capture they no longer hold.
+      }
       return;
     }
     setDrag(null);
@@ -337,6 +348,28 @@ export function AerialCanvas({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [fullscreen]);
+
+  // Esc-to-deselect. Convenient because the new "left-drag pans when
+  // zoomed in" behavior swallows the old "click empty space to
+  // deselect" gesture — Esc gives the contractor that escape hatch
+  // back without making them tap a different tool.
+  useEffect(() => {
+    if (!selectedId) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA")
+      )
+        return;
+      setSelectedId(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedId]);
 
   return (
     <div
@@ -519,16 +552,35 @@ export function AerialCanvas({
         viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
         preserveAspectRatio="xMidYMid slice"
         onPointerDown={(e) => {
-          // Right-click OR shift+drag on empty space starts a pan.
-          // Doesn't interfere with the eave/downspout drag handlers
-          // because they call e.stopPropagation() on their hits.
+          // Pan on empty-space drag. Three triggers:
+          //   1. right-click + drag
+          //   2. shift + drag
+          //   3. plain left-drag while in select mode AND we're zoomed
+          //      in (view < full). At full extent we don't pan because
+          //      there's nowhere to go and we'd swallow a deselect click.
+          // Drags that originate on an eave / vertex / downspout don't
+          // reach here — their handlers stopPropagation() — so this
+          // never hijacks a real selection or vertex grab.
+          const zoomedIn = view.width < VIEWBOX_W * 0.98;
           if (
-            (e.button === 2 || e.shiftKey) &&
             tool === "select" &&
-            !drag
+            !drag &&
+            (e.button === 2 || e.shiftKey || zoomedIn)
           ) {
             e.preventDefault();
-            setPanning({ sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y });
+            setPanning({
+              sx: e.clientX,
+              sy: e.clientY,
+              vx: view.x,
+              vy: view.y,
+            });
+            // Capture the pointer so we keep getting move events even
+            // if the cursor leaves the SVG bounds during the drag.
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              // Some browsers throw on capture for non-mouse pointers.
+            }
             return;
           }
           handlePointerDown(e);
