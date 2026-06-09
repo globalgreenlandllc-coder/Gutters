@@ -484,7 +484,7 @@ export function AerialCanvas({
               <motion.path
                 d={pathFor(line)}
                 stroke={stroke}
-                strokeWidth={isSelected ? 9 : isHover ? 8 : 7}
+                strokeWidth={isSelected ? 5 : isHover ? 4.5 : 3.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"

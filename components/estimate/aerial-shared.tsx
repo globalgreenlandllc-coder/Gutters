@@ -30,16 +30,19 @@ export const THEMES: Record<
   }
 > = {
   tactical: {
-    eave: "#00e5ff",
-    eaveSelected: "#a3f7ff",
+    // Softer teal — was too bright and competed with the satellite
+    // image for attention. New tone reads as a clear trace but lets
+    // the roof show through clearly.
+    eave: "#2dd4bf",
+    eaveSelected: "#5eead4",
     eaveGlowFilter: "url(#neonCyanGlow)",
-    downspout: "#ff2bd6",
-    downspoutCore: "#fff0fb",
+    downspout: "#e879f9",
+    downspoutCore: "#fdf4ff",
     downspoutGlowFilter: "url(#neonMagentaGlow)",
-    overlay: "rgba(2, 6, 23, 0.45)",
-    handleStroke: "#a3f7ff",
+    overlay: "rgba(2, 6, 23, 0.35)",
+    handleStroke: "#5eead4",
     handleFill: "#0b1220",
-    label: "#a3f7ff",
+    label: "#5eead4",
   },
   schematic: {
     eave: "#059669",
