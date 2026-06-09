@@ -98,6 +98,9 @@ export function AerialCanvas({
     sy: number;
     vx: number;
     vy: number;
+    /** Has the cursor moved enough to count as a pan? If false on
+     *  pointer up, treat the gesture as a click (deselect) instead. */
+    moved: boolean;
   } | null>(null);
   const resetView = () =>
     setView({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
@@ -263,7 +266,15 @@ export function AerialCanvas({
       // chains seamlessly off the prior trace.
       const snappedStart = snapToCorner(p);
       setDrawing({ start: snappedStart, end: snappedStart });
-      e.currentTarget.setPointerCapture(e.pointerId);
+      // setPointerCapture can throw on some pointer types — wrap so a
+      // single device quirk doesn't silently break the entire add-eave
+      // flow.
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Capture is a nice-to-have. The drag tracking still works
+        // because the move/up listeners are on the SVG element itself.
+      }
       return;
     }
     if (tool === "add-downspout") {
@@ -638,6 +649,7 @@ export function AerialCanvas({
               sy: e.clientY,
               vx: view.x,
               vy: view.y,
+              moved: false,
             });
             // Capture the pointer so we keep getting move events even
             // if the cursor leaves the SVG bounds during the drag.
@@ -652,13 +664,22 @@ export function AerialCanvas({
         }}
         onPointerMove={(e) => {
           if (panning && svgRef.current) {
+            const dxRaw = e.clientX - panning.sx;
+            const dyRaw = e.clientY - panning.sy;
+            // Movement threshold: 4 screen pixels. Below that, treat
+            // the gesture as a click — used on pointer-up to deselect
+            // instead of leaving the user stuck because they tapped
+            // on empty space while zoomed in.
+            if (!panning.moved && Math.hypot(dxRaw, dyRaw) > 4) {
+              setPanning({ ...panning, moved: true });
+            }
             const rect = svgRef.current.getBoundingClientRect();
             const scaleX = view.width / rect.width;
             const scaleY = view.height / rect.height;
             setView((v) => ({
               ...v,
-              x: panning.vx - (e.clientX - panning.sx) * scaleX,
-              y: panning.vy - (e.clientY - panning.sy) * scaleY,
+              x: panning.vx - dxRaw * scaleX,
+              y: panning.vy - dyRaw * scaleY,
             }));
             return;
           }
@@ -666,6 +687,12 @@ export function AerialCanvas({
         }}
         onPointerUp={(e) => {
           if (panning) {
+            // No real movement → user tapped empty space. Deselect so
+            // the contractor can dismiss a selection without having to
+            // remember the Esc key.
+            if (!panning.moved) {
+              setSelectedId(null);
+            }
             setPanning(null);
             return;
           }
