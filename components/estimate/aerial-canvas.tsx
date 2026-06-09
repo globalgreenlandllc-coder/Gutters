@@ -7,11 +7,14 @@ import {
   Hash,
   Layers,
   Maximize2,
+  Minimize2,
   MountainSnow,
   MousePointer2,
   Plus,
   Ruler,
   Sparkles,
+  Sun,
+  SunDim,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,11 +66,19 @@ export function AerialCanvas({
   const [theme, setTheme] = useState<CanvasTheme>("tactical");
   const t = THEMES[theme];
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [showRoofStructure, setShowRoofStructure] = useState(true);
   const [showRakes, setShowRakes] = useState(true);
+  // Fullscreen lifts the canvas to the viewport so you can see the
+  // full roof while nudging eaves/downspouts. Independent of theme.
+  const [fullscreen, setFullscreen] = useState(false);
+  // Low-glow mode dims the neon glow + scrim so the satellite image
+  // reads cleanly under the takeoff. Critical when squinting at a
+  // pixelated roof edge to decide where the gutter actually sits.
+  const [lowGlow, setLowGlow] = useState(false);
   // null = "auto": labels are shown but tiny crowded ones are skipped. The
   // user can force them all-on or all-off with the toolbar toggle.
   const [showLfLabels, setShowLfLabels] = useState<"auto" | "on" | "off">(
@@ -222,14 +233,36 @@ export function AerialCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
+  // Esc exits fullscreen. Skipped when fullscreen isn't active so the
+  // global Esc handlers in the rest of the app aren't doubly bound.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [fullscreen]);
+
   return (
     <div
+      ref={containerRef}
       className={cn(
-        "relative h-full w-full overflow-hidden rounded-2xl border shadow-card transition-colors",
+        "group/canvas relative w-full overflow-hidden border shadow-card transition-all",
+        fullscreen
+          ? "fixed inset-0 z-50 h-screen rounded-none"
+          : "h-full rounded-2xl",
         theme === "tactical"
           ? "border-cyan-900/40 bg-slate-950"
           : "border-zinc-200 bg-zinc-100",
+        // CSS variable powering the global glow intensity — every neon
+        // filter below references it so one toggle reaches the whole tree.
+        lowGlow ? "[--glow-strength:0.15]" : "[--glow-strength:1]",
       )}
+      data-low-glow={lowGlow ? "1" : "0"}
     >
       <Toolbar
         tool={tool}
@@ -252,6 +285,10 @@ export function AerialCanvas({
             m === "auto" ? "off" : m === "off" ? "on" : "auto",
           )
         }
+        fullscreen={fullscreen}
+        onToggleFullscreen={() => setFullscreen((v) => !v)}
+        lowGlow={lowGlow}
+        onToggleLowGlow={() => setLowGlow((v) => !v)}
       />
       <Legend
         rakeCount={rakes.length}
@@ -283,7 +320,7 @@ export function AerialCanvas({
         ) : (
           <AerialBackground />
         )}
-        {t.overlay && (
+        {t.overlay && !lowGlow && (
           <rect
             x={0}
             y={0}
@@ -325,14 +362,20 @@ export function AerialCanvas({
           const isSelected = selectedId === line.id;
           const isHover = hoverId === line.id;
           const stroke = isSelected ? t.eaveSelected : t.eave;
+          // Low-glow mode keeps only the selected eave's glow so you
+          // can still tell which one you're editing, while the other
+          // eaves render as clean strokes that don't bleed across
+          // the satellite image's roof edges.
           const filter =
-            theme === "tactical"
-              ? isSelected
-                ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
-                : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-              : isSelected
-                ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
-                : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
+            lowGlow && !isSelected
+              ? "none"
+              : theme === "tactical"
+                ? isSelected
+                  ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
+                  : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
+                : isSelected
+                  ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
+                  : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
           return (
             <g key={line.id}>
               <motion.path
@@ -401,31 +444,40 @@ export function AerialCanvas({
             >
               {theme === "tactical" ? (
                 <>
-                  <motion.circle
-                    cx={d.x}
-                    cy={d.y}
-                    r={isSelected ? 18 : 14}
-                    fill={t.downspout}
-                    opacity={0.18}
-                    initial={{ scale: 0.7, opacity: 0 }}
-                    animate={{
-                      scale: [0.7, 1.3, 0.9],
-                      opacity: [0, 0.4, 0.18],
-                    }}
-                    transition={{
-                      duration: 2.2,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                      delay: i * 0.15,
-                    }}
-                    pointerEvents="none"
-                  />
+                  {/* Pulsing halo gets suppressed in low-glow mode so a
+                      cluster of 8 downspouts doesn't paint over half
+                      the roof while you're trying to read it. */}
+                  {!lowGlow && (
+                    <motion.circle
+                      cx={d.x}
+                      cy={d.y}
+                      r={isSelected ? 18 : 14}
+                      fill={t.downspout}
+                      opacity={0.18}
+                      initial={{ scale: 0.7, opacity: 0 }}
+                      animate={{
+                        scale: [0.7, 1.3, 0.9],
+                        opacity: [0, 0.4, 0.18],
+                      }}
+                      transition={{
+                        duration: 2.2,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                        delay: i * 0.15,
+                      }}
+                      pointerEvents="none"
+                    />
+                  )}
                   <circle
                     cx={d.x}
                     cy={d.y}
-                    r={isSelected ? 8 : 6}
+                    r={isSelected ? 8 : lowGlow ? 4.5 : 6}
                     fill={t.downspout}
-                    filter={t.downspoutGlowFilter ?? undefined}
+                    filter={
+                      lowGlow && !isSelected
+                        ? undefined
+                        : (t.downspoutGlowFilter ?? undefined)
+                    }
                   />
                   <circle cx={d.x} cy={d.y} r={2.4} fill={t.downspoutCore} />
                 </>
@@ -629,6 +681,10 @@ function Toolbar({
   onToggleRakes,
   lfLabelMode,
   onCycleLfLabels,
+  fullscreen,
+  onToggleFullscreen,
+  lowGlow,
+  onToggleLowGlow,
 }: {
   tool: Tool;
   setTool: (t: Tool) => void;
@@ -644,6 +700,15 @@ function Toolbar({
   onToggleRakes: () => void;
   lfLabelMode: "auto" | "on" | "off";
   onCycleLfLabels: () => void;
+  /** Lifts the canvas to fixed/full-viewport so the contractor can
+   *  nudge eaves at full zoom rather than fighting the sidebar. */
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+  /** Drops the cyan glow filter + scrim so the satellite image reads
+   *  clearly under the takeoff. Critical when verifying eave placement
+   *  against pixelated roof edges. */
+  lowGlow: boolean;
+  onToggleLowGlow: () => void;
 }) {
   const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
     { id: "select", icon: MousePointer2, label: "Select" },
@@ -798,6 +863,56 @@ function Toolbar({
         )}
       >
         <Hash className="h-4 w-4" />
+      </button>
+      <div
+        className={cn(
+          "my-1 h-px w-full",
+          tactical ? "bg-cyan-500/20" : "bg-zinc-200",
+        )}
+      />
+      <button
+        onClick={onToggleLowGlow}
+        title={
+          lowGlow
+            ? "Restore neon overlay glow"
+            : "Dim overlay glow so the satellite image reads clearly"
+        }
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          lowGlow
+            ? tactical
+              ? "bg-amber-500/20 text-amber-200 ring-1 ring-inset ring-amber-400/50"
+              : "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200"
+            : tactical
+              ? "text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
+              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+        )}
+      >
+        {lowGlow ? (
+          <Sun className="h-4 w-4" />
+        ) : (
+          <SunDim className="h-4 w-4" />
+        )}
+      </button>
+      <button
+        onClick={onToggleFullscreen}
+        title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen edit"}
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          fullscreen
+            ? tactical
+              ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-inset ring-cyan-400/50"
+              : "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
+            : tactical
+              ? "text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
+              : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
+        )}
+      >
+        {fullscreen ? (
+          <Minimize2 className="h-4 w-4" />
+        ) : (
+          <Maximize2 className="h-4 w-4" />
+        )}
       </button>
     </div>
   );
