@@ -491,6 +491,19 @@ export async function runAIEstimatePipeline(
   // bbox area against the image area — if it's <55% of the work image,
   // we treat the Solar mask as unreliable and fall through to GPT-4o
   // vision which sees the whole frame.
+  // When we reject the Solar mask polygon as too-small to use directly,
+  // we still keep its bbox around as a *spatial hint* for the vision
+  // call below — vision otherwise has no idea where in the crop the
+  // building actually sits and traces whatever's biggest (often grass
+  // + driveway). The bbox lives in the original-image coordinate
+  // system; we translate it to crop space when handing it off.
+  let rejectedSolarBboxOriginal: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null = null;
+
   if (image && !roofPolygon) {
     const solarMask = await getRoofMaskFromSolar(geocoded.lat, geocoded.lng);
     if (solarMask.ok) {
@@ -510,8 +523,18 @@ export async function runAIEstimatePipeline(
         // a multi-tier roof. Above that, it's probably the whole house.
         const MASK_COVERAGE_FLOOR = 0.55;
         if (coverage < MASK_COVERAGE_FLOOR) {
+          // Reject the polygon but stash its bbox — already in
+          // original-image coords because polygonFromSolarMask
+          // operates on the original image — so we can hand it to
+          // vision as a "look here, not at the lawn" hint.
+          rejectedSolarBboxOriginal = {
+            x: result.polygon.bbox.x,
+            y: result.polygon.bbox.y,
+            width: result.polygon.bbox.width,
+            height: result.polygon.bbox.height,
+          };
           notes.push(
-            `Solar mask covered only ${(coverage * 100).toFixed(0)}% of work image (bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px) — likely one wing of a multi-tier roof. Falling through to vision.`,
+            `Solar mask covered only ${(coverage * 100).toFixed(0)}% of work image (bbox ${result.polygon.bbox.width}×${result.polygon.bbox.height} px) — likely one wing of a multi-tier roof. Passing bbox to vision as a focus hint.`,
           );
         } else {
           roofPolygon = result.polygon;
@@ -864,13 +887,51 @@ export async function runAIEstimatePipeline(
   // returned a polygon too noisy/small to trace. Less reliable but still
   // produces eaves on most homes.
   if (image) {
-    // When cropped, the building IS the image so no hint needed; GPT-4o
-    // gets a focused crop and traces the only roof in frame. roofPolygon
-    // is in original image space so we can't pass it as crop-space context.
+    // Build a building hint for vision in crop-space coords. Priority:
+    //   1. Rejected Solar mask bbox (most precise — Solar found the
+    //      building, we just didn't trust its polygon trace).
+    //   2. Building bbox from Solar API insights (less precise).
+    //   3. Building point from geocode (lowest precision).
+    // Without a hint, vision sees a crop the same size as the building
+    // PLUS its yard and traces whatever's biggest — usually the lawn,
+    // driveway, and house all stitched into one giant polygon.
+    let visionHint:
+      | { x: number; y: number }
+      | { x1: number; y1: number; x2: number; y2: number }
+      | null = null;
+    if (rejectedSolarBboxOriginal) {
+      // Translate original-image bbox into crop-space.
+      visionHint = {
+        x1: rejectedSolarBboxOriginal.x - cropOffset.x,
+        y1: rejectedSolarBboxOriginal.y - cropOffset.y,
+        x2:
+          rejectedSolarBboxOriginal.x +
+          rejectedSolarBboxOriginal.width -
+          cropOffset.x,
+        y2:
+          rejectedSolarBboxOriginal.y +
+          rejectedSolarBboxOriginal.height -
+          cropOffset.y,
+      };
+    } else if (!didCrop) {
+      visionHint = buildingBoxPx ?? buildingPointPx ?? null;
+    } else if (buildingBoxPx) {
+      visionHint = {
+        x1: buildingBoxPx.x1 - cropOffset.x,
+        y1: buildingBoxPx.y1 - cropOffset.y,
+        x2: buildingBoxPx.x2 - cropOffset.x,
+        y2: buildingBoxPx.y2 - cropOffset.y,
+      };
+    } else if (buildingPointPx) {
+      visionHint = {
+        x: buildingPointPx.x - cropOffset.x,
+        y: buildingPointPx.y - cropOffset.y,
+      };
+    }
     const segmentation = await segmentEavesViaVision(
       workImage,
       didCrop ? null : roofPolygon,
-      didCrop ? null : (buildingBoxPx ?? buildingPointPx),
+      visionHint,
     );
     if (
       segmentation &&
@@ -935,6 +996,37 @@ export async function runAIEstimatePipeline(
         totalEaveLF += pixelLengthToFeet(px, geocoded.lat, image.zoom);
       }
       totalEaveLF = totalEaveLF * 1.08;
+
+      // Sanity check vision's trace against Solar API's reported roof
+      // area. A real residential roof has perimeter ~5-8 × sqrt(area).
+      // If vision returned >12× sqrt(area), it traced grass/driveway
+      // along with the building. Bail out — better to show an error
+      // than render a 400 LF trace for a 200 m² house.
+      const solarAreaM2 = solarRoofSegments.reduce(
+        (s, seg) => s + (seg.areaMeters2 ?? 0),
+        0,
+      );
+      if (solarAreaM2 > 30) {
+        const solarAreaSqft = solarAreaM2 * 10.7639;
+        const sqrtArea = Math.sqrt(solarAreaSqft);
+        const ratio = totalEaveLF / sqrtArea;
+        notes.push(
+          `Vision sanity: ${totalEaveLF.toFixed(0)} LF / √(${solarAreaSqft.toFixed(0)} sqft) = ${ratio.toFixed(1)} (expected 5–8, max 11)`,
+        );
+        if (ratio > 11) {
+          notes.push(
+            `Vision rejected: trace LF is ${ratio.toFixed(1)}× sqrt(roof area) — likely traced yard/driveway as part of building. Try moving downspouts manually after fixing the perimeter, or contact support.`,
+          );
+          // Bail out of vision path — caller falls through to no-result
+          // / mock pipeline so the contractor doesn't see a wildly
+          // wrong trace they have to delete and redraw entirely.
+          // Returning empty would crash downstream; instead throw a
+          // controlled error the caller can render.
+          throw new Error(
+            `Vision trace is ${ratio.toFixed(1)}× the expected perimeter for this roof area — refusing to ship a misleading takeoff. The AI couldn't lock onto the building outline at this address. Try the address with a small variant (e.g. add ', USA') to bypass the cache, or use the manual takeoff tools.`,
+          );
+        }
+      }
 
       const cornerCount = countCorners(eaves);
       const downspouts = placeDownspouts(eaves, totalEaveLF, estimatedStories);
