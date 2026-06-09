@@ -688,23 +688,9 @@ export function AerialCanvas({
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
               />
-              {isSelected &&
-                line.points.map((pt, idx) => (
-                  <circle
-                    key={idx}
-                    cx={pt.x}
-                    cy={pt.y}
-                    r={7}
-                    fill={t.handleFill}
-                    stroke={t.handleStroke}
-                    strokeWidth={2.5}
-                    style={{ cursor: "grab" }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      setDrag({ kind: "vertex", lineId: line.id, index: idx });
-                    }}
-                  />
-                ))}
+              {/* Render the LF label BEFORE the vertex dots so the dots
+                  stay on top — the label used to cover the endpoint
+                  handles on short eaves, making them unclickable. */}
               {(labelVisibleIds.has(line.id) || isSelected || isHover) && (
                 <LineLabel
                   line={line}
@@ -713,6 +699,42 @@ export function AerialCanvas({
                   animationDelay={0.6 + i * 0.06}
                 />
               )}
+              {/* Vertex handles render LAST so they sit on top of any
+                  LF label that might land near a corner. Also enlarged
+                  the hit area (transparent ring + visible dot) so the
+                  dots stay clickable even when an label is right there. */}
+              {isSelected &&
+                line.points.map((pt, idx) => (
+                  <g key={idx}>
+                    {/* Transparent hit area — 14px radius so the corner
+                        is grab-friendly even with a label nearby. */}
+                    <circle
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={14}
+                      fill="transparent"
+                      style={{ cursor: "grab" }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setDrag({
+                          kind: "vertex",
+                          lineId: line.id,
+                          index: idx,
+                        });
+                      }}
+                    />
+                    {/* Visible vertex dot. */}
+                    <circle
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={7}
+                      fill={t.handleFill}
+                      stroke={t.handleStroke}
+                      strokeWidth={2.5}
+                      pointerEvents="none"
+                    />
+                  </g>
+                ))}
             </g>
           );
         })}
@@ -804,6 +826,31 @@ export function AerialCanvas({
             key={selectedDownspout.id}
             downspout={selectedDownspout}
             theme={theme}
+            // Convert the selected downspout's viewBox position into
+            // the container's pixel space so the popover floats right
+            // above it. Falls back to bottom-center when the SVG ref
+            // isn't ready yet (first paint only).
+            position={(() => {
+              const svg = svgRef.current;
+              if (!svg) return undefined;
+              const rect = svg.getBoundingClientRect();
+              const containerRect =
+                svg.parentElement?.getBoundingClientRect() ?? rect;
+              const xRatio =
+                (selectedDownspout.x - view.x) / view.width;
+              const yRatio =
+                (selectedDownspout.y - view.y) / view.height;
+              return {
+                x:
+                  rect.left -
+                  containerRect.left +
+                  xRatio * rect.width,
+                y:
+                  rect.top -
+                  containerRect.top +
+                  yRatio * rect.height,
+              };
+            })()}
             onChangeStories={(s) =>
               onDownspoutsChange(
                 downspouts.map((d) =>
@@ -865,11 +912,16 @@ function DownspoutPopover({
   theme,
   onChangeStories,
   onDelete,
+  position,
 }: {
   downspout: Downspout;
   theme: CanvasTheme;
   onChangeStories: (s: Stories) => void;
   onDelete: () => void;
+  /** Pixel coordinates of the selected downspout in the canvas's
+   *  rendered space (NOT viewBox space) — so the popover floats
+   *  right next to the dot the contractor just tapped. */
+  position?: { x: number; y: number };
 }) {
   const current = storiesFromHeightFt(downspout.heightFt);
   const options: { id: Stories; label: string; ft: number }[] = [
@@ -877,12 +929,24 @@ function DownspoutPopover({
     { id: 2, label: "2-story", ft: 20 },
     { id: 3, label: "3-story", ft: 30 },
   ];
+  const inlineStyle = position
+    ? {
+        left: position.x,
+        top: position.y - 56, // sit just above the dot
+        transform: "translateX(-50%)",
+      }
+    : undefined;
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 12 }}
-      className="absolute bottom-4 left-1/2 -translate-x-1/2"
+      exit={{ opacity: 0, y: 8 }}
+      className={
+        position
+          ? "absolute z-20"
+          : "absolute bottom-4 left-1/2 -translate-x-1/2"
+      }
+      style={inlineStyle}
     >
       <div
         className={cn(
@@ -1372,12 +1436,14 @@ function LineLabel({
   const fontSize = emphasized ? 11 : 10;
 
   // Offset the label perpendicular to the line so it sits OFF the eave
-  // rather than crossing it. For mostly-horizontal lines, lift it up; for
-  // mostly-vertical lines, push it sideways.
+  // rather than crossing it. Magnitude bumped from 12-16 → 22-28 so the
+  // label sits comfortably outside the now-thicker eave stroke and
+  // doesn't hide where the line is going. Scales with the eave length
+  // so a very short connector eave still has a readable label distance.
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len2 = Math.hypot(dx, dy) || 1;
-  const offsetMag = emphasized ? 16 : 12;
+  const offsetMag = emphasized ? 28 : 22;
   const nx = (-dy / len2) * offsetMag;
   const ny = (dx / len2) * offsetMag;
 
