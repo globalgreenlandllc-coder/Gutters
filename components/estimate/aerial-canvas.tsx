@@ -240,17 +240,23 @@ export function AerialCanvas({
     return { x: transformed.x, y: transformed.y };
   }
 
-  // Magnetic-snap helper. When the user is drawing or dragging near an
-  // existing eave's endpoint, pulling the point onto that endpoint
-  // produces clean continuous gutter runs instead of microgaps that
-  // look like a coding error in the final proposal. Snap radius is
-  // generous (16px in viewBox units ≈ a fingertip) since the trace is
-  // rarely off by more than a foot at canvas scale.
+  // Magnetic-snap helper. Pulls a drag/draw point onto a nearby existing
+  // eave endpoint so the gutter runs chain cleanly without microgaps.
+  // Two important rules:
+  //   1. Snap radius is in viewBox units BUT scales with the current
+  //      zoom so it always feels like a fingertip on screen rather
+  //      than a half-roof-wide magnet at high zoom.
+  //   2. Only EAVE endpoints qualify. Rakes (gray-dashed no-gutter
+  //      lines) are visible in the canvas but vertex-snapping onto them
+  //      would yank an eave's corner into a position the contractor
+  //      didn't want — which is exactly the 'snaps to the white line'
+  //      complaint. We're already iterating `eaves` only; this comment
+  //      is here so the next change doesn't forget.
   function snapToCorner(
     p: { x: number; y: number },
     excludeLineId: string | null = null,
   ): { x: number; y: number } {
-    const SNAP_RADIUS = 16;
+    const SNAP_RADIUS = 6 * Math.max(renderScale, 0.5);
     let best: { x: number; y: number } | null = null;
     let bestDist = SNAP_RADIUS;
     for (const line of eaves) {
@@ -427,6 +433,17 @@ export function AerialCanvas({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [fullscreen]);
+
+  // Switching to a non-select tool (Add eave / Add downspout) clears
+  // the current selection. Without this, the previously-selected
+  // line's corner handles stay on top of the canvas and intercept
+  // pointer-down events — so clicking the satellite to start a new
+  // eave never reaches the SVG and the drawing doesn't appear.
+  useEffect(() => {
+    if (tool !== "select") {
+      setSelectedId(null);
+    }
+  }, [tool]);
 
   // Esc-to-deselect. Convenient because the new "left-drag pans when
   // zoomed in" behavior swallows the old "click empty space to
@@ -796,26 +813,20 @@ export function AerialCanvas({
                   : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
           return (
             <g key={line.id}>
-              <motion.path
+              {/* Plain <path> (not motion.path) — framer-motion's path
+                  measurement on every render was a hot spot during
+                  drag. Entrance animation isn't needed after the first
+                  render of the canvas. */}
+              <path
                 d={pathFor(line)}
                 stroke={stroke}
                 strokeWidth={
                   (isSelected ? 5 : isHover ? 4.5 : 3.5) * renderScale
                 }
-                // Architectural look: square caps + miter joins give
-                // clean perpendicular intersections instead of the
-                // rounded pill ends + soft corners we had before.
                 strokeLinecap="square"
                 strokeLinejoin="miter"
                 strokeMiterlimit={4}
                 fill="none"
-                initial={{ pathLength: 0, opacity: 0 }}
-                animate={{ pathLength: 1, opacity: 1 }}
-                transition={{
-                  duration: 0.7,
-                  ease: "easeOut",
-                  delay: i * 0.05,
-                }}
                 style={{
                   filter,
                   cursor: isSelected ? "move" : "pointer",
@@ -851,7 +862,12 @@ export function AerialCanvas({
                   reading hovering near the corner handles where they're
                   trying to click. The total LF is shown in the legend
                   anyway, and the pricing tab updates live. */}
-              {!isSelected &&
+              {/* Labels during active drag are pure waste — they re-
+                  position every frame, retrigger SVG layout, and the
+                  contractor isn't reading numbers while dragging.
+                  Suppress them while ANY drag is in progress. */}
+              {!drag &&
+                !isSelected &&
                 (labelVisibleIds.has(line.id) || isHover) && (
                   <LineLabel
                     line={line}
