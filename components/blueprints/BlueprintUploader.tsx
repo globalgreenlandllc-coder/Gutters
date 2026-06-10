@@ -80,6 +80,23 @@ export default function BlueprintUploader() {
           console.error("[BlueprintUploader] Blob direct upload failed", blobErr);
           const message =
             blobErr instanceof Error ? blobErr.message : "Upload failed";
+          // Surface the request URL when present — CORS failures don't
+          // include it in the Error message but Vercel SDK errors often
+          // carry a `cause` with the offending Response.
+          const cause =
+            blobErr instanceof Error && "cause" in blobErr
+              ? (blobErr as { cause?: unknown }).cause
+              : undefined;
+          if (cause) console.error("[BlueprintUploader] cause:", cause);
+          // Tag the error explicitly so we can spot "still going to mpu"
+          // failures even when the browser strips the URL from the message.
+          const looksLikeCors =
+            /CORS|Access-Control|opaque|Failed to fetch/i.test(message);
+          if (looksLikeCors) {
+            console.warn(
+              "[BlueprintUploader] CORS failure — verify the latest deploy is live and hard-refresh (Cmd+Shift+R). If the request URL ends with /mpu, multipart:false isn't taking effect.",
+            );
+          }
           // Token-expiry retry: the upload-url route now mints 5-minute
           // tokens (was 60 s), but if a token still expires mid-upload
           // we retry once before surfacing the error. A second attempt
