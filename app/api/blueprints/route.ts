@@ -168,9 +168,49 @@ export async function POST(request: Request) {
   // function with an empty 500, crashing the client on res.json().
   let source: PlanSource;
   if (blobUrl) {
-    source = isPdf
-      ? { kind: "pdf-url", url: blobUrl }
-      : { kind: "image-url", url: blobUrl };
+    // For PDFs we DON'T trust Anthropic's URL-fetcher. The user's
+    // blob may have been uploaded before our mime-normalization fix
+    // (content-type stored as application/octet-stream), and the
+    // stored content-type is what Anthropic sees regardless of what
+    // headers we attach now. When Anthropic fetches an octet-stream,
+    // it falls through to the image validator and 400s with the
+    // misleading "image.source.base64.data" error path we've been
+    // chasing.
+    //
+    // Workaround: fetch the bytes ourselves and pass as base64 with
+    // explicit application/pdf media_type. Anthropic doesn't have to
+    // interpret the URL's content-type at all. Costs us ~16 MB of
+    // function memory for a 12 MB PDF + the round-trip; both are
+    // fine within Vercel's 300s function budget.
+    if (isPdf) {
+      try {
+        const fetchRes = await fetch(blobUrl);
+        if (!fetchRes.ok) {
+          throw new Error(`HTTP ${fetchRes.status} fetching blob`);
+        }
+        const arr = new Uint8Array(await fetchRes.arrayBuffer());
+        const pdfBase64 = Buffer.from(arr).toString("base64");
+        source = { kind: "pdf", base64: pdfBase64 };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "blob fetch failed";
+        await db.planAnalysis.update({
+          where: { id: analysis.id },
+          data: {
+            status: "FAILED",
+            errorMessage: `Failed to fetch PDF from blob: ${message}`,
+          },
+        });
+        return NextResponse.json(
+          { error: `Blob fetch failed: ${message}`, id: analysis.id },
+          { status: 502 },
+        );
+      }
+    } else {
+      // Images: URL source is fine — image formats are unambiguous
+      // from the byte signature, so Anthropic doesn't need the
+      // correct content-type to interpret them.
+      source = { kind: "image-url", url: blobUrl };
+    }
   } else if (base64) {
     source = isPdf
       ? { kind: "pdf", base64 }
