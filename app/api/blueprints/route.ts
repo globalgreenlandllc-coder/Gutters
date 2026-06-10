@@ -1,12 +1,24 @@
 import { NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { Prisma } from "@prisma/client";
+import { get as blobGet } from "@vercel/blob";
 
 import { db } from "@/lib/db";
 import {
   blueprintFromPlanSources,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
+
+function resolveBlobToken(): string | null {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!v) continue;
+    if (k.endsWith("_READ_WRITE_TOKEN") || k.endsWith("_BLOB_READ_WRITE_TOKEN")) {
+      return v;
+    }
+  }
+  return null;
+}
 
 // Vision-on-plans takes 30-120s for large PDFs. Bump high — Vercel
 // honors up to 300s on Pro. after() callbacks share the same budget,
@@ -168,28 +180,69 @@ export async function POST(request: Request) {
   // function with an empty 500, crashing the client on res.json().
   let source: PlanSource;
   if (blobUrl) {
-    // For PDFs we DON'T trust Anthropic's URL-fetcher. The user's
-    // blob may have been uploaded before our mime-normalization fix
-    // (content-type stored as application/octet-stream), and the
-    // stored content-type is what Anthropic sees regardless of what
-    // headers we attach now. When Anthropic fetches an octet-stream,
-    // it falls through to the image validator and 400s with the
-    // misleading "image.source.base64.data" error path we've been
-    // chasing.
-    //
-    // Workaround: fetch the bytes ourselves and pass as base64 with
-    // explicit application/pdf media_type. Anthropic doesn't have to
-    // interpret the URL's content-type at all. Costs us ~16 MB of
-    // function memory for a 12 MB PDF + the round-trip; both are
-    // fine within Vercel's 300s function budget.
+    // Use the Vercel Blob SDK's get() to download the bytes server-
+    // side with the read/write token. We CANNOT trust a raw fetch()
+    // of the blob URL:
+    //   - Despite presignUrl({access:"public"}), Vercel returns URLs
+    //     on the .private.blob.vercel-storage.com host that 403 when
+    //     fetched without auth.
+    //   - Earlier rounds of "image.source.base64.data" / "pdf is not
+    //     valid" errors from Anthropic were us base64-encoding the
+    //     literal string "Forbidden" (the 403 body) and sending it
+    //     as a PDF.
+    // get(blobUrl, { token }) hits Vercel's API server-to-server with
+    // the bearer token and returns an authenticated stream.
     if (isPdf) {
+      const token = resolveBlobToken();
+      if (!token) {
+        await db.planAnalysis.update({
+          where: { id: analysis.id },
+          data: {
+            status: "FAILED",
+            errorMessage: "BLOB_READ_WRITE_TOKEN missing — cannot fetch blob",
+          },
+        });
+        return NextResponse.json(
+          { error: "BLOB_READ_WRITE_TOKEN not configured", id: analysis.id },
+          { status: 500 },
+        );
+      }
       try {
-        const fetchRes = await fetch(blobUrl);
-        if (!fetchRes.ok) {
-          throw new Error(`HTTP ${fetchRes.status} fetching blob`);
+        const blobResult = await blobGet(blobUrl, {
+          token,
+          access: "public",
+        });
+        if (!blobResult || blobResult.statusCode !== 200) {
+          throw new Error(
+            `blob.get returned ${blobResult?.statusCode ?? "null"}`,
+          );
         }
-        const arr = new Uint8Array(await fetchRes.arrayBuffer());
-        const pdfBase64 = Buffer.from(arr).toString("base64");
+        const chunks: Uint8Array[] = [];
+        const reader = blobResult.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        const totalLen = chunks.reduce((n, c) => n + c.length, 0);
+        const buf = new Uint8Array(totalLen);
+        let off = 0;
+        for (const c of chunks) {
+          buf.set(c, off);
+          off += c.length;
+        }
+        // Sanity-check: PDFs start with %PDF-. If the bytes don't,
+        // we'd send garbage to Anthropic and get the misleading
+        // "not a valid PDF" error — fail loudly here instead.
+        const magic = String.fromCharCode(...buf.slice(0, 5));
+        if (!magic.startsWith("%PDF-")) {
+          throw new Error(
+            `Blob is not a valid PDF (first bytes: "${magic}"). ` +
+              "Re-upload the file via the dashboard so the new mime " +
+              "normalization is applied.",
+          );
+        }
+        const pdfBase64 = Buffer.from(buf).toString("base64");
         source = { kind: "pdf", base64: pdfBase64 };
       } catch (e) {
         const message = e instanceof Error ? e.message : "blob fetch failed";
@@ -197,7 +250,7 @@ export async function POST(request: Request) {
           where: { id: analysis.id },
           data: {
             status: "FAILED",
-            errorMessage: `Failed to fetch PDF from blob: ${message}`,
+            errorMessage: `Blob fetch failed: ${message}`,
           },
         });
         return NextResponse.json(
@@ -206,9 +259,11 @@ export async function POST(request: Request) {
         );
       }
     } else {
-      // Images: URL source is fine — image formats are unambiguous
-      // from the byte signature, so Anthropic doesn't need the
-      // correct content-type to interpret them.
+      // Images: URL source is fine — image byte signatures are
+      // unambiguous, so Anthropic doesn't need the correct content-
+      // type to interpret them. The URL still needs to be publicly
+      // fetchable though; if image URLs start 403'ing we'll need to
+      // route them through blob.get() the same way as PDFs.
       source = { kind: "image-url", url: blobUrl };
     }
   } else if (base64) {
