@@ -203,53 +203,107 @@ export function QuickStart() {
         fd.append("file", file);
         res = await fetch("/api/blueprints", { method: "POST", body: fd });
       } else {
-        // Blob path. Try the chunked-multipart upload first — it uses
-        // *.public.blob.vercel-storage.com which has proper CORS,
-        // unlike the single-shot path which has been hitting CORS on
-        // vercel.com/api/blob in some deploy/store configurations.
-        // If it still fails AND the file is small enough for the
-        // serverless body limit, fall through to the server-side
-        // multipart route so the contractor isn't blocked.
-        let blob;
+        // PRIMARY: presigned-URL flow. Server mints a presigned PUT URL
+        // via @vercel/blob's server SDK (issueSignedToken + presignUrl);
+        // browser does a plain fetch() PUT to that URL. Does NOT use
+        // @vercel/blob/client's upload(), so there's no SDK-internal
+        // routing to vercel.com/api/blob/mpu — the URL that's been
+        // failing CORS / 400 on this deploy.
+        let blobUrl: string | null = null;
         try {
-          blob = await upload(file.name, file, {
-            access: "public",
-            handleUploadUrl: "/api/blueprints/upload-url",
-            multipart: true,
+          const presignRes = await fetch("/api/blueprints/presign", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+            }),
           });
-        } catch (blobErr) {
-          console.error("[QuickStart] Blob direct upload failed", blobErr);
-          if (file.size <= MULTIPART_LIMIT) {
-            console.warn(
-              "[QuickStart] Blob upload failed; falling back to server-side multipart",
+          if (!presignRes.ok) {
+            const errBody = await presignRes.json().catch(() => ({}));
+            throw new Error(
+              errBody?.error ?? `presign HTTP ${presignRes.status}`,
             );
-            const fd = new FormData();
-            fd.append("file", file);
-            res = await fetch("/api/blueprints", { method: "POST", body: fd });
-            const data = await res.json();
-            if (!res.ok) {
-              setError(data.error ?? "Plan analysis failed");
+          }
+          const { presignedUrl, pathname } = (await presignRes.json()) as {
+            presignedUrl: string;
+            pathname: string;
+          };
+          const putRes = await fetch(presignedUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": file.type || "application/octet-stream",
+            },
+            body: file,
+          });
+          if (!putRes.ok) {
+            throw new Error(`Blob PUT HTTP ${putRes.status}`);
+          }
+          const headerUrl = putRes.headers.get("location");
+          const fromPresign = new URL(presignedUrl);
+          blobUrl =
+            headerUrl ??
+            `https://${fromPresign.host.replace("blob.vercel-storage.com", "public.blob.vercel-storage.com")}/${pathname}`;
+        } catch (presignErr) {
+          console.warn(
+            "[QuickStart] presigned-URL path failed, trying SDK upload()",
+            presignErr,
+          );
+        }
+
+        if (blobUrl) {
+          res = await fetch("/api/blueprints", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              blobUrl,
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+            }),
+          });
+        } else {
+          // FALLBACK: SDK upload() with multipart:false. Only runs if
+          // the presign path threw. Still prefers single-PUT to avoid
+          // the /mpu CORS issue, but at this point we're already in
+          // degraded mode so we accept whatever the SDK can do.
+          let blob;
+          try {
+            blob = await upload(file.name, file, {
+              access: "public",
+              handleUploadUrl: "/api/blueprints/upload-url",
+              multipart: false,
+            });
+          } catch (blobErr) {
+            console.error("[QuickStart] Blob fallback upload failed", blobErr);
+            if (file.size <= MULTIPART_LIMIT) {
+              const fd = new FormData();
+              fd.append("file", file);
+              res = await fetch("/api/blueprints", { method: "POST", body: fd });
+              const data = await res.json();
+              if (!res.ok) {
+                setError(data.error ?? "Plan analysis failed");
+                return;
+              }
+              router.push(`/estimate?planId=${data.id}&jobType=${jobType}`);
               return;
             }
-            router.push(`/estimate?planId=${data.id}&jobType=${jobType}`);
+            const message =
+              blobErr instanceof Error ? blobErr.message : "Upload failed";
+            setError(
+              `Direct upload to Vercel Blob failed: ${message}. File is ${(file.size / 1024 / 1024).toFixed(1)} MB; the server-side fallback is capped at Vercel's 4 MB serverless body limit.`,
+            );
             return;
           }
-          const message =
-            blobErr instanceof Error ? blobErr.message : "Upload failed";
-          setError(
-            `Direct upload to Vercel Blob failed: ${message}. The file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) for the server-side fallback (4 MB ceiling). Try compressing or splitting the PDF, or contact support.`,
-          );
-          return;
+          res = await fetch("/api/blueprints", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              blobUrl: blob.url,
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+            }),
+          });
         }
-        res = await fetch("/api/blueprints", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            blobUrl: blob.url,
-            filename: file.name,
-            mimeType: file.type || "application/octet-stream",
-          }),
-        });
       }
       const data = await res.json();
       if (!res.ok) {
