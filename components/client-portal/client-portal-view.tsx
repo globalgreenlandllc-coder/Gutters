@@ -43,7 +43,11 @@ export function ClientPortalView({
 
   const selected =
     proposal.packages.find((p) => p.id === selectedId) ?? proposal.packages[0];
-  const totals = packageTotal(selected, proposal.measurements);
+  const totals = packageTotal(
+    selected,
+    proposal.measurements,
+    proposal.discountPct ?? 0,
+  );
 
   const canAccept =
     !!signature &&

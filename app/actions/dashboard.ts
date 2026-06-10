@@ -40,7 +40,11 @@ function deriveProposalTotalCents(
     packages[0];
   if (!pick) return 0;
   try {
-    const { total } = packageTotal(pick, proposal.measurements);
+    const { total } = packageTotal(
+      pick,
+      proposal.measurements,
+      proposal.discountPct ?? 0,
+    );
     return Math.max(0, Math.round(total * 100));
   } catch {
     return 0;

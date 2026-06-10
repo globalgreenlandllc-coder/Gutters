@@ -73,6 +73,13 @@ export type Proposal = {
   terms: TermsBlock[];
   depositPct: number;
   validDays: number;
+  /** Per-proposal discount applied to every package total. Stored as
+   *  a percentage (0-50). 0 = no discount. Optional + defaulted to 0
+   *  on load so older proposals without this field still render. */
+  discountPct?: number;
+  /** Free-form reason the contractor shows next to the discount so
+   *  the homeowner sees WHY (e.g. 'Spring promo', 'Repeat customer'). */
+  discountLabel?: string;
 };
 
 export const sampleProposal: Proposal = {
@@ -272,7 +279,17 @@ export function blankProposal(): Proposal {
 export function packageTotal(
   p: Package,
   measurements: Measurements,
-): { subtotal: number; total: number; addOns: number } {
+  /** Per-proposal discount percentage (0-50). Applied AFTER markup,
+   *  BEFORE tax — same order the estimate Summary already uses, so
+   *  the dashboard / proposal / client portal all show the same
+   *  number for a given package + discount combination. */
+  discountPct: number = 0,
+): {
+  subtotal: number;
+  total: number;
+  addOns: number;
+  discount: number;
+} {
   const items = buildLineItems(measurements, p.config);
   const baseSubtotal = items.reduce(
     (acc, i) => acc + i.quantity * i.unitPrice,
@@ -284,10 +301,14 @@ export function packageTotal(
   );
   const subtotal = baseSubtotal + addOns;
   const markup = subtotal * (p.markupPct / 100);
-  const tax = subtotal * 0.0825 * 0.85;
+  const afterMarkup = subtotal + markup;
+  const safePct = Math.max(0, Math.min(50, discountPct));
+  const discount = afterMarkup * (safePct / 100);
+  const tax = (afterMarkup - discount) * 0.0825 * 0.85;
   return {
     subtotal,
     addOns,
-    total: subtotal + markup + tax,
+    discount,
+    total: afterMarkup - discount + tax,
   };
 }

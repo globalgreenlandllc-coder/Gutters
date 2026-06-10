@@ -41,7 +41,11 @@ export function PackagesSection({
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {proposal.packages.map((p) => {
-          const totals = packageTotal(p, proposal.measurements);
+          const totals = packageTotal(
+            p,
+            proposal.measurements,
+            proposal.discountPct ?? 0,
+          );
           const selected = selectedPackageId === p.id;
           const interactive = !!onSelectPackage;
           return (
