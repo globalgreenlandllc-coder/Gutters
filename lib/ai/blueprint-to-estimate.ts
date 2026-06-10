@@ -54,6 +54,10 @@ export interface BlueprintToEstimateMeta {
   /** Total time Claude spent analyzing the plan; surfaced in the notes
    *  panel alongside the AI confidence score. */
   durationMs?: number;
+  /** PlanAnalysis row id. Used to build the authenticated PDF proxy
+   *  URL (/api/blueprints/<id>/pdf) so the canvas can rasterize the
+   *  source page as its background. */
+  planId?: string;
 }
 
 export function blueprintToEstimateResult(
@@ -156,5 +160,14 @@ export function blueprintToEstimateResult(
     durationMs: meta.durationMs ?? 0,
     notes,
     aerial: undefined,
+    // Plan-based estimates pass the source-PDF reference so the canvas
+    // can render the actual roof plan page underneath the trace
+    // instead of falling back to the cartoon yard scene.
+    planSource: meta.planId
+      ? {
+          pdfUrl: `/api/blueprints/${meta.planId}/pdf`,
+          pageIndex: analysis.source_page_index ?? 1,
+        }
+      : undefined,
   };
 }

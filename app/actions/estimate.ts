@@ -245,6 +245,7 @@ export async function runEstimateFromPlan(
   const result = blueprintToEstimateResult(analysis, {
     filename: row.filename,
     durationMs: row.durationMs ?? undefined,
+    planId: row.id,
   });
 
   return {

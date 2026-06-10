@@ -68,6 +68,15 @@ export type EstimateResult = {
     height: number;
     zoom: number;
   };
+  /** Plan-based estimates: PDF page reference for the canvas to render
+   *  as the takeoff background. The browser fetches `pdfUrl` (an
+   *  authenticated proxy on /api/blueprints/[id]/pdf), rasterizes the
+   *  requested page via pdfjs-dist, and uses that image as the
+   *  background instead of the satellite cartoon. Page is 1-based. */
+  planSource?: {
+    pdfUrl: string;
+    pageIndex: number;
+  };
   /** Optional perimeter + ridge/valley overlay for the visual annotation
    *  layer. Detected via GPT-4o vision in parallel with the eaves
    *  pipeline; null when the vision call fails or no image is available. */

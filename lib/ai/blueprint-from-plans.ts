@@ -51,6 +51,12 @@ export type BlueprintAnalysis = {
   totals: BlueprintTotals;
   confidence: "high" | "medium" | "low";
   notes: string[];
+  /** 1-based index of the roof plan page in the uploaded document.
+   *  Used by the canvas to render the corresponding PDF page as the
+   *  takeoff background. Older rows (analyzed before this field was
+   *  added to the schema) won't have it — consumer should default
+   *  to 1. */
+  source_page_index?: number;
 };
 
 export type BlueprintResult =
@@ -181,7 +187,11 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
     "inside_corner_miters": number
   },
   "confidence": "high" | "medium" | "low",
-  "notes": ["<short warning, e.g. 'scale unreadable — lengths in pixels'>"]
+  "notes": ["<short warning, e.g. 'scale unreadable — lengths in pixels'>"],
+  "source_page_index": number  // 1-based index of the roof plan page in the
+                                // uploaded document. For single-page uploads
+                                // use 1. For multi-page plan sets, return
+                                // the page you traced (e.g. sheet A9 → 9).
 }
 </output_schema>
 
