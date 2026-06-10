@@ -103,6 +103,47 @@ const PROVIDER_META: Record<
   },
 };
 
+// Per-provider hint that renders inside the Add Key dialog. Tells the
+// admin where to actually grab the credential from + what format to
+// expect. Skips the user-friendly back-and-forth where the admin
+// pastes an email or the wrong provider's key by mistake.
+const ADD_KEY_HINTS: Partial<Record<ApiKeyProvider, string>> = {
+  RESEND:
+    "resend.com → API Keys → Create API Key (with 'Sending access'). Key starts with 're_' and is ~40 characters. NOT an email address.",
+  OPENAI:
+    "platform.openai.com → API keys → Create new secret key. Starts with 'sk-'.",
+  ANTHROPIC:
+    "console.anthropic.com → API Keys → Create Key. Starts with 'sk-ant-'.",
+  GOOGLE_MAPS:
+    "console.cloud.google.com → APIs & Services → Credentials → API Key. Starts with 'AIza'.",
+  GOOGLE_SOLAR:
+    "console.cloud.google.com → APIs & Services → Credentials. Same shape as Maps but enable the Solar API.",
+  MAPBOX:
+    "account.mapbox.com → Tokens → 'Default public token' (starts with 'pk.…').",
+  FAL: "fal.ai → Dashboard → Keys. Starts with the key ID followed by a colon, like 'KEY_ID:KEY_SECRET'.",
+  STRIPE_SECRET:
+    "dashboard.stripe.com → Developers → API keys → Secret key. Starts with 'sk_live_…' or 'sk_test_…'.",
+  STRIPE_WEBHOOK:
+    "dashboard.stripe.com → Developers → Webhooks → endpoint → Signing secret. Starts with 'whsec_'.",
+  SOCRATA:
+    "data city's Socrata portal → developer settings → App Token. ~20 character mixed-case string.",
+  NEARMAP:
+    "nearmap.com customer portal → API access → API Key (UUID-style).",
+  EAGLEVIEW:
+    "eagleview.com partner portal → API credentials.",
+};
+
+const ADD_KEY_PLACEHOLDERS: Partial<Record<ApiKeyProvider, string>> = {
+  RESEND: "re_…",
+  OPENAI: "sk-…",
+  ANTHROPIC: "sk-ant-…",
+  GOOGLE_MAPS: "AIza…",
+  GOOGLE_SOLAR: "AIza…",
+  MAPBOX: "pk.…",
+  STRIPE_SECRET: "sk_live_… or sk_test_…",
+  STRIPE_WEBHOOK: "whsec_…",
+};
+
 type Phase =
   | { kind: "idle" }
   | { kind: "add"; provider: ApiKeyProvider }
@@ -671,6 +712,20 @@ function AddDialog({
             never written to logs or git.
           </p>
 
+          {/* Provider-specific guidance — admins routinely paste the
+              wrong thing here (Gmail address, OpenAI key into Resend
+              slot, etc.). The hint links to the right source. */}
+          {(() => {
+            const hint = ADD_KEY_HINTS[provider];
+            if (!hint) return null;
+            return (
+              <div className="rounded-lg border border-accent-200 bg-accent-50/60 px-3 py-2 text-xs text-accent-900">
+                <strong className="font-semibold">Where to get this:</strong>{" "}
+                {hint}
+              </div>
+            );
+          })()}
+
           <Field
             label="Label"
             value={label}
@@ -681,7 +736,9 @@ function AddDialog({
             label="Key value"
             value={value}
             onChange={setValue}
-            placeholder="sk_live_… / pk_live_… / AIza…"
+            placeholder={
+              ADD_KEY_PLACEHOLDERS[provider] ?? "sk_live_… / pk_live_… / AIza…"
+            }
             mono
             type="password"
             autoFocus

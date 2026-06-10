@@ -65,6 +65,30 @@ export async function createApiKey(args: {
         reason: "Key value looks too short to be a real credential.",
       };
     }
+    // Reject obvious non-credentials. None of the providers we vault
+    // (Resend, OpenAI, Anthropic, Fal, Mapbox, Socrata, Stripe…) use
+    // email-formatted credentials, so an admin pasting an email here
+    // is always a mistake — and storing it makes the rest of the flow
+    // misleading (the 'Test' / 'Send test email' button would just
+    // surface a confusing 401).
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      return {
+        ok: false,
+        reason:
+          "That looks like an email address, not an API key. Open the provider's dashboard (Resend → API Keys for Resend) and copy the secret key — usually a long string starting with 're_' / 'sk_' / etc.",
+      };
+    }
+    // Provider-specific format hints. Catches cases where the admin
+    // pastes a different provider's key by mistake (e.g. an OpenAI
+    // key into the Resend slot). Soft check — only flags very
+    // obvious mismatches.
+    if (args.provider === "RESEND" && !value.startsWith("re_")) {
+      return {
+        ok: false,
+        reason:
+          "Resend API keys start with 're_'. Paste the key from resend.com → API Keys (not an email, not an OpenAI/Anthropic key).",
+      };
+    }
     const fp = fingerprint(value);
     const dup = await db.apiKey.findUnique({
       where: {
