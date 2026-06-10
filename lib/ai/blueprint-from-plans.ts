@@ -290,7 +290,13 @@ export async function blueprintFromPlanSources(
   try {
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 4000,
+      // 4000 was too tight — the Woodinville plan set returned ~6400+
+      // chars (≈1700 tokens) before truncating mid-array on a JSON
+      // close. Blueprints with many edges + coordinates + excluded_
+      // edges entries can run much longer. 16000 buys headroom for
+      // 10-12 page plan sets without blowing past Sonnet 4.6's
+      // generous output cap.
+      max_tokens: 16000,
       temperature: 0,
       system: [
         {
@@ -336,9 +342,17 @@ export async function blueprintFromPlanSources(
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
+      // stop_reason "max_tokens" → Claude was cut off mid-output.
+      // Surface that explicitly so the operator can bump max_tokens
+      // instead of staring at a generic JSON parse error.
+      const truncated = response.stop_reason === "max_tokens";
+      const baseMsg = (e as Error).message;
+      const hint = truncated
+        ? " (output was truncated at max_tokens — bump max_tokens in blueprint-from-plans.ts)"
+        : "";
       return {
         ok: false,
-        reason: `Claude returned unparseable JSON: ${(e as Error).message}. First 200 chars: ${raw.slice(0, 200)}`,
+        reason: `Claude returned unparseable JSON: ${baseMsg}${hint}. First 200 chars: ${raw.slice(0, 200)}`,
       };
     }
 
