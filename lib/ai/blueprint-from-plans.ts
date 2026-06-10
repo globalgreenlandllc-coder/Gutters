@@ -244,7 +244,14 @@ export async function blueprintFromPlanSources(
   const userContent: Anthropic.MessageParam["content"] = [
     {
       type: "text",
-      text: "Construction plans attached. Find the roof plan page(s) and return the gutter layout JSON per the schema.",
+      text:
+        "Construction plans attached. Find the roof plan page(s) and return " +
+        "the gutter layout JSON per the schema.\n\n" +
+        "OUTPUT FORMAT: respond with a single JSON object only. No preamble, " +
+        "no commentary, no markdown code fences. The response must start " +
+        "with `{` and end with `}`. The downstream parser extracts the " +
+        "substring between the first `{` and the last `}` — anything " +
+        "outside that range is discarded.",
     },
     ...sources.map((s) => {
       switch (s.kind) {
@@ -296,9 +303,13 @@ export async function blueprintFromPlanSources(
       ],
       messages: [
         { role: "user", content: userContent },
-        // Assistant prefill forces the model to start with `{` and produce
-        // valid JSON without any "Here is the JSON:" preamble.
-        { role: "assistant", content: [{ type: "text", text: "{" }] },
+        // Was: assistant prefill forcing the response to start with `{`.
+        // Removed because Anthropic's API now rejects prefill on the
+        // current Claude 4 models ("This model does not support
+        // assistant message prefill. The conversation must end with a
+        // user message"). We instead extract the JSON object from the
+        // response body — the system prompt already demands JSON-only
+        // output and the user message reinforces it.
       ],
     });
 
@@ -306,7 +317,20 @@ export async function blueprintFromPlanSources(
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("");
-    const raw = "{" + body;
+
+    // Robust JSON extraction: the model is instructed to return JSON
+    // only, but if it slips in a preamble ("Here is the JSON…") or
+    // wraps in ```json fences we still recover. Take the substring
+    // between the first '{' and the matching last '}'.
+    const firstBrace = body.indexOf("{");
+    const lastBrace = body.lastIndexOf("}");
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      return {
+        ok: false,
+        reason: `Claude response had no JSON object. First 200 chars: ${body.slice(0, 200)}`,
+      };
+    }
+    const raw = body.slice(firstBrace, lastBrace + 1);
 
     let parsed: unknown;
     try {
