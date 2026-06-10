@@ -62,13 +62,78 @@ export default function BlueprintUploader() {
 
       let res: Response;
       if (blobOk) {
-        // Single-PUT upload directly to *.public.blob.vercel-storage.com,
-        // which has CORS configured for any origin. The `multipart: true`
-        // path goes through vercel.com/api/blob/mpu — that endpoint does
-        // NOT send Access-Control-Allow-Origin for many custom Vercel
-        // origins (we saw it fail from gutters-nu.vercel.app with
-        // "blocked by CORS policy"). Direct uploads work up to ~5 GB
-        // per request which is plenty above our 50 MB ceiling.
+        // PRIMARY: presigned-URL flow. We POST {filename,mimeType} to
+        // /api/blueprints/presign, the server uses issueSignedToken +
+        // presignUrl to mint a URL, and we do a single plain-fetch PUT
+        // to it. No @vercel/blob/client SDK involved, so there's zero
+        // chance of the old code routing to vercel.com/api/blob/mpu.
+        let blobUrl: string | null = null;
+        try {
+          const presignRes = await fetch("/api/blueprints/presign", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+            }),
+          });
+          if (!presignRes.ok) {
+            const errBody = await presignRes.json().catch(() => ({}));
+            throw new Error(
+              errBody?.error ?? `presign HTTP ${presignRes.status}`,
+            );
+          }
+          const { presignedUrl, pathname } = (await presignRes.json()) as {
+            presignedUrl: string;
+            pathname: string;
+          };
+          const putRes = await fetch(presignedUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": file.type || "application/octet-stream",
+            },
+            body: file,
+          });
+          if (!putRes.ok) {
+            throw new Error(`Blob PUT HTTP ${putRes.status}`);
+          }
+          // Public blob URLs are derived from the store ID and pathname.
+          // The presigned URL response doesn't include the canonical
+          // public URL directly — we read it from the PUT response
+          // headers when present, otherwise reconstruct from the
+          // signed URL's host + pathname.
+          const headerUrl = putRes.headers.get("location");
+          const fromPresign = new URL(presignedUrl);
+          blobUrl =
+            headerUrl ??
+            `https://${fromPresign.host.replace("blob.vercel-storage.com", "public.blob.vercel-storage.com")}/${pathname}`;
+        } catch (presignErr) {
+          console.warn(
+            "[BlueprintUploader] presigned-URL path failed, trying SDK upload()",
+            presignErr,
+          );
+        }
+
+        if (blobUrl) {
+          res = await fetch("/api/blueprints", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              blobUrl,
+              filename: file.name,
+              mimeType: file.type || "application/octet-stream",
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            setError(data.error ?? "Analysis failed");
+            return;
+          }
+          router.push(`/estimate?planId=${data.id}`);
+          return;
+        }
+
+        // FALLBACK: SDK upload() — only runs if the presign path threw.
         let blob;
         try {
           blob = await upload(file.name, file, {
@@ -226,7 +291,7 @@ export default function BlueprintUploader() {
               new code hasn't deployed yet. Bump this string whenever
               there's a stale-build question to verify. */}
           <div className="text-[10px] text-slate-600 mt-1 opacity-60">
-            uploader v2 · direct-PUT · 5-min token
+            uploader v3 · presigned-URL · 15-min token
           </div>
         </div>
       </div>
