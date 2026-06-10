@@ -222,6 +222,12 @@ export default function BlueprintUploader() {
           <div className="text-slate-500 text-xs mt-2">
             Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
           </div>
+          {/* Build marker — if you don't see "v2" on Vercel prod, the
+              new code hasn't deployed yet. Bump this string whenever
+              there's a stale-build question to verify. */}
+          <div className="text-[10px] text-slate-600 mt-1 opacity-60">
+            uploader v2 · direct-PUT · 5-min token
+          </div>
         </div>
       </div>
 
