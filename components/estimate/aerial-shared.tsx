@@ -105,6 +105,177 @@ export function AerialImage({ imageDataUrl }: { imageDataUrl: string }) {
   );
 }
 
+/**
+ * Drafting-paper background for plan-based takeoffs. Replaces the
+ * cartoon yard scene (and the unreliable "rasterize the source PDF
+ * page" approach — Claude consistently picks the site plan page,
+ * not the roof plan, because the schema has no robust way to tell
+ * them apart).
+ *
+ * Visual: warm off-white paper with a faint engineering grid, corner
+ * registration marks, and a subtle title-block-style trim along the
+ * right edge. Looks like an architectural drawing the contractor
+ * could fold and hand to a customer.
+ */
+export function BlueprintBackground() {
+  return (
+    <g aria-hidden>
+      <defs>
+        <pattern
+          id="blueprint-grid"
+          width="24"
+          height="24"
+          patternUnits="userSpaceOnUse"
+        >
+          <path
+            d="M 24 0 L 0 0 0 24"
+            fill="none"
+            stroke="rgba(30, 58, 138, 0.06)"
+            strokeWidth="0.6"
+          />
+        </pattern>
+        <pattern
+          id="blueprint-grid-major"
+          width="120"
+          height="120"
+          patternUnits="userSpaceOnUse"
+        >
+          <path
+            d="M 120 0 L 0 0 0 120"
+            fill="none"
+            stroke="rgba(30, 58, 138, 0.12)"
+            strokeWidth="0.9"
+          />
+        </pattern>
+      </defs>
+      {/* Warm paper tone */}
+      <rect width={VIEWBOX_W} height={VIEWBOX_H} fill="#f7f4ee" />
+      {/* Vignette toward edges for a printed-paper feel */}
+      <radialGradient id="blueprint-vignette" cx="50%" cy="50%" r="65%">
+        <stop offset="50%" stopColor="rgba(247, 244, 238, 0)" />
+        <stop offset="100%" stopColor="rgba(120, 95, 60, 0.10)" />
+      </radialGradient>
+      <rect
+        width={VIEWBOX_W}
+        height={VIEWBOX_H}
+        fill="url(#blueprint-vignette)"
+      />
+      <rect width={VIEWBOX_W} height={VIEWBOX_H} fill="url(#blueprint-grid)" />
+      <rect
+        width={VIEWBOX_W}
+        height={VIEWBOX_H}
+        fill="url(#blueprint-grid-major)"
+      />
+      {/* Border frame */}
+      <rect
+        x={20}
+        y={20}
+        width={VIEWBOX_W - 40}
+        height={VIEWBOX_H - 40}
+        fill="none"
+        stroke="rgba(30, 58, 138, 0.45)"
+        strokeWidth="1.2"
+      />
+      <rect
+        x={28}
+        y={28}
+        width={VIEWBOX_W - 56}
+        height={VIEWBOX_H - 56}
+        fill="none"
+        stroke="rgba(30, 58, 138, 0.18)"
+        strokeWidth="0.6"
+      />
+      {/* Corner registration marks */}
+      {[
+        { x: 28, y: 28 },
+        { x: VIEWBOX_W - 28, y: 28 },
+        { x: 28, y: VIEWBOX_H - 28 },
+        { x: VIEWBOX_W - 28, y: VIEWBOX_H - 28 },
+      ].map((c, i) => (
+        <g key={i}>
+          <circle
+            cx={c.x}
+            cy={c.y}
+            r={5}
+            fill="none"
+            stroke="rgba(30, 58, 138, 0.55)"
+            strokeWidth="0.8"
+          />
+          <line
+            x1={c.x - 8}
+            y1={c.y}
+            x2={c.x + 8}
+            y2={c.y}
+            stroke="rgba(30, 58, 138, 0.55)"
+            strokeWidth="0.8"
+          />
+          <line
+            x1={c.x}
+            y1={c.y - 8}
+            x2={c.x}
+            y2={c.y + 8}
+            stroke="rgba(30, 58, 138, 0.55)"
+            strokeWidth="0.8"
+          />
+        </g>
+      ))}
+      {/* Title-block strip along the right edge */}
+      <g transform={`translate(${VIEWBOX_W - 56}, 40)`}>
+        <line
+          x1={0}
+          y1={0}
+          x2={0}
+          y2={VIEWBOX_H - 80}
+          stroke="rgba(30, 58, 138, 0.35)"
+          strokeWidth="0.8"
+        />
+        {[0.2, 0.4, 0.6, 0.8].map((p, i) => (
+          <line
+            key={i}
+            x1={0}
+            y1={p * (VIEWBOX_H - 80)}
+            x2={24}
+            y2={p * (VIEWBOX_H - 80)}
+            stroke="rgba(30, 58, 138, 0.2)"
+            strokeWidth="0.5"
+          />
+        ))}
+      </g>
+      {/* "GUTTER TAKEOFF" stencil-style label in the lower-right title block */}
+      <g transform={`translate(${VIEWBOX_W - 200}, ${VIEWBOX_H - 64})`}>
+        <text
+          x={0}
+          y={0}
+          fill="rgba(30, 58, 138, 0.55)"
+          fontSize="9"
+          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+          letterSpacing="0.18em"
+        >
+          GUTTER TAKEOFF
+        </text>
+        <line
+          x1={0}
+          y1={4}
+          x2={130}
+          y2={4}
+          stroke="rgba(30, 58, 138, 0.3)"
+          strokeWidth="0.6"
+        />
+        <text
+          x={0}
+          y={16}
+          fill="rgba(30, 58, 138, 0.4)"
+          fontSize="7"
+          fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+          letterSpacing="0.12em"
+        >
+          AI-ASSISTED · CONTRACTOR VERIFIED
+        </text>
+      </g>
+    </g>
+  );
+}
+
 export function AerialBackground() {
   return (
     <g aria-hidden>

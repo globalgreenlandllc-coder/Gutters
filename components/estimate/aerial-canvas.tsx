@@ -29,6 +29,7 @@ import {
 import {
   AerialBackground,
   AerialImage,
+  BlueprintBackground,
   CanvasTheme,
   NeonDefs,
   RoofStructureOverlay,
@@ -39,7 +40,6 @@ import {
   dist,
   lineLengthFt,
 } from "./aerial-shared";
-import { PlanPdfBackground } from "./plan-pdf-background";
 
 type Tool = "select" | "add-eave" | "add-downspout";
 
@@ -69,9 +69,6 @@ export function AerialCanvas({
   planSource?: { pdfUrl: string; pageIndex: number };
   roofStructure?: RoofStructure;
 }) {
-  // Once the PDF page is rasterized by PlanPdfBackground, it lives here
-  // and is rendered as if it were any other aerial image.
-  const [planPdfDataUrl, setPlanPdfDataUrl] = useState<string | null>(null);
   const [theme, setTheme] = useState<CanvasTheme>("tactical");
   const t = THEMES[theme];
   const svgRef = useRef<SVGSVGElement>(null);
@@ -491,11 +488,10 @@ export function AerialCanvas({
         // filter below references it so one toggle reaches the whole tree.
         lowGlow ? "[--glow-strength:0.15]" : "[--glow-strength:1]",
       )}
-      // Side-effect-only component: fetches the PDF, rasterizes the
-      // requested page client-side, and hands back the data URL. Only
-      // kicks in for plan-based estimates; address-based estimates
-      // already have aerialImageUrl set so this never runs.
-      data-plan-pdf={planSource ? "1" : undefined}
+      // Marker for plan-based takeoffs — used to switch to the
+      // drafting-paper BlueprintBackground further down. Address-mode
+      // estimates leave this unset and use the satellite/cartoon path.
+      data-plan-takeoff={planSource ? "1" : undefined}
       data-low-glow={lowGlow ? "1" : "0"}
     >
       <Toolbar
@@ -767,17 +763,17 @@ export function AerialCanvas({
         <NeonDefs />
         {aerialImageUrl ? (
           <AerialImage imageDataUrl={aerialImageUrl} />
-        ) : planPdfDataUrl ? (
-          <AerialImage imageDataUrl={planPdfDataUrl} />
+        ) : planSource ? (
+          // Plan-based takeoff: drafting-paper background instead of
+          // the cartoon yard scene. We previously tried rasterizing the
+          // source PDF page Claude identified, but Claude consistently
+          // picked the site plan (page 1) rather than the roof plan
+          // page from multi-page sets. A clean architectural canvas
+          // looks more presentable AND doesn't depend on us getting
+          // page-detection right from the AI.
+          <BlueprintBackground />
         ) : (
           <AerialBackground />
-        )}
-        {planSource && !planPdfDataUrl && (
-          <PlanPdfBackground
-            pdfUrl={planSource.pdfUrl}
-            pageIndex={planSource.pageIndex}
-            onReady={setPlanPdfDataUrl}
-          />
         )}
         {t.overlay && !lowGlow && (
           <rect
