@@ -7,7 +7,11 @@ import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderProposalEmail } from "@/lib/email/proposal-template";
-import { blankProposal, type Proposal } from "@/lib/proposal-mock";
+import {
+  blankProposal,
+  packageTotal,
+  type Proposal,
+} from "@/lib/proposal-mock";
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
 import { getMe } from "./me";
 
@@ -299,7 +303,21 @@ async function saveDraftFromEstimateImpl(args: {
   const dataJson = draft as unknown as Prisma.InputJsonValue;
   const contractorSnap = draft.contractor as unknown as Prisma.InputJsonValue;
 
-  const totalCents = Math.max(0, Math.round(args.totalCents ?? 0));
+  // Derive a sensible totalCents from the package pricing instead of
+  // always falling back to 0. The estimate top-bar currently passes 0
+  // because no package has been selected — pick the canonical 'Pro
+  // Shield' (middle tier) so the proposals list + dashboard pipeline
+  // both reflect a real number instead of $0 everywhere.
+  let totalCents = Math.max(0, Math.round(args.totalCents ?? 0));
+  if (totalCents === 0 && draft.packages.length > 0) {
+    const pick = draft.packages[1] ?? draft.packages[0];
+    try {
+      const { total } = packageTotal(pick, args.measurements);
+      totalCents = Math.max(0, Math.round(total * 100));
+    } catch {
+      // packageTotal can throw on malformed measurements — fall back to 0.
+    }
+  }
 
   // Update path: contractor has clicked Save more than once on this estimate.
   const existing = args.existingId

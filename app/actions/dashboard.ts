@@ -4,7 +4,48 @@ import { db } from "@/lib/db";
 import { getMe } from "./me";
 
 import type { ProposalListItem } from "@/lib/dashboard-mock";
-import type { Proposal } from "@/lib/proposal-mock";
+import { packageTotal, type Proposal } from "@/lib/proposal-mock";
+
+/**
+ * Computes a proposal's dollar total from its data blob. Falls through
+ * to 0 only if the blob has no packages or measurements.
+ *
+ * Priority:
+ *   1. selectedPackageId — what the contractor/homeowner picked
+ *   2. Pro Shield / index 1 — the canonical "most popular" tier the
+ *      dashboard already highlights in the estimate view
+ *   3. First available package
+ *
+ * Saves us from the bug where saveDraftFromEstimate was writing
+ * totalCents: 0 to the row even though the proposal had real package
+ * pricing in its data blob.
+ */
+function deriveProposalTotalCents(
+  data: unknown,
+  fallbackCents: number,
+): number {
+  // Already-priced rows (sent / accepted with real totalCents) keep
+  // their stored value. Only $0 rows need derivation.
+  if (fallbackCents > 0) return fallbackCents;
+  const proposal = data as Partial<Proposal> | null;
+  if (!proposal || !Array.isArray(proposal.packages) || !proposal.measurements) {
+    return 0;
+  }
+  const packages = proposal.packages;
+  if (packages.length === 0) return 0;
+  const selectedId = (proposal as { selectedPackageId?: string }).selectedPackageId;
+  const pick =
+    (selectedId ? packages.find((p) => p.id === selectedId) : null) ??
+    packages[1] ??
+    packages[0];
+  if (!pick) return 0;
+  try {
+    const { total } = packageTotal(pick, proposal.measurements);
+    return Math.max(0, Math.round(total * 100));
+  } catch {
+    return 0;
+  }
+}
 export type MyProposalRow = ProposalListItem;
 
 export type MyKpis = {
@@ -50,9 +91,6 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
     orderBy: { updatedAt: "desc" },
     include: {
       _count: { select: { events: true } },
-      // Just the VIEWED events so we can compute first/last/count.
-      // Capped at 50 — anything past that is uncommon and we only
-      // care about the latest two timestamps.
       events: {
         where: { kind: "VIEWED" },
         orderBy: { createdAt: "asc" },
@@ -63,12 +101,16 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
   });
   return rows.map((r) => {
     const viewEvents = r.events;
+    // Derive the dollar total from the data blob when the row's
+    // totalCents column is still 0 (proposals saved before the
+    // package-price derivation existed).
+    const cents = deriveProposalTotalCents(r.data, r.totalCents);
     return {
       id: r.id,
       address: r.address,
       client: r.clientName,
       clientEmail: r.clientEmail || undefined,
-      total: r.totalCents / 100,
+      total: cents / 100,
       status: STATUS_TO_UI[r.status as keyof typeof STATUS_TO_UI] ?? "draft",
       selectedPackage: r.selectedPackageId ?? undefined,
       updatedAt: r.updatedAt.toISOString(),
@@ -143,42 +185,59 @@ export async function getMyKpis(): Promise<MyKpis> {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
 
-  const [sentCount, acceptedThisMonth, allDecided, openPipeline] = await Promise.all([
-    db.proposal.count({
-      where: {
-        userId,
-        status: { in: ["SENT", "VIEWED", "ACCEPTED", "DECLINED", "EXPIRED"] },
-        updatedAt: { gte: monthStart },
-      },
-    }),
-    db.proposal.findMany({
-      where: { userId, status: "ACCEPTED", acceptedAt: { gte: monthStart } },
-      select: { paidCents: true, totalCents: true },
-    }),
-    db.proposal.findMany({
-      where: { userId, status: { in: ["ACCEPTED", "DECLINED"] } },
-      select: { status: true },
-    }),
-    db.proposal.aggregate({
-      where: {
-        userId,
-        status: { in: ["DRAFT", "SENT", "VIEWED"] },
-      },
-      _sum: { totalCents: true },
-    }),
-  ]);
+  // Pipeline proposals now fetched WITH their data blobs so we can
+  // derive the dollar total for any row where totalCents is still 0
+  // (proposals created before the package-price derivation existed
+  // still need to count toward the contractor's pipeline view).
+  const [sentCount, acceptedThisMonth, allDecided, pipelineRows] =
+    await Promise.all([
+      db.proposal.count({
+        where: {
+          userId,
+          status: { in: ["SENT", "VIEWED", "ACCEPTED", "DECLINED", "EXPIRED"] },
+          updatedAt: { gte: monthStart },
+        },
+      }),
+      db.proposal.findMany({
+        where: { userId, status: "ACCEPTED", acceptedAt: { gte: monthStart } },
+        select: { paidCents: true, totalCents: true, data: true },
+      }),
+      db.proposal.findMany({
+        where: { userId, status: { in: ["ACCEPTED", "DECLINED"] } },
+        select: { status: true },
+      }),
+      db.proposal.findMany({
+        where: {
+          userId,
+          status: { in: ["DRAFT", "SENT", "VIEWED"] },
+        },
+        select: { totalCents: true, data: true },
+      }),
+    ]);
 
   const acceptedCount = acceptedThisMonth.length;
   const revenueMtd =
     acceptedThisMonth.reduce((sum, p) => sum + p.paidCents, 0) / 100;
+  // Accepted-deal totals: derive from data blob when the column says 0.
   const totalAcceptedDollarsMtd =
-    acceptedThisMonth.reduce((sum, p) => sum + p.totalCents, 0) / 100;
+    acceptedThisMonth.reduce(
+      (sum, p) => sum + deriveProposalTotalCents(p.data, p.totalCents),
+      0,
+    ) / 100;
   const avgDeal = acceptedCount > 0 ? totalAcceptedDollarsMtd / acceptedCount : 0;
 
   const decidedCount = allDecided.length;
   const decidedAccepted = allDecided.filter((p) => p.status === "ACCEPTED").length;
   const conversion = decidedCount > 0 ? decidedAccepted / decidedCount : 0;
-  const pipelineValue = (openPipeline._sum.totalCents ?? 0) / 100;
+  // Pipeline value: sum derived totals so drafts with package pricing
+  // in the data blob (the common case after Save proposal in the
+  // estimate top bar) contribute even though the row's totalCents
+  // column is 0.
+  const pipelineValue =
+    pipelineRows.reduce(
+      (sum, p) => sum + deriveProposalTotalCents(p.data, p.totalCents),
+      0,
+    ) / 100;
 
   return {
     sent: sentCount,
