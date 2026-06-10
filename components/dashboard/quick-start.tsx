@@ -217,13 +217,39 @@ export function QuickStart() {
         // routing to vercel.com/api/blob/mpu — the URL that's been
         // failing CORS / 400 on this deploy.
         let blobUrl: string | null = null;
+        // Normalize the MIME type from the file extension when the OS
+        // didn't attach one (drag-from-Finder strips file.type for some
+        // file types). Anthropic's vision API rejects PDF URLs served
+        // with content-type application/octet-stream — its validator
+        // tries to treat the bytes as an image and fails with
+        //   "messages.0.content.1.image.source.base64.data: file format
+        //    is invalid or unsupported"
+        // which we hit on a 12 MB Woodinville plan upload.
+        const resolveMime = (f: File): string => {
+          if (f.type && f.type !== "application/octet-stream") return f.type;
+          const ext = f.name.toLowerCase().split(".").pop();
+          switch (ext) {
+            case "pdf":
+              return "application/pdf";
+            case "png":
+              return "image/png";
+            case "jpg":
+            case "jpeg":
+              return "image/jpeg";
+            case "webp":
+              return "image/webp";
+            default:
+              return f.type || "application/octet-stream";
+          }
+        };
+        const fileMime = resolveMime(file);
         try {
           const presignRes = await fetch("/api/blueprints/presign", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               filename: file.name,
-              mimeType: file.type || "application/octet-stream",
+              mimeType: fileMime,
             }),
           });
           if (!presignRes.ok) {
@@ -239,7 +265,7 @@ export function QuickStart() {
           const putRes = await fetch(presignedUrl, {
             method: "PUT",
             headers: {
-              "content-type": file.type || "application/octet-stream",
+              "content-type": fileMime,
             },
             body: file,
           });
@@ -265,7 +291,7 @@ export function QuickStart() {
             body: JSON.stringify({
               blobUrl,
               filename: file.name,
-              mimeType: file.type || "application/octet-stream",
+              mimeType: fileMime,
             }),
           });
         } else {

@@ -20,6 +20,34 @@ export const maxDuration = 300;
 // the opaque platform 413 you'd otherwise hit.
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4 MB
 
+/**
+ * Derive the canonical MIME for the file extension when the wire-
+ * provided mime is missing or generic (application/octet-stream).
+ * Anthropic's vision API fetches blob URLs and validates the response
+ * content-type; a PDF served as octet-stream gets routed through the
+ * image validator and fails with a misleading "image.source.base64.
+ * data" error.
+ */
+function normalizeMimeFromName(name: string, hinted?: string): string {
+  if (hinted && hinted !== "application/octet-stream") return hinted;
+  const ext = name.toLowerCase().split(".").pop();
+  switch (ext) {
+    case "pdf":
+      return "application/pdf";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return hinted ?? "application/octet-stream";
+  }
+}
+
 export async function POST(request: Request) {
   const { userId: clerkId } = await auth();
   if (!clerkId) {
@@ -64,7 +92,13 @@ export async function POST(request: Request) {
     }
     blobUrl = body.blobUrl;
     filename = body.filename;
-    mime = body.mimeType ?? "application/octet-stream";
+    // Trust the file extension over the wire-provided mime — drag-from-
+    // Finder strips file.type, so we sometimes get "application/octet-
+    // stream" for what's actually a PDF. Anthropic's vision API fetches
+    // the URL and rejects bytes with the wrong content-type, surfacing
+    // as the misleading "image.source.base64.data: format invalid"
+    // error path.
+    mime = normalizeMimeFromName(filename, body.mimeType);
     isPdf =
       mime === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
     isImage = mime.startsWith("image/");
@@ -87,7 +121,7 @@ export async function POST(request: Request) {
     const buffer = Buffer.from(arrayBuf);
     base64 = buffer.toString("base64");
     filename = file.name;
-    mime = file.type || "application/octet-stream";
+    mime = normalizeMimeFromName(file.name, file.type);
     isPdf =
       mime === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
     isImage = mime.startsWith("image/");
@@ -167,6 +201,13 @@ export async function POST(request: Request) {
   // pollable via GET /api/blueprints/[id].
   after(async () => {
     try {
+      const srcSummary =
+        "url" in source
+          ? `url=${source.url.slice(0, 80)}…`
+          : `base64-bytes=${source.base64.length}`;
+      console.log(
+        `[/api/blueprints after()] starting analysis: id=${analysis.id} kind=${source.kind} mime=${mime} isPdf=${isPdf} isImage=${isImage} ${srcSummary}`,
+      );
       const result = await blueprintFromPlanSources([source]);
       if (!result.ok) {
         await db.planAnalysis.update({
