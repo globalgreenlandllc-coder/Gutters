@@ -337,6 +337,86 @@ export async function testApiKey(
   }
 }
 
+export type SendTestEmailResult = {
+  ok: boolean;
+  /** Resend's message ID when ok, error message when not. */
+  detail: string;
+  /** Where the email was sent FROM (so the admin can see the
+   *  configured sender). */
+  from: string;
+  /** Recipient confirmation. */
+  to: string;
+};
+
+/**
+ * Composes + delivers a real test email via the stored Resend key.
+ * Lets the admin verify the full pipeline — vault decrypt → Resend
+ * accept → actual deliverability — without going through the proposal
+ * flow. Returns Resend's message ID on success; the email will land
+ * in the recipient's inbox within seconds.
+ *
+ * Uses sendEmailViaResend so the From / Reply-To rules stay identical
+ * to a real proposal send. If the contractor has set RESEND_FROM_EMAIL
+ * to their verified domain, the test will come from there too.
+ */
+export async function sendTestEmail(args: {
+  to: string;
+}): Promise<SendTestEmailResult> {
+  try {
+    const me = await requireAdmin();
+    const trimmed = args.to.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return {
+        ok: false,
+        detail: "Recipient email looks invalid (need name@domain.tld).",
+        from: "",
+        to: trimmed,
+      };
+    }
+    const { sendEmailViaResend } = await import("@/lib/email/resend");
+    const fromName = me.profile.contractorName || "Gutters Admin";
+    const fromEmail =
+      process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
+    const res = await sendEmailViaResend({
+      to: trimmed,
+      fromName,
+      replyTo: me.user.email,
+      subject: "Gutters — Resend deliverability test",
+      html:
+        `<div style="font-family:system-ui,sans-serif;color:#0f172a;line-height:1.5">` +
+        `<h2 style="margin:0 0 8px">Resend test ✓</h2>` +
+        `<p>If you're reading this, your Resend API key + sender domain are wired correctly and proposals will go out.</p>` +
+        `<p style="color:#64748b;font-size:13px">Sent from the Gutters admin console at ${new Date().toISOString()}.</p>` +
+        `</div>`,
+      text:
+        "Resend test — if you're reading this, your Resend API key + sender domain are wired correctly and proposals will go out.\n\n" +
+        `Sent from the Gutters admin console at ${new Date().toISOString()}.`,
+    });
+    if (res.ok) {
+      return {
+        ok: true,
+        detail: `Resend accepted the message: ${res.id}. Should land within 30s.`,
+        from: `${fromName} <${fromEmail}>`,
+        to: trimmed,
+      };
+    }
+    return {
+      ok: false,
+      detail: res.reason,
+      from: `${fromName} <${fromEmail}>`,
+      to: trimmed,
+    };
+  } catch (e) {
+    console.error("[sendTestEmail] threw", e);
+    return {
+      ok: false,
+      detail: e instanceof Error ? e.message : "Unexpected error",
+      from: "",
+      to: args.to,
+    };
+  }
+}
+
 export type ApiKeyAuditEntry = {
   id: string;
   action: string;

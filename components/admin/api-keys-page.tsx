@@ -10,8 +10,10 @@ import {
   Key,
   Lock,
   Loader2,
+  Mail,
   Plug,
   RefreshCw,
+  Send,
   ShieldOff,
   Trash2,
   X,
@@ -26,9 +28,11 @@ import {
   revealApiKey,
   revokeApiKey,
   rotateApiKey,
+  sendTestEmail,
   testApiKey,
   type ApiKeyAuditEntry,
   type ApiKeyRow,
+  type SendTestEmailResult,
   type TestApiKeyResult,
 } from "@/app/actions/api-keys";
 import { ALL_PROVIDERS } from "@/lib/api-key-providers";
@@ -302,6 +306,12 @@ function ProviderCard({
   const [showHistory, setShowHistory] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestApiKeyResult | null>(null);
+  // 'Send test email' state — only used on the Resend card.
+  const [testEmailOpen, setTestEmailOpen] = useState(false);
+  const [testEmailAddr, setTestEmailAddr] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
+  const [sendTestResult, setSendTestResult] =
+    useState<SendTestEmailResult | null>(null);
   return (
     <div
       className={cn(
@@ -396,6 +406,95 @@ function ProviderCard({
         </div>
       )}
 
+      {/* Resend-only: Send a test email so the admin can verify
+          deliverability end-to-end (key valid, sender domain OK,
+          recipient inbox gets the message) without going through the
+          proposal flow. Inline panel rather than a modal so the result
+          stays attached to the card it belongs to. */}
+      {active && provider === "RESEND" && (
+        <div className="mt-3 space-y-2">
+          {sendTestResult && (
+            <div
+              className={cn(
+                "rounded-lg border px-3 py-2 text-xs",
+                sendTestResult.ok
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-rose-200 bg-rose-50 text-rose-800",
+              )}
+            >
+              <div className="flex items-start gap-1.5">
+                {sendTestResult.ok ? (
+                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className="font-medium">{sendTestResult.detail}</div>
+                  {sendTestResult.from && (
+                    <div className="mt-0.5 text-[10px] opacity-80">
+                      From {sendTestResult.from} → {sendTestResult.to}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {testEmailOpen && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!testEmailAddr.trim()) return;
+                setSendingTest(true);
+                setSendTestResult(null);
+                try {
+                  const r = await sendTestEmail({ to: testEmailAddr.trim() });
+                  setSendTestResult(r);
+                  if (r.ok) {
+                    setTestEmailOpen(false);
+                  }
+                } finally {
+                  setSendingTest(false);
+                }
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                type="email"
+                required
+                autoFocus
+                value={testEmailAddr}
+                onChange={(e) => setTestEmailAddr(e.target.value)}
+                placeholder="you@example.com"
+                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              />
+              <Button
+                size="sm"
+                disabled={sendingTest || !testEmailAddr.trim()}
+                type="submit"
+              >
+                {sendingTest ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+                Send
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTestEmailOpen(false);
+                  setSendTestResult(null);
+                }}
+                className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="Cancel"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {active ? (
           <>
@@ -421,6 +520,19 @@ function ProviderCard({
                   <Plug className="h-3.5 w-3.5" />
                 )}
                 Test
+              </Button>
+            )}
+            {provider === "RESEND" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTestEmailOpen((v) => !v);
+                  setSendTestResult(null);
+                }}
+              >
+                <Mail className="h-3.5 w-3.5" />
+                {testEmailOpen ? "Hide test email" : "Send test email"}
               </Button>
             )}
             <Button
