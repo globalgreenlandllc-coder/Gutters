@@ -1,7 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { Prisma } from "@prisma/client";
-import { get as blobGet } from "@vercel/blob";
+import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
 import {
@@ -207,15 +207,55 @@ export async function POST(request: Request) {
           { status: 500 },
         );
       }
+      // Extract pathname from URL. get() accepts EITHER a URL or a
+      // pathname; pathnames bypass URL-format validation. The user's
+      // existing row was created when the client constructed
+      // .public.blob.vercel-storage.com URLs, which the SDK rejects
+      // ("Invalid URL: does not point to a Vercel Blob store") because
+      // canonical blobs live on .private.blob.vercel-storage.com.
+      // Pathname-based lookup is host-agnostic.
+      let blobPath: string;
       try {
-        const blobResult = await blobGet(blobUrl, {
+        const u = new URL(blobUrl);
+        blobPath = u.pathname.replace(/^\/+/, "");
+      } catch {
+        // blobUrl wasn't a full URL — assume it's already a pathname.
+        blobPath = blobUrl.replace(/^\/+/, "");
+      }
+      try {
+        let blobResult = await blobGet(blobPath, {
           token,
           access: "public",
-        });
+        }).catch(() => null);
         if (!blobResult || blobResult.statusCode !== 200) {
-          throw new Error(
-            `blob.get returned ${blobResult?.statusCode ?? "null"}`,
-          );
+          // Fallback: pre-existing rows have a pathname that's missing
+          // Vercel's random suffix (the client used to construct URLs
+          // assuming addRandomSuffix=false, but the SDK's default added
+          // a suffix anyway). Find the actual blob via prefix listing
+          // — most uploads have at most one blob per prefix because we
+          // namespace under userId/random-token.
+          const prefix = blobPath.replace(/\.[a-z0-9]+$/i, ""); // strip ext
+          const listing = await blobList({
+            token,
+            prefix,
+            limit: 5,
+          });
+          const match = listing.blobs.find((b) => b.pathname.startsWith(prefix));
+          if (!match) {
+            throw new Error(
+              `Could not find blob: get returned ${blobResult?.statusCode ?? "null"}, ` +
+                `list(prefix="${prefix}") returned ${listing.blobs.length} results`,
+            );
+          }
+          blobResult = await blobGet(match.pathname, {
+            token,
+            access: "public",
+          });
+          if (!blobResult || blobResult.statusCode !== 200) {
+            throw new Error(
+              `blob.get on fallback path "${match.pathname}" returned ${blobResult?.statusCode ?? "null"}`,
+            );
+          }
         }
         const chunks: Uint8Array[] = [];
         const reader = blobResult.stream.getReader();

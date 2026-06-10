@@ -102,6 +102,13 @@ export async function POST(request: Request) {
       allowedContentTypes: ALLOWED_TYPES,
       maximumSizeInBytes: MAX_BYTES,
       validUntil,
+      // Disable random suffix so the stored pathname matches what we
+      // just generated (and what the client posts back to /api/
+      // blueprints). Without this, Vercel appends a per-upload random
+      // string before the extension and the route can't find the blob
+      // by pathname later. Our pathname already includes user.id +
+      // random-token so collisions aren't an issue.
+      addRandomSuffix: false,
     });
 
     return NextResponse.json({
