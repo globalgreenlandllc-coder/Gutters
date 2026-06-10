@@ -371,3 +371,157 @@ async function saveDraftFromEstimateImpl(args: {
 
   return { ok: true, id: row.id, token: row.publicToken, status: "DRAFT" };
 }
+
+export type AcceptProposalResult =
+  | {
+      ok: true;
+      acceptedAt: string;
+      proposalAddress: string;
+      contractorNotified: boolean;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Homeowner-side accept. Called from /p/[token] when the homeowner
+ * signs + agrees + clicks Accept.
+ *
+ *   1. Looks up the proposal by public token (no auth required —
+ *      that's the whole point of a token-gated portal).
+ *   2. Bumps status DRAFT/SENT/VIEWED → ACCEPTED and sets acceptedAt.
+ *      Idempotent: re-accept of an already-accepted proposal is a no-op
+ *      success, not a 500.
+ *   3. Records a ProposalEvent of kind ACCEPTED so the activity feed
+ *      + dashboard KPIs pick it up.
+ *   4. Fires an email to the contractor letting them know the proposal
+ *      was just accepted. Best-effort: an email failure here doesn't
+ *      reverse the acceptance — the homeowner shouldn't be punished
+ *      for the contractor's email config being off.
+ */
+export async function acceptProposalByToken(args: {
+  token: string;
+  signerName: string;
+  signatureDataUrl: string;
+  selectedPackageId?: string | null;
+  paymentChoice: "deposit" | "full";
+}): Promise<AcceptProposalResult> {
+  try {
+    const row = await db.proposal.findUnique({
+      where: { publicToken: args.token },
+      include: { user: { include: { contractorProfile: true } } },
+    });
+    if (!row) return { ok: false, reason: "Proposal not found" };
+
+    if (row.status === "ACCEPTED") {
+      return {
+        ok: true,
+        acceptedAt: (row.acceptedAt ?? row.updatedAt).toISOString(),
+        proposalAddress: row.address,
+        contractorNotified: false,
+      };
+    }
+
+    if (row.status === "DECLINED" || row.status === "EXPIRED") {
+      return {
+        ok: false,
+        reason: `Proposal can't be accepted because it's ${row.status.toLowerCase()}.`,
+      };
+    }
+
+    const now = new Date();
+    const accepted = await db.proposal.update({
+      where: { id: row.id },
+      data: {
+        status: "ACCEPTED",
+        acceptedAt: now,
+        selectedPackageId: args.selectedPackageId ?? row.selectedPackageId,
+      },
+    });
+
+    await db.proposalEvent.create({
+      data: {
+        proposalId: row.id,
+        kind: "ACCEPTED",
+        payload: {
+          signerName: args.signerName,
+          paymentChoice: args.paymentChoice,
+          selectedPackageId: args.selectedPackageId ?? null,
+          // Don't store the full signature dataURL here — it can be
+          // several hundred KB and goes into the proposal data blob
+          // anyway. Just note it was provided.
+          hasSignature: Boolean(args.signatureDataUrl),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    // Best-effort contractor notification.
+    let contractorNotified = false;
+    const contractorEmail = row.user?.contractorProfile?.email ?? row.user?.email;
+    if (contractorEmail) {
+      try {
+        const portalUrl = `${appBaseUrl()}/p/${row.publicToken}`;
+        const dashUrl = `${appBaseUrl()}/dashboard/proposals`;
+        const totalCents = accepted.totalCents > 0 ? accepted.totalCents : 0;
+        const totalDollars = (totalCents / 100).toFixed(2);
+        const html =
+          `<div style="font-family:system-ui,sans-serif;color:#0f172a;line-height:1.5;max-width:560px">` +
+          `<h2 style="margin:0 0 8px;color:#059669">Proposal accepted ✓</h2>` +
+          `<p>${escapeHtml(args.signerName || row.clientName || "Your client")} just accepted the proposal for <strong>${escapeHtml(row.address)}</strong>.</p>` +
+          (totalCents > 0
+            ? `<p>Total: <strong>$${totalDollars}</strong></p>`
+            : "") +
+          `<p>Payment choice: <strong>${args.paymentChoice === "deposit" ? "Deposit only" : "Full upfront"}</strong></p>` +
+          `<p style="margin-top:20px"><a href="${dashUrl}" style="background:#059669;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Open dashboard</a>` +
+          ` &nbsp; <a href="${portalUrl}" style="color:#059669">View signed proposal</a></p>` +
+          `<p style="color:#64748b;font-size:13px;margin-top:24px">Accepted at ${now.toISOString()}.</p>` +
+          `</div>`;
+        const text =
+          `Proposal accepted ✓\n\n` +
+          `${args.signerName || row.clientName || "Your client"} just accepted the proposal for ${row.address}.\n` +
+          (totalCents > 0 ? `Total: $${totalDollars}\n` : "") +
+          `Payment choice: ${args.paymentChoice === "deposit" ? "Deposit only" : "Full upfront"}\n\n` +
+          `Dashboard: ${dashUrl}\nSigned proposal: ${portalUrl}\n\n` +
+          `Accepted at ${now.toISOString()}.`;
+        const res = await sendEmailViaResend({
+          to: contractorEmail,
+          fromName: "Gutters",
+          subject: `✓ Proposal accepted — ${row.address}`,
+          html,
+          text,
+        });
+        contractorNotified = res.ok;
+        if (!res.ok) {
+          console.warn(
+            "[acceptProposalByToken] contractor notification failed",
+            res.reason,
+          );
+        }
+      } catch (e) {
+        console.warn("[acceptProposalByToken] contractor email threw", e);
+      }
+    }
+
+    revalidatePath("/dashboard/proposals");
+    revalidatePath("/dashboard");
+
+    return {
+      ok: true,
+      acceptedAt: now.toISOString(),
+      proposalAddress: row.address,
+      contractorNotified,
+    };
+  } catch (e) {
+    console.error("[acceptProposalByToken] threw", e);
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "Accept failed",
+    };
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}

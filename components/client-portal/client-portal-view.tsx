@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { motion } from "framer-motion";
 import { ShieldCheck, Phone, Mail } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
@@ -15,6 +15,7 @@ import { SignaturePad } from "./signature-pad";
 import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
 import { packageTotal, type Proposal } from "@/lib/proposal-mock";
+import { acceptProposalByToken } from "@/app/actions/proposals";
 
 export function ClientPortalView({
   proposal,
@@ -36,6 +37,9 @@ export function ClientPortalView({
     "deposit",
   );
   const [accepted, setAccepted] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [, startAccept] = useTransition();
+  const [acceptPending, setAcceptPending] = useState(false);
 
   const selected =
     proposal.packages.find((p) => p.id === selectedId) ?? proposal.packages[0];
@@ -143,9 +147,38 @@ export function ClientPortalView({
         depositPct={proposal.depositPct}
         paymentChoice={paymentChoice}
         onPaymentChoice={setPaymentChoice}
-        canAccept={canAccept}
-        reason={reason}
-        onAccept={() => setAccepted(true)}
+        canAccept={canAccept && !acceptPending}
+        reason={acceptError ?? reason}
+        onAccept={() => {
+          if (previewMode) {
+            setAccepted(true);
+            return;
+          }
+          setAcceptError(null);
+          setAcceptPending(true);
+          startAccept(async () => {
+            try {
+              const result = await acceptProposalByToken({
+                token: proposal.token,
+                signerName: signerName.trim(),
+                signatureDataUrl: signature ?? "",
+                selectedPackageId: selectedId,
+                paymentChoice,
+              });
+              if (!result.ok) {
+                setAcceptError(result.reason);
+                return;
+              }
+              setAccepted(true);
+            } catch (e) {
+              setAcceptError(
+                e instanceof Error ? e.message : "Couldn't accept the proposal",
+              );
+            } finally {
+              setAcceptPending(false);
+            }
+          });
+        }}
       />
     </div>
   );
