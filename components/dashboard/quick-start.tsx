@@ -196,6 +196,13 @@ export function QuickStart() {
       }
 
       let res: Response;
+      // Local safe-parse alias — promoted to module from lib/safe-json.
+      // We can't import top-level here without rewriting the whole file
+      // around server actions; tiny inline wrapper is cheap.
+      const safeJson = async <T,>(r: Response): Promise<T | { error: string }> => {
+        const { safeResponseJson } = await import("@/lib/safe-json");
+        return safeResponseJson<T>(r);
+      };
       if (useMultipart) {
         // Direct multipart upload (no Blob). Stays under Vercel's 4.5 MB
         // serverless body limit — server-side /api/blueprints handles it.
@@ -279,8 +286,11 @@ export function QuickStart() {
               const fd = new FormData();
               fd.append("file", file);
               res = await fetch("/api/blueprints", { method: "POST", body: fd });
-              const data = await res.json();
-              if (!res.ok) {
+              const data = (await safeJson<{ id?: string; error?: string }>(res)) as {
+                id?: string;
+                error?: string;
+              };
+              if (!res.ok || !data.id) {
                 setError(data.error ?? "Plan analysis failed");
                 return;
               }
@@ -305,11 +315,16 @@ export function QuickStart() {
           });
         }
       }
-      const data = await res.json();
-      if (!res.ok) {
+      const data = (await safeJson<{ id?: string; error?: string }>(res)) as {
+        id?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.id) {
         setError(data.error ?? "Plan analysis failed");
         return;
       }
+      // 202 Accepted means the analysis is QUEUED and running in
+      // background via after(). The estimate page polls for status.
       router.push(`/estimate?planId=${data.id}&jobType=${jobType}`);
     } catch (e) {
       console.error("[QuickStart upload] threw", e);

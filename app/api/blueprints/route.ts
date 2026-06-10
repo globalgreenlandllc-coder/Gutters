@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { Prisma } from "@prisma/client";
 
@@ -8,8 +8,10 @@ import {
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
 
-// Vision-on-plans takes 30-60s. Bump above the default 10s.
-export const maxDuration = 90;
+// Vision-on-plans takes 30-120s for large PDFs. Bump high — Vercel
+// honors up to 300s on Pro. after() callbacks share the same budget,
+// so this must cover both the queue write AND the analysis.
+export const maxDuration = 300;
 
 // Multipart-fallback cap. The Blob direct-upload path accepts up to 32 MB
 // (Anthropic's PDF limit); this lower number is for the legacy multipart
@@ -124,69 +126,96 @@ export async function POST(request: Request) {
     },
   });
 
-  try {
-    let source: PlanSource;
-    if (blobUrl) {
-      source = isPdf
-        ? { kind: "pdf-url", url: blobUrl }
-        : { kind: "image-url", url: blobUrl };
-    } else if (base64) {
-      source = isPdf
-        ? { kind: "pdf", base64 }
-        : {
-            kind: "image",
-            base64,
-            mediaType: (mime === "image/png" ||
-            mime === "image/jpeg" ||
-            mime === "image/webp" ||
-            mime === "image/gif"
-              ? mime
-              : "image/png") as Extract<PlanSource, { kind: "image" }>["mediaType"],
-          };
-    } else {
-      throw new Error("No file or blobUrl provided");
-    }
-
-    const result = await blueprintFromPlanSources([source]);
-    if (!result.ok) {
-      await db.planAnalysis.update({
-        where: { id: analysis.id },
-        data: { status: "FAILED", errorMessage: result.reason },
-      });
-      return NextResponse.json(
-        { error: result.reason, id: analysis.id },
-        { status: 422 },
-      );
-    }
-
-    const updated = await db.planAnalysis.update({
-      where: { id: analysis.id },
-      data: {
-        status: "SUCCEEDED",
-        analysisJson: result.analysis as object,
-        confidence: result.analysis.confidence,
-        modelUsed: result.usage.model,
-        inputTokens: result.usage.input_tokens,
-        outputTokens: result.usage.output_tokens,
-        cacheHit: result.usage.cache_hit,
-        durationMs: result.usage.duration_ms,
-      },
-    });
-
-    return NextResponse.json({
-      id: updated.id,
-      status: updated.status,
-      analysis: result.analysis,
-      usage: result.usage,
-    });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "blueprint analysis failed";
+  // Build the PlanSource synchronously — it's just data shape massaging,
+  // no I/O. Then defer the actual Claude analysis to after() so the
+  // browser gets an immediate 202 + planId and can navigate to the
+  // result page (which polls for SUCCEEDED). Previously a 12 MB PDF
+  // would block the response for 90+ s and Vercel would kill the
+  // function with an empty 500, crashing the client on res.json().
+  let source: PlanSource;
+  if (blobUrl) {
+    source = isPdf
+      ? { kind: "pdf-url", url: blobUrl }
+      : { kind: "image-url", url: blobUrl };
+  } else if (base64) {
+    source = isPdf
+      ? { kind: "pdf", base64 }
+      : {
+          kind: "image",
+          base64,
+          mediaType: (mime === "image/png" ||
+          mime === "image/jpeg" ||
+          mime === "image/webp" ||
+          mime === "image/gif"
+            ? mime
+            : "image/png") as Extract<PlanSource, { kind: "image" }>["mediaType"],
+        };
+  } else {
     await db.planAnalysis.update({
       where: { id: analysis.id },
-      data: { status: "FAILED", errorMessage: message },
+      data: { status: "FAILED", errorMessage: "No file or blobUrl provided" },
     });
-    return NextResponse.json({ error: message, id: analysis.id }, { status: 500 });
+    return NextResponse.json(
+      { error: "No file or blobUrl provided", id: analysis.id },
+      { status: 400 },
+    );
   }
+
+  // Kick off the heavy work AFTER returning. Vercel keeps the function
+  // alive up to maxDuration; the client doesn't wait for it. Status is
+  // tracked on the planAnalysis row (QUEUED → SUCCEEDED | FAILED) and
+  // pollable via GET /api/blueprints/[id].
+  after(async () => {
+    try {
+      const result = await blueprintFromPlanSources([source]);
+      if (!result.ok) {
+        await db.planAnalysis.update({
+          where: { id: analysis.id },
+          data: { status: "FAILED", errorMessage: result.reason },
+        });
+        return;
+      }
+      await db.planAnalysis.update({
+        where: { id: analysis.id },
+        data: {
+          status: "SUCCEEDED",
+          analysisJson: result.analysis as object,
+          confidence: result.analysis.confidence,
+          modelUsed: result.usage.model,
+          inputTokens: result.usage.input_tokens,
+          outputTokens: result.usage.output_tokens,
+          cacheHit: result.usage.cache_hit,
+          durationMs: result.usage.duration_ms,
+        },
+      });
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "blueprint analysis failed";
+      console.error("[/api/blueprints after()] analysis threw:", e);
+      await db.planAnalysis
+        .update({
+          where: { id: analysis.id },
+          data: { status: "FAILED", errorMessage: message },
+        })
+        .catch((updateErr) =>
+          console.error(
+            "[/api/blueprints after()] also failed to mark FAILED:",
+            updateErr,
+          ),
+        );
+    }
+  });
+
+  // Return immediately with 202 Accepted. Client navigates to
+  // /estimate?planId=<id>, which polls GET /api/blueprints/[id] for
+  // status.
+  return NextResponse.json(
+    {
+      id: analysis.id,
+      status: analysis.status,
+    },
+    { status: 202 },
+  );
 }
 
 export async function GET() {
