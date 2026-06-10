@@ -42,58 +42,85 @@ export async function listApiKeys(): Promise<ApiKeyRow[]> {
   }));
 }
 
+export type CreateApiKeyResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: string };
+
 export async function createApiKey(args: {
   provider: ApiKeyProvider;
   label: string;
   value: string;
-}): Promise<{ ok: true; id: string }> {
-  const me = await requireAdmin();
-  const value = args.value.trim();
-  if (value.length < 8) {
-    throw new Error("Key value looks too short to be a real credential.");
-  }
-  const fp = fingerprint(value);
-  const dup = await db.apiKey.findUnique({
-    where: { provider_fingerprint: { provider: args.provider, fingerprint: fp } },
-  });
-  if (dup) {
-    throw new Error(
-      "This exact key value is already stored for this provider. Rotate the existing entry instead.",
-    );
-  }
+}): Promise<CreateApiKeyResult> {
+  // Wrap the whole action in a single try/catch and convert every
+  // failure into a structured result. Without this, throws bubble
+  // past the server action boundary and Next.js production strips
+  // the message into 'An error occurred in the Server Components
+  // render' — leaving the admin staring at a useless modal.
+  try {
+    const me = await requireAdmin();
+    const value = args.value.trim();
+    if (value.length < 8) {
+      return {
+        ok: false,
+        reason: "Key value looks too short to be a real credential.",
+      };
+    }
+    const fp = fingerprint(value);
+    const dup = await db.apiKey.findUnique({
+      where: {
+        provider_fingerprint: { provider: args.provider, fingerprint: fp },
+      },
+    });
+    if (dup) {
+      return {
+        ok: false,
+        reason:
+          "This exact key value is already stored for this provider. Rotate the existing entry instead.",
+      };
+    }
 
-  await db.apiKey.updateMany({
-    where: { provider: args.provider, active: true },
-    data: { active: false, rotatedAt: new Date() },
-  });
+    await db.apiKey.updateMany({
+      where: { provider: args.provider, active: true },
+      data: { active: false, rotatedAt: new Date() },
+    });
 
-  const created = await db.apiKey.create({
-    data: {
-      provider: args.provider,
-      label: args.label.trim() || `${args.provider} key`,
-      encryptedValue: encrypt(value),
-      fingerprint: fp,
-      active: true,
-      createdBy: me.user.id,
-    },
-  });
-
-  await db.auditLog.create({
-    data: {
-      actorId: me.user.id,
-      action: "API_KEY_CREATED",
-      targetType: "ApiKey",
-      targetId: created.id,
-      payload: {
+    const created = await db.apiKey.create({
+      data: {
         provider: args.provider,
+        label: args.label.trim() || `${args.provider} key`,
+        encryptedValue: encrypt(value),
         fingerprint: fp,
-        label: created.label,
-      } as Prisma.InputJsonValue,
-    },
-  });
+        active: true,
+        createdBy: me.user.id,
+      },
+    });
 
-  revalidatePath("/admin/api-keys");
-  return { ok: true, id: created.id };
+    await db.auditLog.create({
+      data: {
+        actorId: me.user.id,
+        action: "API_KEY_CREATED",
+        targetType: "ApiKey",
+        targetId: created.id,
+        payload: {
+          provider: args.provider,
+          fingerprint: fp,
+          label: created.label,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    revalidatePath("/admin/api-keys");
+    return { ok: true, id: created.id };
+  } catch (e) {
+    console.error("[createApiKey] threw", e);
+    const msg = e instanceof Error ? e.message : "Unexpected error";
+    return {
+      ok: false,
+      reason: msg.startsWith("Forbidden")
+        ? "You're not signed in as a super-admin."
+        : msg,
+    };
+  }
 }
 
 export async function revealApiKey(

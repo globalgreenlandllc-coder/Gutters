@@ -638,15 +638,21 @@ function AddDialog({
     setError(null);
     startTransition(async () => {
       try {
-        await createApiKey({
+        const result = await createApiKey({
           provider,
           label: label.trim() || `${provider} key`,
           value,
         });
+        if (!result.ok) {
+          setError(result.reason);
+          return;
+        }
         setLabel("");
         setValue("");
         onSaved();
       } catch (e) {
+        // Defense in depth — createApiKey now returns {ok, reason}
+        // but if anything goes sideways post-deploy, surface it.
         setError(e instanceof Error ? e.message : "Save failed");
       }
     });
