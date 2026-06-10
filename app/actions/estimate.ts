@@ -59,7 +59,17 @@ export type RunEstimateResponse =
       runId: string;
     }
   | {
+      // Plan analysis is queued / still running in the after()
+      // background callback. The caller should poll, NOT surface this
+      // as an error.
       ok: false;
+      pending: true;
+      reason: string;
+      remaining: number;
+    }
+  | {
+      ok: false;
+      pending?: false;
       reason: string;
       remaining: number;
     };
@@ -215,13 +225,18 @@ export async function runEstimateFromPlan(
   if (!row) {
     return { ok: false, reason: "Plan analysis not found", remaining };
   }
+  if (row.status === "QUEUED") {
+    return {
+      ok: false,
+      pending: true,
+      reason: "Plan analysis is still in progress",
+      remaining,
+    };
+  }
   if (row.status !== "SUCCEEDED" || !row.analysisJson) {
     return {
       ok: false,
-      reason:
-        row.status === "FAILED"
-          ? row.errorMessage ?? "Plan analysis failed"
-          : "Plan analysis is still in progress",
+      reason: row.errorMessage ?? "Plan analysis failed",
       remaining,
     };
   }

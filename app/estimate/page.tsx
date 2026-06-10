@@ -44,12 +44,12 @@ function EstimateContent() {
     let cancelled = false;
     const startedAt = Date.now();
 
-    // Client-side watchdog. The server action has a 90s maxDuration on
-    // Vercel; if no response by 95s, we surface a real error instead
-    // of leaving the user staring at "Building takeoff…" forever.
-    // Most pipeline calls finish in 25-50s so this rarely fires; when
-    // it does, an upstream API (Solar / Anthropic / fal) is hung.
-    const WATCHDOG_MS = 95_000;
+    // Client-side watchdog. Address mode finishes in 25-50s typically
+    // — 95s is the bail-out. Plan mode runs Claude vision on a 12 MB
+    // PDF which can take 60-120s; bump the watchdog to 240s (just
+    // under the 300s maxDuration on the route). Polling re-runs reset
+    // the timer because the effect re-mounts on every tick.
+    const WATCHDOG_MS = planId ? 240_000 : 95_000;
     const watchdog = setTimeout(() => {
       if (cancelled) return;
       cancelled = true;
@@ -77,6 +77,15 @@ function EstimateContent() {
           setResult(r.result);
           setReused(r.reused);
           setPhase("ready");
+        } else if ("pending" in r && r.pending) {
+          // QUEUED — analysis still running in the after() callback.
+          // Stay in loading phase, bump tick after 3s so the effect
+          // re-runs and re-polls. Watchdog (95s above) is the upper
+          // bound — if it's still pending past that the user sees a
+          // real timeout error.
+          setTimeout(() => {
+            if (!cancelled) setTick((t) => t + 1);
+          }, 3000);
         } else {
           setError(r.reason);
           setPhase("error");
