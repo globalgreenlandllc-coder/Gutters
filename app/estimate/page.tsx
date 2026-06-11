@@ -121,7 +121,9 @@ function EstimateContent() {
     : address;
 
   if (phase === "loading") {
-    return <LoadingState address={headerLabel} />;
+    return (
+      <LoadingState address={headerLabel} mode={planId ? "plan" : "aerial"} />
+    );
   }
   if (phase === "error") {
     return (

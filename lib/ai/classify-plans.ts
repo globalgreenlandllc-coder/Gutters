@@ -86,7 +86,11 @@ export type ClassificationResult =
       };
     };
 
-const MODEL = "claude-sonnet-4-6";
+// Classification is structured-output work, not geometric reasoning —
+// Haiku 4.5 handles it accurately and runs ~2-3x faster than Sonnet for
+// the per-page inventory. Geometry stays on Sonnet in
+// blueprint-from-plans.ts where vision precision matters.
+const MODEL = "claude-haiku-4-5-20251001";
 
 const CLASSIFIER_SYSTEM = `
 You are a senior rain-gutter estimator triaging a multi-page residential

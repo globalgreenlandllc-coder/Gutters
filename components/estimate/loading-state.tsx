@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Check, Loader2, MapPin } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 
-const STEPS = [
+const AERIAL_STEPS = [
   { id: "geocode", label: "Geocoding property" },
   { id: "aerial", label: "Fetching aerial imagery" },
   { id: "segment", label: "Analyzing roof edges" },
@@ -14,16 +14,43 @@ const STEPS = [
   { id: "price", label: "Building takeoff" },
 ];
 
-export function LoadingState({ address }: { address: string }) {
+// Plan-mode runs a different pipeline: classifier (Haiku) catalogs
+// every sheet, picks the roof plan + harvests elevation eave counts,
+// then geometry (Sonnet) traces the identified page constrained by
+// those counts. Steps mirror that order so the contractor doesn't see
+// "Fetching aerial imagery" while staring at their uploaded PDF.
+const PLAN_STEPS = [
+  { id: "read", label: "Reading plan PDF" },
+  { id: "classify", label: "Cataloging sheets" },
+  { id: "elevations", label: "Counting eaves on elevations" },
+  { id: "roof", label: "Tracing the roof plan" },
+  { id: "downspouts", label: "Placing downspouts" },
+  { id: "price", label: "Building takeoff" },
+];
+
+export function LoadingState({
+  address,
+  mode = "aerial",
+}: {
+  address: string;
+  mode?: "aerial" | "plan";
+}) {
+  const steps = mode === "plan" ? PLAN_STEPS : AERIAL_STEPS;
   const [stepIndex, setStepIndex] = useState(0);
 
-  useEffect(() => {
-    if (stepIndex >= STEPS.length - 1) return;
-    const t = setTimeout(() => setStepIndex((i) => i + 1), 420);
-    return () => clearTimeout(t);
-  }, [stepIndex]);
+  // Plan-mode work takes 30-120s in practice (classifier + Sonnet
+  // geometry). Stretch the per-step dwell so the checkmark cascade
+  // doesn't finish in 2.5s and leave the contractor staring at a
+  // pulsing dot for the rest of the wait.
+  const dwellMs = mode === "plan" ? 8000 : 420;
 
-  const progress = Math.min((stepIndex + 1) / STEPS.length, 1);
+  useEffect(() => {
+    if (stepIndex >= steps.length - 1) return;
+    const t = setTimeout(() => setStepIndex((i) => i + 1), dwellMs);
+    return () => clearTimeout(t);
+  }, [stepIndex, steps.length, dwellMs]);
+
+  const progress = Math.min((stepIndex + 1) / steps.length, 1);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
@@ -63,7 +90,7 @@ export function LoadingState({ address }: { address: string }) {
           </div>
 
           <ul className="mt-6 space-y-2.5">
-            {STEPS.map((s, i) => {
+            {steps.map((s, i) => {
               const state =
                 i < stepIndex ? "done" : i === stepIndex ? "active" : "pending";
               return (
@@ -127,7 +154,9 @@ export function LoadingState({ address }: { address: string }) {
         </div>
 
         <p className="mt-4 text-center text-xs text-zinc-500">
-          Running in parallel: Solar API · Vision segmentation · Turf.js geometry
+          {mode === "plan"
+            ? "Two-stage AI: Haiku sheet inventory · Sonnet roof-plan geometry"
+            : "Running in parallel: Solar API · Vision segmentation · Turf.js geometry"}
         </p>
       </motion.div>
     </div>
