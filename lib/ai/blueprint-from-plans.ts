@@ -240,6 +240,18 @@ having an absolute ceiling of max_total_eave_lf. If your trace
 exceeds it, re-derive scale before emitting JSON. The same applies
 to max_single_run_lf — no single run can be longer than the building's
 larger dimension.
+
+SELF-CHECK BEFORE EMITTING JSON:
+1. Sum every gutter_runs[i].length_ft.
+2. Is the sum > max_total_eave_lf? If yes, your scale is wrong by
+   (sum / max_total_eave_lf)×. Divide every length_ft by that factor
+   and re-check. Common cause: you measured against the page bounds
+   instead of a dimensioned wall.
+3. Is any single length_ft > max_single_run_lf? If yes, you merged
+   two segments through a missed corner. Find the corner on the roof
+   plan and split that run into two.
+4. Do this self-correction silently — the response should still be
+   strict JSON, no commentary.
 </scale_discipline>
 
 <tier_assignment>

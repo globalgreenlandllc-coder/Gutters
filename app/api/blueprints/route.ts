@@ -12,6 +12,7 @@ import {
   classifyPlanSheets,
   classificationToConstraints,
 } from "@/lib/ai/classify-plans";
+import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -381,11 +382,29 @@ export async function POST(request: Request) {
         return;
       }
 
+      // Defensive clamp: if Sonnet's per-run length_ft values blow
+      // past the envelope cap derived by the classifier (real failure
+      // mode — emitted 789 LF on a 64×51 house when the actual
+      // perimeter is ~270 LF), scale them proportionally so the
+      // priced LF lands at a believable number. Shape is preserved
+      // because length_px isn't touched and the canvas is fit-to-
+      // viewBox.
+      const { analysis: clamped, clampNotes } = clampBlueprintToEnvelope(
+        result.analysis,
+        constraints,
+      );
+      if (clampNotes.length > 0) {
+        clamped.notes = [...clamped.notes, ...clampNotes];
+        console.log(
+          `[/api/blueprints after()] clamp: ${clampNotes.length} note(s) — ${clampNotes[0]}`,
+        );
+      }
+
       // Stash the classifier output alongside the geometry under
       // `_classifier` so the detail page can show it without a schema
       // migration. analysisJson is a free-form Json column.
       const analysisJson: Record<string, unknown> = {
-        ...(result.analysis as unknown as Record<string, unknown>),
+        ...(clamped as unknown as Record<string, unknown>),
       };
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
@@ -412,7 +431,7 @@ export async function POST(request: Request) {
         data: {
           status: "SUCCEEDED",
           analysisJson: analysisJson as object,
-          confidence: result.analysis.confidence,
+          confidence: clamped.confidence,
           modelUsed: result.usage.model,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
