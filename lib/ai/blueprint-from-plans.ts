@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
+import type { GeometryConstraints } from "./classify-plans";
 
 export type BlueprintPoint = { x: number; y: number };
 
@@ -235,8 +236,70 @@ export type PlanSource =
 
 const MODEL = "claude-sonnet-4-6";
 
+/**
+ * Render Stage-1 classifier output into a prose block that gets
+ * prepended to the geometry call's user message. Empty string when no
+ * constraints supplied (legacy single-call mode still works for direct
+ * image uploads that skip the classifier).
+ */
+function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
+  if (!c) return "";
+  const lines: string[] = [
+    "GROUND-TRUTH FROM SHEET-INVENTORY PASS (already run on this PDF):",
+  ];
+  if (c.roof_plan_page != null) {
+    lines.push(
+      `- The roof plan is on page ${c.roof_plan_page}. Trace ONLY that page. ` +
+        "Set source_page_index to this value. Do not trace the site plan, " +
+        "floor plans, or elevations — they are reference material only.",
+    );
+  } else {
+    lines.push(
+      "- No dedicated roof plan was identified. Use the elevations and any " +
+        "footprint-bearing sheet (site plan or floor plan) to infer the " +
+        "roof outline. Flag this in notes and lower confidence accordingly.",
+    );
+  }
+  if (c.elevation_summary) {
+    lines.push(`- Elevation coverage: ${c.elevation_summary}.`);
+  }
+  if (c.min_gutter_runs != null && c.min_gutter_runs > 0) {
+    lines.push(
+      `- Your gutter_runs array MUST contain at least ${c.min_gutter_runs} ` +
+        "entries — that is the count of distinct horizontal eave segments " +
+        "visible across the elevations. If your trace produces fewer, " +
+        "you've under-segmented (likely missed a gable, dormer, or porch " +
+        "roof). Re-examine the roof plan and split runs at every change of " +
+        "direction or roof plane.",
+    );
+  }
+  if (c.min_downspouts != null && c.min_downspouts > 0) {
+    lines.push(
+      `- Downspouts visible in the elevations total ${c.min_downspouts}. ` +
+        "Use that as a lower bound when placing downspouts.",
+    );
+  }
+  if (c.global_rules.length > 0) {
+    lines.push("- Plan notes that constrain the takeoff:");
+    for (const r of c.global_rules) lines.push(`    * "${r}"`);
+  }
+  lines.push("");
+  return lines.join("\n") + "\n";
+}
+
+export type BlueprintRunOptions = {
+  /** Stage-1 classifier output. When provided, gets injected into the
+   *  user message as ground-truth constraints — the geometry pass
+   *  traces ONLY the identified roof_plan_page and must meet the
+   *  min_gutter_runs floor derived from the elevations. Without this
+   *  the model regularly traces the site plan and returns a
+   *  rectangular ~8-run trace for houses with 12-18 distinct eaves. */
+  constraints?: GeometryConstraints;
+};
+
 export async function blueprintFromPlanSources(
   sources: PlanSource[],
+  opts: BlueprintRunOptions = {},
 ): Promise<BlueprintResult> {
   if (sources.length === 0) {
     return { ok: false, reason: "No plan sources supplied" };
@@ -250,6 +313,8 @@ export async function blueprintFromPlanSources(
   const client = new Anthropic({ apiKey });
   const t0 = Date.now();
 
+  const constraintsBlock = buildConstraintsBlock(opts.constraints);
+
   // Build the content blocks: each PDF as a document, each image as an image.
   const userContent: Anthropic.MessageParam["content"] = [
     {
@@ -257,6 +322,7 @@ export async function blueprintFromPlanSources(
       text:
         "Construction plans attached. Find the roof plan page(s) and return " +
         "the gutter layout JSON per the schema.\n\n" +
+        constraintsBlock +
         "OUTPUT FORMAT: respond with a single JSON object only. No preamble, " +
         "no commentary, no markdown code fences. The response must start " +
         "with `{` and end with `}`. The downstream parser extracts the " +

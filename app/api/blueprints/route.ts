@@ -8,6 +8,10 @@ import {
   blueprintFromPlanSources,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
+import {
+  classifyPlanSheets,
+  classificationToConstraints,
+} from "@/lib/ai/classify-plans";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -343,7 +347,32 @@ export async function POST(request: Request) {
       console.log(
         `[/api/blueprints after()] starting analysis: id=${analysis.id} kind=${source.kind} mime=${mime} isPdf=${isPdf} isImage=${isImage} ${srcSummary}`,
       );
-      const result = await blueprintFromPlanSources([source]);
+
+      // Stage 1: sheet inventory. Only run for PDFs — direct image
+      // uploads are single-page so classification adds no signal.
+      // Skipping it on images keeps cost identical to the legacy path.
+      const useTwoStage = isPdf;
+      const stage1 = useTwoStage ? await classifyPlanSheets(source) : null;
+      if (stage1 && !stage1.ok) {
+        // Don't fail the whole run on classifier error — fall through
+        // to the legacy single-call path so the contractor still gets
+        // something to edit. Surface the classifier error in notes.
+        console.warn(
+          `[/api/blueprints after()] classifier failed (continuing without constraints): ${stage1.reason}`,
+        );
+      }
+      const constraints =
+        stage1 && stage1.ok
+          ? classificationToConstraints(stage1.classification)
+          : undefined;
+      if (constraints) {
+        console.log(
+          `[/api/blueprints after()] classifier: roof_plan_page=${constraints.roof_plan_page} min_runs=${constraints.min_gutter_runs} min_ds=${constraints.min_downspouts}`,
+        );
+      }
+
+      // Stage 2: geometry trace, constrained by Stage 1 findings.
+      const result = await blueprintFromPlanSources([source], { constraints });
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id: analysis.id },
@@ -351,17 +380,44 @@ export async function POST(request: Request) {
         });
         return;
       }
+
+      // Stash the classifier output alongside the geometry under
+      // `_classifier` so the detail page can show it without a schema
+      // migration. analysisJson is a free-form Json column.
+      const analysisJson: Record<string, unknown> = {
+        ...(result.analysis as unknown as Record<string, unknown>),
+      };
+      if (stage1 && stage1.ok) {
+        analysisJson._classifier = {
+          classification: stage1.classification,
+          usage: stage1.usage,
+        };
+      }
+
+      // Telemetry rolls up both calls so the dashboard's "cost per
+      // takeoff" number reflects reality. cacheHit reports the
+      // geometry call only (the classifier prompt is cached too but
+      // we don't surface it separately).
+      const totalInputTokens =
+        result.usage.input_tokens + (stage1?.ok ? stage1.usage.input_tokens : 0);
+      const totalOutputTokens =
+        result.usage.output_tokens +
+        (stage1?.ok ? stage1.usage.output_tokens : 0);
+      const totalDurationMs =
+        result.usage.duration_ms +
+        (stage1?.ok ? stage1.usage.duration_ms : 0);
+
       await db.planAnalysis.update({
         where: { id: analysis.id },
         data: {
           status: "SUCCEEDED",
-          analysisJson: result.analysis as object,
+          analysisJson: analysisJson as object,
           confidence: result.analysis.confidence,
           modelUsed: result.usage.model,
-          inputTokens: result.usage.input_tokens,
-          outputTokens: result.usage.output_tokens,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
           cacheHit: result.usage.cache_hit,
-          durationMs: result.usage.duration_ms,
+          durationMs: totalDurationMs,
         },
       });
     } catch (e) {
