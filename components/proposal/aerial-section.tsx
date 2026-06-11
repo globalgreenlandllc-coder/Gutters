@@ -89,6 +89,11 @@ export function AerialSection({
                 onEavesChange={editable ? handleEavesChange : undefined}
                 onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
                 aerialImageUrl={takeoff!.aerial?.imageDataUrl}
+                // Plan-based takeoffs have no satellite image. Switch
+                // the canvas into drafting-paper mode so the gutter
+                // trace reads as an architectural drawing instead of
+                // being painted on top of the cartoon yard scene.
+                planMode={!takeoff!.aerial?.imageDataUrl}
               />
             </div>
           ) : (

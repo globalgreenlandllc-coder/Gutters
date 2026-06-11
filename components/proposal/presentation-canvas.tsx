@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   AerialImage,
   AerialBackground,
+  BlueprintBackground,
   NeonDefs,
   VIEWBOX_W,
   VIEWBOX_H,
@@ -36,6 +37,7 @@ export function PresentationCanvas({
   onEavesChange,
   onDownspoutsChange,
   aerialImageUrl,
+  planMode,
 }: {
   eaves: EditableLine[];
   rakes?: EditableLine[];
@@ -45,6 +47,13 @@ export function PresentationCanvas({
   onEavesChange?: (next: EditableLine[]) => void;
   onDownspoutsChange?: (next: Downspout[]) => void;
   aerialImageUrl?: string;
+  /** Plan-based takeoffs use a drafting-paper background instead of
+   *  the cartoon yard scene. The cartoon makes sense on satellite-
+   *  derived estimates (it's a fallback when imagery didn't load) but
+   *  is visually wrong on plan-based proposals — the gutter trace was
+   *  extracted from architectural plans, not from a satellite tile, so
+   *  drawing it on a cartoon roof looks fake. */
+  planMode?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -108,17 +117,56 @@ export function PresentationCanvas({
   const LABEL_MIN_FT = 8;
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-slate-950 ring-1 ring-slate-900/50">
+    <div
+      className={
+        "relative h-full w-full overflow-hidden rounded-2xl ring-1 " +
+        (planMode
+          ? "bg-[#f7f4ee] ring-indigo-200/40"
+          : "bg-slate-950 ring-slate-900/50")
+      }
+    >
       {/* Floating total — replaces the editor's busy Legend strip */}
-      <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-cyan-500/30 bg-slate-950/80 px-3 py-1.5 text-[11px] font-medium text-cyan-100 shadow-card backdrop-blur">
-        <span className="inline-block h-1.5 w-3 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.9)]" />
+      <div
+        className={
+          "pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-card backdrop-blur " +
+          (planMode
+            ? "border-cyan-700/30 bg-[#f7f4ee]/85 text-cyan-900"
+            : "border-cyan-500/30 bg-slate-950/80 text-cyan-100")
+        }
+      >
+        <span
+          className={
+            planMode
+              ? "inline-block h-1.5 w-3 rounded-full bg-cyan-700"
+              : "inline-block h-1.5 w-3 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.9)]"
+          }
+        />
         <span className="tabular-nums">
-          <span className="font-semibold text-white">{totalEaveLF}</span> LF
+          <span
+            className={planMode ? "font-semibold text-slate-900" : "font-semibold text-white"}
+          >
+            {totalEaveLF}
+          </span>{" "}
+          LF
         </span>
-        <span className="h-3 w-px bg-cyan-500/30" />
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(255,43,214,0.9)]" />
+        <span
+          className={
+            planMode ? "h-3 w-px bg-cyan-800/30" : "h-3 w-px bg-cyan-500/30"
+          }
+        />
+        <span
+          className={
+            planMode
+              ? "inline-block h-1.5 w-1.5 rounded-full bg-slate-900"
+              : "inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(255,43,214,0.9)]"
+          }
+        />
         <span className="tabular-nums">
-          <span className="font-semibold text-white">{downspouts.length}</span>{" "}
+          <span
+            className={planMode ? "font-semibold text-slate-900" : "font-semibold text-white"}
+          >
+            {downspouts.length}
+          </span>{" "}
           drops
         </span>
       </div>
@@ -136,33 +184,42 @@ export function PresentationCanvas({
         <NeonDefs />
         {aerialImageUrl ? (
           <AerialImage imageDataUrl={aerialImageUrl} />
+        ) : planMode ? (
+          <BlueprintBackground />
         ) : (
           <AerialBackground />
         )}
-        {/* Subtle scrim so cyan + pink pop against bright imagery */}
-        <rect
-          x={0}
-          y={0}
-          width={VIEWBOX_W}
-          height={VIEWBOX_H}
-          fill="rgba(2,6,23,0.32)"
-          pointerEvents="none"
-        />
+        {/* Subtle scrim so cyan + pink pop against bright satellite
+            imagery. Skipped in plan mode — the drafting-paper
+            background is already light and a dark scrim on top would
+            wash out the architectural feel. */}
+        {!planMode && (
+          <rect
+            x={0}
+            y={0}
+            width={VIEWBOX_W}
+            height={VIEWBOX_H}
+            fill="rgba(2,6,23,0.32)"
+            pointerEvents="none"
+          />
+        )}
 
-        {/* Rakes — gray-dashed, low-opacity, non-interactive */}
+        {/* Rakes — gray-dashed, low-opacity, non-interactive.
+            On the drafting-paper plan background we use a darker
+            indigo so the dashes stay legible on warm off-white. */}
         {rakes.map((line) => (
           <motion.path
             key={line.id}
             d={pathFor(line)}
-            stroke="#94a3b8"
+            stroke={planMode ? "#1e3a8a" : "#94a3b8"}
             strokeWidth={1.75}
             strokeDasharray="5 4"
             strokeLinecap="round"
             fill="none"
-            opacity={0.55}
+            opacity={planMode ? 0.45 : 0.55}
             pointerEvents="none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 0.55 }}
+            animate={{ opacity: planMode ? 0.45 : 0.55 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           />
         ))}
@@ -193,7 +250,18 @@ export function PresentationCanvas({
               />
               <motion.path
                 d={pathFor(line)}
-                stroke={active ? "#a3f7ff" : "#00e5ff"}
+                stroke={
+                  planMode
+                    ? // Plan mode: architectural-ink palette. Saturated
+                      // cyan/sky still reads as "gutter" but no glow —
+                      // glows clip on print and look fake on paper.
+                      active
+                      ? "#0891b2"
+                      : "#0e7490"
+                    : active
+                      ? "#a3f7ff"
+                      : "#00e5ff"
+                }
                 strokeWidth={active ? 3.5 : 2.5}
                 strokeLinecap="round"
                 fill="none"
@@ -202,9 +270,11 @@ export function PresentationCanvas({
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.35 }}
                 style={{
-                  filter: active
-                    ? "drop-shadow(0 0 6px rgba(0,229,255,0.85))"
-                    : "drop-shadow(0 0 3px rgba(0,229,255,0.55))",
+                  filter: planMode
+                    ? undefined
+                    : active
+                      ? "drop-shadow(0 0 6px rgba(0,229,255,0.85))"
+                      : "drop-shadow(0 0 3px rgba(0,229,255,0.55))",
                 }}
               />
 
@@ -235,6 +305,7 @@ export function PresentationCanvas({
                 line={line}
                 emphasized={active}
                 minFt={active ? 0 : LABEL_MIN_FT}
+                planMode={planMode}
               />
             </g>
           );
@@ -260,17 +331,24 @@ export function PresentationCanvas({
                 cx={d.x}
                 cy={d.y}
                 r={isSelected ? 7 : 5.5}
-                fill="#ff2bd6"
-                stroke="white"
-                strokeWidth={1.8}
+                fill={planMode ? "#0f172a" : "#ff2bd6"}
+                stroke={planMode ? "#f7f4ee" : "white"}
+                strokeWidth={planMode ? 2 : 1.8}
                 initial={{ opacity: 0, scale: 0.6 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25 }}
                 style={{
-                  filter: "drop-shadow(0 0 4px rgba(255,43,214,0.7))",
+                  filter: planMode
+                    ? undefined
+                    : "drop-shadow(0 0 4px rgba(255,43,214,0.7))",
                 }}
               />
-              <circle cx={d.x} cy={d.y} r={1.8} fill="#fff0fb" />
+              <circle
+                cx={d.x}
+                cy={d.y}
+                r={1.8}
+                fill={planMode ? "#f7f4ee" : "#fff0fb"}
+              />
             </g>
           );
         })}
@@ -288,10 +366,12 @@ function SegmentLabel({
   line,
   emphasized,
   minFt,
+  planMode,
 }: {
   line: EditableLine;
   emphasized: boolean;
   minFt: number;
+  planMode?: boolean;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -331,15 +411,31 @@ function SegmentLabel({
         width={w}
         height={h}
         rx={emphasized ? 5 : 3.5}
-        fill="rgba(2,6,23,0.85)"
-        stroke={emphasized ? "#67e8f9" : "rgba(103,232,249,0.45)"}
+        fill={planMode ? "#f7f4ee" : "rgba(2,6,23,0.85)"}
+        stroke={
+          planMode
+            ? emphasized
+              ? "#0e7490"
+              : "rgba(14, 116, 144, 0.55)"
+            : emphasized
+              ? "#67e8f9"
+              : "rgba(103,232,249,0.45)"
+        }
         strokeWidth={emphasized ? 1.2 : 0.8}
       />
       <text
         x={labelCx}
         y={labelCy + (emphasized ? 3.5 : 3)}
         textAnchor="middle"
-        fill={emphasized ? "#a5f3fc" : "#67e8f9"}
+        fill={
+          planMode
+            ? emphasized
+              ? "#155e75"
+              : "#0e7490"
+            : emphasized
+              ? "#a5f3fc"
+              : "#67e8f9"
+        }
         fontSize={fontSize}
         fontWeight={600}
         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
