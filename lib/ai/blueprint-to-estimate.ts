@@ -62,7 +62,15 @@ function buildFeetAwareProjection(
    *  when the plan didn't fit and we had to shrink everything. */
   ftScale: number;
 } {
-  if (allPoints.length === 0) {
+  // Drop anything non-finite before doing arithmetic — stored
+  // analyses from earlier prompt versions sometimes have null x/y
+  // or NaN values, and one bad sample poisons the median and zeros
+  // out every projected coordinate (entire canvas goes blank, LF
+  // reads "NaN LF").
+  const safePoints = allPoints.filter(
+    (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
+  );
+  if (safePoints.length === 0) {
     return { project: (p) => ({ x: p.x, y: p.y }), ftScale: 1 };
   }
 
@@ -70,12 +78,22 @@ function buildFeetAwareProjection(
   // Median absorbs outliers (a single mis-measured run won't skew it).
   const samples: number[] = [];
   for (const r of runs) {
-    if (r.length_ft == null || r.length_ft <= 0) continue;
+    if (r.length_ft == null || !Number.isFinite(r.length_ft) || r.length_ft <= 0)
+      continue;
+    if (
+      !Number.isFinite(r.start.x) ||
+      !Number.isFinite(r.start.y) ||
+      !Number.isFinite(r.end.x) ||
+      !Number.isFinite(r.end.y)
+    )
+      continue;
     const dx = r.end.x - r.start.x;
     const dy = r.end.y - r.start.y;
     const pdfPxLen = Math.sqrt(dx * dx + dy * dy);
-    if (pdfPxLen <= 0) continue;
-    samples.push(pdfPxLen / r.length_ft);
+    if (!Number.isFinite(pdfPxLen) || pdfPxLen <= 0) continue;
+    const ratio = pdfPxLen / r.length_ft;
+    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+    samples.push(ratio);
   }
   samples.sort((a, b) => a - b);
   const pdfPxPerFt =
@@ -85,7 +103,7 @@ function buildFeetAwareProjection(
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const p of allPoints) {
+  for (const p of safePoints) {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
@@ -100,12 +118,19 @@ function buildFeetAwareProjection(
   // back to fit-to-viewBox. AI didn't return any length_ft (no
   // readable scale on the plan); the contractor will see correct
   // shape but the displayed LF is meaningless until they edit it.
-  if (pdfPxPerFt == null) {
+  if (pdfPxPerFt == null || !Number.isFinite(pdfPxPerFt)) {
     const fitScale = Math.min(targetW / w, targetH / h);
     const ox = (VIEWBOX_W - w * fitScale) / 2 - minX * fitScale;
     const oy = (VIEWBOX_H - h * fitScale) / 2 - minY * fitScale;
     return {
-      project: (p) => ({ x: p.x * fitScale + ox, y: p.y * fitScale + oy }),
+      project: (p) => {
+        const x = p.x * fitScale + ox;
+        const y = p.y * fitScale + oy;
+        return {
+          x: Number.isFinite(x) ? x : VIEWBOX_W / 2,
+          y: Number.isFinite(y) ? y : VIEWBOX_H / 2,
+        };
+      },
       ftScale: 1,
     };
   }
@@ -129,8 +154,15 @@ function buildFeetAwareProjection(
   const ox = (VIEWBOX_W - w * scale) / 2 - minX * scale;
   const oy = (VIEWBOX_H - h * scale) / 2 - minY * scale;
   return {
-    project: (p) => ({ x: p.x * scale + ox, y: p.y * scale + oy }),
-    ftScale: shrink,
+    project: (p) => {
+      const x = p.x * scale + ox;
+      const y = p.y * scale + oy;
+      return {
+        x: Number.isFinite(x) ? x : VIEWBOX_W / 2,
+        y: Number.isFinite(y) ? y : VIEWBOX_H / 2,
+      };
+    },
+    ftScale: Number.isFinite(shrink) && shrink > 0 ? shrink : 1,
   };
 }
 

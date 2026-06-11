@@ -28,11 +28,19 @@ export function AerialSection({
   const editable = !readOnly && !!onChange && hasRealTakeoff;
 
   // Recompute total LF from the live edited eaves so the badge stays in
-  // sync as the contractor adjusts the trace.
+  // sync as the contractor adjusts the trace. NaN-guard each line:
+  // a single eave with bad coords (stale analysis predating the
+  // projection NaN-safety pass) used to poison the entire sum and
+  // produce "NaN LF" in the overlay. Treat bad lines as 0 — the
+  // contractor edits them away rather than seeing junk.
+  const safeLineLengthFt = (l: EditableLine): number => {
+    const v = lineLengthFt(l);
+    return Number.isFinite(v) ? v : 0;
+  };
   const liveEaveLF = useMemo(() => {
     if (!takeoff) return proposal.measurements.eaveLF;
     return Math.round(
-      takeoff.eaves.reduce((acc, l) => acc + lineLengthFt(l), 0),
+      takeoff.eaves.reduce((acc, l) => acc + safeLineLengthFt(l), 0),
     );
   }, [takeoff, proposal.measurements.eaveLF]);
 
@@ -42,7 +50,7 @@ export function AerialSection({
   const handleEavesChange = (next: EditableLine[]) => {
     if (!onChange || !takeoff) return;
     const updatedLF = Math.round(
-      next.reduce((acc, l) => acc + lineLengthFt(l), 0),
+      next.reduce((acc, l) => acc + safeLineLengthFt(l), 0),
     );
     onChange({
       ...proposal,
