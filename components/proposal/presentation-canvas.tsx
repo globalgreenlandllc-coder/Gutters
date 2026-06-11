@@ -349,6 +349,35 @@ export function PresentationCanvas({
                 r={1.8}
                 fill={planMode ? "#f7f4ee" : "#fff0fb"}
               />
+              {/* Plan-mode height pill — surfaces per-downspout drop
+                  height so the contractor can spot a porch downspout
+                  sitting at 20 ft (wrong) or a 2-story body downspout
+                  sitting at 10 ft (wrong). Suppressed in aerial mode
+                  to keep the satellite background readable. */}
+              {planMode && d.heightFt > 0 && (
+                <g pointerEvents="none">
+                  <rect
+                    x={d.x + 8}
+                    y={d.y - 8}
+                    width={26}
+                    height={14}
+                    rx={3}
+                    fill="#f7f4ee"
+                    stroke="#0e7490"
+                    strokeWidth={0.6}
+                  />
+                  <text
+                    x={d.x + 21}
+                    y={d.y + 2}
+                    fontSize={9}
+                    fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                    fill="#0e7490"
+                    textAnchor="middle"
+                  >
+                    {Math.round(d.heightFt)}′
+                  </text>
+                </g>
+              )}
             </g>
           );
         })}

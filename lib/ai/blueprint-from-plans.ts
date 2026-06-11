@@ -13,6 +13,11 @@ export type BlueprintRun = {
   length_ft: number | null;
   length_px: number;
   drains_to: string[];
+  /** Which roof tier this run sits on. Single-story porch/garage
+   *  sections are "lower" (~10 ft); 2-story main body is "upper"
+   *  (~20 ft). Drives drop_height_ft on the downspouts that drain
+   *  this run. */
+  tier?: "lower" | "upper" | "unknown";
 };
 
 export type BlueprintDownspout = {
@@ -21,6 +26,10 @@ export type BlueprintDownspout = {
   from_gutter: string;
   drop_direction: "front" | "back" | "left" | "right";
   reason: "outside_corner" | "long_run_relief" | "valley_terminus";
+  /** Drop height from gutter line to grade, in feet. Pulled from the
+   *  classifier's gutter_tiers when the source gutter's tier is
+   *  known; defaults to the upper tier when ambiguous. */
+  drop_height_ft?: number | null;
 };
 
 export type BlueprintExcludedEdge = {
@@ -161,7 +170,8 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
       "end":   { "x": number, "y": number },
       "length_ft": number | null,
       "length_px": number,
-      "drains_to": ["d1"]
+      "drains_to": ["d1"],
+      "tier": "lower" | "upper" | "unknown"
     }
   ],
   "downspouts": [
@@ -170,7 +180,8 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
       "at": { "x": number, "y": number },
       "from_gutter": "g1",
       "drop_direction": "front" | "back" | "left" | "right",
-      "reason": "outside_corner" | "long_run_relief" | "valley_terminus"
+      "reason": "outside_corner" | "long_run_relief" | "valley_terminus",
+      "drop_height_ft": number | null
     }
   ],
   "excluded_edges": [
@@ -195,6 +206,56 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
                                 // the page you traced (e.g. sheet A9 → 9).
 }
 </output_schema>
+
+<scale_discipline>
+Misreading scale is the #1 failure mode. Symptom: total eave LF comes
+out 2-3× too high (e.g. 782 LF on a 64×51 ft house when the truth is
+~350 LF) because you measured against the page bounds (site plan lot
+dimensions) instead of the dimensioned wall labels.
+
+Procedure to derive scale:
+1. Find a dimensioned wall on the roof plan or the foundation plan
+   referenced in the same set. Look for tick-mark labels like "20'-0",
+   "24'-0", "64'-0 OVERALL".
+2. Measure that wall's pixel length in the roof plan render.
+3. feet_per_unit = real_feet / pixel_length.
+
+NEVER infer scale from the page dimensions or from the lot/site plan.
+The site plan's "200'-0" lot width is 3-4× larger than the building
+and using it will inflate every gutter LF.
+
+When the constraints block (above) provides a building envelope
+(width × depth or perimeter), treat sum(gutter_runs.length_ft) as
+having an absolute ceiling of max_total_eave_lf. If your trace
+exceeds it, re-derive scale before emitting JSON. The same applies
+to max_single_run_lf — no single run can be longer than the building's
+larger dimension.
+</scale_discipline>
+
+<tier_assignment>
+Each gutter_run sits on a roof tier. On a 2-story house with attached
+single-story garage / front porch / rear covered patio:
+- "lower" tier = single-story sections (garage, porch, patio cover).
+  Drop height typically 9-11 ft.
+- "upper" tier = 2-story main body. Drop height typically 18-26 ft.
+
+Cues from the roof plan:
+- Lower-tier runs are usually on bump-outs that protrude from the main
+  rectangle (front porch projecting forward, garage wing, rear patio).
+- Upper-tier runs are the main body perimeter.
+- Slope arrows on lower tiers point AWAY from the main body (rain runs
+  off the porch roof toward the porch eave); slope arrows on the
+  upper tier point AWAY from the central ridge.
+
+Cross-reference the elevations: if the elevation shows a step-down in
+the eave line (a low single-story gutter line + a high 2-story gutter
+line behind it), runs along the low line are "lower" tier.
+
+Each downspout's drop_height_ft = the constraints-block tier height
+for its source run's tier (lower_tier_ft or upper_tier_ft). When the
+tier is "unknown", default to upper_tier_ft (conservative — labor
+priced for the taller drop).
+</tier_assignment>
 
 <rules>
 - Coordinate origin is TOP-LEFT of the source page, x→right, y→down. Use the
@@ -262,6 +323,39 @@ function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
   }
   if (c.elevation_summary) {
     lines.push(`- Elevation coverage: ${c.elevation_summary}.`);
+  }
+  if (c.building_envelope_note) {
+    lines.push(`- Building envelope: ${c.building_envelope_note}.`);
+  }
+  if (c.roof_scale) {
+    lines.push(
+      `- Roof-plan scale (verbatim from the title block): ${c.roof_scale}. ` +
+        "Use this to convert pixels → feet. Do NOT derive scale from page bounds.",
+    );
+  }
+  if (c.max_total_eave_lf != null) {
+    lines.push(
+      `- HARD CAP — sum(gutter_runs.length_ft) MUST be ≤ ${c.max_total_eave_lf} ft. ` +
+        "If your trace exceeds this, you misread the scale (likely measured " +
+        "against the lot dimensions on the site plan). Re-derive scale from " +
+        "a dimensioned wall before emitting JSON.",
+    );
+  }
+  if (c.max_single_run_lf != null) {
+    lines.push(
+      `- HARD CAP — no single gutter_run can be longer than ${Math.round(c.max_single_run_lf)} ft ` +
+        "(the building's larger dimension). A run longer than that means you " +
+        "merged two segments through what should be an outside corner.",
+    );
+  }
+  if (c.lower_tier_ft != null || c.upper_tier_ft != null) {
+    lines.push(
+      `- Gutter tiers (from elevation plate heights): lower = ${c.lower_tier_ft ?? "?"} ft, ` +
+        `upper = ${c.upper_tier_ft ?? "?"} ft. Assign every gutter_run a tier ` +
+        "(lower for single-story porch/garage sections, upper for the 2-story " +
+        "main body) and set each downspout's drop_height_ft to its source run's " +
+        "tier height.",
+    );
   }
   if (c.min_gutter_runs != null && c.min_gutter_runs > 0) {
     lines.push(

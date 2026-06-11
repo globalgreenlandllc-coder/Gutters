@@ -43,6 +43,19 @@ export type PlanSheet = {
   visible_eave_count: number | null;
   /** Approximate count of distinct downspouts shown / called out. */
   visible_downspout_count: number | null;
+  /** Eave heights above grade, in feet, harvested from elevation
+   *  callouts ("UPPER PLATE @ 911.75", "MAIN PLATE @ 591.34", with
+   *  ABE / finish grade as the reference). Tier #1 is the lowest
+   *  gutter line visible on the sheet (typically a porch or single-
+   *  story garage roof, ~9-11 ft). Tier #2 is the upper roof line
+   *  (typically a 2-story body at ~18-26 ft). Null entries when the
+   *  tier isn't shown on this elevation. Drives per-downspout drop
+   *  height in the takeoff so a porch downspout doesn't get priced
+   *  at 20 ft. */
+  tier_heights_ft: {
+    tier_1_ft: number | null;
+    tier_2_ft: number | null;
+  } | null;
   /** Notes that should constrain the geometry pass — e.g. "ALL EAVES TO
    *  HAVE 5\" K-STYLE GUTTER", attached covered porch, garage, dormers. */
   takeoff_notes: string[];
@@ -62,6 +75,33 @@ export type PlanClassification = {
     south: boolean;
     east: boolean;
     west: boolean;
+  };
+  /** Overall building footprint dimensions, read from the foundation
+   *  plan / floor plan title block ("64'-0 OVERALL" style labels). The
+   *  geometry pass uses these as a hard envelope: total eave LF cannot
+   *  exceed ~1.4× the rectangular perimeter, and no single run can be
+   *  longer than the larger dimension. Without this, Sonnet kept
+   *  inflating LF 2-3× by misreading the roof-plan scale and emitting
+   *  151 ft single runs on a 64×51 ft house. */
+  building_dimensions: {
+    width_ft: number | null;
+    depth_ft: number | null;
+    /** Sum of all visible foundation/floor-plan dimensions around the
+     *  outer perimeter — better than width × depth alone when the
+     *  house has wings or offsets. */
+    footprint_perimeter_ft: number | null;
+  };
+  /** Roof-plan paper scale, verbatim — e.g. "1/4\\" = 1'-0\\"". The
+   *  geometry pass uses this to convert pixel measurements rather than
+   *  guessing from the page bounds. */
+  roof_scale: string | null;
+  /** Consolidated gutter tier heights across the whole set. Computed
+   *  from the elevation sheets' tier_heights_ft. */
+  gutter_tiers: {
+    /** Lower roof tier — porch / garage / single-story sections. */
+    lower_tier_ft: number | null;
+    /** Upper roof tier — 2-story or main body. */
+    upper_tier_ft: number | null;
   };
   /** Sum of visible eave segments across all elevations. The geometry
    *  pass MUST produce at least this many gutter_runs. */
@@ -140,6 +180,44 @@ If you can't determine a side confidently, set elevation_side to
 "unknown" and explain in the sheet's summary. Don't guess.
 </elevation_side_detection>
 
+<building_dimensions>
+On the foundation plan, floor plan, or roof framing plan, look for
+title-block-style overall dimensions: "64'-0 OVERALL", "51'-0 OVERALL",
+or unbroken dimension strings running along the outer edge that sum to
+the total width / depth. These are the ground truth for scale — the
+geometry pass uses them to sanity-check its trace and refuses to emit
+runs longer than the larger dimension. If you can't read overall
+dimensions, sum the visible foundation/wall dimension increments
+("20'-0 + 24'-0 + 30'-0 + 14'-0 + 5'-6" = 93'-6") to get a
+footprint_perimeter_ft.
+
+Also capture the roof-plan paper scale verbatim from the scale bar in
+the title block of the roof plan sheet — typically "1/4\\" = 1'-0\\""
+or "1/8\\" = 1'-0\\"". This matters because the geometry pass picks
+the wrong reference (page width = lot width on the site plan) when
+the scale isn't pinned.
+</building_dimensions>
+
+<tier_heights>
+On elevation sheets, the architect labels horizontal datum lines with
+absolute elevations (e.g. "UPPER PLATE @ 911.75", "MAIN PLATE @
+591.34", "ABE @ 548.83" where ABE = average building elevation = grade).
+
+Compute gutter tier height = plate_elevation - ABE. The plate elevation
+is where the eave / fascia / gutter line lives on that wall.
+
+Typical pattern on a 2-story house with attached single-story garage:
+- Lower tier (garage / porch / covered patio gutter): MAIN PLATE - ABE
+  ≈ 9-11 ft.
+- Upper tier (main body gutter): UPPER PLATE - ABE ≈ 18-26 ft.
+
+Populate tier_heights_ft on each elevation sheet with whatever tiers
+you can read off that view. At the classification top level, surface
+the consolidated lower_tier_ft / upper_tier_ft (median across
+elevations) so the geometry pass can assign each downspout a real drop
+height instead of defaulting every spout to 10 ft.
+</tier_heights>
+
 <eave_counting>
 On an elevation sheet, count every distinct HORIZONTAL bottom edge of a
 roof plane. Each gable is one eave segment from one side and the gable
@@ -190,6 +268,10 @@ Output ONLY the JSON object below. No prose, no markdown fence.
       "elevation_side": "north" | "south" | "east" | "west" | "unknown",
       "visible_eave_count": number | null,
       "visible_downspout_count": number | null,
+      "tier_heights_ft": {
+        "tier_1_ft": number | null,
+        "tier_2_ft": number | null
+      } | null,
       "takeoff_notes": ["<short string>", ...],
       "summary": "<one sentence>"
     }
@@ -201,6 +283,16 @@ Output ONLY the JSON object below. No prose, no markdown fence.
     "south": boolean,
     "east": boolean,
     "west": boolean
+  },
+  "building_dimensions": {
+    "width_ft": number | null,
+    "depth_ft": number | null,
+    "footprint_perimeter_ft": number | null
+  },
+  "roof_scale": "<verbatim, e.g. \\"1/4\\\\\\" = 1'-0\\\\\\"\\"> | null",
+  "gutter_tiers": {
+    "lower_tier_ft": number | null,
+    "upper_tier_ft": number | null
   },
   "min_expected_gutter_runs": number | null,
   "min_expected_downspouts": number | null,
@@ -370,9 +462,29 @@ export function classificationToConstraints(
         s.visible_downspout_count != null
           ? `${s.visible_downspout_count} downspouts`
           : "?";
-      return `page ${s.page_index} (${side}): ${eaves}, ${ds}`;
+      const tiers = s.tier_heights_ft
+        ? ` (tiers ${s.tier_heights_ft.tier_1_ft ?? "?"}/${s.tier_heights_ft.tier_2_ft ?? "?"} ft)`
+        : "";
+      return `page ${s.page_index} (${side}): ${eaves}, ${ds}${tiers}`;
     })
     .join("; ");
+
+  // Derive a hard cap on total eave LF. For a rectangular footprint of
+  // W × D, perimeter = 2(W+D). Real houses run 1.0-1.4× that depending
+  // on bump-outs and porches. We cap at 1.5× as a generous ceiling — if
+  // Sonnet exceeds it, the scale is wrong. Prefer the explicit
+  // perimeter when supplied; fall back to W+D rectangle.
+  const dims = c.building_dimensions;
+  let maxEaveLF: number | null = null;
+  let envelopeNote: string | null = null;
+  if (dims.footprint_perimeter_ft != null && dims.footprint_perimeter_ft > 0) {
+    maxEaveLF = Math.round(dims.footprint_perimeter_ft * 1.5);
+    envelopeNote = `footprint perimeter ${dims.footprint_perimeter_ft} ft`;
+  } else if (dims.width_ft && dims.depth_ft) {
+    const perim = 2 * (dims.width_ft + dims.depth_ft);
+    maxEaveLF = Math.round(perim * 1.5);
+    envelopeNote = `${dims.width_ft}×${dims.depth_ft} ft envelope (perim ${Math.round(perim)} ft)`;
+  }
 
   return {
     roof_plan_page: c.roof_plan_page,
@@ -380,6 +492,15 @@ export function classificationToConstraints(
     min_downspouts: c.min_expected_downspouts,
     elevation_summary: elevationSummary || null,
     global_rules: c.global_rules,
+    building_envelope_note: envelopeNote,
+    max_total_eave_lf: maxEaveLF,
+    max_single_run_lf:
+      dims.width_ft && dims.depth_ft
+        ? Math.max(dims.width_ft, dims.depth_ft)
+        : null,
+    roof_scale: c.roof_scale,
+    lower_tier_ft: c.gutter_tiers.lower_tier_ft,
+    upper_tier_ft: c.gutter_tiers.upper_tier_ft,
   };
 }
 
@@ -389,4 +510,18 @@ export type GeometryConstraints = {
   min_downspouts: number | null;
   elevation_summary: string | null;
   global_rules: string[];
+  /** Short human-readable note about the envelope used to derive
+   *  max_total_eave_lf. Injected into the user message verbatim. */
+  building_envelope_note: string | null;
+  /** Hard ceiling for sum(gutter_runs.length_ft). When Sonnet's trace
+   *  exceeds this, scale was misread. */
+  max_total_eave_lf: number | null;
+  /** Hard ceiling for any single gutter_run length. A 151 ft run on a
+   *  64×51 house is impossible. */
+  max_single_run_lf: number | null;
+  /** Verbatim roof-plan scale label, e.g. "1/4\\" = 1'-0\\"". */
+  roof_scale: string | null;
+  /** Drop heights for the per-downspout `drop_height_ft` field. */
+  lower_tier_ft: number | null;
+  upper_tier_ft: number | null;
 };

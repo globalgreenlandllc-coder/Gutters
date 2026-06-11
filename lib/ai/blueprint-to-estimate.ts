@@ -91,12 +91,19 @@ export function blueprintToEstimateResult(
       points: [project(e.start), project(e.end)],
     }));
 
-  // Downspouts. Plan-based estimates default to 1-story (10 ft drop).
-  // The contractor edits each downspout's heightFt manually via the
-  // popover in <AerialCanvas> just like the satellite-based flow.
+  // Downspouts. Each one carries its source-run tier height when the
+  // AI was able to derive tiers from the elevations (e.g. porch
+  // downspouts at 10 ft, 2-story body downspouts at 20-26 ft).
+  // Fallback to 20 ft (2-story default) when tier info is missing —
+  // pricing for the taller drop is the conservative call. Contractor
+  // can still edit per-downspout via the popover in AerialCanvas.
   const downspouts: Downspout[] = analysis.downspouts.map((d, i) => {
     const p = project(d.at);
-    return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt: 10 };
+    const heightFt =
+      d.drop_height_ft != null && d.drop_height_ft > 0
+        ? Math.round(d.drop_height_ft)
+        : 20;
+    return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
   });
 
   // LF totals come from Claude's pixel-or-feet output. When the plan
@@ -113,7 +120,12 @@ export function blueprintToEstimateResult(
   const avgRunLf = eaves.length > 0 ? eaveLF / eaves.length : 0;
   const rakeLF = Math.round(rakes.length * avgRunLf);
 
-  const stories: Stories = 1;
+  // Stories = the max tier we found on any downspout. A 2-story house
+  // with a porch will have downspouts at both 10 ft (porch) and 20+
+  // (main body); priced as 2-story.
+  const maxDropFt = downspouts.reduce((m, d) => Math.max(m, d.heightFt), 0);
+  const stories: Stories =
+    maxDropFt > 24 ? 3 : maxDropFt > 14 ? 2 : 1;
 
   const measurements = {
     eaveLF,
