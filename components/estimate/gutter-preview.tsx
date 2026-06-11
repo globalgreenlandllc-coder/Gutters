@@ -29,30 +29,28 @@ const MATERIAL_BADGE: Record<
 };
 
 /**
- * Realistic side-elevation preview of the configured gutter system.
- * Drawn as a single SVG with layered scene elements so the homeowner
- * can see the whole assembly the way it'll sit on their house:
+ * 3/4-perspective isometric preview of the gutter system. Switched
+ * from a pure side elevation to a perspective view because the side
+ * view made the gutter cross-section look like a faint curve — too
+ * easy to mistake for "no design at all." Here we draw:
  *
- *   • Sloped roof with shingle courses at the top
- *   • Drip-edge flashing tucked between shingles and gutter (toggle)
- *   • Fascia board behind the gutter
- *   • Cross-section of the gutter — K-style or half-round — with the
- *     selected color filling both gutter and downspout
- *   • Outlet drop at the gutter floor + offset elbow above the
- *     downspout, so the pipe visibly connects to the gutter
- *   • Downspout running down past the wall siding to a kick-out elbow
- *     at the bottom
- *   • Leaf-protection mesh stretched across the open top when enabled
- *     (different patterns per guard tier: screen / mesh / micro-mesh)
- *   • Decorative copper rain chain hanging from the outlet when chosen
- *     in place of a regular downspout
- *   • Heat-tape cable looped along the inside of the gutter when on
- *     (red zig-zag pattern over the gutter floor)
- *   • Snow / ice guards as small triangles up the roof slope when on
- *
- * The geometry is roughly to-scale relative to size: a 7" gutter is
- * visibly wider than a 5" one, and a round downspout is a cylinder
- * vs the rectangular box for 2×3 / 3×4.
+ *   • A short run of the gutter as a 3D channel with a visible front
+ *     face, top opening (parallelogram into perspective), and a cut
+ *     end on the right that shows the K-style ogee or half-round
+ *     cross-section.
+ *   • A downspout that drops from the right end of the gutter,
+ *     rendered as a 3D isometric prism: front face + right side depth
+ *     face + top face. Box pipes (2×3 / 3×4) read as solid rectangles
+ *     in perspective; round pipes (3″ / 4″) read as cylinders with
+ *     elliptical top / band rings.
+ *   • A clearly-rendered outlet hole on the gutter floor and the drop
+ *     tube starting INSIDE the gutter, so the downspout visibly
+ *     connects to the gutter.
+ *   • Roof, fascia, siding, ground for context.
+ *   • Accessories: drip edge, leaf guard mesh, heat tape, snow guards,
+ *     rain chain (same toggles as before).
+ *   • Cross-section badge in the corner explicitly draws the active
+ *     downspout shape so a single glance confirms square vs round.
  */
 export function GutterPreview({ config }: { config: EstimateConfig }) {
   const color = COLOR_OPTIONS.find((c) => c.id === config.color);
@@ -61,24 +59,90 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
   const acc = config.accessories;
   const halfRound = config.style === "half-round";
 
-  // Gutter width drives the visual size of the cross-section + outlet
-  // position. 5/6/7" → progressively wider.
-  const gWidth = config.size === "5" ? 60 : config.size === "6" ? 74 : 90;
-  const gHeight = halfRound ? gWidth / 2 + 4 : gWidth * 0.75;
+  // ─── GUTTER (3D run + cut end) ────────────────────────────────
+  // The gutter sits horizontally across most of the preview. The
+  // "length" makes the channel obvious as a channel. The cut-end on
+  // the right is the K-style ogee or half-round profile.
+  const gutterLeft = 90; // left end of the gutter run
+  const gutterTop = 110; // top edge of the front face (where rim is)
+  const gutterFrontH = halfRound ? 36 : 44; // height of the visible front face
+  // Profile width (the "depth" into the scene). Bigger sizes get a
+  // visibly bigger profile so 5 / 6 / 7 toggle is clearly perceived.
+  const gutterDepth =
+    config.size === "5" ? 34 : config.size === "6" ? 42 : 50;
+  const gutterLen = 220; // horizontal length of the run
+  const gutterRightX = gutterLeft + gutterLen; // X of the cut-end
+  // Perspective offsets — the back of the gutter is up and to the
+  // right of the front by these amounts. Gives the isometric feel.
+  const perspX = gutterDepth * 0.55;
+  const perspY = -gutterDepth * 0.55;
 
-  // Position the gutter so its mounting flange sits flush with the
-  // fascia board. (320, 150) is the top-back corner of the gutter.
-  const gX = 220;
-  const gY = 145;
-  const gOutletX = gX + gWidth * 0.78;
-  const gOutletY = gY + gHeight;
-
-  // Downspout sizing — round = cylinder, rectangular = box.
+  // ─── DOWNSPOUT ────────────────────────────────────────────────
   const ds = config.downspoutSize;
-  const dsWidth = ds === "2x3" ? 24 : ds === "3x4" ? 30 : ds === "round-3" ? 26 : 32;
   const dsRound = ds === "round-3" || ds === "round-4";
+  const dsW = ds === "2x3" ? 30 : ds === "3x4" ? 38 : ds === "round-3" ? 32 : 40;
+  const dsDepth = dsRound ? 0 : Math.max(10, dsW * 0.38);
+
+  // Outlet sits about 80% along the gutter, on the front face.
+  const outletCenterX = gutterLeft + gutterLen * 0.82;
+  const outletY = gutterTop + gutterFrontH; // gutter floor (front face bottom)
+
+  // Drop tube — top OVERLAPS into the gutter so the connection
+  // visibly continues from gutter into downspout.
+  const dropTop = outletY - 4;
+  const dropBot = outletY + 22;
+  // Offset elbow — jogs the run back toward the wall.
+  const elbowBot = dropBot + 18;
+  const jogX = 12;
+  const runLeft = outletCenterX - dsW / 2 + jogX;
+  const runTop = elbowBot;
+  const runBot = 312;
+  const kickBot = 340;
+
   const useRainChain = acc?.rainChain;
   const guardTier = acc?.guard ?? "none";
+
+  // Helper: vertical pipe section with isometric depth on box pipes
+  // and cylindrical shading on round pipes.
+  const renderPipe = (x: number, y: number, w: number, h: number) => {
+    if (dsRound) {
+      return (
+        <g>
+          <rect x={x} y={y} width={w} height={h} fill={hex} />
+          {/* Cylindrical shading */}
+          <rect x={x} y={y} width={w * 0.2} height={h} fill="rgba(255,255,255,0.32)" />
+          <rect x={x + w * 0.76} y={y} width={w * 0.24} height={h} fill="rgba(0,0,0,0.26)" />
+          <rect x={x} y={y} width={w} height={h} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth="1" />
+        </g>
+      );
+    }
+    return (
+      <g>
+        {/* Front face */}
+        <rect x={x} y={y} width={w} height={h} fill={hex} />
+        {/* Matte highlight */}
+        <rect x={x} y={y} width={w} height={h * 0.32} fill="rgba(255,255,255,0.18)" />
+        {/* Right depth face */}
+        <rect x={x + w} y={y} width={dsDepth} height={h} fill={hex} />
+        <rect x={x + w} y={y} width={dsDepth} height={h} fill="rgba(0,0,0,0.35)" />
+        {/* Outlines */}
+        <rect x={x} y={y} width={w + dsDepth} height={h} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth="1" />
+        <line x1={x + w} y1={y} x2={x + w} y2={y + h} stroke="rgba(0,0,0,0.45)" strokeWidth="0.7" />
+      </g>
+    );
+  };
+
+  // The K-style cross-section path (used for the right cut-end).
+  // Drawn relative to (0,0); we translate it into place.
+  const ogeePath = (W: number, H: number) =>
+    `M 0 0
+     L 0 ${H - 6}
+     Q 0 ${H} 6 ${H}
+     L ${W - 14} ${H}
+     Q ${W - 2} ${H} ${W + 3} ${H - 12}
+     C ${W + 9} ${H * 0.6} ${W - 8} ${H * 0.4} ${W - 2} 8
+     Q ${W - 3} 0 ${W - 12} 0
+     Z`;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
@@ -108,78 +172,61 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
           aria-hidden
         >
           <defs>
-            {/* Sky gradient backdrop */}
             <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#e0f2fe" />
-              <stop offset="100%" stopColor="#f8fafc" />
+              <stop offset="0%" stopColor="#bae6fd" />
+              <stop offset="100%" stopColor="#f1f5f9" />
             </linearGradient>
-            {/* Roof / shingle base */}
             <linearGradient id="roof" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#4b5563" />
-              <stop offset="100%" stopColor="#374151" />
+              <stop offset="0%" stopColor="#334155" />
+              <stop offset="100%" stopColor="#1e293b" />
             </linearGradient>
-            {/* Fascia board */}
             <linearGradient id="fascia" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f1f5f9" />
+              <stop offset="0%" stopColor="#fafafa" />
               <stop offset="100%" stopColor="#cbd5e1" />
             </linearGradient>
-            {/* Siding */}
             <linearGradient id="siding" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#e7e5e4" />
               <stop offset="100%" stopColor="#a8a29e" />
             </linearGradient>
-            {/* Gutter sheen — used as overlay on the colored body */}
-            <linearGradient id="gutter-sheen" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(255,255,255,0.55)" />
-              <stop offset="40%" stopColor="rgba(255,255,255,0)" />
-              <stop offset="100%" stopColor="rgba(0,0,0,0.22)" />
+            {/* Top of the gutter looks brighter (catching sky) than the
+                front face. Used on the top-opening parallelogram. */}
+            <linearGradient id="gutter-top" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(0,0,0,0.6)" />
+              <stop offset="100%" stopColor="rgba(0,0,0,0.32)" />
             </linearGradient>
-            {/* Downspout sheen — left→right cylindrical */}
-            <linearGradient id="ds-sheen" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="rgba(255,255,255,0.45)" />
+            <linearGradient id="gutter-sheen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(255,255,255,0.5)" />
               <stop offset="50%" stopColor="rgba(255,255,255,0)" />
               <stop offset="100%" stopColor="rgba(0,0,0,0.22)" />
             </linearGradient>
-            {/* Drip edge — bright flashing */}
+            <linearGradient id="ds-sheen" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="rgba(255,255,255,0.4)" />
+              <stop offset="50%" stopColor="rgba(255,255,255,0)" />
+              <stop offset="100%" stopColor="rgba(0,0,0,0.22)" />
+            </linearGradient>
             <linearGradient id="drip-edge" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={hex} />
               <stop offset="100%" stopColor="rgba(0,0,0,0.15)" />
             </linearGradient>
-            {/* Mesh / screen pattern for guards */}
-            <pattern
-              id="guard-screen"
-              width="6"
-              height="6"
-              patternUnits="userSpaceOnUse"
-            >
+            <pattern id="guard-screen" width="6" height="6" patternUnits="userSpaceOnUse">
               <rect width="6" height="6" fill="rgba(255,255,255,0.0)" />
-              <line x1="0" y1="0" x2="6" y2="0" stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" />
-              <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" />
+              <line x1="0" y1="0" x2="6" y2="0" stroke="rgba(0,0,0,0.55)" strokeWidth="0.6" />
+              <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(0,0,0,0.55)" strokeWidth="0.6" />
             </pattern>
-            <pattern
-              id="guard-mesh"
-              width="3.5"
-              height="3.5"
-              patternUnits="userSpaceOnUse"
-            >
+            <pattern id="guard-mesh" width="3.5" height="3.5" patternUnits="userSpaceOnUse">
               <rect width="3.5" height="3.5" fill="rgba(255,255,255,0.0)" />
-              <line x1="0" y1="0" x2="3.5" y2="0" stroke="rgba(0,0,0,0.55)" strokeWidth="0.35" />
-              <line x1="0" y1="0" x2="0" y2="3.5" stroke="rgba(0,0,0,0.55)" strokeWidth="0.35" />
+              <line x1="0" y1="0" x2="3.5" y2="0" stroke="rgba(0,0,0,0.6)" strokeWidth="0.4" />
+              <line x1="0" y1="0" x2="0" y2="3.5" stroke="rgba(0,0,0,0.6)" strokeWidth="0.4" />
             </pattern>
-            <pattern
-              id="guard-micro"
-              width="2"
-              height="2"
-              patternUnits="userSpaceOnUse"
-            >
+            <pattern id="guard-micro" width="2" height="2" patternUnits="userSpaceOnUse">
               <rect width="2" height="2" fill="rgba(255,255,255,0.0)" />
-              <circle cx="1" cy="1" r="0.45" fill="rgba(0,0,0,0.7)" />
+              <circle cx="1" cy="1" r="0.5" fill="rgba(0,0,0,0.7)" />
             </pattern>
             <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
               <feOffset dx="0" dy="3" />
               <feComponentTransfer>
-                <feFuncA type="linear" slope="0.32" />
+                <feFuncA type="linear" slope="0.34" />
               </feComponentTransfer>
               <feMerge>
                 <feMergeNode />
@@ -188,22 +235,20 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
             </filter>
           </defs>
 
-          {/* Sky */}
+          {/* Sky + sun */}
           <rect x="0" y="0" width="500" height="360" fill="url(#sky)" />
+          <circle cx="68" cy="46" r="34" fill="rgba(254,243,199,0.65)" />
+          <circle cx="68" cy="46" r="18" fill="rgba(253,224,71,0.55)" />
 
-          {/* Roof slope — ends just above the back of the gutter so it
-              doesn't visually cover the gutter mouth. The eave edge is
-              a tiny shingle overhang past the fascia + drip edge. */}
+          {/* Roof slope coming down from upper-left to just behind the
+              gutter back-top. Drawn as a thick rotated slab so it
+              reads as roof, not as a stick. */}
           {(() => {
-            const roofStartX = 60;
-            const roofStartY = 30;
-            // Roof ends just above-and-behind the gutter's back wall.
-            // gX is the back-top corner of the gutter; the shingle
-            // overhang sticks out ~10px past the fascia.
-            const roofEndX = gX + 10;
-            const roofEndY = gY - 6;
-            const roofThick = 12;
-            // Perpendicular thickness vector pointing "down-into-roof".
+            const roofStartX = 30;
+            const roofStartY = 18;
+            const roofEndX = gutterLeft + perspX + 6;
+            const roofEndY = gutterTop + perspY - 4;
+            const roofThick = 16;
             const dx = roofEndX - roofStartX;
             const dy = roofEndY - roofStartY;
             const len = Math.hypot(dx, dy) || 1;
@@ -213,12 +258,10 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
             const p2 = `${roofEndX},${roofEndY}`;
             const p3 = `${roofEndX + nx * roofThick},${roofEndY + ny * roofThick}`;
             const p4 = `${roofStartX + nx * roofThick},${roofStartY + ny * roofThick}`;
-
             const shingleCount = 12;
             return (
               <g>
                 <polygon points={`${p1} ${p2} ${p3} ${p4}`} fill="url(#roof)" />
-                {/* Shingle course lines along the slope */}
                 {Array.from({ length: shingleCount }, (_, i) => {
                   const t = (i + 1) / (shingleCount + 1);
                   const sx = roofStartX + dx * t;
@@ -228,31 +271,26 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
                       key={`tab-${i}`}
                       x1={sx}
                       y1={sy}
-                      x2={sx + nx * 4}
-                      y2={sy + ny * 4}
-                      stroke="rgba(0,0,0,0.55)"
-                      strokeWidth="0.6"
+                      x2={sx + nx * 6}
+                      y2={sy + ny * 6}
+                      stroke="rgba(0,0,0,0.6)"
+                      strokeWidth="0.8"
                     />
                   );
                 })}
-                {/* Bottom edge highlight at the drip line */}
                 <line
                   x1={roofStartX}
                   y1={roofStartY}
                   x2={roofEndX}
                   y2={roofEndY}
-                  stroke="rgba(255,255,255,0.15)"
-                  strokeWidth="0.8"
+                  stroke="rgba(255,255,255,0.22)"
+                  strokeWidth="1"
                 />
-                {/* Snow / ice guards along the slope */}
                 {acc?.iceGuard &&
                   Array.from({ length: 5 }, (_, i) => {
                     const t = 0.2 + i * 0.14;
                     const cx = roofStartX + dx * t;
                     const cy = roofStartY + dy * t;
-                    // The guard sits ON the roof surface — kick it up
-                    // along the negative-normal so it pokes up out of
-                    // the shingles instead of into them.
                     const gxg = cx - nx * 2;
                     const gyg = cy - ny * 2;
                     return (
@@ -260,8 +298,8 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
                         key={`ice-${i}`}
                         points={`${gxg - 4},${gyg} ${gxg + 4},${gyg} ${gxg - nx * 7},${gyg - ny * 7}`}
                         fill="#e2e8f0"
-                        stroke="rgba(0,0,0,0.4)"
-                        strokeWidth="0.5"
+                        stroke="rgba(0,0,0,0.5)"
+                        strokeWidth="0.6"
                       />
                     );
                   })}
@@ -269,136 +307,74 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
             );
           })()}
 
-          {/* Fascia board — vertical face the gutter mounts to */}
-          <rect
-            x={gX - 14}
-            y={gY - 4}
-            width="12"
-            height={gHeight + 40}
+          {/* Fascia board behind the gutter — drawn as a long
+              rectangle running the length of the gutter. */}
+          <polygon
+            points={`${gutterLeft - 4},${gutterTop - 6}
+                     ${gutterRightX + 4},${gutterTop - 6}
+                     ${gutterRightX + 4},${gutterTop + gutterFrontH + 50}
+                     ${gutterLeft - 4},${gutterTop + gutterFrontH + 50}`}
             fill="url(#fascia)"
-            stroke="rgba(0,0,0,0.18)"
-            strokeWidth="0.7"
+            stroke="rgba(0,0,0,0.25)"
+            strokeWidth="0.8"
           />
 
-          {/* Wall siding below the fascia (visible behind the downspout) */}
+          {/* Wall siding below the fascia */}
           <rect
-            x={gX - 14}
-            y={gY + gHeight + 36}
-            width="220"
+            x={gutterLeft - 4}
+            y={gutterTop + gutterFrontH + 46}
+            width={gutterRightX - gutterLeft + 8 + 60}
             height="120"
             fill="url(#siding)"
           />
-          {/* Siding course lines */}
-          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
             <line
               key={`siding-${i}`}
-              x1={gX - 14}
-              y1={gY + gHeight + 50 + i * 14}
-              x2={gX + 206}
-              y2={gY + gHeight + 50 + i * 14}
-              stroke="rgba(0,0,0,0.18)"
-              strokeWidth="0.6"
+              x1={gutterLeft - 4}
+              y1={gutterTop + gutterFrontH + 58 + i * 14}
+              x2={gutterRightX + 64}
+              y2={gutterTop + gutterFrontH + 58 + i * 14}
+              stroke="rgba(0,0,0,0.22)"
+              strokeWidth="0.7"
             />
           ))}
 
-          {/* Drip edge — tucked between shingles and the back of the gutter */}
+          {/* Drip edge tucked between roof + gutter back */}
           {acc?.dripEdge && (
             <g filter="url(#soft-shadow)">
-              <path
-                d={`M ${gX - 8} ${gY - 6} L ${gX + 6} ${gY - 6} L ${gX + 6} ${gY + 8} L ${gX - 8} ${gY + 8} Z`}
+              <polygon
+                points={`${gutterLeft + perspX - 8},${gutterTop + perspY - 6}
+                         ${gutterRightX + perspX - 8},${gutterTop + perspY - 6}
+                         ${gutterRightX + perspX + 4},${gutterTop + perspY + 8}
+                         ${gutterLeft + perspX + 4},${gutterTop + perspY + 8}`}
                 fill="url(#drip-edge)"
-                stroke="rgba(0,0,0,0.25)"
-                strokeWidth="0.6"
-              />
-              {/* The kicked-out lip that sticks into the gutter */}
-              <path
-                d={`M ${gX + 2} ${gY + 8} L ${gX + 14} ${gY + 14} L ${gX + 14} ${gY + 18} L ${gX + 2} ${gY + 12} Z`}
-                fill={hex}
-                opacity="0.95"
-                stroke="rgba(0,0,0,0.3)"
-                strokeWidth="0.5"
+                stroke="rgba(0,0,0,0.35)"
+                strokeWidth="0.8"
               />
             </g>
           )}
 
-          {/* Gutter cross-section */}
+          {/* ───── GUTTER 3D ASSEMBLY ───── */}
           <g filter="url(#soft-shadow)">
-            {halfRound ? (
-              <>
-                <path
-                  d={`M ${gX} ${gY}
-                      A ${gWidth / 2} ${gWidth / 2} 0 0 0 ${gX + gWidth} ${gY}
-                      L ${gX + gWidth} ${gY + 6}
-                      A ${gWidth / 2 - 4} ${gWidth / 2 - 4} 0 0 1 ${gX} ${gY + 6} Z`}
-                  fill={hex}
-                />
-                <path
-                  d={`M ${gX} ${gY}
-                      A ${gWidth / 2} ${gWidth / 2} 0 0 0 ${gX + gWidth} ${gY}
-                      L ${gX + gWidth} ${gY + 6}
-                      A ${gWidth / 2 - 4} ${gWidth / 2 - 4} 0 0 1 ${gX} ${gY + 6} Z`}
-                  fill="url(#gutter-sheen)"
-                />
-                {/* Bead edges */}
-                <circle cx={gX} cy={gY} r="3" fill={hex} stroke="rgba(0,0,0,0.3)" strokeWidth="0.7" />
-                <circle cx={gX + gWidth} cy={gY} r="3" fill={hex} stroke="rgba(0,0,0,0.3)" strokeWidth="0.7" />
-              </>
-            ) : (
-              <>
-                {/* K-style ogee profile */}
-                <path
-                  d={`M ${gX} ${gY}
-                      L ${gX} ${gY + 8}
-                      Q ${gX + 2} ${gY + gHeight - 4} ${gX + 14} ${gY + gHeight}
-                      L ${gX + gWidth - 4} ${gY + gHeight}
-                      Q ${gX + gWidth} ${gY + gHeight - 6} ${gX + gWidth + 3} ${gY + gHeight - 18}
-                      Q ${gX + gWidth + 5} ${gY + gHeight - 30} ${gX + gWidth + 1} ${gY + 4}
-                      L ${gX + gWidth + 1} ${gY}
-                      L ${gX + gWidth - 3} ${gY}
-                      L ${gX + gWidth - 3} ${gY + gHeight - 22}
-                      Q ${gX + gWidth - 5} ${gY + gHeight - 8} ${gX + gWidth - 10} ${gY + gHeight - 4}
-                      L ${gX + 16} ${gY + gHeight - 4}
-                      Q ${gX + 5} ${gY + gHeight - 8} ${gX + 4} ${gY + 8}
-                      L ${gX + 4} ${gY} Z`}
-                  fill={hex}
-                />
-                <path
-                  d={`M ${gX} ${gY}
-                      L ${gX} ${gY + 8}
-                      Q ${gX + 2} ${gY + gHeight - 4} ${gX + 14} ${gY + gHeight}
-                      L ${gX + gWidth - 4} ${gY + gHeight}
-                      Q ${gX + gWidth} ${gY + gHeight - 6} ${gX + gWidth + 3} ${gY + gHeight - 18}
-                      Q ${gX + gWidth + 5} ${gY + gHeight - 30} ${gX + gWidth + 1} ${gY + 4}
-                      L ${gX + gWidth + 1} ${gY}
-                      L ${gX + gWidth - 3} ${gY} Z`}
-                  fill="url(#gutter-sheen)"
-                />
-              </>
-            )}
-          </g>
-
-          {/* Hidden hangers — small clips inside the gutter */}
-          {[0.25, 0.5, 0.75].map((t, i) => (
-            <line
-              key={`hanger-${i}`}
-              x1={gX + 4 + (gWidth - 8) * t}
-              y1={gY + 2}
-              x2={gX + 4 + (gWidth - 8) * t}
-              y2={gY + gHeight - 6}
-              stroke="rgba(0,0,0,0.18)"
-              strokeWidth="0.6"
-              strokeDasharray="2 2"
+            {/* (a) TOP OPENING — parallelogram receding into the
+                   distance. This is what most clearly says "gutter":
+                   the dark trough you can see down INTO from above. */}
+            <polygon
+              points={`${gutterLeft},${gutterTop}
+                       ${gutterRightX},${gutterTop}
+                       ${gutterRightX + perspX},${gutterTop + perspY}
+                       ${gutterLeft + perspX},${gutterTop + perspY}`}
+              fill="url(#gutter-top)"
+              stroke="rgba(0,0,0,0.55)"
+              strokeWidth="1"
             />
-          ))}
-
-          {/* Leaf protection across the top */}
-          {guardTier !== "none" && (
-            <g>
-              <rect
-                x={gX + 2}
-                y={gY - 2}
-                width={gWidth - 4}
-                height="4"
+            {/* Optional leaf-guard mesh stretched across the opening */}
+            {guardTier !== "none" && (
+              <polygon
+                points={`${gutterLeft + 2},${gutterTop + 2}
+                         ${gutterRightX - 2},${gutterTop + 2}
+                         ${gutterRightX - 2 + perspX},${gutterTop + 2 + perspY}
+                         ${gutterLeft + 2 + perspX},${gutterTop + 2 + perspY}`}
                 fill={
                   guardTier === "screen"
                     ? "url(#guard-screen)"
@@ -406,67 +382,161 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
                       ? "url(#guard-mesh)"
                       : "url(#guard-micro)"
                 }
-                stroke="rgba(0,0,0,0.4)"
-                strokeWidth="0.5"
-                rx="0.5"
+                stroke="rgba(0,0,0,0.45)"
+                strokeWidth="0.6"
               />
-              {/* Edge tone strip so it reads as material, not just a pattern */}
-              <rect
-                x={gX + 2}
-                y={gY - 2}
-                width={gWidth - 4}
-                height="0.8"
-                fill="rgba(0,0,0,0.25)"
-              />
-            </g>
-          )}
+            )}
 
-          {/* Heat-tape cable looping inside the gutter when enabled */}
+            {/* (b) FRONT FACE of the gutter run — long ogee profile
+                   shown as a single horizontal band the color of the
+                   gutter, with a subtle vertical sheen. For half-round
+                   the visual front face is the bottom-half of a circle
+                   extruded along the length. Same band, different
+                   bottom contour. */}
+            <path
+              d={
+                halfRound
+                  ? `M ${gutterLeft} ${gutterTop}
+                     L ${gutterRightX} ${gutterTop}
+                     Q ${gutterRightX + 4} ${gutterTop + gutterFrontH / 2} ${gutterRightX} ${gutterTop + gutterFrontH}
+                     Q ${(gutterLeft + gutterRightX) / 2} ${gutterTop + gutterFrontH + 4} ${gutterLeft} ${gutterTop + gutterFrontH}
+                     Q ${gutterLeft - 4} ${gutterTop + gutterFrontH / 2} ${gutterLeft} ${gutterTop} Z`
+                  : `M ${gutterLeft} ${gutterTop}
+                     L ${gutterRightX} ${gutterTop}
+                     L ${gutterRightX} ${gutterTop + 8}
+                     C ${gutterRightX - 2} ${gutterTop + gutterFrontH * 0.5} ${gutterRightX + 6} ${gutterTop + gutterFrontH * 0.7} ${gutterRightX} ${gutterTop + gutterFrontH - 4}
+                     L ${gutterRightX - 6} ${gutterTop + gutterFrontH}
+                     L ${gutterLeft + 6} ${gutterTop + gutterFrontH}
+                     L ${gutterLeft} ${gutterTop + gutterFrontH - 4}
+                     C ${gutterLeft + 6} ${gutterTop + gutterFrontH * 0.7} ${gutterLeft - 2} ${gutterTop + gutterFrontH * 0.5} ${gutterLeft} ${gutterTop + 8}
+                     Z`
+              }
+              fill={hex}
+              stroke="rgba(0,0,0,0.55)"
+              strokeWidth="1"
+            />
+            {/* Sheen on front face */}
+            <rect
+              x={gutterLeft}
+              y={gutterTop}
+              width={gutterLen}
+              height={gutterFrontH}
+              fill="url(#gutter-sheen)"
+              pointerEvents="none"
+            />
+
+            {/* (c) CUT END (right side) — the actual profile. K-style
+                   ogee or half-round, drawn at the right edge of the
+                   gutter run so the contractor sees the actual
+                   cross-section. */}
+            {halfRound ? (
+              (() => {
+                const r = gutterDepth / 2;
+                const cx = gutterRightX + perspX / 2;
+                const cy = gutterTop + perspY / 2 + r * 0.1;
+                return (
+                  <>
+                    <ellipse
+                      cx={cx}
+                      cy={cy}
+                      rx={r * 1.05}
+                      ry={r * 0.5}
+                      fill={hex}
+                      stroke="rgba(0,0,0,0.55)"
+                      strokeWidth="1"
+                    />
+                    {/* Inner dark cavity */}
+                    <ellipse
+                      cx={cx}
+                      cy={cy - 1}
+                      rx={r * 0.85}
+                      ry={r * 0.36}
+                      fill="rgba(0,0,0,0.4)"
+                    />
+                  </>
+                );
+              })()
+            ) : (
+              <g transform={`translate(${gutterRightX}, ${gutterTop})`}>
+                <path
+                  d={ogeePath(gutterDepth, gutterFrontH)}
+                  fill={hex}
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="1"
+                />
+                <path d={ogeePath(gutterDepth, gutterFrontH)} fill="url(#gutter-sheen)" />
+              </g>
+            )}
+
+            {/* (d) HANGER bracket clipped to the back wall — a small
+                   visible mounting clip every 24" feels right and
+                   sells the gutter as "really attached to fascia." */}
+            {Array.from(
+              { length: Math.max(2, Math.floor(gutterLen / 70)) },
+              (_, i) => {
+                const t = (i + 0.5) / Math.max(2, Math.floor(gutterLen / 70));
+                const cx = gutterLeft + gutterLen * t;
+                return (
+                  <g key={`hanger-${i}`}>
+                    {/* The screw + bracket sits at the back of the
+                        opening, so on the receding edge of the top
+                        parallelogram. */}
+                    <line
+                      x1={cx + perspX * 0.6}
+                      y1={gutterTop + perspY * 0.6}
+                      x2={cx + perspX}
+                      y2={gutterTop + perspY}
+                      stroke="rgba(0,0,0,0.6)"
+                      strokeWidth="1.4"
+                    />
+                    <circle
+                      cx={cx + perspX}
+                      cy={gutterTop + perspY}
+                      r="1.4"
+                      fill="rgba(0,0,0,0.7)"
+                    />
+                  </g>
+                );
+              },
+            )}
+          </g>
+
+          {/* Heat-tape cable loops inside the trough */}
           {acc?.heatTape && (
             <path
-              d={`M ${gX + 6} ${gY + gHeight - 6}
-                  Q ${gX + gWidth * 0.25} ${gY + gHeight - 12}
-                    ${gX + gWidth * 0.5} ${gY + gHeight - 6}
-                  Q ${gX + gWidth * 0.75} ${gY + gHeight - 12}
-                    ${gX + gWidth - 6} ${gY + gHeight - 6}`}
+              d={`M ${gutterLeft + 12} ${gutterTop + perspY * 0.35}
+                  Q ${gutterLeft + gutterLen * 0.25} ${gutterTop + perspY * 0.7}
+                    ${gutterLeft + gutterLen * 0.5} ${gutterTop + perspY * 0.35}
+                  Q ${gutterLeft + gutterLen * 0.75} ${gutterTop + perspY * 0.7}
+                    ${gutterRightX - 12} ${gutterTop + perspY * 0.35}`}
               fill="none"
               stroke="#dc2626"
-              strokeWidth="1.6"
+              strokeWidth="1.8"
               strokeLinecap="round"
-              opacity="0.9"
+              opacity="0.95"
             />
           )}
 
-          {/* Outlet drop — short flange + hole at the gutter floor */}
-          <ellipse
-            cx={gOutletX}
-            cy={gOutletY}
-            rx={dsWidth * 0.45}
-            ry="3"
-            fill="rgba(0,0,0,0.45)"
-          />
-
-          {/* Either a downspout OR a rain chain hangs below the outlet. */}
+          {/* ───── DOWNSPOUT or RAIN CHAIN ───── */}
           {useRainChain ? (
             <g>
-              {/* Copper rain chain — alternating cup links */}
               {Array.from({ length: 10 }, (_, i) => {
-                const cy = gOutletY + 10 + i * 18;
+                const cy = outletY + 10 + i * 18;
                 return (
                   <g key={`chain-${i}`}>
                     <path
-                      d={`M ${gOutletX - 6} ${cy} Q ${gOutletX} ${cy + 10} ${gOutletX + 6} ${cy} Z`}
+                      d={`M ${outletCenterX - 6} ${cy} Q ${outletCenterX} ${cy + 10} ${outletCenterX + 6} ${cy} Z`}
                       fill="#b87333"
-                      stroke="rgba(0,0,0,0.35)"
-                      strokeWidth="0.5"
+                      stroke="rgba(0,0,0,0.4)"
+                      strokeWidth="0.6"
                     />
                     <line
-                      x1={gOutletX}
+                      x1={outletCenterX}
                       y1={cy + 8}
-                      x2={gOutletX}
+                      x2={outletCenterX}
                       y2={cy + 18}
                       stroke="#b87333"
-                      strokeWidth="1.2"
+                      strokeWidth="1.3"
                     />
                   </g>
                 );
@@ -474,159 +544,315 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
             </g>
           ) : (
             <g filter="url(#soft-shadow)">
-              {/* Elbow #1: comes out of the outlet, jogs back toward the wall */}
-              <path
-                d={`M ${gOutletX - dsWidth / 2} ${gOutletY + 2}
-                    L ${gOutletX + dsWidth / 2} ${gOutletY + 2}
-                    L ${gOutletX + dsWidth / 2 + 8} ${gOutletY + 20}
-                    L ${gOutletX - dsWidth / 2 + 8} ${gOutletY + 20} Z`}
+              {/* OUTLET HOLE — dark ellipse / rect punched into the
+                  gutter floor. Drawn so the drop tube clearly comes
+                  from INSIDE the gutter. */}
+              {dsRound ? (
+                <ellipse
+                  cx={outletCenterX}
+                  cy={outletY - 1}
+                  rx={dsW / 2 + 3}
+                  ry="4"
+                  fill="rgba(0,0,0,0.7)"
+                />
+              ) : (
+                <rect
+                  x={outletCenterX - dsW / 2 - 3}
+                  y={outletY - 3}
+                  width={dsW + 6}
+                  height="6"
+                  fill="rgba(0,0,0,0.7)"
+                  rx="1"
+                />
+              )}
+
+              {/* 1. DROP TUBE — top overlaps INTO the gutter via
+                     dropTop = outletY - 4. */}
+              {renderPipe(outletCenterX - dsW / 2, dropTop, dsW, dropBot - dropTop)}
+
+              {/* 2. OFFSET ELBOW — parallelogram front + side */}
+              <polygon
+                points={`${outletCenterX - dsW / 2},${dropBot}
+                         ${outletCenterX + dsW / 2},${dropBot}
+                         ${runLeft + dsW},${elbowBot}
+                         ${runLeft},${elbowBot}`}
                 fill={hex}
-                stroke="rgba(0,0,0,0.3)"
-                strokeWidth="0.6"
+                stroke="rgba(0,0,0,0.55)"
+                strokeWidth="1"
               />
-              <path
-                d={`M ${gOutletX - dsWidth / 2} ${gOutletY + 2}
-                    L ${gOutletX + dsWidth / 2} ${gOutletY + 2}
-                    L ${gOutletX + dsWidth / 2 + 8} ${gOutletY + 20}
-                    L ${gOutletX - dsWidth / 2 + 8} ${gOutletY + 20} Z`}
+              <polygon
+                points={`${outletCenterX - dsW / 2},${dropBot}
+                         ${outletCenterX + dsW / 2},${dropBot}
+                         ${runLeft + dsW},${elbowBot}
+                         ${runLeft},${elbowBot}`}
                 fill="url(#ds-sheen)"
               />
+              {!dsRound && (
+                <polygon
+                  points={`${outletCenterX + dsW / 2},${dropBot}
+                           ${outletCenterX + dsW / 2 + dsDepth},${dropBot}
+                           ${runLeft + dsW + dsDepth},${elbowBot}
+                           ${runLeft + dsW},${elbowBot}`}
+                  fill={hex}
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="0.7"
+                />
+              )}
+              {!dsRound && (
+                <polygon
+                  points={`${outletCenterX + dsW / 2},${dropBot}
+                           ${outletCenterX + dsW / 2 + dsDepth},${dropBot}
+                           ${runLeft + dsW + dsDepth},${elbowBot}
+                           ${runLeft + dsW},${elbowBot}`}
+                  fill="rgba(0,0,0,0.35)"
+                />
+              )}
 
-              {/* Vertical downspout shaft — bands every ~40px */}
-              {(() => {
-                const dsLeft = gOutletX - dsWidth / 2 + 8;
-                const dsTop = gOutletY + 20;
-                const dsBottom = 330;
-                if (dsRound) {
-                  return (
-                    <g>
-                      <ellipse
-                        cx={dsLeft + dsWidth / 2}
-                        cy={dsTop}
-                        rx={dsWidth / 2}
-                        ry="3"
-                        fill={hex}
-                        stroke="rgba(0,0,0,0.25)"
-                        strokeWidth="0.5"
-                      />
-                      <rect
-                        x={dsLeft}
-                        y={dsTop}
-                        width={dsWidth}
-                        height={dsBottom - dsTop}
-                        fill={hex}
-                      />
-                      <rect
-                        x={dsLeft}
-                        y={dsTop}
-                        width={dsWidth}
-                        height={dsBottom - dsTop}
-                        fill="url(#ds-sheen)"
-                      />
-                      {/* Band rings */}
-                      {[0.25, 0.55, 0.85].map((t, i) => (
-                        <ellipse
-                          key={`ring-${i}`}
-                          cx={dsLeft + dsWidth / 2}
-                          cy={dsTop + (dsBottom - dsTop) * t}
-                          rx={dsWidth / 2 + 1}
-                          ry="2.5"
-                          fill="none"
-                          stroke="rgba(0,0,0,0.3)"
-                          strokeWidth="0.6"
+              {/* 3. VERTICAL RUN */}
+              {renderPipe(runLeft, runTop, dsW, runBot - runTop)}
+
+              {/* Top face of the vertical run — parallelogram for
+                  square pipes, ellipse for round. This is the single
+                  most useful indicator of "the pipe is actually
+                  square" because the eye sees the shape directly. */}
+              {dsRound ? (
+                <ellipse
+                  cx={runLeft + dsW / 2}
+                  cy={runTop}
+                  rx={dsW / 2 - 0.5}
+                  ry="3"
+                  fill="rgba(0,0,0,0.45)"
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="0.7"
+                />
+              ) : (
+                <polygon
+                  points={`${runLeft},${runTop} ${runLeft + dsW},${runTop} ${runLeft + dsW + dsDepth},${runTop - dsDepth * 0.65} ${runLeft + dsDepth},${runTop - dsDepth * 0.65}`}
+                  fill="rgba(0,0,0,0.45)"
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="0.7"
+                />
+              )}
+
+              {/* Round → bands. Box → wall straps. */}
+              {dsRound
+                ? [0.18, 0.5, 0.82].map((t, i) => (
+                    <ellipse
+                      key={`ring-${i}`}
+                      cx={runLeft + dsW / 2}
+                      cy={runTop + (runBot - runTop) * t}
+                      rx={dsW / 2 + 2}
+                      ry="3"
+                      fill="none"
+                      stroke="rgba(0,0,0,0.5)"
+                      strokeWidth="1"
+                    />
+                  ))
+                : [0.2, 0.55, 0.85].map((t, i) => {
+                    const strapY = runTop + (runBot - runTop) * t - 1;
+                    return (
+                      <g key={`strap-${i}`}>
+                        <rect
+                          x={runLeft - 5}
+                          y={strapY}
+                          width={dsW + dsDepth + 10}
+                          height="3"
+                          fill="rgba(0,0,0,0.45)"
                         />
-                      ))}
-                    </g>
-                  );
-                }
-                return (
-                  <g>
-                    <rect
-                      x={dsLeft}
-                      y={dsTop}
-                      width={dsWidth}
-                      height={dsBottom - dsTop}
-                      rx="1.5"
-                      fill={hex}
-                    />
-                    <rect
-                      x={dsLeft}
-                      y={dsTop}
-                      width={dsWidth}
-                      height={dsBottom - dsTop}
-                      rx="1.5"
-                      fill="url(#ds-sheen)"
-                    />
-                    {/* Center seam line */}
-                    <line
-                      x1={dsLeft + dsWidth / 2}
-                      y1={dsTop}
-                      x2={dsLeft + dsWidth / 2}
-                      y2={dsBottom}
-                      stroke="rgba(0,0,0,0.18)"
-                      strokeWidth="0.5"
-                      strokeDasharray="3 4"
-                    />
-                    {/* Strap bands */}
-                    {[0.2, 0.55, 0.85].map((t, i) => (
-                      <rect
-                        key={`strap-${i}`}
-                        x={dsLeft - 2}
-                        y={dsTop + (dsBottom - dsTop) * t - 1}
-                        width={dsWidth + 4}
-                        height="2.2"
-                        fill="rgba(0,0,0,0.28)"
-                      />
-                    ))}
-                  </g>
-                );
-              })()}
+                        <rect
+                          x={runLeft - 5}
+                          y={strapY}
+                          width="3"
+                          height="3"
+                          fill="rgba(0,0,0,0.65)"
+                        />
+                      </g>
+                    );
+                  })}
 
-              {/* Kick-out elbow at the bottom — points away from the wall */}
-              <path
-                d={`M ${gOutletX - dsWidth / 2 + 8} ${330}
-                    L ${gOutletX + dsWidth / 2 + 8} ${330}
-                    L ${gOutletX + dsWidth / 2 + 22} ${346}
-                    L ${gOutletX - dsWidth / 2 + 22} ${346} Z`}
+              {/* Front-face crimp seams on box pipes */}
+              {!dsRound &&
+                [0.33, 0.67].map((t, i) => (
+                  <line
+                    key={`crimp-${i}`}
+                    x1={runLeft + 1}
+                    y1={runTop + (runBot - runTop) * t}
+                    x2={runLeft + dsW - 1}
+                    y2={runTop + (runBot - runTop) * t}
+                    stroke="rgba(0,0,0,0.22)"
+                    strokeWidth="0.5"
+                  />
+                ))}
+
+              {/* 4. KICK-OUT ELBOW with open mouth showing
+                     cross-section (rectangle for box, ellipse for round). */}
+              <polygon
+                points={`${runLeft},${runBot}
+                         ${runLeft + dsW},${runBot}
+                         ${runLeft + dsW + 16},${kickBot}
+                         ${runLeft + 16},${kickBot}`}
                 fill={hex}
-                stroke="rgba(0,0,0,0.3)"
-                strokeWidth="0.6"
+                stroke="rgba(0,0,0,0.55)"
+                strokeWidth="1"
               />
-              <path
-                d={`M ${gOutletX - dsWidth / 2 + 8} ${330}
-                    L ${gOutletX + dsWidth / 2 + 8} ${330}
-                    L ${gOutletX + dsWidth / 2 + 22} ${346}
-                    L ${gOutletX - dsWidth / 2 + 22} ${346} Z`}
+              <polygon
+                points={`${runLeft},${runBot}
+                         ${runLeft + dsW},${runBot}
+                         ${runLeft + dsW + 16},${kickBot}
+                         ${runLeft + 16},${kickBot}`}
                 fill="url(#ds-sheen)"
               />
+              {!dsRound && (
+                <>
+                  <polygon
+                    points={`${runLeft + dsW},${runBot}
+                             ${runLeft + dsW + dsDepth},${runBot}
+                             ${runLeft + dsW + 16 + dsDepth},${kickBot}
+                             ${runLeft + dsW + 16},${kickBot}`}
+                    fill={hex}
+                    stroke="rgba(0,0,0,0.55)"
+                    strokeWidth="0.7"
+                  />
+                  <polygon
+                    points={`${runLeft + dsW},${runBot}
+                             ${runLeft + dsW + dsDepth},${runBot}
+                             ${runLeft + dsW + 16 + dsDepth},${kickBot}
+                             ${runLeft + dsW + 16},${kickBot}`}
+                    fill="rgba(0,0,0,0.35)"
+                  />
+                </>
+              )}
+              {/* Open mouth at the kick-out tip */}
+              {dsRound ? (
+                <ellipse
+                  cx={runLeft + 16 + dsW / 2}
+                  cy={kickBot}
+                  rx={dsW / 2 - 1}
+                  ry="3"
+                  fill="rgba(0,0,0,0.75)"
+                  stroke="rgba(0,0,0,0.6)"
+                  strokeWidth="0.6"
+                />
+              ) : (
+                <polygon
+                  points={`${runLeft + 16},${kickBot}
+                           ${runLeft + 16 + dsW},${kickBot}
+                           ${runLeft + 16 + dsW + dsDepth * 0.7},${kickBot - dsDepth * 0.55}
+                           ${runLeft + 16 + dsDepth * 0.7},${kickBot - dsDepth * 0.55}`}
+                  fill="rgba(0,0,0,0.7)"
+                  stroke="rgba(0,0,0,0.6)"
+                  strokeWidth="0.6"
+                />
+              )}
             </g>
           )}
 
-          {/* Ground — soft grass strip */}
-          <rect x="0" y="346" width="500" height="14" fill="#86efac" opacity="0.4" />
-          <line x1="0" y1="346" x2="500" y2="346" stroke="rgba(0,0,0,0.18)" strokeWidth="0.5" />
+          {/* Ground / grass */}
+          <rect x="0" y="344" width="500" height="16" fill="#86efac" opacity="0.55" />
+          <line x1="0" y1="344" x2="500" y2="344" stroke="rgba(0,0,0,0.2)" strokeWidth="0.6" />
+          {Array.from({ length: 24 }, (_, i) => (
+            <line
+              key={`grass-${i}`}
+              x1={i * 21 + 4}
+              y1="344"
+              x2={i * 21 + 6}
+              y2="340"
+              stroke="rgba(22,101,52,0.5)"
+              strokeWidth="0.7"
+            />
+          ))}
 
-          {/* Annotations — small leader callouts */}
+          {/* Cross-section badge — explicit shape indicator */}
+          {!useRainChain && (
+            <g transform="translate(452, 60)">
+              <rect
+                x="-32"
+                y="-30"
+                width="64"
+                height="62"
+                rx="8"
+                fill="rgba(255,255,255,0.95)"
+                stroke="rgba(0,0,0,0.2)"
+                strokeWidth="1"
+              />
+              <text
+                x="0"
+                y="-18"
+                textAnchor="middle"
+                fontSize="6"
+                fontWeight="700"
+                fill="rgba(0,0,0,0.55)"
+                letterSpacing="0.6"
+              >
+                CROSS-SECTION
+              </text>
+              {dsRound ? (
+                <circle
+                  cx="0"
+                  cy="4"
+                  r={ds === "round-3" ? 9 : 12}
+                  fill={hex}
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="1.2"
+                />
+              ) : (
+                <rect
+                  x={ds === "2x3" ? -6 : -8}
+                  y={ds === "2x3" ? -8 : -10}
+                  width={ds === "2x3" ? 12 : 16}
+                  height={ds === "2x3" ? 20 : 24}
+                  fill={hex}
+                  stroke="rgba(0,0,0,0.55)"
+                  strokeWidth="1.2"
+                  rx="0.5"
+                />
+              )}
+              <text
+                x="0"
+                y={26}
+                textAnchor="middle"
+                fontSize="8"
+                fontWeight="600"
+                fill="#0f172a"
+              >
+                {ds === "2x3"
+                  ? "2×3″"
+                  : ds === "3x4"
+                    ? "3×4″"
+                    : ds === "round-3"
+                      ? "3″ round"
+                      : "4″ round"}
+              </text>
+            </g>
+          )}
+
           {/* Gutter callout */}
           <g>
-            <line x1={gX + gWidth + 18} y1={gY + 4} x2={gX + gWidth + 50} y2={gY - 16} stroke="rgba(0,0,0,0.45)" strokeWidth="0.6" />
+            <line
+              x1={gutterLeft + gutterLen * 0.4 + perspX * 0.5}
+              y1={gutterTop + perspY * 0.5}
+              x2={gutterLeft + gutterLen * 0.5}
+              y2={gutterTop + perspY - 30}
+              stroke="rgba(0,0,0,0.45)"
+              strokeWidth="0.7"
+            />
             <rect
-              x={gX + gWidth + 50}
-              y={gY - 30}
-              width="92"
-              height="20"
-              rx="4"
-              fill="rgba(255,255,255,0.92)"
-              stroke="rgba(0,0,0,0.15)"
+              x={gutterLeft + gutterLen * 0.5 - 50}
+              y={gutterTop + perspY - 50}
+              width="100"
+              height="22"
+              rx="5"
+              fill="rgba(255,255,255,0.95)"
+              stroke="rgba(0,0,0,0.18)"
             />
             <text
-              x={gX + gWidth + 96}
-              y={gY - 16}
+              x={gutterLeft + gutterLen * 0.5}
+              y={gutterTop + perspY - 34}
               textAnchor="middle"
               fontSize="10"
               fontFamily="ui-sans-serif, system-ui"
               fill="#0f172a"
-              fontWeight="600"
+              fontWeight="700"
             >
               {config.size}″ {halfRound ? "Half-Round" : "K-Style"}
             </text>
@@ -635,24 +861,31 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
           {/* Downspout callout */}
           {!useRainChain && (
             <g>
-              <line x1={gOutletX + dsWidth + 14} y1={250} x2={gOutletX + dsWidth + 60} y2={234} stroke="rgba(0,0,0,0.45)" strokeWidth="0.6" />
+              <line
+                x1={runLeft + dsW + dsDepth + 4}
+                y1={(runTop + runBot) / 2}
+                x2={runLeft + dsW + dsDepth + 50}
+                y2={(runTop + runBot) / 2 - 16}
+                stroke="rgba(0,0,0,0.45)"
+                strokeWidth="0.7"
+              />
               <rect
-                x={gOutletX + dsWidth + 58}
-                y={222}
-                width="92"
-                height="20"
-                rx="4"
-                fill="rgba(255,255,255,0.92)"
-                stroke="rgba(0,0,0,0.15)"
+                x={runLeft + dsW + dsDepth + 48}
+                y={(runTop + runBot) / 2 - 28}
+                width="96"
+                height="22"
+                rx="5"
+                fill="rgba(255,255,255,0.95)"
+                stroke="rgba(0,0,0,0.18)"
               />
               <text
-                x={gOutletX + dsWidth + 104}
-                y={236}
+                x={runLeft + dsW + dsDepth + 96}
+                y={(runTop + runBot) / 2 - 13}
                 textAnchor="middle"
                 fontSize="10"
                 fontFamily="ui-sans-serif, system-ui"
                 fill="#0f172a"
-                fontWeight="600"
+                fontWeight="700"
               >
                 {ds === "2x3"
                   ? "2×3″ downspout"
@@ -665,45 +898,41 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
             </g>
           )}
 
-          {/* Drip-edge callout */}
-          {acc?.dripEdge && (
-            <g>
-              <line x1={gX + 4} y1={gY + 4} x2={gX - 50} y2={gY - 24} stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" />
-              <rect x={gX - 98} y={gY - 38} width="78" height="20" rx="4" fill="rgba(255,255,255,0.95)" stroke="rgba(0,0,0,0.15)" />
-              <text x={gX - 59} y={gY - 24} textAnchor="middle" fontSize="10" fontFamily="ui-sans-serif, system-ui" fill="#0f172a" fontWeight="600">
-                Drip edge
-              </text>
-            </g>
-          )}
-
-          {/* Leaf guard callout */}
-          {guardTier !== "none" && (
-            <g>
-              <line x1={gX + gWidth / 2} y1={gY - 2} x2={gX + gWidth / 2 + 40} y2={gY - 60} stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" />
-              <rect x={gX + gWidth / 2 + 16} y={gY - 76} width="96" height="20" rx="4" fill="rgba(255,255,255,0.95)" stroke="rgba(0,0,0,0.15)" />
-              <text x={gX + gWidth / 2 + 64} y={gY - 62} textAnchor="middle" fontSize="10" fontFamily="ui-sans-serif, system-ui" fill="#0f172a" fontWeight="600">
-                {guardTier === "screen"
-                  ? "Screen guard"
-                  : guardTier === "mesh"
-                    ? "Mesh guard"
-                    : "Micro-mesh"}
-              </text>
-            </g>
-          )}
-
           {/* Rain-chain callout */}
           {useRainChain && (
             <g>
-              <line x1={gOutletX + 8} y1={260} x2={gOutletX + 70} y2={236} stroke="rgba(0,0,0,0.5)" strokeWidth="0.6" />
-              <rect x={gOutletX + 60} y={222} width="98" height="20" rx="4" fill="rgba(255,255,255,0.95)" stroke="rgba(0,0,0,0.15)" />
-              <text x={gOutletX + 109} y={236} textAnchor="middle" fontSize="10" fontFamily="ui-sans-serif, system-ui" fill="#0f172a" fontWeight="600">
+              <line
+                x1={outletCenterX + 8}
+                y1={260}
+                x2={outletCenterX + 70}
+                y2={236}
+                stroke="rgba(0,0,0,0.5)"
+                strokeWidth="0.7"
+              />
+              <rect
+                x={outletCenterX + 60}
+                y={222}
+                width="100"
+                height="22"
+                rx="5"
+                fill="rgba(255,255,255,0.95)"
+                stroke="rgba(0,0,0,0.18)"
+              />
+              <text
+                x={outletCenterX + 110}
+                y={238}
+                textAnchor="middle"
+                fontSize="10"
+                fontFamily="ui-sans-serif, system-ui"
+                fill="#0f172a"
+                fontWeight="700"
+              >
                 Copper rain chain
               </text>
             </g>
           )}
         </motion.svg>
 
-        {/* Color chip overlay (bottom right) */}
         <div className="absolute bottom-2 right-3 inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2 py-0.5 text-[10px] font-medium text-zinc-700 shadow-sm ring-1 ring-inset ring-zinc-200">
           <span
             className="h-2 w-2 rounded-full ring-1 ring-inset ring-white/50"
@@ -712,7 +941,7 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
           {color?.name ?? "Custom color"}
         </div>
         <div className="absolute bottom-2 left-3 inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2 py-0.5 text-[10px] font-medium text-zinc-700 shadow-sm ring-1 ring-inset ring-zinc-200">
-          Side elevation · approx scale
+          3/4 perspective · approx scale
         </div>
       </div>
     </div>

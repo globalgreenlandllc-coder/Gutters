@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -8,8 +8,10 @@ import {
   ChevronRight,
   Eye,
   Loader2,
-  Send,
+  MoreHorizontal,
   Search,
+  Send,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -20,6 +22,7 @@ import {
 } from "@/lib/dashboard-mock";
 import { SendModal } from "@/components/proposal/send-modal";
 import { getMyProposal } from "@/app/actions/dashboard";
+import { deleteProposal } from "@/app/actions/proposals";
 import type { Proposal } from "@/lib/proposal-mock";
 
 const STATUS_TONE: Record<
@@ -61,6 +64,11 @@ export function ProposalsTable({
   const [loadingSendId, setLoadingSendId] = useState<string | null>(null);
   const [sendProposal, setSendProposal] = useState<Proposal | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Optimistic hide of deleted rows so the list updates instantly while
+  // the server action revalidates the route in the background.
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function openSendFor(id: string) {
     setLoadingSendId(id);
@@ -79,7 +87,24 @@ export function ProposalsTable({
     }
   }
 
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    setDeleteError(null);
+    const result = await deleteProposal(id);
+    if (result.ok) {
+      setDeletedIds((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
+    } else {
+      setDeleteError(result.reason);
+    }
+    setDeletingId(null);
+  }
+
   const filtered = items.filter((p) => {
+    if (deletedIds.has(p.id)) return false;
     if (filter !== "all" && p.status !== filter) return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
@@ -154,6 +179,11 @@ export function ProposalsTable({
         {sendError && (
           <li className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">
             {sendError}
+          </li>
+        )}
+        {deleteError && (
+          <li className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+            Couldn&apos;t delete: {deleteError}
           </li>
         )}
         {filtered.map((p, i) => {
@@ -271,6 +301,11 @@ export function ProposalsTable({
                       {p.status === "draft" ? "Send" : "Re-send"}
                     </button>
                   )}
+                  <RowMenu
+                    onDelete={() => handleDelete(p.id)}
+                    deleting={deletingId === p.id}
+                    address={p.address}
+                  />
                   <ChevronRight className="hidden h-4 w-4 text-zinc-300 lg:block" />
                 </div>
               </div>
@@ -296,6 +331,133 @@ export function ProposalsTable({
           onClose={() => setSendProposal(null)}
           proposal={sendProposal}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-row overflow menu — currently delete-only. Confirm step is
+ * inline (no separate modal) so it's a single click + a single
+ * confirm and the row vanishes.
+ */
+function RowMenu({
+  onDelete,
+  deleting,
+  address,
+}: {
+  onDelete: () => void;
+  deleting: boolean;
+  address: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setConfirming(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setConfirming(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        aria-label="More actions"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-zinc-500 transition hover:border-zinc-200 hover:bg-white hover:text-zinc-900"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {!confirming ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setConfirming(true);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete proposal
+            </button>
+          ) : (
+            <div className="p-3">
+              <div className="text-sm font-medium text-zinc-900">
+                Delete this proposal?
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                {address ? (
+                  <>
+                    Permanently removes <strong>{address}</strong> and its
+                    history.
+                  </>
+                ) : (
+                  "This permanently removes the draft and its history."
+                )}{" "}
+                Can&apos;t be undone.
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setConfirming(false);
+                    setOpen(false);
+                  }}
+                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDelete();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                >
+                  {deleting ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                  Delete
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

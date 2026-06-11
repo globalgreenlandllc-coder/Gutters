@@ -525,3 +525,51 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+/* ------------------------------------------------------------------ */
+/*  Delete proposal                                                    */
+/* ------------------------------------------------------------------ */
+
+export type DeleteProposalResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/**
+ * Permanently deletes a proposal owned by the signed-in contractor.
+ * Refuses to delete proposals that don't belong to the caller so a
+ * leaked id can't be used to wipe someone else's row.
+ *
+ * Cascades through ProposalEvent rows via the `onDelete: Cascade`
+ * relation in the Prisma schema, so we don't need to clean those up
+ * manually here.
+ */
+export async function deleteProposal(
+  id: string,
+): Promise<DeleteProposalResult> {
+  try {
+    const me = await getMe();
+    if (!me) return { ok: false, reason: "Not signed in" };
+    if (!id) return { ok: false, reason: "Missing proposal id" };
+
+    const row = await db.proposal.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!row) return { ok: false, reason: "Proposal not found" };
+    if (row.userId !== me.user.id) {
+      return { ok: false, reason: "Not your proposal" };
+    }
+
+    await db.proposal.delete({ where: { id } });
+
+    revalidatePath("/dashboard/proposals");
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (e) {
+    console.error("[deleteProposal] threw", e);
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "Delete failed",
+    };
+  }
+}

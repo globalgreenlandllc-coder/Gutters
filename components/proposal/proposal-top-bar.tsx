@@ -1,7 +1,17 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, Eye, Pencil, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Eye,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,15 +20,22 @@ import { cn } from "@/lib/utils";
 export function ProposalTopBar({
   address,
   preview,
+  proposalId,
   onTogglePreview,
   onSend,
   onDownload,
+  onDelete,
+  deleting,
 }: {
   address: string;
   preview: boolean;
+  /** Hides the delete option when the proposal hasn't been persisted yet. */
+  proposalId?: string | null;
   onTogglePreview: () => void;
   onSend: () => void;
   onDownload: () => void;
+  onDelete?: () => void;
+  deleting?: boolean;
 }) {
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
@@ -47,26 +64,33 @@ export function ProposalTopBar({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white p-1">
+        {/* Builder / Preview tabs — both are always clickable so you can
+            jump back to editing from preview with one tap. Bigger hit
+            targets + clearer "active" styling than the previous version. */}
+        <div className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1">
           <button
+            type="button"
             onClick={() => preview && onTogglePreview()}
+            aria-pressed={!preview}
             className={cn(
-              "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
+              "flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
               !preview
-                ? "bg-zinc-100 text-zinc-900"
-                : "text-zinc-600 hover:text-zinc-900",
+                ? "bg-zinc-900 text-white shadow-sm"
+                : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
             )}
           >
             <Pencil className="h-3.5 w-3.5" />
-            Builder
+            Edit
           </button>
           <button
+            type="button"
             onClick={() => !preview && onTogglePreview()}
+            aria-pressed={preview}
             className={cn(
-              "flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
+              "flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
               preview
-                ? "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
-                : "text-zinc-600 hover:text-zinc-900",
+                ? "bg-accent-600 text-white shadow-sm"
+                : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
             )}
           >
             <Eye className="h-3.5 w-3.5" />
@@ -74,11 +98,26 @@ export function ProposalTopBar({
           </button>
         </div>
 
+        {/* Prominent escape hatch from preview — sits next to the tabs
+            so contractors who don't realize the tabs are tabs still
+            have a clear way back to editing price. */}
+        {preview && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onTogglePreview}
+            className="hidden md:inline-flex"
+          >
+            <Pencil className="h-4 w-4" />
+            Back to edit
+          </Button>
+        )}
+
         <Button
           variant="secondary"
           size="sm"
           onClick={onDownload}
-          className="hidden sm:inline-flex"
+          className="hidden lg:inline-flex"
         >
           <Download className="h-4 w-4" />
           PDF
@@ -87,7 +126,112 @@ export function ProposalTopBar({
           <Send className="h-4 w-4" />
           Send
         </Button>
+
+        {proposalId && onDelete && (
+          <OverflowMenu onDelete={onDelete} deleting={deleting} />
+        )}
       </div>
     </header>
+  );
+}
+
+/**
+ * Overflow menu — currently just a Delete option, but the dropdown
+ * shape leaves room for Duplicate / Archive / Export later without
+ * having to rearrange the top-bar layout.
+ */
+function OverflowMenu({
+  onDelete,
+  deleting,
+}: {
+  onDelete: () => void;
+  deleting?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setConfirming(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setConfirming(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="More actions"
+        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+          {!confirming ? (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete proposal
+            </button>
+          ) : (
+            <div className="p-3">
+              <div className="text-sm font-medium text-zinc-900">
+                Delete this proposal?
+              </div>
+              <div className="mt-1 text-xs text-zinc-500">
+                This permanently removes the draft and any view history. You
+                can&apos;t undo this.
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirming(false);
+                    setOpen(false);
+                  }}
+                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => onDelete()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                >
+                  {deleting ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                  Delete
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

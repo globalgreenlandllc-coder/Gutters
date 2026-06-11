@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Pencil, X } from "lucide-react";
 import { blankProposal, type Proposal } from "@/lib/proposal-mock";
 import {
   clearEstimateHandoff,
@@ -19,6 +20,7 @@ import { SendModal } from "@/components/proposal/send-modal";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
 import { useProfile } from "@/lib/auth-mock";
 import { getMyProposal } from "@/app/actions/dashboard";
+import { deleteProposal } from "@/app/actions/proposals";
 
 export default function ProposalPage() {
   return (
@@ -31,6 +33,7 @@ export default function ProposalPage() {
 }
 
 function Inner() {
+  const router = useRouter();
   const params = useSearchParams();
   const proposalId = params.get("id");
   // ?manual=1 — contractor chose "Start a manual estimate" from the
@@ -40,8 +43,15 @@ function Inner() {
   const profile = useProfile();
   const [proposal, setProposal] = useState<Proposal>(blankProposal);
   const [preview, setPreview] = useState(false);
+  // When the contractor pops into preview to QA the client view, they
+  // still need to be able to nudge price / discount / deposit without
+  // bouncing back to Edit mode. `editDrawerOpen` flips on a slide-over
+  // panel that hosts the BuilderSidebar right on top of the preview.
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [handoffApplied, setHandoffApplied] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Three ways the editor gets seeded:
   //   1. ?id=<proposalId> → load the saved row from the DB so the
@@ -127,18 +137,99 @@ function Inner() {
     if (typeof window !== "undefined") window.print();
   }
 
+  async function handleDelete() {
+    if (!proposalId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    const result = await deleteProposal(proposalId);
+    if (result.ok) {
+      router.replace("/dashboard/proposals");
+    } else {
+      setDeleting(false);
+      setDeleteError(result.reason);
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <ProposalTopBar
         address={proposal.address}
         preview={preview}
+        proposalId={proposalId}
         onTogglePreview={() => setPreview((v) => !v)}
         onSend={() => setSendOpen(true)}
         onDownload={download}
+        onDelete={handleDelete}
+        deleting={deleting}
       />
 
+      {deleteError && (
+        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
+          Couldn&apos;t delete proposal: {deleteError}
+        </div>
+      )}
+
       {preview ? (
-        <ClientPortalView proposal={proposal} previewMode />
+        <>
+          <ClientPortalView proposal={proposal} previewMode />
+
+          {/* Floating "Edit price" pill — sits at the bottom-right while
+              the contractor is in preview mode so they can adjust price,
+              discount, deposit, or recipient WITHOUT having to leave
+              preview. Tapping it opens the slide-over drawer below. */}
+          {!editDrawerOpen && (
+            <button
+              type="button"
+              onClick={() => setEditDrawerOpen(true)}
+              className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-xl ring-1 ring-black/10 transition hover:bg-zinc-800 print:hidden"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit price & details
+            </button>
+          )}
+
+          {/* Slide-over edit drawer — full BuilderSidebar overlaid on
+              the client preview so changes update both views in real
+              time. Backdrop click + ESC close. */}
+          {editDrawerOpen && (
+            <div className="fixed inset-0 z-40 print:hidden">
+              <button
+                type="button"
+                aria-label="Close editor"
+                onClick={() => setEditDrawerOpen(false)}
+                className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
+              />
+              <aside className="absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col gap-3 overflow-y-auto bg-zinc-50 p-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Live edit
+                    </div>
+                    <div className="text-sm font-medium text-zinc-900">
+                      Adjust price while previewing
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditDrawerOpen(false)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <BuilderSidebar
+                  proposal={proposal}
+                  onChange={setProposal}
+                  onSend={() => {
+                    setEditDrawerOpen(false);
+                    setSendOpen(true);
+                  }}
+                />
+              </aside>
+            </div>
+          )}
+        </>
       ) : (
         <main className="mx-auto grid max-w-[1600px] gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:p-6">
           <div className="space-y-6">
