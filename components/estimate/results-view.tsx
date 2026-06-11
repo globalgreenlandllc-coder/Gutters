@@ -22,6 +22,7 @@ export function ResultsView({
   initial,
   reused,
   jobType = "replacement",
+  planId,
 }: {
   address: string;
   initial: EstimateResult;
@@ -30,6 +31,10 @@ export function ResultsView({
    *  language downstream; here we surface it as a chip in the top bar so
    *  the contractor sees what mode they're in. */
   jobType?: "new" | "replacement";
+  /** When this estimate came from a plan upload, the PlanAnalysis id.
+   *  Passed through to TopBar so the "Re-analyze" button can target
+   *  the right row. */
+  planId?: string;
 }) {
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
@@ -64,7 +69,12 @@ export function ResultsView({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <TopBar address={address} handoff={handoff} jobType={jobType} />
+      <TopBar
+        address={address}
+        handoff={handoff}
+        jobType={jobType}
+        planId={planId}
+      />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}

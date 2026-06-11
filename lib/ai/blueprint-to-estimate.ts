@@ -195,11 +195,30 @@ export function blueprintToEstimateResult(
     analysis.gutter_runs,
   );
 
-  const eaves: EditableLine[] = analysis.gutter_runs.map((r, i) => ({
-    id: `plan-eave-${i}`,
-    kind: "eave",
-    points: [project(r.start), project(r.end)],
-  }));
+  // A point is "bad" when the stored analysis has null/undefined/NaN
+  // coords — projection would collapse it to viewBox center and the
+  // canvas would render every degenerate eave on top of one another
+  // (the "single pink dot, no eaves" failure mode). Drop bad lines
+  // entirely so the canvas shows the trace that's actually usable.
+  const isGoodPoint = (p: BlueprintPoint | undefined | null): p is BlueprintPoint =>
+    !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const droppedEaves: number[] = [];
+  const droppedRakes: number[] = [];
+  const droppedDownspouts: number[] = [];
+
+  const eaves: EditableLine[] = analysis.gutter_runs
+    .map((r, i): EditableLine | null => {
+      if (!isGoodPoint(r.start) || !isGoodPoint(r.end)) {
+        droppedEaves.push(i);
+        return null;
+      }
+      return {
+        id: `plan-eave-${i}`,
+        kind: "eave",
+        points: [project(r.start), project(r.end)],
+      };
+    })
+    .filter((l): l is EditableLine => l !== null);
 
   // Hips + rakes + dormer_rakes ARE perimeter edges the contractor needs
   // to see so they can verify what the AI excluded. Ridges and valleys are
@@ -207,26 +226,37 @@ export function blueprintToEstimateResult(
   // the building" and would just confuse the no-gutter dashed rendering.
   const rakes: EditableLine[] = analysis.excluded_edges
     .filter((e) => e.kind !== "ridge" && e.kind !== "valley")
-    .map((e, i) => ({
-      id: `plan-rake-${i}`,
-      kind: "rake",
-      points: [project(e.start), project(e.end)],
-    }));
+    .map((e, i): EditableLine | null => {
+      if (!isGoodPoint(e.start) || !isGoodPoint(e.end)) {
+        droppedRakes.push(i);
+        return null;
+      }
+      return {
+        id: `plan-rake-${i}`,
+        kind: "rake",
+        points: [project(e.start), project(e.end)],
+      };
+    })
+    .filter((l): l is EditableLine => l !== null);
 
   // Downspouts. Each one carries its source-run tier height when the
   // AI was able to derive tiers from the elevations (e.g. porch
   // downspouts at 10 ft, 2-story body downspouts at 20-26 ft).
-  // Fallback to 20 ft (2-story default) when tier info is missing —
-  // pricing for the taller drop is the conservative call. Contractor
-  // can still edit per-downspout via the popover in AerialCanvas.
-  const downspouts: Downspout[] = analysis.downspouts.map((d, i) => {
-    const p = project(d.at);
-    const heightFt =
-      d.drop_height_ft != null && d.drop_height_ft > 0
-        ? Math.round(d.drop_height_ft)
-        : 20;
-    return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
-  });
+  // Fallback to 20 ft (2-story default) when tier info is missing.
+  const downspouts: Downspout[] = analysis.downspouts
+    .map((d, i): Downspout | null => {
+      if (!isGoodPoint(d.at)) {
+        droppedDownspouts.push(i);
+        return null;
+      }
+      const p = project(d.at);
+      const heightFt =
+        d.drop_height_ft != null && d.drop_height_ft > 0
+          ? Math.round(d.drop_height_ft)
+          : 20;
+      return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
+    })
+    .filter((d): d is Downspout => d !== null);
 
   // LF totals come from Claude's length_ft values, scaled by ftScale
   // when the polygon had to be shrunk to fit the viewBox (rare —
@@ -281,6 +311,18 @@ export function blueprintToEstimateResult(
     );
   }
   for (const n of analysis.notes) notes.push(n);
+
+  // Tell the contractor when the stored analysis had malformed
+  // geometry we had to drop. A non-zero count means the takeoff is
+  // partial — they should re-run rather than send.
+  if (droppedEaves.length + droppedRakes.length + droppedDownspouts.length > 0) {
+    notes.push(
+      `⚠ Stored analysis had ${droppedEaves.length} eave(s), ` +
+        `${droppedRakes.length} rake(s), ${droppedDownspouts.length} downspout(s) ` +
+        "with missing/invalid coordinates — dropped to keep canvas usable. " +
+        "Re-analyze for a complete trace.",
+    );
+  }
 
   return {
     geocoded: {

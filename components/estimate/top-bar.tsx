@@ -8,6 +8,7 @@ import {
   Check,
   Download,
   Loader2,
+  RefreshCw,
   Save,
   Send,
 } from "lucide-react";
@@ -30,6 +31,7 @@ export function TopBar({
   address,
   handoff,
   jobType = "replacement",
+  planId,
 }: {
   address: string;
   /** Full takeoff snapshot. Optional because some call sites don't have
@@ -41,10 +43,47 @@ export function TopBar({
    *  scope-of-work language). "replacement" → existing house, existing
    *  gutters being removed. Default is "replacement" — the common case. */
   jobType?: "new" | "replacement";
+  /** PlanAnalysis row id when this estimate came from a plan upload.
+   *  Surfaces the "Re-analyze" button so the contractor can refresh
+   *  an old upload against the latest prompts without re-uploading
+   *  the PDF. Omit for the aerial flow. */
+  planId?: string;
 }) {
   const router = useRouter();
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const [, startTransition] = useTransition();
+  const [reanalyzing, setReanalyzing] = useState(false);
+
+  const onReanalyze = async () => {
+    if (!planId || reanalyzing) return;
+    if (
+      !confirm(
+        "Re-analyze this plan against the latest AI prompts? Takes ~60-90s. " +
+          "Your current edits will be replaced with a fresh trace.",
+      )
+    ) {
+      return;
+    }
+    setReanalyzing(true);
+    try {
+      const res = await fetch(`/api/blueprints/${planId}/reanalyze`, {
+        method: "POST",
+      });
+      if (!res.ok && res.status !== 202) {
+        const body = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      // Bounce back through the estimate route so the page polls the
+      // QUEUED row and the contractor sees the loading screen.
+      router.push(`/estimate?planId=${planId}&jobType=${jobType}`);
+      router.refresh();
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "Re-analyze request failed";
+      alert(`Re-analyze failed: ${message}`);
+      setReanalyzing(false);
+    }
+  };
 
   const handoffAndGo = () => {
     if (handoff) writeEstimateHandoff(handoff);
@@ -157,6 +196,22 @@ export function TopBar({
         </div>
 
         <div className="flex items-center gap-2">
+          {planId && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onReanalyze}
+              disabled={reanalyzing}
+              title="Re-run the two-stage AI pipeline against the latest prompts"
+            >
+              {reanalyzing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"

@@ -141,6 +141,7 @@ function EstimateContent() {
         initial={result}
         reused={reused}
         jobType={jobType}
+        planId={planId ?? undefined}
       />
     );
   }
