@@ -25,6 +25,37 @@ const VIEWBOX_H = 580;
 const MARGIN_PCT = 0.08;
 
 /**
+ * IQR-based outlier filter on a 2D point set. Drops points whose x or
+ * y lies more than 3×IQR outside the [Q1, Q3] range — generous enough
+ * to keep all legitimate building coordinates, strict enough to reject
+ * sentinel/page-bounds artifacts that the AI sometimes mixes into
+ * building_footprint or excluded_edges.
+ */
+function filterOutliers(points: readonly BlueprintPoint[]): BlueprintPoint[] {
+  if (points.length < 4) return [...points];
+  const xs = points.map((p) => p.x).sort((a, b) => a - b);
+  const ys = points.map((p) => p.y).sort((a, b) => a - b);
+  const q = (arr: number[], pct: number) =>
+    arr[Math.min(arr.length - 1, Math.max(0, Math.floor(arr.length * pct)))];
+  const xQ1 = q(xs, 0.25);
+  const xQ3 = q(xs, 0.75);
+  const yQ1 = q(ys, 0.25);
+  const yQ3 = q(ys, 0.75);
+  const xIQR = Math.max(1, xQ3 - xQ1);
+  const yIQR = Math.max(1, yQ3 - yQ1);
+  const xMin = xQ1 - 3 * xIQR;
+  const xMax = xQ3 + 3 * xIQR;
+  const yMin = yQ1 - 3 * yIQR;
+  const yMax = yQ3 + 3 * yIQR;
+  const kept = points.filter(
+    (p) => p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax,
+  );
+  // If we'd reject everything, give up and return original — fail
+  // safe rather than producing an empty bbox.
+  return kept.length >= Math.max(2, points.length * 0.5) ? kept : [...points];
+}
+
+/**
  * Feet-aware projection from raw PDF-pixel coordinates onto the
  * 900×580 canvas viewBox.
  *
@@ -67,12 +98,22 @@ function buildFeetAwareProjection(
   // or NaN values, and one bad sample poisons the median and zeros
   // out every projected coordinate (entire canvas goes blank, LF
   // reads "NaN LF").
-  const safePoints = allPoints.filter(
+  const finitePoints = allPoints.filter(
     (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
   );
-  if (safePoints.length === 0) {
+  if (finitePoints.length === 0) {
     return { project: (p) => ({ x: p.x, y: p.y }), ftScale: 1 };
   }
+
+  // Reject outliers before bbox math. The AI sometimes emits a stray
+  // sentinel coordinate (page-bounds reference, off-page label) in
+  // building_footprint or excluded_edges — a single (99999, y) point
+  // blows the bbox up so much that every real gutter coordinate
+  // shrinks to sub-pixel scale, and the canvas renders as one dot.
+  // IQR-based filter: keep points within Q1-3×IQR to Q3+3×IQR on
+  // both axes. Generous bounds because real plans can have legitimate
+  // long-axis dimensions, but extreme enough to catch sentinels.
+  const safePoints = filterOutliers(finitePoints);
 
   // Derive PDF-pixels-per-foot from runs where we know both ends.
   // Median absorbs outliers (a single mis-measured run won't skew it).
@@ -183,15 +224,20 @@ export function blueprintToEstimateResult(
   analysis: BlueprintAnalysis,
   meta: BlueprintToEstimateMeta,
 ): EstimateResult {
-  // Union of every point we know about — this is what we fit to the canvas.
-  const allPoints: BlueprintPoint[] = [
-    ...analysis.building_footprint,
+  // ONLY load-bearing geometry feeds the bbox: gutter_runs (what we
+  // price + render solid) + downspouts (drainage points). The
+  // building_footprint and excluded_edges fields are decorative — and
+  // when the AI puts a stray sentinel coordinate in either of them
+  // (a page-bounds reference at 99999, an off-page label), the
+  // outlier blows up the bbox and crushes every gutter coordinate
+  // to sub-pixel scale. Limiting the bbox source isolates the
+  // projection from those artifacts.
+  const loadBearingPoints: BlueprintPoint[] = [
     ...analysis.gutter_runs.flatMap((r) => [r.start, r.end]),
     ...analysis.downspouts.map((d) => d.at),
-    ...analysis.excluded_edges.flatMap((e) => [e.start, e.end]),
   ];
   const { project, ftScale } = buildFeetAwareProjection(
-    allPoints,
+    loadBearingPoints,
     analysis.gutter_runs,
   );
 

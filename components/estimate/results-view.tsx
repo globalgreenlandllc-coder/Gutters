@@ -45,12 +45,19 @@ export function ResultsView({
   const [stories, setStories] = useState(initial.measurements.stories);
 
   const liveEaveLF = Math.round(
-    eaves.reduce((acc, l) => acc + lineLengthFt(l), 0),
+    eaves.reduce((acc, l) => {
+      const v = lineLengthFt(l);
+      return acc + (Number.isFinite(v) ? v : 0);
+    }, 0),
   );
 
   const measurements: Measurements = {
     ...initial.measurements,
-    eaveLF: liveEaveLF || initial.measurements.eaveLF,
+    // Fall back to stored eaveLF when the live sum is 0 — happens
+    // when all eaves were dropped at projection time (bad coords on
+    // every gutter_run). Without this, the contractor sees "0 LF"
+    // even though the stored takeoff has a real LF total.
+    eaveLF: liveEaveLF > 0 ? liveEaveLF : initial.measurements.eaveLF,
     downspoutCount: downspouts.length,
     stories,
   };

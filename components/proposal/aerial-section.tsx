@@ -39,9 +39,18 @@ export function AerialSection({
   };
   const liveEaveLF = useMemo(() => {
     if (!takeoff) return proposal.measurements.eaveLF;
-    return Math.round(
-      takeoff.eaves.reduce((acc, l) => acc + safeLineLengthFt(l), 0),
+    // When ALL eaves got dropped (every gutter_run had bad coords —
+    // happens on stored analyses with malformed geometry), the live
+    // sum is 0 and the contractor sees a misleading "0 LF" overlay
+    // even though measurements.eaveLF is the real number. Fall back
+    // to the stored value when nothing summable survived.
+    const computed = takeoff.eaves.reduce(
+      (acc, l) => acc + safeLineLengthFt(l),
+      0,
     );
+    return computed > 0
+      ? Math.round(computed)
+      : proposal.measurements.eaveLF;
   }, [takeoff, proposal.measurements.eaveLF]);
 
   // Wire canvas edits back into proposal state so /proposal's pricing
