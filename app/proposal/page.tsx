@@ -33,18 +33,23 @@ export default function ProposalPage() {
 function Inner() {
   const params = useSearchParams();
   const proposalId = params.get("id");
+  // ?manual=1 — contractor chose "Start a manual estimate" from the
+  // New-estimate dialog. Forces a blank proposal and discards any stale
+  // handoff so a prior AI run doesn't leak in.
+  const manual = params.get("manual") === "1";
   const profile = useProfile();
   const [proposal, setProposal] = useState<Proposal>(blankProposal);
   const [preview, setPreview] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [handoffApplied, setHandoffApplied] = useState(false);
 
-  // Two ways the editor gets seeded:
+  // Three ways the editor gets seeded:
   //   1. ?id=<proposalId> → load the saved row from the DB so the
   //      contractor can edit / re-send an existing draft. Without this
   //      the editor was starting from blankProposal and the send modal
   //      rejected with "Property address is required".
-  //   2. handoff in localStorage → fresh from the /estimate flow.
+  //   2. ?manual=1 → blank proposal, skip handoff entirely.
+  //   3. handoff in localStorage → fresh from the /estimate flow.
   // ?id wins when both are present so a re-opened draft never gets
   // overwritten by stale handoff data left behind in localStorage.
   useEffect(() => {
@@ -55,12 +60,17 @@ function Inner() {
         if (cancelled) return;
         if (loaded) {
           setProposal(loaded);
-          // Clear any stale handoff so it doesn't leak into the next
-          // fresh /proposal load.
           clearEstimateHandoff();
           setHandoffApplied(true);
           return;
         }
+      }
+      if (manual) {
+        // Drop any handoff that might still be in localStorage so it
+        // can't bleed into the blank manual proposal.
+        clearEstimateHandoff();
+        setHandoffApplied(true);
+        return;
       }
       const handoff = readEstimateHandoff();
       if (handoff) {
@@ -83,7 +93,7 @@ function Inner() {
     return () => {
       cancelled = true;
     };
-  }, [proposalId]);
+  }, [proposalId, manual]);
 
   useEffect(() => {
     setProposal((p) => ({

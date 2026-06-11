@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { NewEstimateDialog } from "@/components/dashboard/new-estimate-dialog";
 import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +23,7 @@ export default function ProposalsListPage() {
 function Inner() {
   const [rows, setRows] = useState<MyProposalRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,13 +53,11 @@ function Inner() {
               Every estimate and proposal you've drafted, sent, or closed.
             </p>
           </div>
-          <Link href="/estimate">
-            <Button>
-              <Sparkles className="h-4 w-4" />
-              New estimate
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </Link>
+          <Button onClick={() => setDialogOpen(true)}>
+            <Sparkles className="h-4 w-4" />
+            New estimate
+            <ArrowRight className="h-4 w-4" />
+          </Button>
         </header>
 
         {!loading && rows.length === 0 ? (
@@ -74,18 +73,24 @@ function Inner() {
               and accepted jobs will show up here with status filters and
               search.
             </p>
-            <Link href="/estimate" className="mt-5 inline-block">
-              <Button>
-                <Sparkles className="h-4 w-4" />
-                Start your first estimate
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
+            <Button
+              onClick={() => setDialogOpen(true)}
+              className="mt-5"
+            >
+              <Sparkles className="h-4 w-4" />
+              Start your first estimate
+              <ArrowRight className="h-4 w-4" />
+            </Button>
           </div>
         ) : (
           <ProposalsTable items={rows} />
         )}
       </div>
+
+      <NewEstimateDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+      />
     </main>
   );
 }
