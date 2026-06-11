@@ -5,6 +5,7 @@ import type {
 } from "./blueprint-from-plans";
 import type { EstimateResult } from "./index";
 import type { Downspout, EditableLine, Stories } from "@/lib/types";
+import { PX_PER_FT } from "@/components/estimate/aerial-shared";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -23,15 +24,68 @@ const VIEWBOX_W = 900;
 const VIEWBOX_H = 580;
 const MARGIN_PCT = 0.08;
 
-function fitTransform(
-  points: readonly BlueprintPoint[],
-): (p: BlueprintPoint) => BlueprintPoint {
-  if (points.length === 0) return (p) => ({ x: p.x, y: p.y });
+/**
+ * Feet-aware projection from raw PDF-pixel coordinates onto the
+ * 900×580 canvas viewBox.
+ *
+ * Why this needs to be feet-aware: the canvas's live-pricing
+ * recompute (`lineLengthFt` in aerial-shared.tsx) divides
+ * canvas-pixel distance by the global PX_PER_FT constant. For the
+ * satellite (aerial) flow that constant is calibrated to the
+ * fixed-zoom imagery. For plan takeoffs the raw input pixels come
+ * from whatever DPI the PDF was rendered at — totally arbitrary.
+ *
+ * If we naively fit-to-viewBox (old behavior), the contractor sees a
+ * pretty trace but the displayed feet are nonsense: a building the
+ * AI sized at 210 LF gutter ends up reading 805 LF on the canvas
+ * because viewBox-pixels ÷ 2.4 has no relationship to plan scale.
+ *
+ * The fix: derive a single feet-per-PDF-pixel ratio from the AI's
+ * own length_ft values (median across runs to absorb noise), then
+ * project so canvas-pixels = real-feet × PX_PER_FT. Now
+ * lineLengthFt round-trips and the live recompute matches the
+ * stored length_ft.
+ *
+ * If the resulting bbox doesn't fit the viewBox (huge house), we
+ * uniformly downscale BOTH positions AND length_ft on each run so
+ * the canvas stays self-consistent. The trade is accuracy → fit,
+ * but that's still better than the original "feet are random"
+ * behavior.
+ */
+function buildFeetAwareProjection(
+  allPoints: readonly BlueprintPoint[],
+  runs: readonly { start: BlueprintPoint; end: BlueprintPoint; length_ft: number | null }[],
+): {
+  project: (p: BlueprintPoint) => BlueprintPoint;
+  /** Multiplier applied to AI length_ft values so they stay consistent
+   *  with what lineLengthFt(line) computes from canvas distance. < 1
+   *  when the plan didn't fit and we had to shrink everything. */
+  ftScale: number;
+} {
+  if (allPoints.length === 0) {
+    return { project: (p) => ({ x: p.x, y: p.y }), ftScale: 1 };
+  }
+
+  // Derive PDF-pixels-per-foot from runs where we know both ends.
+  // Median absorbs outliers (a single mis-measured run won't skew it).
+  const samples: number[] = [];
+  for (const r of runs) {
+    if (r.length_ft == null || r.length_ft <= 0) continue;
+    const dx = r.end.x - r.start.x;
+    const dy = r.end.y - r.start.y;
+    const pdfPxLen = Math.sqrt(dx * dx + dy * dy);
+    if (pdfPxLen <= 0) continue;
+    samples.push(pdfPxLen / r.length_ft);
+  }
+  samples.sort((a, b) => a - b);
+  const pdfPxPerFt =
+    samples.length > 0 ? samples[Math.floor(samples.length / 2)] : null;
+
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const p of points) {
+  for (const p of allPoints) {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
@@ -41,10 +95,43 @@ function fitTransform(
   const h = Math.max(1, maxY - minY);
   const targetW = VIEWBOX_W * (1 - 2 * MARGIN_PCT);
   const targetH = VIEWBOX_H * (1 - 2 * MARGIN_PCT);
-  const scale = Math.min(targetW / w, targetH / h);
-  const offsetX = (VIEWBOX_W - w * scale) / 2 - minX * scale;
-  const offsetY = (VIEWBOX_H - h * scale) / 2 - minY * scale;
-  return (p) => ({ x: p.x * scale + offsetX, y: p.y * scale + offsetY });
+
+  // Without a feet-per-pixel anchor we can't be feet-aware — fall
+  // back to fit-to-viewBox. AI didn't return any length_ft (no
+  // readable scale on the plan); the contractor will see correct
+  // shape but the displayed LF is meaningless until they edit it.
+  if (pdfPxPerFt == null) {
+    const fitScale = Math.min(targetW / w, targetH / h);
+    const ox = (VIEWBOX_W - w * fitScale) / 2 - minX * fitScale;
+    const oy = (VIEWBOX_H - h * fitScale) / 2 - minY * fitScale;
+    return {
+      project: (p) => ({ x: p.x * fitScale + ox, y: p.y * fitScale + oy }),
+      ftScale: 1,
+    };
+  }
+
+  // Ideal scale: canvas-pixels = feet × PX_PER_FT
+  //   feet = pdf-pixels / pdfPxPerFt
+  //   canvas-pixels = (pdf-pixels / pdfPxPerFt) × PX_PER_FT
+  // So scale = PX_PER_FT / pdfPxPerFt
+  const idealScale = PX_PER_FT / pdfPxPerFt;
+
+  // If the projected bbox exceeds the viewBox, shrink uniformly so
+  // it fits. We then apply the same shrink to all length_ft values
+  // so the canvas stays internally consistent.
+  const projW = w * idealScale;
+  const projH = h * idealScale;
+  const shrink =
+    projW > targetW || projH > targetH
+      ? Math.min(targetW / projW, targetH / projH)
+      : 1;
+  const scale = idealScale * shrink;
+  const ox = (VIEWBOX_W - w * scale) / 2 - minX * scale;
+  const oy = (VIEWBOX_H - h * scale) / 2 - minY * scale;
+  return {
+    project: (p) => ({ x: p.x * scale + ox, y: p.y * scale + oy }),
+    ftScale: shrink,
+  };
 }
 
 export interface BlueprintToEstimateMeta {
@@ -71,7 +158,10 @@ export function blueprintToEstimateResult(
     ...analysis.downspouts.map((d) => d.at),
     ...analysis.excluded_edges.flatMap((e) => [e.start, e.end]),
   ];
-  const project = fitTransform(allPoints);
+  const { project, ftScale } = buildFeetAwareProjection(
+    allPoints,
+    analysis.gutter_runs,
+  );
 
   const eaves: EditableLine[] = analysis.gutter_runs.map((r, i) => ({
     id: `plan-eave-${i}`,
@@ -106,11 +196,16 @@ export function blueprintToEstimateResult(
     return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
   });
 
-  // LF totals come from Claude's pixel-or-feet output. When the plan
-  // had a readable scale, length_ft is populated; otherwise length_px
-  // is all we have and the LF will read 0 + a strong note will warn.
+  // LF totals come from Claude's length_ft values, scaled by ftScale
+  // when the polygon had to be shrunk to fit the viewBox (rare —
+  // only triggers on enormous floor plates). Without this scale,
+  // canvas-pixel re-computes via lineLengthFt would diverge from the
+  // stored total.
   const eaveLF = Math.round(
-    analysis.gutter_runs.reduce((sum, r) => sum + (r.length_ft ?? 0), 0),
+    analysis.gutter_runs.reduce(
+      (sum, r) => sum + (r.length_ft ?? 0) * ftScale,
+      0,
+    ),
   );
 
   // We don't get rake length from Claude — excluded_edges only has

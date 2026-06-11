@@ -131,6 +131,40 @@ VALLEY — interior V where two planes drain together at an INSIDE corner.
 DORMER — small projecting roof. Its short eaves DO get gutters; its rakes do not.
 </vocabulary>
 
+<cross_reference>
+Do not trace the roof plan in isolation. Every residential plan set
+has 3-5 sheets that constrain the takeoff and you MUST reconcile
+across them before emitting geometry:
+
+1. ROOF PLAN — gives you the geometry (perimeter shape, slope
+   arrows, ridge/hip/valley lines). This is where coordinates come
+   from. The roof framing plan with truss layout works too: the
+   outer edge of the truss layout = roof perimeter; eaves are the
+   edges perpendicular to the truss span direction.
+
+2. ELEVATIONS — give you the eave count per side, the gable/dormer
+   geometry, and the tier heights. If the front elevation shows
+   3 distinct horizontal eaves (e.g. main body + front gable + porch
+   gable), the front side of your roof plan trace MUST have 3
+   matching eave segments. A single 64-ft eave across the front of
+   a 3-gable house is wrong.
+
+3. FOUNDATION PLAN / MAIN FLOOR PLAN — gives you the building
+   envelope dimensions in feet. Use these to calibrate scale, not
+   the page bounds.
+
+4. SITE PLAN — IGNORE for geometry. The building polygon on a site
+   plan is at lot scale (200' wide page = 200' lot) and using it as
+   the source of pixel coordinates inflates every measurement 3-4×.
+
+When the roof plan disagrees with the elevations (e.g. roof plan
+shows a clean rectangle but elevations show 5 gables on the front),
+trust the elevations for COUNT — split the roof-plan eaves at each
+elevation gable's bottom corner. The roof plan is sometimes a
+simplified framing diagram; the elevations always show what's
+actually there.
+</cross_reference>
+
 <method>
 Follow these steps in order. Think carefully before producing JSON.
 
