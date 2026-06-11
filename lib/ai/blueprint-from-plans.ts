@@ -33,7 +33,17 @@ export type BlueprintDownspout = {
 };
 
 export type BlueprintExcludedEdge = {
-  kind: "rake" | "ridge" | "hip" | "valley" | "dormer_rake";
+  kind:
+    | "rake"
+    | "ridge"
+    | "hip"
+    | "valley"
+    | "dormer_rake"
+    // Eave that exists on the roof plan but won't get a gutter —
+    // e.g. drains onto a lower roof, owner explicitly excluded it,
+    // or it's under an upper roof's drip line. Surfaces the
+    // architect's intent without inflating the priced LF.
+    | "eave_no_gutter";
   start: BlueprintPoint;
   end: BlueprintPoint;
   reason: string;
@@ -186,7 +196,7 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
   ],
   "excluded_edges": [
     {
-      "kind": "rake" | "ridge" | "hip" | "valley" | "dormer_rake",
+      "kind": "rake" | "ridge" | "hip" | "valley" | "dormer_rake" | "eave_no_gutter",
       "start": { "x": number, "y": number },
       "end":   { "x": number, "y": number },
       "reason": "<short why>"
@@ -256,6 +266,33 @@ for its source run's tier (lower_tier_ft or upper_tier_ft). When the
 tier is "unknown", default to upper_tier_ft (conservative — labor
 priced for the taller drop).
 </tier_assignment>
+
+<lf_accounting>
+The contractor prices gutter LF off sum(gutter_runs.length_ft).
+Nothing else enters the LF total — not rakes, not ridges, not hips,
+not valleys, not eaves that drain into a higher roof. The pricing
+math is literal: each foot in gutter_runs becomes a foot of installed
+5" K-style + per-LF accessories (guards, drip edge, ice guards, heat
+tape).
+
+This means:
+- A 30 ft segment in gutter_runs that shouldn't actually have a
+  gutter costs the contractor ~$300 of phantom material + ~$60-180
+  of phantom guards/drip-edge. Don't put it there.
+- Eaves that exist on the roof plan but won't get gutters (porch
+  eave draining onto a lower roof, owner-excluded section, eave
+  under another roof's drip line) go in excluded_edges with kind=
+  "eave_no_gutter" and a reason. They are visible to the contractor
+  but NOT priced.
+- Rakes, ridges, hips, valleys, dormer rakes ALWAYS go in
+  excluded_edges. They never appear in gutter_runs.
+
+If the plan note says "PROVIDE CONTINUOUS GUTTERS @ ALL EAVES,
+TYP." then every horizontal eave on the roof plan becomes a
+gutter_run (subject to the splitting rules at outside corners).
+If the plan is silent, default to "all eaves get gutters" — that's
+the residential norm.
+</lf_accounting>
 
 <rules>
 - Coordinate origin is TOP-LEFT of the source page, x→right, y→down. Use the
@@ -359,12 +396,14 @@ function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
   }
   if (c.min_gutter_runs != null && c.min_gutter_runs > 0) {
     lines.push(
-      `- Your gutter_runs array MUST contain at least ${c.min_gutter_runs} ` +
-        "entries — that is the count of distinct horizontal eave segments " +
-        "visible across the elevations. If your trace produces fewer, " +
-        "you've under-segmented (likely missed a gable, dormer, or porch " +
-        "roof). Re-examine the roof plan and split runs at every change of " +
-        "direction or roof plane.",
+      `- Target gutter_runs count: ~${c.min_gutter_runs} (from elevation ` +
+        "eave segments). If your trace lands materially below this number, " +
+        "re-examine the roof plan — you've probably missed a gable, dormer, " +
+        "or porch roof. BUT do NOT fabricate runs to hit the number. " +
+        "Pricing is per-LF on the gutter_runs you emit, so a phantom 30 ft " +
+        "segment turns into ~$300 of phantom gutter on the contractor's " +
+        "quote. If the real count is genuinely lower, return fewer and " +
+        "drop confidence to 'medium' with a note.",
     );
   }
   if (c.min_downspouts != null && c.min_downspouts > 0) {

@@ -62,7 +62,7 @@ export function CoverSection({
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Client" value={proposal.client.name} />
-        <Stat label="Total LF" value={`${proposal.measurements.eaveLF} LF`} />
+        <Stat label="Gutter LF" value={`${proposal.measurements.eaveLF} LF`} />
         <Stat
           label="Downspouts"
           value={`${proposal.measurements.downspoutCount}`}
