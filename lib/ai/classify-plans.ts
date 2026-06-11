@@ -218,6 +218,40 @@ elevations) so the geometry pass can assign each downspout a real drop
 height instead of defaulting every spout to 10 ft.
 </tier_heights>
 
+<covered_projections>
+Attached covered structures are the most common omission in plan
+takeoffs: covered front porch, covered entry, covered rear patio,
+covered deck, porte-cochère, attached carport. Each has its own roof
+and its own eave that gets a gutter — typically lower-tier (10 ft
+drop).
+
+When counting visible_eave_count on an ELEVATION sheet:
+- Include every horizontal low edge you can see, including the ones
+  on porch / patio covers that step down BELOW the main eave line.
+- A 2-story house with attached front porch + rear patio cover
+  typically shows ~5-7 distinct eaves PER SIDE elevation (main body
+  + gable bottoms + porch eave + patio eave), not 1-2.
+
+When counting visible_eave_count on a ROOF PLAN sheet:
+- Count every rectangle in the perimeter, INCLUDING small
+  projections labeled "COV'D PATIO", "PORCH", "COV'D ENTRY",
+  "COVERED", "SHED ROOF". These bump-outs each contribute 1-3 eave
+  segments to the takeoff.
+- Slope arrows pointing AWAY from the main body indicate a
+  single-story projection that drains off its own outer edge — that
+  outer edge is the eave.
+
+When counting visible_downspouts on an elevation:
+- Porch covers and patio covers each typically carry 1-2 downspouts
+  at their outer corners. These show as bold vertical rectangles
+  dropping from the lower eave line straight to grade — usually
+  shorter than the main-body downspouts.
+
+Surface these explicitly in takeoff_notes when present, e.g.:
+- "rear covered patio: ~14 ft eave + 1 DS at SE corner"
+- "front porch: ~22 ft eave + 1 DS each at NW/NE corners"
+</covered_projections>
+
 <eave_counting>
 On an elevation sheet, count every distinct HORIZONTAL bottom edge of a
 roof plane. Each gable is one eave segment from one side and the gable
@@ -465,7 +499,13 @@ export function classificationToConstraints(
       const tiers = s.tier_heights_ft
         ? ` (tiers ${s.tier_heights_ft.tier_1_ft ?? "?"}/${s.tier_heights_ft.tier_2_ft ?? "?"} ft)`
         : "";
-      return `page ${s.page_index} (${side}): ${eaves}, ${ds}${tiers}`;
+      // Surface porch/patio/cover callouts the classifier flagged
+      // per-sheet, so Stage 2 can't miss them.
+      const notes =
+        s.takeoff_notes.length > 0
+          ? ` [${s.takeoff_notes.slice(0, 3).join("; ")}]`
+          : "";
+      return `page ${s.page_index} (${side}): ${eaves}, ${ds}${tiers}${notes}`;
     })
     .join("; ");
 

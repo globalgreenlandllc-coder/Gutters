@@ -131,6 +131,52 @@ VALLEY — interior V where two planes drain together at an INSIDE corner.
 DORMER — small projecting roof. Its short eaves DO get gutters; its rakes do not.
 </vocabulary>
 
+<covered_projections>
+THE MOST COMMONLY MISSED GUTTERS are on attached covered structures:
+covered front porch, covered entry, covered rear patio, covered deck,
+porte-cochère, attached carport, covered side stoop, second-floor
+balcony cover. EVERY ONE OF THESE has its own roof and MUST appear
+in gutter_runs with tier="lower". Skipping them under-prices the
+contractor by 80-200 LF on a typical 2-story house with porch + rear
+patio cover.
+
+How to spot them on the roof plan:
+- A small rectangular projection extending OUT from the main body,
+  often labeled "PORCH", "COV'D PATIO", "COV'D ENTRY", "COVERED",
+  "SHED ROOF", or just shown as a separately-framed area
+- Slope arrows pointing AWAY from the main body (the cover drains
+  off its outer edge)
+- Truss / rafter lines on the roof framing plan that run independent
+  of the main truss layout
+- A ridge that's lower than the main body's ridge (because the cover
+  is single-story)
+
+How to confirm on the elevations:
+- A "step" in the elevation outline where the main 2-story wall
+  drops to a single-story projection in front of or behind it
+- A separate horizontal eave line BELOW the main eave, with its own
+  fascia and (often) a downspout symbol dropping from it
+- Posts or columns supporting the cover (no enclosed wall under it)
+
+The eaves on these projections are EAVES — they get gutters. The
+sides of the projection that abut the main body's wall are NOT eaves
+(no gutter — water sheds away). The outer edge facing away from the
+main body IS the eave (drains into a gutter that empties via a
+downspout at one or both ends).
+
+Typical counts on a residential plan:
+- Covered front porch: 1-3 eave segments (1 if straight-across, 2-3
+  if it wraps a front-corner or has a gabled center bump)
+- Covered rear patio: 1-2 eave segments
+- Covered entry / stoop: 1 small eave
+- Each cover usually carries 1-2 downspouts at outer corners
+
+If the plan note says "PROVIDE CONTINUOUS GUTTERS & DOWNSPOUTS @ ALL
+EAVES, TYP." the porch and patio cover eaves are explicitly in scope.
+Even without that note, default to including them — the residential
+norm is to gutter every covered eave.
+</covered_projections>
+
 <cross_reference>
 Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile
