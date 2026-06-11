@@ -15,36 +15,53 @@ const SUGGESTIONS = [
   "514 Birchwood Lane, Charlotte, NC",
 ];
 
-export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
+/**
+ * Address-bar with green Estimate CTA.
+ *
+ * Behavior:
+ *   • Signed-in users   → router-push to /estimate?address=...
+ *   • Anonymous users   → open the inline DemoFlow modal
+ *
+ * The parent (Hero) can optionally pass `onOpenDemo` to lift the modal
+ * state up — used so the hero's MiniDemo can open the same modal as
+ * this input. When `onOpenDemo` is omitted, AddressInput falls back to
+ * managing its own modal locally (so it still works in isolation).
+ */
+export function AddressInput({
+  size = "lg",
+  onOpenDemo,
+}: {
+  size?: "lg" | "md";
+  onOpenDemo?: (address: string) => void;
+}) {
   const router = useRouter();
   const { session } = useSession();
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const [pending, startTransition] = useTransition();
-  // When an anonymous visitor clicks Estimate, we play the demo reel
-  // inline instead of bouncing them to sign-in. Signed-in users
-  // continue straight to /estimate as before.
-  const [demoOpen, setDemoOpen] = useState(false);
-  const [demoAddress, setDemoAddress] = useState("");
+  // Local fallback when parent doesn't lift the modal state.
+  const [localOpen, setLocalOpen] = useState(false);
+  const [localAddress, setLocalAddress] = useState("");
+
+  function openDemo(addr: string) {
+    const target = addr.trim() || SAMPLE_ADDRESS;
+    if (onOpenDemo) {
+      onOpenDemo(target);
+    } else {
+      setLocalAddress(target);
+      setLocalOpen(true);
+    }
+  }
 
   function submit(addr: string) {
     const target = (addr || "").trim();
     if (!target) return;
     if (!session) {
-      // Anonymous → show the inline demo. Use the typed address as
-      // the demo header so it feels personal, even though the
-      // aerial/eaves are pre-built sample data.
-      setDemoAddress(target);
-      setDemoOpen(true);
+      openDemo(target);
       return;
     }
     const dest = `/estimate?address=${encodeURIComponent(target)}`;
     startTransition(() => router.push(dest));
-  }
-
-  function playDemo() {
-    setDemoAddress(value.trim() || SAMPLE_ADDRESS);
-    setDemoOpen(true);
   }
 
   return (
@@ -57,7 +74,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
           e.preventDefault();
           submit(value);
         }}
-        className="relative mx-auto w-full max-w-2xl"
+        className="relative w-full"
       >
         <div
           className={cn(
@@ -65,7 +82,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
             focused
               ? "border-accent-500 shadow-glow-lg"
               : "border-zinc-200 shadow-sm",
-            size === "lg" ? "h-16 pl-5 pr-2" : "h-14 pl-4 pr-2",
+            size === "lg" ? "h-14 pl-4 pr-2 sm:h-16 sm:pl-5" : "h-14 pl-4 pr-2",
           )}
         >
           <MapPin
@@ -83,7 +100,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
             placeholder="Enter a property address…"
             className={cn(
               "w-full bg-transparent text-zinc-900 placeholder:text-zinc-400 outline-none",
-              size === "lg" ? "text-lg" : "text-base",
+              size === "lg" ? "text-base sm:text-lg" : "text-base",
             )}
             autoComplete="off"
             spellCheck={false}
@@ -93,13 +110,15 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
             disabled={pending}
             className={cn(
               "group inline-flex shrink-0 items-center gap-2 rounded-xl bg-accent-600 font-semibold text-white transition-all hover:bg-accent-700 active:translate-y-px disabled:opacity-60",
-              size === "lg" ? "h-12 px-5 text-base" : "h-10 px-4 text-sm",
+              size === "lg"
+                ? "h-11 px-4 text-sm sm:h-12 sm:px-5 sm:text-base"
+                : "h-10 px-4 text-sm",
             )}
           >
             {pending ? (
               <>
                 <Sparkles className="h-4 w-4 animate-pulse" />
-                Analyzing
+                <span className="hidden sm:inline">Analyzing</span>
               </>
             ) : (
               <>
@@ -111,7 +130,7 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-zinc-500">
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs text-zinc-500 lg:justify-start">
           <span className="text-zinc-400">Try:</span>
           {SUGGESTIONS.map((s) => (
             <button
@@ -129,27 +148,29 @@ export function AddressInput({ size = "lg" }: { size?: "lg" | "md" }) {
         </div>
 
         {!session && (
-          <div className="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row">
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-zinc-500 lg:justify-start">
             <button
               type="button"
-              onClick={playDemo}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-accent-400 hover:text-accent-700"
+              onClick={() => openDemo(value)}
+              className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 font-medium text-zinc-700 shadow-sm transition hover:border-accent-400 hover:text-accent-700"
             >
               <Play className="h-3 w-3 fill-current" />
-              Watch a 12-second demo
+              Watch 12-sec demo
             </button>
-            <span className="text-xs text-zinc-500">
-              Free demo · no credit card required
-            </span>
+            <span>Free demo · no credit card required</span>
           </div>
         )}
       </motion.form>
 
-      <DemoFlow
-        open={demoOpen}
-        address={demoAddress}
-        onClose={() => setDemoOpen(false)}
-      />
+      {/* Local fallback modal — only used when the parent doesn't
+          lift the state via `onOpenDemo`. */}
+      {!onOpenDemo && (
+        <DemoFlow
+          open={localOpen}
+          address={localAddress}
+          onClose={() => setLocalOpen(false)}
+        />
+      )}
     </>
   );
 }
