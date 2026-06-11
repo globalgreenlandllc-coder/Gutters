@@ -37,12 +37,13 @@ export function LoadingState({
 }) {
   const steps = mode === "plan" ? PLAN_STEPS : AERIAL_STEPS;
   const [stepIndex, setStepIndex] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
 
-  // Plan-mode work takes 30-120s in practice (classifier + Sonnet
-  // geometry). Stretch the per-step dwell so the checkmark cascade
-  // doesn't finish in 2.5s and leave the contractor staring at a
-  // pulsing dot for the rest of the wait.
-  const dwellMs = mode === "plan" ? 8000 : 420;
+  // Plan-mode work takes 30-90s in practice. Pace the cascade so the
+  // first 5 steps finish in ~25s, then the final "Building takeoff"
+  // sits with the elapsed counter doing the talking until the
+  // Sonnet geometry call returns.
+  const dwellMs = mode === "plan" ? 5000 : 420;
 
   useEffect(() => {
     if (stepIndex >= steps.length - 1) return;
@@ -50,7 +51,15 @@ export function LoadingState({
     return () => clearTimeout(t);
   }, [stepIndex, steps.length, dwellMs]);
 
+  // Wall-clock counter — replaces the user's "is it stuck?" question
+  // with a concrete signal. Only ticks while we're loading.
+  useEffect(() => {
+    const t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const progress = Math.min((stepIndex + 1) / steps.length, 1);
+  const onLastStep = stepIndex >= steps.length - 1;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
@@ -158,6 +167,19 @@ export function LoadingState({
             ? "Two-stage AI: Haiku sheet inventory · Sonnet roof-plan geometry"
             : "Running in parallel: Solar API · Vision segmentation · Turf.js geometry"}
         </p>
+
+        {/* Wall-clock elapsed + reassurance copy on plan mode where
+            the final Sonnet call can sit for 30-60s after the cascade
+            finishes. Without this the contractor sees "Building
+            takeoff…" with no feedback and assumes the app is stuck. */}
+        <div className="mt-3 flex items-center justify-center gap-2 text-center text-[11px] text-zinc-400">
+          <span className="tabular-nums">{elapsedSec}s elapsed</span>
+          {mode === "plan" && onLastStep && (
+            <span className="text-zinc-500">
+              · Sonnet is tracing — typically 30-60s on the final step
+            </span>
+          )}
+        </div>
       </motion.div>
     </div>
   );

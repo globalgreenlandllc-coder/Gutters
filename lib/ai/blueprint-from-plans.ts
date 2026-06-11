@@ -591,13 +591,15 @@ export async function blueprintFromPlanSources(
   try {
     const response = await client.messages.create({
       model: MODEL,
-      // 4000 was too tight — the Woodinville plan set returned ~6400+
-      // chars (≈1700 tokens) before truncating mid-array on a JSON
-      // close. Blueprints with many edges + coordinates + excluded_
-      // edges entries can run much longer. 16000 buys headroom for
-      // 10-12 page plan sets without blowing past Sonnet 4.6's
-      // generous output cap.
-      max_tokens: 16000,
+      // Sonnet's per-token generation rate is the main wall-clock cost
+      // here. The typical takeoff (15-20 runs + 10 downspouts + 10
+      // excluded edges) finishes in ~3000-4000 output tokens. 16000
+      // was leaving 12k of headroom that generation latency had to
+      // walk through every time. 6000 covers the long tail (complex
+      // 30-segment trace with full excluded_edges) and trims ~15-25s
+      // off wall-clock for typical jobs. If output gets truncated the
+      // stop_reason check below catches it and surfaces a clear error.
+      max_tokens: 6000,
       temperature: 0,
       system: [
         {
