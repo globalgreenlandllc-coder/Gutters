@@ -216,8 +216,11 @@ export async function runEstimateFromPlan(
   }
   if (!me) return { ok: false, reason: "Not signed in", remaining: 0 };
 
+  const isAdmin = me.user.role === "SUPER_ADMIN";
   const totalCredits = me.credits.included + me.credits.bonus;
-  const remaining = Math.max(totalCredits - me.credits.used, 0);
+  const remaining = isAdmin
+    ? Number.POSITIVE_INFINITY
+    : Math.max(totalCredits - me.credits.used, 0);
 
   const row = await db.planAnalysis.findFirst({
     where: { id: planId, userId: me.user.id },

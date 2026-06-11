@@ -207,6 +207,131 @@ function buildFeetAwareProjection(
   };
 }
 
+/**
+ * Last-resort synthesis. When the AI's stored gutter_runs all have
+ * unusable coordinates (null/NaN/undefined points, or every run
+ * collapsed to the same single coordinate) — the resulting eaves
+ * array is empty and the canvas shows nothing.
+ *
+ * The data is still valuable: the AI knows the gutter LENGTHS and
+ * COUNTS even when it can't pin them to good pixel coordinates.
+ * Synthesize a plausible rectangular footprint and distribute the
+ * runs around its perimeter, sized proportionally to their
+ * length_ft. The contractor sees the layout they expected and can
+ * drag corners to match the real plan. Worst case: they redraw
+ * from scratch with the drawing tools — still better than a blank
+ * canvas.
+ *
+ * Returns synthesized EditableLines in canvas coordinates (already
+ * inside the viewBox with margin). Each line's points are scaled so
+ * lineLengthFt(line) gives back the AI's length_ft cleanly.
+ */
+function synthesizeRectangularLayout(
+  runs: readonly { length_ft: number | null }[],
+  downspoutCount: number,
+): { eaves: EditableLine[]; downspouts: Downspout[] } {
+  const validRuns = runs
+    .map((r, i) => ({ i, len: r.length_ft ?? 0 }))
+    .filter((r) => r.len > 0);
+  if (validRuns.length === 0) {
+    return { eaves: [], downspouts: [] };
+  }
+
+  const totalLF = validRuns.reduce((sum, r) => sum + r.len, 0);
+  // Aim for a 4:3 rectangle whose perimeter equals the total LF.
+  // perimeter = 2(W + D), W = 4k, D = 3k → 14k = totalLF → k = totalLF/14
+  const k = totalLF / 14;
+  const widthFt = 4 * k;
+  const depthFt = 3 * k;
+
+  // Fit the rectangle into the viewBox at canvas-PX_PER_FT scale so
+  // lineLengthFt round-trips correctly. If the rectangle doesn't fit,
+  // shrink uniformly — same trick as buildFeetAwareProjection's
+  // ftScale path.
+  const targetW = VIEWBOX_W * (1 - 2 * MARGIN_PCT);
+  const targetH = VIEWBOX_H * (1 - 2 * MARGIN_PCT);
+  const widthPx = widthFt * PX_PER_FT;
+  const depthPx = depthFt * PX_PER_FT;
+  const shrink =
+    widthPx > targetW || depthPx > targetH
+      ? Math.min(targetW / widthPx, targetH / depthPx)
+      : 1;
+  const wPx = widthPx * shrink;
+  const dPx = depthPx * shrink;
+  const left = (VIEWBOX_W - wPx) / 2;
+  const top = (VIEWBOX_H - dPx) / 2;
+
+  // Walk runs around the perimeter clockwise from top-left, allocating
+  // each run a span proportional to its length_ft. Sides break at
+  // corners.
+  const perimPx = 2 * (wPx + dPx);
+  const eaves: EditableLine[] = [];
+  let cursorPx = 0; // 0..perimPx
+  for (const { i, len } of validRuns) {
+    const spanPx = (len / totalLF) * perimPx * shrink;
+    const startCanvas = pointOnRect(cursorPx, left, top, wPx, dPx, perimPx);
+    const endCanvas = pointOnRect(
+      cursorPx + spanPx,
+      left,
+      top,
+      wPx,
+      dPx,
+      perimPx,
+    );
+    eaves.push({
+      id: `plan-eave-${i}-syn`,
+      kind: "eave",
+      points: [startCanvas, endCanvas],
+    });
+    cursorPx += spanPx;
+  }
+
+  // Drop downspouts at the start of each run, capped at the requested
+  // count. Real contractors will reposition; the goal is "they appear
+  // SOMEWHERE on the canvas," not pixel-perfect.
+  const downspouts: Downspout[] = [];
+  const dsCount = Math.min(downspoutCount, validRuns.length);
+  for (let n = 0; n < dsCount; n++) {
+    const at = pointOnRect(
+      (n / dsCount) * perimPx,
+      left,
+      top,
+      wPx,
+      dPx,
+      perimPx,
+    );
+    downspouts.push({
+      id: `plan-ds-${n}-syn`,
+      x: at.x,
+      y: at.y,
+      heightFt: 20,
+    });
+  }
+  return { eaves, downspouts };
+}
+
+function pointOnRect(
+  t: number,
+  left: number,
+  top: number,
+  w: number,
+  h: number,
+  perim: number,
+): BlueprintPoint {
+  // Walk a closed rectangular perimeter clockwise from top-left:
+  // 0..w → top edge, w..(w+h) → right edge, (w+h)..(2w+h) → bottom,
+  // (2w+h)..perim → left edge.
+  let s = t % perim;
+  if (s < 0) s += perim;
+  if (s <= w) return { x: left + s, y: top };
+  s -= w;
+  if (s <= h) return { x: left + w, y: top + s };
+  s -= h;
+  if (s <= w) return { x: left + w - s, y: top + h };
+  s -= w;
+  return { x: left, y: top + h - s };
+}
+
 export interface BlueprintToEstimateMeta {
   /** Original uploaded filename — used as the "address" label in the
    *  results view header since there's no real geocoded address. */
@@ -252,7 +377,7 @@ export function blueprintToEstimateResult(
   const droppedRakes: number[] = [];
   const droppedDownspouts: number[] = [];
 
-  const eaves: EditableLine[] = analysis.gutter_runs
+  let eaves: EditableLine[] = analysis.gutter_runs
     .map((r, i): EditableLine | null => {
       if (!isGoodPoint(r.start) || !isGoodPoint(r.end)) {
         droppedEaves.push(i);
@@ -265,6 +390,21 @@ export function blueprintToEstimateResult(
       };
     })
     .filter((l): l is EditableLine => l !== null);
+
+  // Also detect "all eaves got projected to the same point" — the
+  // bbox was so small the load-bearing geometry collapsed. In that
+  // case the eaves array is non-empty but every line has zero canvas
+  // length. Treat as a project-failure and synthesize the same way.
+  const allDegenerate =
+    eaves.length > 0 &&
+    eaves.every((l) => {
+      const a = l.points[0];
+      const b = l.points[1];
+      if (!a || !b) return true;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      return dx * dx + dy * dy < 1; // < 1 canvas px²
+    });
 
   // Hips + rakes + dormer_rakes ARE perimeter edges the contractor needs
   // to see so they can verify what the AI excluded. Ridges and valleys are
@@ -289,7 +429,7 @@ export function blueprintToEstimateResult(
   // AI was able to derive tiers from the elevations (e.g. porch
   // downspouts at 10 ft, 2-story body downspouts at 20-26 ft).
   // Fallback to 20 ft (2-story default) when tier info is missing.
-  const downspouts: Downspout[] = analysis.downspouts
+  let downspouts: Downspout[] = analysis.downspouts
     .map((d, i): Downspout | null => {
       if (!isGoodPoint(d.at)) {
         droppedDownspouts.push(i);
@@ -303,6 +443,39 @@ export function blueprintToEstimateResult(
       return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
     })
     .filter((d): d is Downspout => d !== null);
+
+  // Synthesis fallback. Triggers in two cases:
+  //   1. ALL eaves were dropped because every gutter_run had bad
+  //      coords (eaves array empty but analysis.gutter_runs has data).
+  //   2. The projection collapsed everything to ~0 canvas length
+  //      (allDegenerate) — happens when the AI emitted the same
+  //      coordinate for every run, or coordinates with no useful
+  //      bbox.
+  // In either case the run COUNTS and LENGTHS the AI gave us are
+  // still valid — just the (x, y) pixels aren't. Lay them out around
+  // a rectangle whose perimeter equals the total LF so the contractor
+  // sees a meaningful starting trace instead of nothing.
+  let synthesized = false;
+  if (
+    (eaves.length === 0 && analysis.gutter_runs.length > 0) ||
+    allDegenerate
+  ) {
+    const syn = synthesizeRectangularLayout(
+      analysis.gutter_runs,
+      downspouts.length > 0
+        ? downspouts.length
+        : analysis.downspouts.length,
+    );
+    if (syn.eaves.length > 0) {
+      eaves = syn.eaves;
+      // Replace downspouts only when we also had none rendered — if
+      // the AI gave good downspout coordinates, keep them.
+      if (downspouts.length === 0) {
+        downspouts = syn.downspouts;
+      }
+      synthesized = true;
+    }
+  }
 
   // LF totals come from Claude's length_ft values, scaled by ftScale
   // when the polygon had to be shrunk to fit the viewBox (rare —
@@ -367,6 +540,14 @@ export function blueprintToEstimateResult(
         `${droppedRakes.length} rake(s), ${droppedDownspouts.length} downspout(s) ` +
         "with missing/invalid coordinates — dropped to keep canvas usable. " +
         "Re-analyze for a complete trace.",
+    );
+  }
+  if (synthesized) {
+    notes.push(
+      "⚠ AI returned valid run counts and lengths but unusable pixel " +
+        "coordinates — canvas shows a synthesized rectangular layout " +
+        "with each run sized to its real LF. Drag corners to match the " +
+        "actual house shape, or redraw from the plan.",
     );
   }
 
