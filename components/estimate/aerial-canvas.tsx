@@ -82,12 +82,14 @@ export function AerialCanvas({
   // recognition, distracting once the contractor is editing the
   // gutter trace. Toolbar still has the eye toggle to bring it back.
   const [showRoofStructure, setShowRoofStructure] = useState(false);
-  // Rakes ship hidden by default. They're informational (the gray-
-  // dashed 'AI says no gutter here' lines), but they painted across
-  // the satellite image and made the trace look noisy after the
-  // takeoff finalized. Contractor can re-enable via the toolbar
-  // toggle if they want to verify what the AI excluded.
-  const [showRakes, setShowRakes] = useState(false);
+  // Rakes (the gray-dashed 'no gutter here' gable/hip edges) ship ON for
+  // PLAN takeoffs and OFF for satellite ones. On a plan, showing the
+  // gables next to the gutter eaves is the whole point — together they
+  // trace the roof outline so the contractor can read eave (gutter) vs
+  // gable (no gutter) vs a gap (a missing run) at a glance. On a satellite
+  // image the same dashes painted over the roof and just looked noisy, so
+  // they stay hidden there. Toolbar toggle flips either default.
+  const [showRakes, setShowRakes] = useState(() => !!planSource);
   // Fullscreen lifts the canvas to the viewport so you can see the
   // full roof while nudging eaves/downspouts. Independent of theme.
   const [fullscreen, setFullscreen] = useState(false);
@@ -867,19 +869,58 @@ export function AerialCanvas({
             possible). Non-interactive — the contractor doesn't edit
             rakes; they confirm visually or ignore. */}
         {showRakes &&
-          rakes.map((line) => (
-            <path
-              key={line.id}
-              d={pathFor(line)}
-              stroke={theme === "tactical" ? "#94a3b8" : "#64748b"}
-              strokeWidth={2 * renderScale}
-              strokeDasharray={`${6 * renderScale} ${5 * renderScale}`}
-              strokeLinecap="round"
-              fill="none"
-              opacity={0.7}
-              pointerEvents="none"
-            />
-          ))}
+          rakes.map((line) => {
+            const a = line.points[0];
+            const b = line.points[line.points.length - 1];
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
+            const tac = theme === "tactical";
+            return (
+              <g key={line.id} pointerEvents="none">
+                <path
+                  d={pathFor(line)}
+                  stroke={tac ? "#94a3b8" : "#64748b"}
+                  strokeWidth={2 * renderScale}
+                  strokeDasharray={`${6 * renderScale} ${5 * renderScale}`}
+                  strokeLinecap="round"
+                  fill="none"
+                  opacity={0.75}
+                />
+                {/* GABLE tag — marks a sloped no-gutter edge so the
+                    contractor reads eave (gutter) vs gable (none) vs a
+                    gap (missing run). Skip tiny rakes to avoid clutter. */}
+                {lenPx > 16 && (
+                  <g>
+                    <rect
+                      x={mx - 20 * renderScale}
+                      y={my - 7 * renderScale}
+                      width={40 * renderScale}
+                      height={14 * renderScale}
+                      rx={3 * renderScale}
+                      fill={tac ? "rgba(2,6,23,0.82)" : "rgba(255,255,255,0.92)"}
+                      stroke={
+                        tac ? "rgba(148,163,184,0.55)" : "rgba(100,116,139,0.5)"
+                      }
+                      strokeWidth={renderScale}
+                    />
+                    <text
+                      x={mx}
+                      y={my + 3 * renderScale}
+                      textAnchor="middle"
+                      fill={tac ? "#cbd5e1" : "#475569"}
+                      fontSize={8 * renderScale}
+                      fontWeight={700}
+                      fontFamily="ui-sans-serif, system-ui"
+                      letterSpacing={0.8 * renderScale}
+                    >
+                      GABLE
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
 
         {eaves.map((line, i) => {
           const isSelected = selectedId === line.id;
@@ -1746,7 +1787,7 @@ function Legend({
           />
           <div
             className="flex items-center gap-1.5"
-            title="Rakes — sloped roof edges with no gutter, dashed gray on the canvas"
+            title="Gables / hips — sloped no-gutter edges (dashed). Together with the solid eaves they trace the full roof outline; a gap between them is a missing gutter run."
           >
             <span
               className={cn(
@@ -1759,7 +1800,7 @@ function Legend({
               }}
             />
             <span className={tactical ? "text-slate-300" : "text-slate-600"}>
-              Rakes
+              Gables
             </span>
             <span
               className={cn(

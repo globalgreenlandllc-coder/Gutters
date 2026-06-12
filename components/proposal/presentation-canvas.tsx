@@ -285,10 +285,10 @@ export function PresentationCanvas({
             strokeDasharray={`${5 * vs} ${4 * vs}`}
             strokeLinecap="round"
             fill="none"
-            opacity={planMode ? 0.45 : 0.55}
+            opacity={planMode ? 0.6 : 0.55}
             pointerEvents="none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: planMode ? 0.45 : 0.55 }}
+            animate={{ opacity: planMode ? 0.6 : 0.55 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           />
         ))}
