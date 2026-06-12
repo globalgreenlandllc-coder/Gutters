@@ -1,8 +1,14 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { COLOR_OPTIONS } from "@/lib/pricing";
 import type { EstimateConfig } from "@/lib/types";
+
+const ROTATE_STEP = 22; // degrees per arrow click
+const SPIN_DPS = 36; // degrees per second when auto-spinning
 
 const MATERIAL_BADGE: Record<
   EstimateConfig["material"],
@@ -58,6 +64,48 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
   const mat = MATERIAL_BADGE[config.material];
   const acc = config.accessories;
   const halfRound = config.style === "half-round";
+
+  // ─── ROTATION (Y-axis "turn around") ──────────────────────────
+  // Wraps the SVG in a CSS perspective container and applies
+  // rotateY. The geometry itself doesn't recompute — instead the
+  // entire isometric scene tilts in 3D so the contractor can see the
+  // front, cross-section side, and back faces by spinning. Arrow
+  // buttons step ±ROTATE_STEP°; the spin button auto-rotates.
+  const [angle, setAngle] = useState(0);
+  const [spinning, setSpinning] = useState(false);
+  const angleRef = useRef(angle);
+  useEffect(() => {
+    angleRef.current = angle;
+  }, [angle]);
+  useEffect(() => {
+    if (!spinning) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      const next = (angleRef.current + dt * SPIN_DPS) % 360;
+      angleRef.current = next;
+      setAngle(next);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [spinning]);
+
+  const turnLeft = () => {
+    setSpinning(false);
+    setAngle((a) => a - ROTATE_STEP);
+  };
+  const turnRight = () => {
+    setSpinning(false);
+    setAngle((a) => a + ROTATE_STEP);
+  };
+  const resetAngle = () => {
+    setSpinning(false);
+    setAngle(0);
+  };
+  const toggleSpin = () => setSpinning((s) => !s);
 
   // ─── GUTTER (3D run + cut end) ────────────────────────────────
   // The gutter sits horizontally across most of the preview. The
@@ -146,29 +194,82 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
 
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-white/70 px-3 py-2 backdrop-blur">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-100 bg-white/70 px-3 py-2 backdrop-blur">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
           Live preview
         </div>
-        <div
-          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${mat.bg} ${mat.text} ${mat.ring}`}
-        >
-          <span
-            className="h-2 w-2 rounded-full ring-1 ring-inset ring-white/40"
-            style={{ background: hex }}
-          />
-          {config.size}″ {halfRound ? "Half-Round" : "K-Style"} · {mat.label}
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 bg-white p-0.5 shadow-sm">
+            <button
+              type="button"
+              onClick={turnLeft}
+              title="Turn left"
+              aria-label="Turn left"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleSpin}
+              onDoubleClick={resetAngle}
+              title={spinning ? "Stop spin (dbl-click to reset)" : "Auto-spin (dbl-click to reset)"}
+              aria-label={spinning ? "Stop spin" : "Auto-spin"}
+              aria-pressed={spinning}
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded-full transition",
+                spinning
+                  ? "bg-accent-600 text-white shadow-sm"
+                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+              )}
+            >
+              <RotateCw
+                className={cn("h-3.5 w-3.5", spinning && "animate-spin")}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={turnRight}
+              title="Turn right"
+              aria-label="Turn right"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-full text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div
+            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${mat.bg} ${mat.text} ${mat.ring}`}
+          >
+            <span
+              className="h-2 w-2 rounded-full ring-1 ring-inset ring-white/40"
+              style={{ background: hex }}
+            />
+            {config.size}″ {halfRound ? "Half-Round" : "K-Style"} · {mat.label}
+          </div>
         </div>
       </div>
 
-      <div className="relative w-full">
+      <div
+        className="relative w-full"
+        style={{ perspective: "1400px" }}
+      >
         <motion.svg
           key={`${config.size}-${config.style}-${config.color}-${config.material}-${ds}-${guardTier}-${acc?.dripEdge}-${acc?.heatTape}-${acc?.iceGuard}-${useRainChain}`}
           viewBox="0 0 500 360"
-          className="block h-64 w-full"
+          className="block h-72 w-full"
           initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.25 }}
+          animate={{ opacity: 1, rotateY: angle }}
+          transition={{
+            opacity: { duration: 0.25 },
+            rotateY: spinning
+              ? { duration: 0 }
+              : { type: "spring", damping: 22, stiffness: 160 },
+          }}
+          style={{
+            transformStyle: "preserve-3d",
+            transformOrigin: "50% 60%",
+            willChange: "transform",
+          }}
           aria-hidden
         >
           <defs>
@@ -942,6 +1043,11 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
         </div>
         <div className="absolute bottom-2 left-3 inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2 py-0.5 text-[10px] font-medium text-zinc-700 shadow-sm ring-1 ring-inset ring-zinc-200">
           3/4 perspective · approx scale
+          {angle !== 0 && (
+            <span className="text-zinc-500">
+              · {Math.round(((angle % 360) + 540) % 360 - 180)}°
+            </span>
+          )}
         </div>
       </div>
     </div>
