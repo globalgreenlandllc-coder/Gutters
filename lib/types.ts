@@ -6,10 +6,24 @@ export type DownspoutSize = "2x3" | "3x4" | "round-3" | "round-4";
 
 export type LineEdgeKind = "eave" | "rake";
 
+/** Which roof the eave sits on. "upper" = the main 2-story body roof
+ *  (~20 ft drop); "lower" = a single-story projection — front porch,
+ *  rear covered patio, or a 1-story garage (~10 ft drop). Drives the
+ *  canvas tier color + label so the contractor can see at a glance which
+ *  gutter is up high vs. down low. */
+export type EaveTier = "lower" | "upper" | "unknown";
+export type EaveSide = "front" | "back" | "left" | "right" | "interior";
+
 export type EditableLine = {
   id: string;
   kind: LineEdgeKind;
   points: { x: number; y: number }[];
+  /** Roof tier this run sits on (from the plan analysis). Optional —
+   *  manually drawn lines and satellite-derived eaves don't carry it. */
+  tier?: EaveTier;
+  /** Building side this run faces (front/back/left/right). Used to mark
+   *  the front of the house on the canvas. */
+  side?: EaveSide;
 };
 
 export type RoofStructureLineKind = "ridge" | "valley";

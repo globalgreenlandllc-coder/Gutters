@@ -4,7 +4,13 @@ import type {
   BlueprintPoint,
 } from "./blueprint-from-plans";
 import type { EstimateResult } from "./index";
-import type { Downspout, EditableLine, Stories } from "@/lib/types";
+import type {
+  Downspout,
+  EaveSide,
+  EaveTier,
+  EditableLine,
+  Stories,
+} from "@/lib/types";
 // Import from the directive-free constants module, NOT from aerial-shared
 // ("use client"). A server module that pulls a value export through a
 // "use client" boundary receives an RSC client reference instead of the
@@ -240,13 +246,17 @@ function buildFeetAwareProjection(
  * lineLengthFt(line) gives back the AI's length_ft cleanly.
  */
 function synthesizeRectangularLayout(
-  runs: readonly { length_ft: number | null }[],
+  runs: readonly {
+    length_ft: number | null;
+    side?: EaveSide;
+    tier?: EaveTier;
+  }[],
   downspoutCount: number,
 ): { eaves: EditableLine[]; downspouts: Downspout[] } {
   const validRuns = runs
     // Number() coercion so a stray string length_ft can't turn the
     // `sum + len` reduce below into string concatenation.
-    .map((r, i) => ({ i, len: Number(r.length_ft) || 0 }))
+    .map((r, i) => ({ i, len: Number(r.length_ft) || 0, side: r.side, tier: r.tier }))
     .filter((r) => r.len > 0);
   if (validRuns.length === 0) {
     return { eaves: [], downspouts: [] };
@@ -282,7 +292,7 @@ function synthesizeRectangularLayout(
   const perimPx = 2 * (wPx + dPx); // already reflects `shrink` via wPx/dPx
   const eaves: EditableLine[] = [];
   let cursorPx = 0; // 0..perimPx
-  for (const { i, len } of validRuns) {
+  for (const { i, len, side, tier } of validRuns) {
     // perimPx already includes the shrink factor — don't apply it again
     // or the runs under-fill the rectangle (and pile up at one corner).
     const spanPx = (len / totalLF) * perimPx;
@@ -299,6 +309,8 @@ function synthesizeRectangularLayout(
       id: `plan-eave-${i}-syn`,
       kind: "eave",
       points: [startCanvas, endCanvas],
+      tier: (tier ?? "unknown") as EaveTier,
+      side,
     });
     cursorPx += spanPx;
   }
@@ -404,6 +416,11 @@ export function blueprintToEstimateResult(
         id: `plan-eave-${i}`,
         kind: "eave",
         points: [project(r.start), project(r.end)],
+        // Carry the plan's roof tier + side so the canvas can color the
+        // run and show whether it's an upper (2-story) or lower
+        // (porch/patio/1-story) eave.
+        tier: (r.tier ?? "unknown") as EaveTier,
+        side: r.side as EaveSide,
       };
     })
     .filter((l): l is EditableLine => l !== null);

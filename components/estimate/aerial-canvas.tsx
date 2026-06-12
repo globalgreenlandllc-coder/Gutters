@@ -193,6 +193,37 @@ export function AerialCanvas({
     return { x: sx / n, y: sy / n };
   }, [eaves]);
 
+  // Where to drop the "FRONT" marker — average midpoint of the eaves the
+  // plan tagged side:"front", pushed outward from the roof centroid so it
+  // sits just off the front edge. Null when no eave is tagged front.
+  const frontAnchor = useMemo(() => {
+    const fronts = eaves.filter(
+      (l) => l.side === "front" && l.points.length >= 2,
+    );
+    if (fronts.length === 0) return null;
+    let sx = 0;
+    let sy = 0;
+    for (const l of fronts) {
+      const a = l.points[0];
+      const b = l.points[l.points.length - 1];
+      sx += (a.x + b.x) / 2;
+      sy += (a.y + b.y) / 2;
+    }
+    const mx = sx / fronts.length;
+    const my = sy / fronts.length;
+    const dx = mx - eavesCentroid.x;
+    const dy = my - eavesCentroid.y;
+    const d = Math.hypot(dx, dy) || 1;
+    return { x: mx + (dx / d) * 30, y: my + (dy / d) * 30 };
+  }, [eaves, eavesCentroid]);
+
+  // Does the plan distinguish roof tiers? Drives the on-canvas tier
+  // legend so the amber color reads as "lower roof" rather than "error".
+  const hasLowerTier = useMemo(
+    () => eaves.some((l) => l.tier === "lower"),
+    [eaves],
+  );
+
   // Decide which eaves get an always-visible LF label. In "off" mode none
   // do (selected still renders its own larger label). In "on" mode all do.
   // "auto" hides labels under a length threshold that climbs as the
@@ -531,6 +562,7 @@ export function AerialCanvas({
         rakeCount={rakes.length}
         totalEaveLF={totalEaveLF}
         downspoutCount={downspouts.length}
+        hasLowerTier={hasLowerTier}
         theme={theme}
       />
       {/* Roof-structure banner only shows when no downspout is
@@ -820,7 +852,17 @@ export function AerialCanvas({
         {eaves.map((line, i) => {
           const isSelected = selectedId === line.id;
           const isHover = hoverId === line.id;
-          const stroke = isSelected ? t.eaveSelected : t.eave;
+          // Lower-tier eaves (front porch / rear patio / 1-story garage,
+          // ~10 ft drop) render amber; upper-tier main-roof eaves keep
+          // the theme cyan/green. Lets the contractor see tier at a glance.
+          const isLower = line.tier === "lower";
+          const stroke = isLower
+            ? isSelected
+              ? "#fde68a"
+              : "#fbbf24"
+            : isSelected
+              ? t.eaveSelected
+              : t.eave;
           // Low-glow mode keeps only the selected eave's glow so you
           // can still tell which one you're editing, while the other
           // eaves render as clean strokes that don't bleed across
@@ -828,13 +870,17 @@ export function AerialCanvas({
           const filter =
             lowGlow && !isSelected
               ? "none"
-              : theme === "tactical"
+              : isLower
                 ? isSelected
-                  ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
-                  : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                : isSelected
-                  ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
-                  : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
+                  ? "drop-shadow(0 0 10px rgba(251,191,36,1))"
+                  : "drop-shadow(0 0 6px rgba(251,191,36,0.95))"
+                : theme === "tactical"
+                  ? isSelected
+                    ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
+                    : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
+                  : isSelected
+                    ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
+                    : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
           return (
             <g key={line.id}>
               {/* Plain <path> (not motion.path) — framer-motion's path
@@ -1002,6 +1048,36 @@ export function AerialCanvas({
             </g>
           );
         })}
+
+        {/* FRONT-of-house marker — anchored off the plan's front eaves so
+            the contractor can orient the trace against the elevations. */}
+        {frontAnchor && (
+          <g pointerEvents="none">
+            <rect
+              x={frontAnchor.x - 27 * renderScale}
+              y={frontAnchor.y - 9 * renderScale}
+              width={54 * renderScale}
+              height={18 * renderScale}
+              rx={4 * renderScale}
+              fill="rgba(2,6,23,0.9)"
+              stroke="#67e8f9"
+              strokeWidth={1}
+              style={{ filter: "drop-shadow(0 0 4px rgba(0,229,255,0.4))" }}
+            />
+            <text
+              x={frontAnchor.x}
+              y={frontAnchor.y + 3.5 * renderScale}
+              textAnchor="middle"
+              fill="#a5f3fc"
+              fontSize={10 * renderScale}
+              fontWeight={700}
+              fontFamily="ui-sans-serif, system-ui"
+              letterSpacing={1.2 * renderScale}
+            >
+              FRONT
+            </text>
+          </g>
+        )}
 
         {downspouts.map((d) => {
           const isSelected = selectedId === d.id;
@@ -1568,11 +1644,13 @@ function Legend({
   totalEaveLF,
   rakeCount,
   downspoutCount,
+  hasLowerTier,
   theme,
 }: {
   totalEaveLF: number;
   rakeCount: number;
   downspoutCount: number;
+  hasLowerTier: boolean;
   theme: CanvasTheme;
 }) {
   const tactical = theme === "tactical";
@@ -1604,6 +1682,28 @@ function Legend({
           {totalEaveLF} LF
         </span>
       </div>
+      {hasLowerTier && (
+        <div
+          className="flex items-center gap-1.5"
+          title="Upper = main 2-story roof eave (~20 ft). Lower = front porch / rear patio / 1-story roof eave (~10 ft)."
+        >
+          <span
+            className={cn(
+              "h-2 w-3 rounded-full",
+              tactical
+                ? "bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.9)]"
+                : "bg-accent-500",
+            )}
+          />
+          <span className={tactical ? "text-cyan-100/80" : "text-zinc-600"}>
+            Upper
+          </span>
+          <span className="h-2 w-3 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.85)]" />
+          <span className={tactical ? "text-amber-200/90" : "text-amber-700"}>
+            Lower
+          </span>
+        </div>
+      )}
       {rakeCount > 0 && (
         <>
           <div
@@ -1720,11 +1820,23 @@ function LineLabel({
   const len = Math.round(lineLengthFt(line));
 
   const tactical = theme === "tactical";
+  // Roof-tier tag shown under the footage so the contractor reads which
+  // gutter is the upper (2-story) vs lower (porch/patio/1-story) eave.
+  const tierLabel =
+    line.tier === "lower"
+      ? "LOWER ROOF"
+      : line.tier === "upper"
+        ? "UPPER ROOF"
+        : null;
+  const isLower = line.tier === "lower";
   // All viewBox sizes scale with the current zoom so the label looks
   // the same on screen at any zoom. Floors keep the label readable at
-  // extreme zoom-out without going invisible.
-  const w = (emphasized ? 60 : 44) * renderScale;
-  const h = (emphasized ? 20 : 16) * renderScale;
+  // extreme zoom-out without going invisible. Tier tag widens/heightens
+  // the pill to fit the second line.
+  const w =
+    (tierLabel ? (emphasized ? 70 : 60) : emphasized ? 60 : 44) * renderScale;
+  const h =
+    (tierLabel ? (emphasized ? 30 : 26) : emphasized ? 20 : 16) * renderScale;
   const fontSize = (emphasized ? 11 : 10) * renderScale;
 
   // Offset perpendicular to the line so the pill sits OFF the eave.
@@ -1770,22 +1882,24 @@ function LineLabel({
         rx={emphasized ? 6 : 4}
         fill={tactical ? "rgba(2,6,23,0.88)" : "rgba(255,255,255,0.96)"}
         stroke={
-          tactical
-            ? emphasized
-              ? "#67e8f9"
-              : "rgba(103,232,249,0.6)"
-            : "#0e7490"
+          isLower
+            ? "#fbbf24"
+            : tactical
+              ? emphasized
+                ? "#67e8f9"
+                : "rgba(103,232,249,0.6)"
+              : "#0e7490"
         }
         strokeWidth={1}
         style={{
           filter: tactical
-            ? "drop-shadow(0 0 4px rgba(0,229,255,0.4))"
+            ? `drop-shadow(0 0 4px ${isLower ? "rgba(251,191,36,0.45)" : "rgba(0,229,255,0.4)"})`
             : undefined,
         }}
       />
       <text
         x={labelCx}
-        y={labelCy + (emphasized ? 4 : 3.5)}
+        y={labelCy + (tierLabel ? -2 : emphasized ? 4 : 3.5) * renderScale}
         textAnchor="middle"
         fill={tactical ? "#a5f3fc" : "#0e7490"}
         fontSize={fontSize}
@@ -1794,6 +1908,20 @@ function LineLabel({
       >
         {len} LF
       </text>
+      {tierLabel && (
+        <text
+          x={labelCx}
+          y={labelCy + 8 * renderScale}
+          textAnchor="middle"
+          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#0e7490"}
+          fontSize={fontSize * 0.72}
+          fontWeight={700}
+          letterSpacing={0.5 * renderScale}
+          fontFamily="ui-sans-serif, system-ui"
+        >
+          {tierLabel}
+        </text>
+      )}
     </motion.g>
   );
 }
