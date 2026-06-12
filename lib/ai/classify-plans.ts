@@ -132,6 +132,112 @@ export type ClassificationResult =
 // blueprint-from-plans.ts where vision precision matters.
 const MODEL = "claude-haiku-4-5-20251001";
 
+// Forced structured output — the classifier answers through a tool call
+// so the response is guaranteed-structured JSON in `input`, never a prose
+// preamble that overruns the token budget before any `{` ("Classifier
+// response had no JSON object"). See the same pattern in
+// blueprint-from-plans.ts.
+const NULLABLE_NUMBER = { type: ["number", "null"] };
+
+const CLASSIFY_TOOL: Anthropic.Tool = {
+  name: "record_plan_classification",
+  description:
+    "Record the classification of every page in the construction plan set " +
+    "and the consolidated building/roof constraints derived from them.",
+  input_schema: {
+    type: "object",
+    properties: {
+      sheets: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            page_index: { type: "number" },
+            sheet_type: {
+              type: "string",
+              enum: [
+                "elevation",
+                "roof_plan",
+                "floor_plan",
+                "section",
+                "site_plan",
+                "detail",
+                "cover",
+                "unknown",
+              ],
+            },
+            sheet_label: { type: ["string", "null"] },
+            elevation_side: {
+              type: "string",
+              enum: ["north", "south", "east", "west", "unknown"],
+            },
+            visible_eave_count: NULLABLE_NUMBER,
+            visible_downspout_count: NULLABLE_NUMBER,
+            tier_heights_ft: {
+              type: ["object", "null"],
+              properties: {
+                tier_1_ft: NULLABLE_NUMBER,
+                tier_2_ft: NULLABLE_NUMBER,
+              },
+            },
+            takeoff_notes: { type: "array", items: { type: "string" } },
+            summary: { type: "string" },
+          },
+          required: [
+            "page_index",
+            "sheet_type",
+            "elevation_side",
+            "visible_eave_count",
+            "visible_downspout_count",
+            "takeoff_notes",
+            "summary",
+          ],
+        },
+      },
+      roof_plan_page: NULLABLE_NUMBER,
+      elevation_coverage: {
+        type: "object",
+        properties: {
+          north: { type: "boolean" },
+          south: { type: "boolean" },
+          east: { type: "boolean" },
+          west: { type: "boolean" },
+        },
+        required: ["north", "south", "east", "west"],
+      },
+      building_dimensions: {
+        type: "object",
+        properties: {
+          width_ft: NULLABLE_NUMBER,
+          depth_ft: NULLABLE_NUMBER,
+          footprint_perimeter_ft: NULLABLE_NUMBER,
+        },
+        required: ["width_ft", "depth_ft", "footprint_perimeter_ft"],
+      },
+      roof_scale: { type: ["string", "null"] },
+      gutter_tiers: {
+        type: "object",
+        properties: {
+          lower_tier_ft: NULLABLE_NUMBER,
+          upper_tier_ft: NULLABLE_NUMBER,
+        },
+        required: ["lower_tier_ft", "upper_tier_ft"],
+      },
+      min_expected_gutter_runs: NULLABLE_NUMBER,
+      min_expected_downspouts: NULLABLE_NUMBER,
+      global_rules: { type: "array", items: { type: "string" } },
+    },
+    required: [
+      "sheets",
+      "roof_plan_page",
+      "elevation_coverage",
+      "building_dimensions",
+      "gutter_tiers",
+      "global_rules",
+    ],
+  },
+};
+
 const CLASSIFIER_SYSTEM = `
 You are a senior rain-gutter estimator triaging a multi-page residential
 construction plan set. You will NOT produce a takeoff in this call — only
@@ -417,47 +523,46 @@ export async function classifyPlanSheets(
               type: "text",
               text:
                 "Construction plan set attached. Classify every page per " +
-                "the schema. Respond with a single JSON object only — no " +
-                "preamble, no markdown fence. The response must start with " +
-                "`{` and end with `}`.",
+                "the schema by calling record_plan_classification.",
             },
             sourceBlock,
           ],
         },
       ],
+      // Force the tool call so the result is structured JSON, never a
+      // prose-only reply that has no JSON object to scrape.
+      tools: [CLASSIFY_TOOL],
+      tool_choice: { type: "tool", name: CLASSIFY_TOOL.name },
     });
 
-    const body = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-
-    const firstBrace = body.indexOf("{");
-    const lastBrace = body.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-      return {
-        ok: false,
-        reason: `Classifier response had no JSON object. First 200 chars: ${body.slice(0, 200)}`,
-      };
-    }
-    const raw = body.slice(firstBrace, lastBrace + 1);
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
+    // Forced tool call → the classification is a tool_use block whose
+    // `input` is already-parsed JSON.
+    const toolUse = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+    );
+    if (!toolUse) {
       const truncated = response.stop_reason === "max_tokens";
-      const baseMsg = (e as Error).message;
-      const hint = truncated
-        ? " (output was truncated at max_tokens — bump max_tokens in classify-plans.ts)"
-        : "";
+      const textPreview = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("")
+        .slice(0, 200);
       return {
         ok: false,
-        reason: `Classifier returned unparseable JSON: ${baseMsg}${hint}. First 200 chars: ${raw.slice(0, 200)}`,
+        reason: truncated
+          ? "Classifier was truncated before returning a result (hit max_tokens — bump max_tokens in classify-plans.ts)."
+          : `Classifier did not return a result (stop_reason=${response.stop_reason}). First 200 chars: ${textPreview}`,
+      };
+    }
+    if (response.stop_reason === "max_tokens") {
+      return {
+        ok: false,
+        reason:
+          "Classifier output was truncated at max_tokens — incomplete. Bump max_tokens in classify-plans.ts and retry.",
       };
     }
 
-    const classification = parsed as PlanClassification;
+    const classification = toolUse.input as PlanClassification;
     return {
       ok: true,
       classification,

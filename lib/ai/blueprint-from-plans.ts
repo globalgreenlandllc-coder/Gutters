@@ -426,6 +426,170 @@ export type PlanSource =
 
 const MODEL = "claude-sonnet-4-6";
 
+// ── Forced structured output ──────────────────────────────────────
+// Sonnet 4.6 does not support assistant prefill, so we can't force the
+// reply to start with `{`. Instead the model answers through a forced
+// tool call (tool_choice "any"): the response is guaranteed to be a
+// tool_use block whose `input` is already-parsed JSON, with no free-text
+// preamble. This kills the "Claude response had no JSON object" failure,
+// where the model spent its whole token budget narrating "Step 1: …" and
+// never emitted the JSON object.
+const POINT_SCHEMA = {
+  type: "object",
+  properties: { x: { type: "number" }, y: { type: "number" } },
+  required: ["x", "y"],
+};
+
+const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
+  name: "record_gutter_takeoff",
+  description:
+    "Record the complete gutter takeoff extracted from the roof plan. " +
+    "Call this once you have traced the eave runs, downspouts, and " +
+    "excluded edges. All coordinates are source-image pixels.",
+  input_schema: {
+    type: "object",
+    properties: {
+      scale: {
+        type: "object",
+        properties: {
+          feet_per_unit: { type: ["number", "null"] },
+          unit: {
+            type: "string",
+            enum: ["inches_on_paper", "pixels", "unknown"],
+          },
+          source: { type: "string" },
+        },
+        required: ["feet_per_unit", "unit", "source"],
+      },
+      building_footprint: { type: "array", items: POINT_SCHEMA },
+      gutter_runs: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            side: {
+              type: "string",
+              enum: ["front", "back", "left", "right", "interior"],
+            },
+            start: POINT_SCHEMA,
+            end: POINT_SCHEMA,
+            length_ft: { type: ["number", "null"] },
+            length_px: { type: "number" },
+            drains_to: { type: "array", items: { type: "string" } },
+            tier: { type: "string", enum: ["lower", "upper", "unknown"] },
+          },
+          required: [
+            "id",
+            "side",
+            "start",
+            "end",
+            "length_ft",
+            "length_px",
+            "drains_to",
+          ],
+        },
+      },
+      downspouts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            at: POINT_SCHEMA,
+            from_gutter: { type: "string" },
+            drop_direction: {
+              type: "string",
+              enum: ["front", "back", "left", "right"],
+            },
+            reason: {
+              type: "string",
+              enum: ["outside_corner", "long_run_relief", "valley_terminus"],
+            },
+            drop_height_ft: { type: ["number", "null"] },
+          },
+          required: ["id", "at", "from_gutter", "drop_direction", "reason"],
+        },
+      },
+      excluded_edges: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            kind: {
+              type: "string",
+              enum: [
+                "rake",
+                "ridge",
+                "hip",
+                "valley",
+                "dormer_rake",
+                "eave_no_gutter",
+              ],
+            },
+            start: POINT_SCHEMA,
+            end: POINT_SCHEMA,
+            reason: { type: "string" },
+          },
+          required: ["kind", "start", "end", "reason"],
+        },
+      },
+      totals: {
+        type: "object",
+        properties: {
+          linear_feet_gutter: { type: ["number", "null"] },
+          downspout_count: { type: "number" },
+          outside_corner_miters: { type: "number" },
+          inside_corner_miters: { type: "number" },
+        },
+        required: [
+          "linear_feet_gutter",
+          "downspout_count",
+          "outside_corner_miters",
+          "inside_corner_miters",
+        ],
+      },
+      confidence: { type: "string", enum: ["high", "medium", "low"] },
+      notes: { type: "array", items: { type: "string" } },
+      source_page_index: {
+        type: "number",
+        description: "1-based page index of the roof plan in the document.",
+      },
+    },
+    required: [
+      "scale",
+      "gutter_runs",
+      "downspouts",
+      "excluded_edges",
+      "totals",
+      "confidence",
+      "notes",
+    ],
+  },
+};
+
+const BLUEPRINT_PROBLEM_TOOL: Anthropic.Tool = {
+  name: "report_problem",
+  description:
+    "Call this INSTEAD of record_gutter_takeoff when you cannot produce a " +
+    "takeoff — e.g. the document has no roof plan, the scale is unreadable, " +
+    "or the relevant pages are illegible.",
+  input_schema: {
+    type: "object",
+    properties: {
+      error: {
+        type: "string",
+        description: "Short problem code, e.g. 'no_roof_plan'.",
+      },
+      reason: {
+        type: "string",
+        description: "Human-readable explanation for the contractor.",
+      },
+    },
+    required: ["error", "reason"],
+  },
+};
+
 /**
  * Render Stage-1 classifier output into a prose block that gets
  * prepended to the geometry call's user message. Empty string when no
@@ -597,9 +761,11 @@ export async function blueprintFromPlanSources(
       // was leaving 12k of headroom that generation latency had to
       // walk through every time. 6000 covers the long tail (complex
       // 30-segment trace with full excluded_edges) and trims ~15-25s
-      // off wall-clock for typical jobs. If output gets truncated the
+      // off wall-clock for typical jobs. Bumped 6000→8000 for headroom
+      // now that the result comes back as a forced tool call (no prose
+      // preamble eats the budget). If output gets truncated the
       // stop_reason check below catches it and surfaces a clear error.
-      max_tokens: 6000,
+      max_tokens: 8000,
       temperature: 0,
       system: [
         {
@@ -612,68 +778,65 @@ export async function blueprintFromPlanSources(
       ],
       messages: [
         { role: "user", content: userContent },
-        // Was: assistant prefill forcing the response to start with `{`.
-        // Removed because Anthropic's API now rejects prefill on the
-        // current Claude 4 models ("This model does not support
-        // assistant message prefill. The conversation must end with a
-        // user message"). We instead extract the JSON object from the
-        // response body — the system prompt already demands JSON-only
-        // output and the user message reinforces it.
+        // No assistant prefill — Claude 4+ (incl. Sonnet 4.6) rejects it
+        // ("This model does not support assistant message prefill"). We
+        // force a tool call instead (tool_choice below), so the result is
+        // structured JSON in a tool_use block rather than free text we'd
+        // have to scrape a `{ … }` out of.
       ],
+      // tool_choice "any" → the model MUST answer through one of these
+      // tools, so it can never emit a prose-only response that has no
+      // JSON object. disable_parallel_tool_use → exactly one call back.
+      tools: [BLUEPRINT_TAKEOFF_TOOL, BLUEPRINT_PROBLEM_TOOL],
+      tool_choice: { type: "any", disable_parallel_tool_use: true },
     });
 
-    const body = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    // The model answers through a forced tool call, so the result is a
+    // tool_use block whose `input` is already-parsed JSON — no text
+    // scraping, no "had no JSON object" failure mode.
+    const toolUse = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+    );
 
-    // Robust JSON extraction: the model is instructed to return JSON
-    // only, but if it slips in a preamble ("Here is the JSON…") or
-    // wraps in ```json fences we still recover. Take the substring
-    // between the first '{' and the matching last '}'.
-    const firstBrace = body.indexOf("{");
-    const lastBrace = body.lastIndexOf("}");
-    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-      return {
-        ok: false,
-        reason: `Claude response had no JSON object. First 200 chars: ${body.slice(0, 200)}`,
-      };
-    }
-    const raw = body.slice(firstBrace, lastBrace + 1);
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      // stop_reason "max_tokens" → Claude was cut off mid-output.
-      // Surface that explicitly so the operator can bump max_tokens
-      // instead of staring at a generic JSON parse error.
+    if (!toolUse) {
+      // No tool call came back — the model was cut off before emitting
+      // one (max_tokens) or it refused. Surface a clear, actionable
+      // reason instead of a generic parse error.
       const truncated = response.stop_reason === "max_tokens";
-      const baseMsg = (e as Error).message;
-      const hint = truncated
-        ? " (output was truncated at max_tokens — bump max_tokens in blueprint-from-plans.ts)"
-        : "";
+      const textPreview = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("")
+        .slice(0, 200);
       return {
         ok: false,
-        reason: `Claude returned unparseable JSON: ${baseMsg}${hint}. First 200 chars: ${raw.slice(0, 200)}`,
+        reason: truncated
+          ? "Claude analysis was truncated before it returned a result (hit max_tokens — bump max_tokens in blueprint-from-plans.ts)."
+          : `Claude did not return a takeoff (stop_reason=${response.stop_reason}). First 200 chars: ${textPreview}`,
       };
     }
 
-    // Graceful error from the model — e.g. "no roof plan found".
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "error" in parsed &&
-      typeof (parsed as Record<string, unknown>).error === "string"
-    ) {
-      const obj = parsed as Record<string, unknown>;
+    // report_problem → the model couldn't produce a takeoff (no roof
+    // plan, unreadable scale, etc.). Surface its reason to the contractor.
+    if (toolUse.name === BLUEPRINT_PROBLEM_TOOL.name) {
+      const obj = toolUse.input as { error?: string; reason?: string };
       return {
         ok: false,
-        reason: `${obj.error}: ${typeof obj.reason === "string" ? obj.reason : "(no reason)"}`,
+        reason: `${obj.error ?? "Could not analyze plan"}: ${obj.reason ?? "(no reason)"}`,
       };
     }
 
-    const analysis = parsed as BlueprintAnalysis;
+    // record_gutter_takeoff truncated mid-input → the JSON object is
+    // incomplete (missing runs/edges). Don't ship a partial takeoff.
+    if (response.stop_reason === "max_tokens") {
+      return {
+        ok: false,
+        reason:
+          "Claude analysis was truncated at max_tokens — the takeoff is incomplete. Bump max_tokens in blueprint-from-plans.ts and re-analyze.",
+      };
+    }
+
+    const analysis = toolUse.input as BlueprintAnalysis;
     return {
       ok: true,
       analysis,
