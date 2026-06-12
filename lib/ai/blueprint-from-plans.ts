@@ -182,11 +182,21 @@ Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile
 across them before emitting geometry:
 
-1. ROOF PLAN — gives you the geometry (perimeter shape, slope
-   arrows, ridge/hip/valley lines). This is where coordinates come
-   from. The roof framing plan with truss layout works too: the
-   outer edge of the truss layout = roof perimeter; eaves are the
-   edges perpendicular to the truss span direction.
+1. ROOF PLAN — gives the geometry and is ALWAYS the source for
+   eave-vs-rake / ridge / hip / valley CLASSIFICATION. For the
+   footprint SHAPE (the polygon you trace) use the cleanest ORTHOGONAL
+   plan-view, in priority order:
+     (a) a CLEAN roof plan with a clear outlined perimeter — trace it
+         directly; best shape source.
+     (b) else, when the only roof sheet is a DENSE framing / truss
+         layout, do NOT trace the outline off the trusses (notation
+         obscures corners) — borrow the clean orthogonal outline from
+         the floor / foundation plan (item 3) and OVERLAY this sheet's
+         edge classification + slope arrows onto it.
+     (c) tracing off a dense truss diagram is the LAST resort.
+   Classification always comes from this roof sheet; only the polygon
+   SHAPE may be borrowed. Outer edge of a truss layout = roof
+   perimeter; eaves are perpendicular to the truss span.
 
 2. ELEVATIONS — give you the eave count per side, the gable/dormer
    geometry, and the tier heights. If the front elevation shows
@@ -197,7 +207,24 @@ across them before emitting geometry:
 
 3. FOUNDATION PLAN / MAIN FLOOR PLAN — gives you the building
    envelope dimensions in feet. Use these to calibrate scale, not
-   the page bounds.
+   the page bounds. Also the SHAPE fallback (item 1b): when no clean
+   roof outline exists, COPY its outline — but trace ONLY the single
+   outermost continuous exterior wall polyline. IGNORE every interior
+   partition, chase, stair, and closet wall (they never appear on the
+   roof; the "interior" side value is for valley-fed eaves, never a
+   partition). If unsure a jog is exterior, check the elevations: an
+   exterior corner is a vertical break in the elevation outline, an
+   interior wall is not. Covered projections (porch / entry / patio /
+   carport / deck) carry gutters but are OFTEN not drawn as rooms here
+   — source their outline from the roof / framing sheet + elevations
+   (post grid, slab edge, separate eave line); never drop a covered
+   eave for lack of a wall. Then overlay the roof sheet's edge
+   classification onto the assembled outline. Nuance: the WALL line
+   sits ~1-2 ft INSIDE the EAVE line (overhang), so a wall-borrowed
+   outline runs slightly short — within field-verify tolerance, but
+   note it in notes and keep confidence medium. This borrows only the
+   OUTLINE — gutter_runs still come from the roof sheet, not from
+   interior floor-plan walls.
 
 4. SITE PLAN — IGNORE for geometry. The building polygon on a site
    plan is at lot scale (200' wide page = 200' lot) and using it as
@@ -214,11 +241,26 @@ actually there.
 <method>
 Follow these steps in order. Think carefully before producing JSON.
 
-1. Locate the roof plan page in the supplied document. If none is visible,
-   output {"error":"no_roof_plan","reason":"<what you see instead>"} and stop.
+1. Locate the roof plan page in the supplied document. If no roof plan AND
+   no roof framing / truss sheet is visible AND no floor / foundation plan
+   exists to borrow a footprint from, output
+   {"error":"no_roof_plan","reason":"<what you see instead>"} and stop.
+   Otherwise proceed using the shape-source priority in <cross_reference>
+   item 1.
 
-2. Trace the building footprint as drawn on the roof plan. If there are
-   multiple structures (main house + detached garage), trace each.
+2. Trace the footprint from the CLEANEST ORTHOGONAL plan-view, in the
+   <cross_reference> priority: a clean roof plan if one exists, else
+   the floor / foundation exterior outline (item 3, covered projections
+   added, roof-sheet classification overlaid), and only as a last
+   resort a dense truss diagram. Trace it rectilinear — axis-aligned
+   sides at right-angle corners — wherever the plan shows an orthogonal
+   footprint (the norm), so a true right angle is not freehanded into a
+   diagonal. But PRESERVE any eave the plan clearly draws at a genuine
+   angle (clipped/chamfered corner, bay, polygonal turret, angled
+   garage/wing) at its real direction and length — see RECTILINEAR
+   EAVES in <rules>. Classification still comes from the roof sheet +
+   elevations. If there are multiple structures (main house + detached
+   garage), trace each.
 
 3. Classify EVERY perimeter edge as EAVE, RAKE, HIP, RIDGE, or VALLEY. Use
    slope arrows, pitch labels ("6/12", "4:12"), and ridge/hip line symbols.
@@ -447,9 +489,32 @@ every side, NOT a gutter on every side.
 - Hand-sketched / red-line plans → confidence "low" + a clear note. Don't
   refuse — return your best estimate so the contractor has something to edit.
 - For multi-page plan sets, only the roof plan page produces gutter_runs.
-  Floor plans, site plans, and elevations are ignored.
+  Floor plans, site plans, and elevations never produce gutter_runs
+  directly — they are reference only. Sole exception: when no clean roof
+  outline exists you may BORROW the floor/foundation exterior footprint
+  polygon as the shape to trace (see <cross_reference> item 1b/3), then
+  overlay the roof sheet's edge classification onto it before emitting any
+  gutter_run. Site plans remain excluded as a shape source entirely.
 - If the roof plan is rotated or upside-down, still use raw pixel coordinates;
   the contractor will rotate the rendered blueprint in the proposal.
+
+- RECTILINEAR EAVES. Residential footprints and eaves are overwhelmingly
+  orthogonal. Emit building_footprint and gutter_runs as axis-aligned
+  segments (horizontal or vertical) meeting at right-angle corners. A
+  DIAGONAL eave only slightly off an axis (within ~10 degrees) landing at
+  a near-90-degree corner is almost always a tracing artifact — snap it
+  to horizontal/vertical so the corner closes square. Do NOT straighten
+  an eave the plan clearly draws at a genuine angle: includes (but is not
+  limited to) a chamfered / clipped corner (~45 degrees), a bay, a
+  polygonal or octagonal turret, an angled garage or wing, or any wall
+  dimensioned on a slant — trace those at their real direction and length.
+  Snapping may only adjust a segment's ANGLE; never delete a real eave run
+  or fold two non-collinear eaves into one (a clipped corner stays three
+  runs — eave, chamfer, eave; only collinear eaves merge, per <method>
+  step 4). Direction only: it does not relax the prefer-RAKE tiebreak, the
+  elevations-for-COUNT split (a multi-gable front is still several eaves,
+  not one), or the HARD CAP on sum(length_ft), and never changes any
+  length_ft — a genuinely angled eave keeps its true on-plan length.
 </rules>
 `.trim();
 
@@ -662,9 +727,11 @@ function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
     );
   } else {
     lines.push(
-      "- No dedicated roof plan was identified. Use the elevations and any " +
-        "footprint-bearing sheet (site plan or floor plan) to infer the " +
-        "roof outline. Flag this in notes and lower confidence accordingly.",
+      "- No dedicated roof plan was identified. Borrow the building " +
+        "outline from the floor / foundation plan (NEVER the site plan — " +
+        "it is lot-scale and inflates every measurement 3-4×), then overlay " +
+        "eave-vs-rake classification from the framing sheet + elevations. " +
+        "Flag this in notes and lower confidence accordingly.",
     );
   }
   if (c.elevation_summary) {
