@@ -1,4 +1,10 @@
-import type { Downspout, EditableLine, EstimateConfig, Measurements } from "./types";
+import type {
+  Downspout,
+  EditableLine,
+  EstimateConfig,
+  LineItem,
+  Measurements,
+} from "./types";
 import { buildLineItems } from "./pricing";
 import { sampleMeasurements } from "./mock-estimate";
 
@@ -21,7 +27,42 @@ export type Package = {
   addOns: AddOn[];
   markupPct: number;
   recommended?: boolean;
+  /** Per-line BOM tweaks keyed by the auto line id from `buildLineItems`
+   *  (e.g. "gutter", "labor"). Lets the contractor override a quantity or
+   *  unit price WITHOUT detaching the bill of materials from the live
+   *  config — change the material and the un-overridden lines still
+   *  refresh. Absent = pure auto BOM (the common case). */
+  lineItemOverrides?: Record<
+    string,
+    { quantity?: number; unitPrice?: number }
+  >;
+  /** Hand-added BOM lines beyond the auto-generated system (custom
+   *  fabrication, a one-off charge, etc.). */
+  customLineItems?: LineItem[];
 };
+
+/**
+ * Effective bill of materials for a package: the auto lines derived from
+ * its config (with any per-line overrides applied) followed by the
+ * contractor's custom lines. Single source of truth for both the
+ * MaterialsBuilder BOM editor and `packageTotal` so the displayed lines
+ * and the price can never disagree.
+ */
+export function packageLineItems(
+  p: Package,
+  measurements: Measurements,
+): LineItem[] {
+  const auto: LineItem[] = buildLineItems(measurements, p.config).map((it) => {
+    const ov = p.lineItemOverrides?.[it.id];
+    if (!ov) return it;
+    return {
+      ...it,
+      quantity: ov.quantity ?? it.quantity,
+      unitPrice: ov.unitPrice ?? it.unitPrice,
+    };
+  });
+  return [...auto, ...(p.customLineItems ?? [])];
+}
 
 export type Photo = {
   id: string;
@@ -276,6 +317,12 @@ export function blankProposal(): Proposal {
   };
 }
 
+/** Effective sales-tax factor applied to the post-discount total. The
+ *  0.85 fudge reflects the share of the job that's taxable material vs
+ *  non-taxable labor. Exported so the inverse (`markupPctForTarget`)
+ *  can't drift from the forward calc below. */
+export const EFFECTIVE_TAX_RATE = 0.0825 * 0.85;
+
 export function packageTotal(
   p: Package,
   measurements: Measurements,
@@ -290,7 +337,7 @@ export function packageTotal(
   addOns: number;
   discount: number;
 } {
-  const items = buildLineItems(measurements, p.config);
+  const items = packageLineItems(p, measurements);
   const baseSubtotal = items.reduce(
     (acc, i) => acc + i.quantity * i.unitPrice,
     0,
@@ -304,11 +351,35 @@ export function packageTotal(
   const afterMarkup = subtotal + markup;
   const safePct = Math.max(0, Math.min(50, discountPct));
   const discount = afterMarkup * (safePct / 100);
-  const tax = (afterMarkup - discount) * 0.0825 * 0.85;
+  const tax = (afterMarkup - discount) * EFFECTIVE_TAX_RATE;
   return {
     subtotal,
     addOns,
     discount,
     total: afterMarkup - discount + tax,
   };
+}
+
+/**
+ * Inverse of `packageTotal`'s `total`. Given a sticker price the
+ * contractor types in, return the `markupPct` that produces it at the
+ * current subtotal + discount, so the editor can offer a "type any
+ * price" field while markup stays the single stored knob. Derived from
+ *   total = subtotal · (1 + m) · (1 − d) · (1 + EFFECTIVE_TAX_RATE)
+ * solved for m. `subtotal` here is the package subtotal *including*
+ * add-ons (the `subtotal` field `packageTotal` returns). Returns a
+ * full-precision percentage so the typed total round-trips exactly;
+ * round only for display. May go negative (selling below cost) — that's
+ * the contractor's call, not ours to clamp.
+ */
+export function markupPctForTarget(
+  targetTotal: number,
+  subtotal: number,
+  discountPct: number = 0,
+): number {
+  if (subtotal <= 0) return 0;
+  const d = Math.max(0, Math.min(50, discountPct)) / 100;
+  const ratio =
+    targetTotal / (subtotal * (1 - d) * (1 + EFFECTIVE_TAX_RATE));
+  return (ratio - 1) * 100;
 }

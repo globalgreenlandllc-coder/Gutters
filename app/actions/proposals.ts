@@ -372,6 +372,120 @@ async function saveDraftFromEstimateImpl(args: {
   return { ok: true, id: row.id, token: row.publicToken, status: "DRAFT" };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Save the in-editor proposal WITHOUT sending                        */
+/*                                                                     */
+/*  The /proposal page only had "Send", so package / materials / spec  */
+/*  edits made there were lost on reload unless the contractor sent.   */
+/*  This persists the full Proposal blob (packages, BOM overrides,     */
+/*  custom lines, highlights, discount — everything) into the `data`   */
+/*  column, keeping status as-is. getMyProposal re-hydrates straight   */
+/*  from `data`, so a reload restores exactly what was saved.          */
+/* ------------------------------------------------------------------ */
+
+export type SaveProposalDraftResult =
+  | { ok: true; id: string; token: string }
+  | { ok: false; reason: string };
+
+export async function saveProposalDraft(args: {
+  proposal: Proposal;
+  /** Row id when editing an existing draft (from ?id=). Omit for a
+   *  proposal that hasn't been persisted yet — a new DRAFT row is
+   *  created and its id returned so the caller can adopt it. */
+  proposalId?: string | null;
+}): Promise<SaveProposalDraftResult> {
+  try {
+    const me = await getMe();
+    if (!me) return { ok: false, reason: "Not signed in" };
+
+    const { proposal } = args;
+    if (!proposal.address.trim()) {
+      return { ok: false, reason: "Add a property address first" };
+    }
+
+    const data = proposal as unknown as Prisma.InputJsonValue;
+    const contractorSnap =
+      proposal.contractor as unknown as Prisma.InputJsonValue;
+
+    // Headline total = the recommended (or middle) tier, so the
+    // dashboard list + pipeline reflect a real number.
+    let totalCents = 0;
+    try {
+      const rec =
+        proposal.packages.find((p) => p.recommended) ??
+        proposal.packages[1] ??
+        proposal.packages[0];
+      if (rec) {
+        const { total } = packageTotal(
+          rec,
+          proposal.measurements,
+          proposal.discountPct ?? 0,
+        );
+        totalCents = Math.max(0, Math.round(total * 100));
+      }
+    } catch {
+      // malformed measurements — leave at 0
+    }
+
+    // Resolve the row to update: prefer the explicit id, fall back to the
+    // proposal's public token. Both are scoped to the signed-in user so a
+    // contractor can never overwrite someone else's proposal.
+    const existing = args.proposalId
+      ? await db.proposal.findFirst({
+          where: { id: args.proposalId, userId: me.user.id },
+          select: { id: true, publicToken: true },
+        })
+      : proposal.token
+        ? await db.proposal.findFirst({
+            where: { publicToken: proposal.token, userId: me.user.id },
+            select: { id: true, publicToken: true },
+          })
+        : null;
+
+    if (existing) {
+      const row = await db.proposal.update({
+        where: { id: existing.id },
+        data: {
+          address: proposal.address,
+          clientName: proposal.client.name,
+          clientEmail: proposal.client.email,
+          totalCents,
+          data,
+          contractorSnap,
+          // status left untouched — saving never sends, and never
+          // downgrades an already-SENT/ACCEPTED proposal.
+        },
+        select: { id: true, publicToken: true },
+      });
+      revalidatePath("/dashboard/proposals");
+      return { ok: true, id: row.id, token: row.publicToken };
+    }
+
+    const row = await db.proposal.create({
+      data: {
+        userId: me.user.id,
+        publicToken: proposal.token || randomBytes(12).toString("hex"),
+        address: proposal.address,
+        clientName: proposal.client.name,
+        clientEmail: proposal.client.email,
+        status: "DRAFT",
+        totalCents,
+        data,
+        contractorSnap,
+      },
+      select: { id: true, publicToken: true },
+    });
+    revalidatePath("/dashboard/proposals");
+    return { ok: true, id: row.id, token: row.publicToken };
+  } catch (e) {
+    console.error("[saveProposalDraft] threw", e);
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "Save failed",
+    };
+  }
+}
+
 export type AcceptProposalResult =
   | {
       ok: true;

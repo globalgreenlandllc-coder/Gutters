@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Pencil, X } from "lucide-react";
 import { blankProposal, type Proposal } from "@/lib/proposal-mock";
@@ -16,11 +16,18 @@ import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
 import { TermsSection } from "@/components/proposal/terms-section";
 import { BuilderSidebar } from "@/components/proposal/builder-sidebar";
+import { MaterialsBuilder } from "@/components/proposal/materials-builder";
 import { SendModal } from "@/components/proposal/send-modal";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
 import { useProfile } from "@/lib/auth-mock";
 import { getMyProposal } from "@/app/actions/dashboard";
-import { deleteProposal } from "@/app/actions/proposals";
+import { deleteProposal, saveProposalDraft } from "@/app/actions/proposals";
+
+type SaveState =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "saved"; at: number }
+  | { kind: "error"; message: string };
 
 export default function ProposalPage() {
   return (
@@ -49,9 +56,21 @@ function Inner() {
   // panel that hosts the BuilderSidebar right on top of the preview.
   const [editDrawerOpen, setEditDrawerOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  // Package id whose materials builder is open (null = closed). Lifted to
+  // the page so the same drawer can be launched from the editor cards,
+  // the editor sidebar, OR the preview "Edit price & details" drawer.
+  const [materialsEditId, setMaterialsEditId] = useState<string | null>(null);
   const [handoffApplied, setHandoffApplied] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Persistence: `savedId` is the DB row this draft maps to (null until
+  // first save/create). `hydratedIdRef` stops the loader effect from
+  // refetching + clobbering edits when we adopt a freshly-created id into
+  // the URL. Save is explicit-first, then debounced autosave keeps it
+  // current.
+  const [savedId, setSavedId] = useState<string | null>(proposalId);
+  const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  const hydratedIdRef = useRef<string | null>(null);
 
   // Three ways the editor gets seeded:
   //   1. ?id=<proposalId> → load the saved row from the DB so the
@@ -63,6 +82,13 @@ function Inner() {
   // ?id wins when both are present so a re-opened draft never gets
   // overwritten by stale handoff data left behind in localStorage.
   useEffect(() => {
+    // Already hydrated this id (or we just created it via Save and pushed
+    // ?id= into the URL) — skip the refetch so it can't overwrite the
+    // contractor's in-progress edits with the just-saved copy.
+    if (proposalId && hydratedIdRef.current === proposalId) {
+      setHandoffApplied(true);
+      return;
+    }
     let cancelled = false;
     async function init() {
       if (proposalId) {
@@ -71,6 +97,8 @@ function Inner() {
         if (loaded) {
           setProposal(loaded);
           clearEstimateHandoff();
+          hydratedIdRef.current = proposalId;
+          setSavedId(proposalId);
           setHandoffApplied(true);
           return;
         }
@@ -129,12 +157,52 @@ function Inner() {
     profile.payments.squareUrl,
   ]);
 
+  // Debounced autosave. Only runs once the draft already has a row
+  // (savedId) so merely opening /proposal never auto-creates a surprise
+  // draft — the first persist is an explicit Save (or Send). After that,
+  // every edit (materials, BOM, price, address…) is flushed 1.5s later.
+  useEffect(() => {
+    if (!handoffApplied || !savedId || !proposal.address.trim()) return;
+    const t = setTimeout(async () => {
+      setSaveState({ kind: "saving" });
+      const res = await saveProposalDraft({ proposal, proposalId: savedId });
+      setSaveState(
+        res.ok
+          ? { kind: "saved", at: Date.now() }
+          : { kind: "error", message: res.reason },
+      );
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [proposal, handoffApplied, savedId]);
+
   // Avoid a one-frame flash of the sample numbers while we read
   // localStorage. handoffApplied flips true on the first mount effect.
   if (!handoffApplied) return null;
 
   function download() {
     if (typeof window !== "undefined") window.print();
+  }
+
+  async function handleSave() {
+    if (!proposal.address.trim()) {
+      setSaveState({ kind: "error", message: "Add a property address first" });
+      return;
+    }
+    setSaveState({ kind: "saving" });
+    const res = await saveProposalDraft({ proposal, proposalId: savedId });
+    if (res.ok) {
+      setSaveState({ kind: "saved", at: Date.now() });
+      if (!savedId) {
+        // Adopt the new row id into the URL so a manual browser reload
+        // restores it. hydratedIdRef set first so the loader effect skips
+        // the refetch when ?id= appears.
+        hydratedIdRef.current = res.id;
+        setSavedId(res.id);
+        router.replace(`/proposal?id=${res.id}`, { scroll: false });
+      }
+    } else {
+      setSaveState({ kind: "error", message: res.reason });
+    }
   }
 
   async function handleDelete() {
@@ -150,6 +218,10 @@ function Inner() {
     }
   }
 
+  const materialsPkg = materialsEditId
+    ? (proposal.packages.find((p) => p.id === materialsEditId) ?? null)
+    : null;
+
   return (
     <div className="min-h-screen">
       <ProposalTopBar
@@ -159,6 +231,9 @@ function Inner() {
         onTogglePreview={() => setPreview((v) => !v)}
         onSend={() => setSendOpen(true)}
         onDownload={download}
+        onSave={handleSave}
+        saving={saveState.kind === "saving"}
+        saved={saveState.kind === "saved"}
         onDelete={handleDelete}
         deleting={deleting}
       />
@@ -166,6 +241,12 @@ function Inner() {
       {deleteError && (
         <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
           Couldn&apos;t delete proposal: {deleteError}
+        </div>
+      )}
+
+      {saveState.kind === "error" && (
+        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
+          Couldn&apos;t save: {saveState.message}
         </div>
       )}
 
@@ -225,6 +306,7 @@ function Inner() {
                     setEditDrawerOpen(false);
                     setSendOpen(true);
                   }}
+                  onEditMaterials={setMaterialsEditId}
                 />
               </aside>
             </div>
@@ -235,7 +317,11 @@ function Inner() {
           <div className="space-y-6">
             <CoverSection proposal={proposal} onChange={setProposal} />
             <AerialSection proposal={proposal} onChange={setProposal} />
-            <PackagesSection proposal={proposal} onChange={setProposal} />
+            <PackagesSection
+              proposal={proposal}
+              onChange={setProposal}
+              onEditMaterials={setMaterialsEditId}
+            />
             <PhotosSection proposal={proposal} onChange={setProposal} />
             <TermsSection proposal={proposal} onChange={setProposal} />
           </div>
@@ -244,9 +330,27 @@ function Inner() {
               proposal={proposal}
               onChange={setProposal}
               onSend={() => setSendOpen(true)}
+              onEditMaterials={setMaterialsEditId}
             />
           </div>
         </main>
+      )}
+
+      {materialsPkg && (
+        <MaterialsBuilder
+          pkg={materialsPkg}
+          measurements={proposal.measurements}
+          discountPct={proposal.discountPct ?? 0}
+          onChange={(next) =>
+            setProposal((prev) => ({
+              ...prev,
+              packages: prev.packages.map((p) =>
+                p.id === next.id ? next : p,
+              ),
+            }))
+          }
+          onClose={() => setMaterialsEditId(null)}
+        />
       )}
 
       <SendModal

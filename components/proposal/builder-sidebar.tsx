@@ -1,20 +1,30 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { CheckCircle2, FileText, Send, Tag } from "lucide-react";
+import { CheckCircle2, FileText, Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import { packageTotal, type Proposal } from "@/lib/proposal-mock";
+import {
+  markupPctForTarget,
+  packageTotal,
+  type Proposal,
+} from "@/lib/proposal-mock";
+import { EditablePrice } from "./editable-price";
 
 export function BuilderSidebar({
   proposal,
   onChange,
   onSend,
+  onEditMaterials,
 }: {
   proposal: Proposal;
   onChange: (p: Proposal) => void;
   onSend: () => void;
+  /** Opens the materials builder for a tier. Present in both the editor
+   *  sidebar and the preview "Edit price & details" drawer, so the
+   *  contractor can rebuild materials without leaving preview. */
+  onEditMaterials?: (id: string) => void;
 }) {
   const discountPct = Math.max(0, Math.min(50, proposal.discountPct ?? 0));
   const totals = proposal.packages.map((p) => {
@@ -22,6 +32,7 @@ export function BuilderSidebar({
     const withDiscount = packageTotal(p, proposal.measurements, discountPct);
     return {
       pkg: p,
+      subtotal: withDiscount.subtotal,
       undiscountedTotal: noDiscount.total,
       total: withDiscount.total,
       discount: withDiscount.discount,
@@ -38,12 +49,36 @@ export function BuilderSidebar({
           Most popular
         </div>
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
-            {recommended ? formatCurrency(recommended.total) : "—"}
-          </span>
+          {recommended ? (
+            <EditablePrice
+              total={recommended.total}
+              onCommit={(target) =>
+                onChange({
+                  ...proposal,
+                  packages: proposal.packages.map((p) =>
+                    p.id === recommended.pkg.id
+                      ? {
+                          ...p,
+                          markupPct: markupPctForTarget(
+                            target,
+                            recommended.subtotal,
+                            discountPct,
+                          ),
+                        }
+                      : p,
+                  ),
+                })
+              }
+              className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums"
+            />
+          ) : (
+            <span className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+              —
+            </span>
+          )}
         </div>
         <div className="mt-0.5 text-xs text-zinc-500">
-          {recommended?.pkg.name}
+          {recommended?.pkg.name} · tap price to edit
         </div>
 
         <div className="mt-5 space-y-2">
@@ -52,7 +87,21 @@ export function BuilderSidebar({
               key={pkg.id}
               className="flex items-center justify-between text-sm"
             >
-              <span className="text-zinc-700">{pkg.name}</span>
+              {onEditMaterials ? (
+                <button
+                  type="button"
+                  onClick={() => onEditMaterials(pkg.id)}
+                  title="Edit this tier's materials & spec"
+                  className="group inline-flex items-center gap-1.5 text-zinc-700 transition hover:text-accent-700"
+                >
+                  <SlidersHorizontal className="h-3 w-3 text-zinc-400 transition group-hover:text-accent-600" />
+                  <span className="border-b border-dashed border-transparent group-hover:border-accent-300">
+                    {pkg.name}
+                  </span>
+                </button>
+              ) : (
+                <span className="text-zinc-700">{pkg.name}</span>
+              )}
               <span className="inline-flex items-baseline gap-1.5">
                 {discountPct > 0 && (
                   <span className="text-xs tabular-nums text-zinc-400 line-through">
@@ -75,6 +124,17 @@ export function BuilderSidebar({
             </div>
           ))}
         </div>
+
+        {onEditMaterials && recommended && (
+          <button
+            type="button"
+            onClick={() => onEditMaterials(recommended.pkg.id)}
+            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+          >
+            <Layers className="h-4 w-4" />
+            Edit materials & spec
+          </button>
+        )}
 
         <div className="my-4 h-px w-full bg-zinc-100" />
 

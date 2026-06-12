@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  Check,
   Download,
   Eye,
   Loader2,
   MoreHorizontal,
   Pencil,
+  Save,
   Send,
   Trash2,
 } from "lucide-react";
@@ -24,6 +26,9 @@ export function ProposalTopBar({
   onTogglePreview,
   onSend,
   onDownload,
+  onSave,
+  saving,
+  saved,
   onDelete,
   deleting,
 }: {
@@ -34,6 +39,10 @@ export function ProposalTopBar({
   onTogglePreview: () => void;
   onSend: () => void;
   onDownload: () => void;
+  /** Persist the draft without sending. Omit to hide the Save button. */
+  onSave?: () => void;
+  saving?: boolean;
+  saved?: boolean;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
@@ -110,6 +119,27 @@ export function ProposalTopBar({
           >
             <Pencil className="h-4 w-4" />
             Back to edit
+          </Button>
+        )}
+
+        {onSave && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSave}
+            disabled={saving}
+            title="Save draft — edits also auto-save"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : saved ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">
+              {saving ? "Saving…" : saved ? "Saved" : "Save"}
+            </span>
           </Button>
         )}
 

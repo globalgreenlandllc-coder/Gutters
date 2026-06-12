@@ -1,13 +1,15 @@
 "use client";
 
-import { Check, Sparkles, Star } from "lucide-react";
+import { Check, Layers, Sparkles, Star } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
+  markupPctForTarget,
   packageTotal,
   type Package,
   type Proposal,
 } from "@/lib/proposal-mock";
+import { EditablePrice } from "./editable-price";
 
 export function PackagesSection({
   proposal,
@@ -15,12 +17,16 @@ export function PackagesSection({
   readOnly,
   selectedPackageId,
   onSelectPackage,
+  onEditMaterials,
 }: {
   proposal: Proposal;
   onChange: (p: Proposal) => void;
   readOnly?: boolean;
   selectedPackageId?: string | null;
   onSelectPackage?: (id: string) => void;
+  /** Opens the full materials builder for a package. Only wired up in
+   *  the contractor's editor — omitted on the read-only client portal. */
+  onEditMaterials?: (id: string) => void;
 }) {
   function update(id: string, patch: Partial<Package>) {
     onChange({
@@ -93,19 +99,38 @@ export function PackagesSection({
               )}
 
               <div className="mt-5 flex items-baseline gap-2">
-                <motion.span
-                  key={Math.round(totals.total)}
-                  initial={{ opacity: 0.5, y: -2 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
-                >
-                  {formatCurrency(totals.total)}
-                </motion.span>
+                {readOnly ? (
+                  <motion.span
+                    key={Math.round(totals.total)}
+                    initial={{ opacity: 0.5, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                  >
+                    {formatCurrency(totals.total)}
+                  </motion.span>
+                ) : (
+                  <EditablePrice
+                    total={totals.total}
+                    onCommit={(target) =>
+                      update(p.id, {
+                        markupPct: markupPctForTarget(
+                          target,
+                          totals.subtotal,
+                          proposal.discountPct ?? 0,
+                        ),
+                      })
+                    }
+                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                  />
+                )}
                 <span className="text-xs text-zinc-500">total</span>
               </div>
               <div className="mt-1 text-xs text-zinc-500">
-                {formatCurrency(totals.subtotal)} subtotal · {p.markupPct}%
-                markup
+                {formatCurrency(totals.subtotal)} subtotal ·{" "}
+                {p.markupPct.toFixed(1)}% markup
+                {!readOnly && (
+                  <span className="text-zinc-400"> · type any price above</span>
+                )}
               </div>
 
               <ul className="mt-5 space-y-2">
@@ -191,13 +216,24 @@ export function PackagesSection({
                 </button>
               )}
 
+              {onEditMaterials && !readOnly && (
+                <button
+                  type="button"
+                  onClick={() => onEditMaterials(p.id)}
+                  className="mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+                >
+                  <Layers className="h-4 w-4" />
+                  Edit materials & spec
+                </button>
+              )}
+
               {!readOnly && !interactive && (
-                <div className="mt-5 flex items-center gap-2 text-xs text-zinc-500">
+                <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
                   <span>Markup</span>
                   <input
                     type="number"
                     step={0.5}
-                    value={p.markupPct}
+                    value={Math.round(p.markupPct * 10) / 10}
                     onChange={(e) =>
                       update(p.id, {
                         markupPct: parseFloat(e.target.value) || 0,
