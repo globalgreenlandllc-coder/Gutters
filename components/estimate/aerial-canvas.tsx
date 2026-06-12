@@ -154,7 +154,14 @@ export function AerialCanvas({
   } | null>(null);
 
   const totalEaveLF = useMemo(
-    () => Math.round(eaves.reduce((acc, l) => acc + lineLengthFt(l), 0)),
+    () =>
+      Math.round(
+        eaves.reduce((acc, l) => {
+          const v = lineLengthFt(l);
+          // Never let one bad line surface "NaN LF" in the legend.
+          return acc + (Number.isFinite(v) ? v : 0);
+        }, 0),
+      ),
     [eaves],
   );
 

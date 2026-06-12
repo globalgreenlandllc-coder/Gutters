@@ -8,9 +8,14 @@ import type {
   RoofStructureLine,
 } from "@/lib/types";
 
-export const VIEWBOX_W = 900;
-export const VIEWBOX_H = 580;
-export const PX_PER_FT = 2.4;
+// Geometry constants live in a directive-free module so the SERVER-ONLY
+// plan→estimate converter can import the real numbers. Importing them
+// from this "use client" file server-side turns them into RSC client
+// references (PX_PER_FT reads as an object → NaN). Imported here for this
+// module's own use AND re-exported so existing client imports
+// `from "@/components/estimate/aerial-shared"` keep working unchanged.
+import { VIEWBOX_W, VIEWBOX_H, PX_PER_FT } from "./aerial-constants";
+export { VIEWBOX_W, VIEWBOX_H, PX_PER_FT };
 
 export type CanvasTheme = "tactical" | "schematic";
 
@@ -524,7 +529,11 @@ export function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
 export function lineLengthFt(line: EditableLine) {
   let total = 0;
   for (let i = 1; i < line.points.length; i++) {
-    total += dist(line.points[i - 1], line.points[i]);
+    const d = dist(line.points[i - 1], line.points[i]);
+    // Skip non-finite segments so a single bad point (NaN/undefined coord
+    // from a stale stored takeoff) contributes 0 instead of poisoning the
+    // whole legend with "NaN LF".
+    if (Number.isFinite(d)) total += d;
   }
   return total / PX_PER_FT;
 }

@@ -5,7 +5,13 @@ import type {
 } from "./blueprint-from-plans";
 import type { EstimateResult } from "./index";
 import type { Downspout, EditableLine, Stories } from "@/lib/types";
-import { PX_PER_FT } from "@/components/estimate/aerial-shared";
+// Import from the directive-free constants module, NOT from aerial-shared
+// ("use client"). A server module that pulls a value export through a
+// "use client" boundary receives an RSC client reference instead of the
+// number — PX_PER_FT would read as an object and every `× PX_PER_FT` /
+// `PX_PER_FT ÷ …` would silently become NaN, collapsing the projection
+// and the synthesized layout (blank canvas, "Eaves NaN LF").
+import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -23,6 +29,13 @@ import { PX_PER_FT } from "@/components/estimate/aerial-shared";
 const VIEWBOX_W = 900;
 const VIEWBOX_H = 580;
 const MARGIN_PCT = 0.08;
+
+// Defensive fallback. PX_PER_FT now comes from a directive-free module so
+// it resolves to a real number on the server — but if the client/server
+// boundary bug ever returns (PX_PER_FT → NaN), clamp to the known canvas
+// scale rather than poisoning every projection and synthesized layout.
+const SAFE_PX_PER_FT =
+  Number.isFinite(PX_PER_FT) && PX_PER_FT > 0 ? PX_PER_FT : 2.4;
 
 /**
  * IQR-based outlier filter on a 2D point set. Drops points whose x or
@@ -180,7 +193,7 @@ function buildFeetAwareProjection(
   //   feet = pdf-pixels / pdfPxPerFt
   //   canvas-pixels = (pdf-pixels / pdfPxPerFt) × PX_PER_FT
   // So scale = PX_PER_FT / pdfPxPerFt
-  const idealScale = PX_PER_FT / pdfPxPerFt;
+  const idealScale = SAFE_PX_PER_FT / pdfPxPerFt;
 
   // If the projected bbox exceeds the viewBox, shrink uniformly so
   // it fits. We then apply the same shrink to all length_ft values
@@ -231,7 +244,9 @@ function synthesizeRectangularLayout(
   downspoutCount: number,
 ): { eaves: EditableLine[]; downspouts: Downspout[] } {
   const validRuns = runs
-    .map((r, i) => ({ i, len: r.length_ft ?? 0 }))
+    // Number() coercion so a stray string length_ft can't turn the
+    // `sum + len` reduce below into string concatenation.
+    .map((r, i) => ({ i, len: Number(r.length_ft) || 0 }))
     .filter((r) => r.len > 0);
   if (validRuns.length === 0) {
     return { eaves: [], downspouts: [] };
@@ -250,8 +265,8 @@ function synthesizeRectangularLayout(
   // ftScale path.
   const targetW = VIEWBOX_W * (1 - 2 * MARGIN_PCT);
   const targetH = VIEWBOX_H * (1 - 2 * MARGIN_PCT);
-  const widthPx = widthFt * PX_PER_FT;
-  const depthPx = depthFt * PX_PER_FT;
+  const widthPx = widthFt * SAFE_PX_PER_FT;
+  const depthPx = depthFt * SAFE_PX_PER_FT;
   const shrink =
     widthPx > targetW || depthPx > targetH
       ? Math.min(targetW / widthPx, targetH / depthPx)
@@ -264,11 +279,13 @@ function synthesizeRectangularLayout(
   // Walk runs around the perimeter clockwise from top-left, allocating
   // each run a span proportional to its length_ft. Sides break at
   // corners.
-  const perimPx = 2 * (wPx + dPx);
+  const perimPx = 2 * (wPx + dPx); // already reflects `shrink` via wPx/dPx
   const eaves: EditableLine[] = [];
   let cursorPx = 0; // 0..perimPx
   for (const { i, len } of validRuns) {
-    const spanPx = (len / totalLF) * perimPx * shrink;
+    // perimPx already includes the shrink factor — don't apply it again
+    // or the runs under-fill the rectangle (and pile up at one corner).
+    const spanPx = (len / totalLF) * perimPx;
     const startCanvas = pointOnRect(cursorPx, left, top, wPx, dPx, perimPx);
     const endCanvas = pointOnRect(
       cursorPx + spanPx,
