@@ -330,7 +330,18 @@ SELF-CHECK BEFORE EMITTING JSON:
 3. Is any single length_ft > max_single_run_lf? If yes, you merged
    two segments through a missed corner. Find the corner on the roof
    plan and split that run into two.
-4. Do this self-correction silently — the response should still be
+4. PERIMETER CLOSURE: walk each traced footprint polygon side by side
+   and confirm every side is accounted for in gutter_runs OR
+   excluded_edges (coverage of perimeter length — merged/split runs are
+   fine). If a side is in NEITHER list you silently dropped it — add it
+   now: a clear horizontal eave becomes a gutter_run; a non-draining
+   horizontal eave (abuts/under a higher roof, drains onto a lower roof,
+   party wall, owner-excluded) becomes excluded_edges kind
+   "eave_no_gutter"; a sloped side becomes a rake/ridge/hip/valley (a
+   full gable end → two excluded_edges of kind "rake"). When ambiguous,
+   close as a rake, not a phantom gutter. Re-confirm the total still
+   respects max_total_eave_lf after closing the loop.
+5. Do this self-correction silently — the response should still be
    strict JSON, no commentary.
 </scale_discipline>
 
@@ -394,6 +405,39 @@ gutter_run (subject to the splitting rules at outside corners).
 If the plan is silent, default to "all eaves get gutters" — that's
 the residential norm.
 </lf_accounting>
+
+<perimeter_closure>
+Every side of every structure you traced (main body AND each garage /
+wing / projection) must be ACCOUNTED FOR — either covered by a
+gutter_run or recorded as an excluded_edge with a kind + reason. The
+union of gutter_runs + excluded_edges must cover the whole
+building_footprint perimeter. A side that is in NEITHER list is a wall
+you silently dropped — that is the #1 way LF gets under-counted (a whole
+eave vanishes with no decision recorded). Closure forces a DECISION on
+every side, NOT a gutter on every side.
+
+- The test is coverage of the perimeter LENGTH, not a 1:1 side-to-entry
+  match. A single gutter_run may span several collinear sides after
+  merging, and one long side may be split across runs at outside
+  corners. Do NOT split a merged run or invent an edge just to make
+  per-side counts line up — only confirm no length of perimeter is
+  unaccounted for.
+- The residential DEFAULT for a clear horizontal eave is a gutter_run
+  (per "all eaves get gutters"). If you traced a horizontal side and it
+  is not in gutter_runs, it MUST be in excluded_edges.
+- A horizontal side that does NOT drain into a gutter closes as
+  excluded_edges kind "eave_no_gutter" with a reason: it abuts or sits
+  under a higher roof, drains onto a lower roof, is owner-excluded, or is
+  a shared party wall with no roof draining over it (reason "no roof
+  drainage on this wall"). Never gutter such a side just to close it.
+- A sloped or peak side closes as rake / ridge / hip / valley /
+  dormer_rake. A genuine full gable end is FINE and expected: its two
+  sloped sides go in excluded_edges as kind "rake".
+- This does not relax the prefer-RAKE tiebreak or the HARD CAP. If a
+  side is AMBIGUOUS, close it as a rake in excluded_edges rather than
+  invent a phantom gutter — a phantom 30 ft run still costs ~$300.
+  Closure makes you NAME every side; it never inflates sum(length_ft).
+</perimeter_closure>
 
 <rules>
 - Coordinate origin is TOP-LEFT of the source page, x→right, y→down. Use the
@@ -681,6 +725,19 @@ function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
     lines.push("- Plan notes that constrain the takeoff:");
     for (const r of c.global_rules) lines.push(`    * "${r}"`);
   }
+  lines.push(
+    "- PERIMETER CLOSURE — every side of the traced building_footprint " +
+      "must be accounted for: covered by a gutter_run OR recorded as an " +
+      "excluded_edge with a kind + reason. A side in neither list means " +
+      "you silently dropped a wall — a common under-count, especially on " +
+      "a hip-dominant roof where nearly every side is an eave. Coverage " +
+      "is of perimeter length, not a 1:1 side count (merged/split runs are " +
+      "fine). Default a clear horizontal eave to a gutter; close a " +
+      "non-draining eave or party wall as kind 'eave_no_gutter', and a " +
+      "gable end via its rakes. Decide every side, do NOT gutter every " +
+      "side — keep sum(gutter_runs.length_ft) within the HARD CAP above " +
+      "and never fabricate a run just to close a side.",
+  );
   lines.push("");
   return lines.join("\n") + "\n";
 }
