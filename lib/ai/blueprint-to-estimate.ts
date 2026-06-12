@@ -43,6 +43,25 @@ const MARGIN_PCT = 0.08;
 const SAFE_PX_PER_FT =
   Number.isFinite(PX_PER_FT) && PX_PER_FT > 0 ? PX_PER_FT : 2.4;
 
+/** Canvas-pixel length of a polyline (mirrors lineLengthFt's px sum on
+ *  the client). NaN-safe so one bad point can't poison the total. */
+function lineLenPx(line: { points: BlueprintPoint[] }): number {
+  let total = 0;
+  for (let i = 1; i < line.points.length; i++) {
+    const a = line.points[i - 1];
+    const b = line.points[i];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (Number.isFinite(d)) total += d;
+  }
+  return total;
+}
+
+/** Same polyline length expressed in feet (the unit the canvas legend
+ *  and the pricing panel show). */
+function lineLenFt(line: { points: BlueprintPoint[] }): number {
+  return lineLenPx(line) / SAFE_PX_PER_FT;
+}
+
 /**
  * IQR-based outlier filter on a 2D point set. Drops points whose x or
  * y lies more than 3×IQR outside the [Q1, Q3] range — generous enough
@@ -444,7 +463,7 @@ export function blueprintToEstimateResult(
   // to see so they can verify what the AI excluded. Ridges and valleys are
   // interior to the roof plane — we drop them here, they're not "edges of
   // the building" and would just confuse the no-gutter dashed rendering.
-  const rakes: EditableLine[] = analysis.excluded_edges
+  let rakes: EditableLine[] = analysis.excluded_edges
     .filter((e) => e.kind !== "ridge" && e.kind !== "valley")
     .map((e, i): EditableLine | null => {
       if (!isGoodPoint(e.start) || !isGoodPoint(e.end)) {
@@ -511,17 +530,112 @@ export function blueprintToEstimateResult(
     }
   }
 
-  // LF totals come from Claude's length_ft values, scaled by ftScale
-  // when the polygon had to be shrunk to fit the viewBox (rare —
-  // only triggers on enormous floor plates). Without this scale,
-  // canvas-pixel re-computes via lineLengthFt would diverge from the
-  // stored total.
-  const eaveLF = Math.round(
-    analysis.gutter_runs.reduce(
-      (sum, r) => sum + (r.length_ft ?? 0) * ftScale,
-      0,
-    ),
+  // ── Length-accurate geometry correction ───────────────────────────
+  // The canvas measures LF from the drawn pixel geometry (lineLengthFt),
+  // but the AI's per-run pixel coordinates are noisy and diverge from its
+  // own length_ft values — so the canvas can read 30%+ over the clamped,
+  // envelope-capped LF the AI actually reported (the "513 vs 390" gap,
+  // plus impossible 103 ft runs on a 64 ft house). Two corrections make
+  // the drawing trustworthy and keep header = canvas = price:
+  //   1. Uniformly scale the whole trace about its centroid so the total
+  //      canvas LF equals the clamped length_ft total. Uniform scale =
+  //      zero shape distortion.
+  //   2. Cap any single run longer than the building's bounding-box
+  //      diagonal — no straight eave can physically exceed it.
+  // Then we price from the corrected geometry, not the raw length_ft.
+  const targetEaveLF = analysis.gutter_runs.reduce(
+    (sum, r) => sum + (r.length_ft ?? 0) * ftScale,
+    0,
   );
+
+  let eaveLF: number;
+  if (eaves.length > 0 && targetEaveLF > 0) {
+    // Centroid of every eave point — the fixed point of the scale.
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const l of eaves) {
+      for (const p of l.points) {
+        sx += p.x;
+        sy += p.y;
+        n++;
+      }
+    }
+    const cx = n > 0 ? sx / n : VIEWBOX_W / 2;
+    const cy = n > 0 ? sy / n : VIEWBOX_H / 2;
+
+    const currentFt = eaves.reduce((s, l) => s + lineLenFt(l), 0);
+    const scale = currentFt > 0 ? targetEaveLF / currentFt : 1;
+    const sp = (p: BlueprintPoint): BlueprintPoint => ({
+      x: cx + (p.x - cx) * scale,
+      y: cy + (p.y - cy) * scale,
+    });
+
+    // (1) Uniform scale eaves + rakes + downspouts about the same point
+    // so the whole layout stays registered while the total LF lands on
+    // the clamped target.
+    eaves = eaves.map((l) => ({ ...l, points: l.points.map(sp) }));
+    rakes = rakes.map((l) => ({ ...l, points: l.points.map(sp) }));
+    downspouts = downspouts.map((d) => {
+      const q = sp({ x: d.x, y: d.y });
+      return { ...d, x: q.x, y: q.y };
+    });
+
+    // (2) Cap physically-impossible runs. The longest legitimate run is
+    // the longest (clamped) length_ft the AI reported — already capped to
+    // the building's longest wall by clampBlueprintToEnvelope. Any drawn
+    // run longer than that is a projection artifact (the 103 ft run on a
+    // 64 ft house); pull it back to that limit. Falls back to the eave
+    // bbox diagonal when no length_ft is available.
+    const maxRunFt = analysis.gutter_runs.reduce((m, r) => {
+      const f = (r.length_ft ?? 0) * ftScale;
+      return Number.isFinite(f) && f > m ? f : m;
+    }, 0);
+    let maxRunPx: number;
+    if (maxRunFt > 0) {
+      maxRunPx = maxRunFt * 1.02 * SAFE_PX_PER_FT;
+    } else {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const l of eaves) {
+        for (const p of l.points) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+      }
+      maxRunPx = Math.hypot(maxX - minX, maxY - minY) * 1.02;
+    }
+    if (Number.isFinite(maxRunPx) && maxRunPx > 0) {
+      eaves = eaves.map((l) => {
+        if (l.points.length !== 2) return l;
+        const a = l.points[0];
+        const b = l.points[1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len <= maxRunPx || len === 0) return l;
+        // Shrink about the midpoint, preserving direction.
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        const k = maxRunPx / len / 2;
+        return {
+          ...l,
+          points: [
+            { x: mx - (b.x - a.x) * k, y: my - (b.y - a.y) * k },
+            { x: mx + (b.x - a.x) * k, y: my + (b.y - a.y) * k },
+          ],
+        };
+      });
+    }
+
+    // Price from the corrected geometry so the legend, the property
+    // header, and the pricing panel all agree with what's drawn.
+    eaveLF = Math.round(eaves.reduce((s, l) => s + lineLenFt(l), 0));
+  } else {
+    eaveLF = Math.round(targetEaveLF);
+  }
 
   // We don't get rake length from Claude — excluded_edges only has
   // endpoints, no source-feet conversion. Estimate rakeLF as the

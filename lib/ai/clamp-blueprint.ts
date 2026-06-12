@@ -77,14 +77,26 @@ export function clampBlueprintToEnvelope(
       (r) => r.length_ft != null && r.length_ft > singleCap * 1.05,
     );
     if (oversized.length > 0) {
-      const longest = Math.max(
-        ...oversized.map((r) => r.length_ft ?? 0),
+      const longest = Math.max(...oversized.map((r) => r.length_ft ?? 0));
+      // A single straight eave can't be longer than the building's
+      // longest wall — a run over the cap means the AI merged two eaves
+      // through a missed corner (or misread the scale). Cap it to the
+      // limit rather than just flagging, so the priced LF and the canvas
+      // geometry don't carry an impossible 103 ft run on a 64 ft house.
+      scaledRuns = scaledRuns.map((r) =>
+        r.length_ft != null && r.length_ft > singleCap * 1.05
+          ? { ...r, length_ft: Math.round(singleCap * 10) / 10 }
+          : r,
       );
+      const cappedTotal = Math.round(
+        scaledRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0),
+      );
+      scaledTotals = { ...scaledTotals, linear_feet_gutter: cappedTotal };
       notes.push(
-        `⚠ ${oversized.length} run(s) exceed the per-run cap of ${Math.round(singleCap)} ft ` +
-          `(longest: ${Math.round(longest)} ft). This usually means the AI ` +
-          `merged two eaves through a missed outside corner. Inspect those ` +
-          `runs and split where the roof actually changes direction.`,
+        `⚠ ${oversized.length} run(s) exceeded the per-run cap of ${Math.round(singleCap)} ft ` +
+          `(longest was ${Math.round(longest)} ft) — capped to ${Math.round(singleCap)} ft each. ` +
+          `This usually means the AI merged two eaves through a missed outside ` +
+          `corner; split them on the canvas where the roof changes direction.`,
       );
     }
   }

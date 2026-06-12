@@ -335,16 +335,25 @@ SELF-CHECK BEFORE EMITTING JSON:
 </scale_discipline>
 
 <tier_assignment>
-Each gutter_run sits on a roof tier. On a 2-story house with attached
-single-story garage / front porch / rear covered patio:
-- "lower" tier = single-story sections (garage, porch, patio cover).
-  Drop height typically 9-11 ft.
-- "upper" tier = 2-story main body. Drop height typically 18-26 ft.
+Each gutter_run sits on a roof tier:
+- "lower" tier = TRUE single-story sections — covered front porch /
+  entry, rear covered patio, or a 1-story garage with NOTHING built
+  above it. Drop height typically 9-11 ft.
+- "upper" tier = anything under the 2-story envelope. Drop height
+  typically 18-26 ft.
+
+A garage is NOT automatically lower-tier. Check the upper floor plan,
+the building sections, and the elevations: if there is living space
+above the garage (bedroom, bonus, media room) or its outer wall rises
+the full two stories, the garage eaves are "upper" tier (~20 ft), NOT
+lower. Only a detached or clearly 1-story garage roof is "lower".
 
 Cues from the roof plan:
 - Lower-tier runs are usually on bump-outs that protrude from the main
-  rectangle (front porch projecting forward, garage wing, rear patio).
-- Upper-tier runs are the main body perimeter.
+  rectangle (front porch projecting forward, rear patio). Confirm the
+  projection is single-story before tagging it lower.
+- Upper-tier runs are the main body perimeter plus any wing with a
+  second floor above it.
 - Slope arrows on lower tiers point AWAY from the main body (rain runs
   off the porch roof toward the porch eave); slope arrows on the
   upper tier point AWAY from the central ridge.
