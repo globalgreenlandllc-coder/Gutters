@@ -590,7 +590,9 @@ export async function classifyPlanSheets(
 export function classificationToConstraints(
   c: PlanClassification,
 ): GeometryConstraints {
-  const elevations = c.sheets.filter((s) => s.sheet_type === "elevation");
+  const elevations = (c.sheets ?? []).filter(
+    (s) => s.sheet_type === "elevation",
+  );
   const elevationSummary = elevations
     .map((s) => {
       const side =
@@ -619,7 +621,18 @@ export function classificationToConstraints(
   // on bump-outs and porches. We cap at 1.5× as a generous ceiling — if
   // Sonnet exceeds it, the scale is wrong. Prefer the explicit
   // perimeter when supplied; fall back to W+D rectangle.
-  const dims = c.building_dimensions;
+  // Defensive: gutter_tiers / building_dimensions are required in the
+  // tool schema, but a forced tool call can still occasionally emit a
+  // partial object (truncated output, model omission). Reading a nested
+  // field off undefined crashes the whole estimate ("Cannot read
+  // properties of undefined (reading 'lower_tier_ft')"), so fall back to
+  // an all-null shape — every downstream consumer already null-guards
+  // these (maxEaveLF stays null, tiers default to the conservative upper).
+  const dims = c.building_dimensions ?? {
+    width_ft: null,
+    depth_ft: null,
+    footprint_perimeter_ft: null,
+  };
   let maxEaveLF: number | null = null;
   let envelopeNote: string | null = null;
   if (dims.footprint_perimeter_ft != null && dims.footprint_perimeter_ft > 0) {
@@ -636,7 +649,7 @@ export function classificationToConstraints(
     min_gutter_runs: c.min_expected_gutter_runs,
     min_downspouts: c.min_expected_downspouts,
     elevation_summary: elevationSummary || null,
-    global_rules: c.global_rules,
+    global_rules: c.global_rules ?? [],
     building_envelope_note: envelopeNote,
     max_total_eave_lf: maxEaveLF,
     max_single_run_lf:
@@ -644,8 +657,8 @@ export function classificationToConstraints(
         ? Math.max(dims.width_ft, dims.depth_ft)
         : null,
     roof_scale: c.roof_scale,
-    lower_tier_ft: c.gutter_tiers.lower_tier_ft,
-    upper_tier_ft: c.gutter_tiers.upper_tier_ft,
+    lower_tier_ft: c.gutter_tiers?.lower_tier_ft ?? null,
+    upper_tier_ft: c.gutter_tiers?.upper_tier_ft ?? null,
   };
 }
 
