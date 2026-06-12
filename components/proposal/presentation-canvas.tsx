@@ -70,6 +70,64 @@ export function PresentationCanvas({
     [eaves],
   );
 
+  // Enlarge a small trace to fill the canvas in plan mode. A correctly-
+  // sized house is only ~150 px wide at the fixed 2.4 px/ft layout scale,
+  // so it otherwise renders as a tiny dot in the 900×580 frame. Unlike the
+  // editor (which zooms the camera), the proposal canvas keeps the viewBox
+  // full so the drafting-paper FRAME, registration marks and title block —
+  // all anchored to the frame edges — stay intact; we scale only the
+  // geometry group about its centroid. Satellite proposals are left alone:
+  // their trace is calibrated to the imagery.
+  const frame = useMemo(() => {
+    if (!planMode) return null;
+    const pts = [
+      ...eaves.flatMap((l) => l.points),
+      ...rakes.flatMap((l) => l.points),
+      ...downspouts.map((d) => ({ x: d.x, y: d.y })),
+    ];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let n = 0;
+    for (const p of pts) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+      n++;
+    }
+    if (n < 2) return null;
+    const cw = maxX - minX;
+    const ch = maxY - minY;
+    if (cw <= 1 && ch <= 1) return null;
+    // Fit into the frame interior (inset so the trace sits inside the
+    // drafting border), with a little breathing room around the content.
+    const pad = 1.16;
+    const targetW = VIEWBOX_W * 0.86;
+    const targetH = VIEWBOX_H * 0.86;
+    const k0 = Math.min(
+      targetW / (Math.max(cw, 1) * pad),
+      targetH / (Math.max(ch, 1) * pad),
+    );
+    // Only ever enlarge, and cap magnification so a tiny trace doesn't
+    // blow up into fat strokes. Already-large traces (k≈1) are skipped.
+    const k = Math.max(1, Math.min(k0, 3));
+    if (k <= 1.02) return null;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    return { k, tx: VIEWBOX_W / 2 - k * cx, ty: VIEWBOX_H / 2 - k * cy };
+  }, [planMode, eaves, rakes, downspouts]);
+  // Geometry is rendered inside a group scaled by `frame.k`. Stroke
+  // widths, handles, dots and labels are sized in viewBox units, so divide
+  // them by k (multiply by `vs`) to keep them visually constant on screen
+  // instead of fattening with the magnification.
+  const vs = frame ? 1 / frame.k : 1;
+  const geomTransform = frame
+    ? `translate(${frame.tx} ${frame.ty}) scale(${frame.k})`
+    : undefined;
+
   function svgPoint(e: React.PointerEvent): { x: number; y: number } {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -84,7 +142,14 @@ export function PresentationCanvas({
 
   function handlePointerMove(e: React.PointerEvent) {
     if (!drag) return;
-    const p = svgPoint(e);
+    // svgPoint gives full-viewBox coords; the geometry lives inside a
+    // group scaled by `frame.k`, so map the pointer back into that local
+    // space before writing it as a data coordinate (otherwise the dragged
+    // corner jumps by the magnification factor).
+    const raw = svgPoint(e);
+    const p = frame
+      ? { x: (raw.x - frame.tx) / frame.k, y: (raw.y - frame.ty) / frame.k }
+      : raw;
     if (drag.kind === "vertex" && onEavesChange) {
       onEavesChange(
         eaves.map((l) =>
@@ -204,6 +269,10 @@ export function PresentationCanvas({
           />
         )}
 
+        {/* Geometry group — scaled about its centroid in plan mode so a
+            small trace fills the frame while the drafting border stays at
+            full size. `geomTransform` is undefined (identity) otherwise. */}
+        <g transform={geomTransform}>
         {/* Rakes — gray-dashed, low-opacity, non-interactive.
             On the drafting-paper plan background we use a darker
             indigo so the dashes stay legible on warm off-white. */}
@@ -212,8 +281,8 @@ export function PresentationCanvas({
             key={line.id}
             d={pathFor(line)}
             stroke={planMode ? "#1e3a8a" : "#94a3b8"}
-            strokeWidth={1.75}
-            strokeDasharray="5 4"
+            strokeWidth={1.75 * vs}
+            strokeDasharray={`${5 * vs} ${4 * vs}`}
             strokeLinecap="round"
             fill="none"
             opacity={planMode ? 0.45 : 0.55}
@@ -235,7 +304,7 @@ export function PresentationCanvas({
               <path
                 d={pathFor(line)}
                 stroke="transparent"
-                strokeWidth={18}
+                strokeWidth={18 * vs}
                 fill="none"
                 style={{ cursor: editable ? "pointer" : "default" }}
                 onPointerEnter={() => setHoverId(line.id)}
@@ -262,7 +331,7 @@ export function PresentationCanvas({
                       ? "#a3f7ff"
                       : "#00e5ff"
                 }
-                strokeWidth={active ? 3.5 : 2.5}
+                strokeWidth={(active ? 3.5 : 2.5) * vs}
                 strokeLinecap="round"
                 fill="none"
                 pointerEvents="none"
@@ -286,10 +355,10 @@ export function PresentationCanvas({
                     key={idx}
                     cx={pt.x}
                     cy={pt.y}
-                    r={5}
+                    r={5 * vs}
                     fill="#0b1220"
                     stroke="#a3f7ff"
-                    strokeWidth={2}
+                    strokeWidth={2 * vs}
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ duration: 0.15 }}
@@ -306,6 +375,7 @@ export function PresentationCanvas({
                 emphasized={active}
                 minFt={active ? 0 : LABEL_MIN_FT}
                 planMode={planMode}
+                scale={vs}
               />
             </g>
           );
@@ -330,10 +400,10 @@ export function PresentationCanvas({
               <motion.circle
                 cx={d.x}
                 cy={d.y}
-                r={isSelected ? 7 : 5.5}
+                r={(isSelected ? 7 : 5.5) * vs}
                 fill={planMode ? "#0f172a" : "#ff2bd6"}
                 stroke={planMode ? "#f7f4ee" : "white"}
-                strokeWidth={planMode ? 2 : 1.8}
+                strokeWidth={(planMode ? 2 : 1.8) * vs}
                 initial={{ opacity: 0, scale: 0.6 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25 }}
@@ -346,7 +416,7 @@ export function PresentationCanvas({
               <circle
                 cx={d.x}
                 cy={d.y}
-                r={1.8}
+                r={1.8 * vs}
                 fill={planMode ? "#f7f4ee" : "#fff0fb"}
               />
               {/* Plan-mode height pill — surfaces per-downspout drop
@@ -357,19 +427,19 @@ export function PresentationCanvas({
               {planMode && d.heightFt > 0 && (
                 <g pointerEvents="none">
                   <rect
-                    x={d.x + 8}
-                    y={d.y - 8}
-                    width={26}
-                    height={14}
-                    rx={3}
+                    x={d.x + 8 * vs}
+                    y={d.y - 8 * vs}
+                    width={26 * vs}
+                    height={14 * vs}
+                    rx={3 * vs}
                     fill="#f7f4ee"
                     stroke="#0e7490"
-                    strokeWidth={0.6}
+                    strokeWidth={0.6 * vs}
                   />
                   <text
-                    x={d.x + 21}
-                    y={d.y + 2}
-                    fontSize={9}
+                    x={d.x + 21 * vs}
+                    y={d.y + 2 * vs}
+                    fontSize={9 * vs}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                     fill="#0e7490"
                     textAnchor="middle"
@@ -381,6 +451,7 @@ export function PresentationCanvas({
             </g>
           );
         })}
+        </g>
       </svg>
     </div>
   );
@@ -396,11 +467,16 @@ function SegmentLabel({
   emphasized,
   minFt,
   planMode,
+  scale = 1,
 }: {
   line: EditableLine;
   emphasized: boolean;
   minFt: number;
   planMode?: boolean;
+  /** Visual scale of the zoomed viewBox window (<1 when the camera is
+   *  zoomed in to frame a small trace). Keeps the pill a constant size
+   *  on screen instead of ballooning with the zoom. */
+  scale?: number;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -411,21 +487,23 @@ function SegmentLabel({
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const norm = Math.hypot(dx, dy) || 1;
-  const offset = emphasized ? 14 : 10;
+  const offset = (emphasized ? 14 : 10) * scale;
   const nx = (-dy / norm) * offset;
   const ny = (dx / norm) * offset;
   const cx = (a.x + b.x) / 2;
   const cy = (a.y + b.y) / 2;
-  // Always offset away from canvas center so labels don't escape the
-  // viewBox on corner eaves near the image edge.
+  // Offset away from the trace centroid so labels don't escape the
+  // viewBox on corner eaves near the edge. Uses the current viewBox
+  // center (which tracks the zoom window) rather than the fixed canvas
+  // center, so labels still kick outward when the camera is zoomed in.
   const towardCenter = (cx - VIEWBOX_W / 2) * nx + (cy - VIEWBOX_H / 2) * ny;
   const sign = towardCenter > 0 ? -1 : 1;
   const labelCx = cx + nx * sign;
   const labelCy = cy + ny * sign;
 
-  const w = emphasized ? 52 : 38;
-  const h = emphasized ? 18 : 14;
-  const fontSize = emphasized ? 10 : 9;
+  const w = (emphasized ? 52 : 38) * scale;
+  const h = (emphasized ? 18 : 14) * scale;
+  const fontSize = (emphasized ? 10 : 9) * scale;
 
   return (
     <motion.g
@@ -439,7 +517,7 @@ function SegmentLabel({
         y={labelCy - h / 2}
         width={w}
         height={h}
-        rx={emphasized ? 5 : 3.5}
+        rx={(emphasized ? 5 : 3.5) * scale}
         fill={planMode ? "#f7f4ee" : "rgba(2,6,23,0.85)"}
         stroke={
           planMode
@@ -450,11 +528,11 @@ function SegmentLabel({
               ? "#67e8f9"
               : "rgba(103,232,249,0.45)"
         }
-        strokeWidth={emphasized ? 1.2 : 0.8}
+        strokeWidth={(emphasized ? 1.2 : 0.8) * scale}
       />
       <text
         x={labelCx}
-        y={labelCy + (emphasized ? 3.5 : 3)}
+        y={labelCy + (emphasized ? 3.5 : 3) * scale}
         textAnchor="middle"
         fill={
           planMode

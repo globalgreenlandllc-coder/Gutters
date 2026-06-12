@@ -39,6 +39,7 @@ import {
   pathFor,
   dist,
   lineLengthFt,
+  fitViewBox,
 } from "./aerial-shared";
 
 type Tool = "select" | "add-eave" | "add-downspout";
@@ -117,8 +118,39 @@ export function AerialCanvas({
      *  pointer up, treat the gesture as a click (deselect) instead. */
     moved: boolean;
   } | null>(null);
-  const resetView = () =>
-    setView({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
+  // Every point the trace occupies — eaves, rakes, and downspouts —
+  // used to frame the camera tight around the takeoff.
+  const contentPoints = useMemo(() => {
+    const pts: { x: number; y: number }[] = [];
+    for (const l of eaves) for (const p of l.points) pts.push(p);
+    for (const l of rakes) for (const p of l.points) pts.push(p);
+    for (const d of downspouts) pts.push({ x: d.x, y: d.y });
+    return pts;
+  }, [eaves, rakes, downspouts]);
+
+  // "Fit to view" frames the trace in plan mode (where the geometry is
+  // laid out at a fixed ft scale and a small house would otherwise sit
+  // tiny in the frame). In satellite mode the trace is calibrated to the
+  // image, so we reset to the full extent instead of cropping the photo.
+  const resetView = () => {
+    const fit = planSource ? fitViewBox(contentPoints) : null;
+    setView(fit ?? { x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
+  };
+
+  // Auto-frame the trace once, the first time geometry is available in
+  // plan mode. Guarded by a ref so a later eave edit (which changes
+  // `contentPoints`) doesn't yank the camera back and fight the
+  // contractor's own pan/zoom. Satellite estimates are skipped — their
+  // trace is already sized to the imagery.
+  const didAutoFitRef = useRef(false);
+  useEffect(() => {
+    if (didAutoFitRef.current) return;
+    if (!planSource) return;
+    if (contentPoints.length < 2) return;
+    const fit = fitViewBox(contentPoints);
+    if (fit) setView(fit);
+    didAutoFitRef.current = true;
+  }, [planSource, contentPoints]);
   // Popover anchor in container-pixel coords. Updated by an effect
   // whenever the selected downspout, pan, or zoom changes — having
   // it as state means it actually re-renders on view changes, which

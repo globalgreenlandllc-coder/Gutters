@@ -539,6 +539,72 @@ export function lineLengthFt(line: EditableLine) {
 }
 
 /**
+ * Frame the takeoff so it fills the canvas.
+ *
+ * The plan→estimate projection lays geometry out at a FIXED scale
+ * (canvas-px = feet × PX_PER_FT) so the live LF recompute round-trips.
+ * The side effect: a correctly-sized small building — a 64 ft house is
+ * only 64 × 2.4 ≈ 154 px — renders as a tiny trace marooned in the
+ * 900×580 frame. (The bug only surfaced once the LF numbers were fixed;
+ * the earlier inflated ~200-ft traces happened to fill the frame.)
+ *
+ * Rather than rescale the geometry (which would desync px↔ft and break
+ * both the LF math and drag-to-reprice), we move the CAMERA: compute a
+ * viewBox window tight around the trace, matched to the canvas aspect
+ * ratio so preserveAspectRatio="slice" doesn't crop it. Pointer math in
+ * both canvases already goes through getScreenCTM().inverse(), so
+ * dragging is unaffected by the zoomed window.
+ *
+ * Returns null when there's nothing to frame, or when the trace already
+ * fills most of the frame — callers fall back to the full 0 0 900 580
+ * view so an already-large (or satellite-calibrated) trace is untouched.
+ */
+export function fitViewBox(
+  points: readonly { x: number; y: number }[],
+  opts?: { padPct?: number },
+): { x: number; y: number; width: number; height: number } | null {
+  const pad = opts?.padPct ?? 0.08;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let n = 0;
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+    n++;
+  }
+  if (n < 2) return null;
+  let cw = (maxX - minX) * (1 + 2 * pad);
+  let ch = (maxY - minY) * (1 + 2 * pad);
+  if (cw <= 1 && ch <= 1) return null;
+  cw = Math.max(cw, 1);
+  ch = Math.max(ch, 1);
+  // Expand the short axis so the window matches the canvas aspect —
+  // otherwise "slice" crops the long axis of the trace.
+  const aspect = VIEWBOX_W / VIEWBOX_H;
+  if (cw / ch < aspect) cw = ch * aspect;
+  else ch = cw / aspect;
+  // Cap the zoom (~3.5×) so a very small trace doesn't fill the frame at
+  // a disorienting magnification — the contractor can still zoom in
+  // further by hand.
+  const minW = VIEWBOX_W / 3.5;
+  if (cw < minW) {
+    ch = (ch * minW) / cw;
+    cw = minW;
+  }
+  // Already fills ~the whole frame → zooming buys nothing; let the
+  // caller use the default viewBox.
+  if (cw >= VIEWBOX_W * 0.9) return null;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return { x: cx - cw / 2, y: cy - ch / 2, width: cw, height: ch };
+}
+
+/**
  * Visual roof-structure annotation. We now draw the clean outer perimeter 
  * of the building footprint instead of rendering messy internal ridges/valleys.
  */
