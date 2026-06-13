@@ -269,8 +269,23 @@ Follow these steps in order. Think carefully before producing JSON.
     exterior wall polyline as <cross_reference> item 3; a jog is real only
     if exterior -- confirm on the elevations (a vertical break in the
     outline). Each jog is an orthogonal RIGHT-ANGLE step (RECTILINEAR EAVES
-    in <rules>); only a corner drawn slanted stays angled. Does NOT change
-    the shape SOURCE priority; never changes length_ft or the CAP.
+    in <rules>); only a corner drawn slanted stays angled. EMIT every one of
+    these jogs INTO the building_footprint array you output -- it is the
+    polygon the contractor SEES as the roof outline on the layout, so put a
+    point at EVERY exterior corner the plan ACTUALLY draws -- no more, no
+    fewer. A genuinely rectangular house is correctly 4 points; an articulated
+    L/T/U or garage-offset house naturally lands higher. Do NOT target a point
+    count. Real exterior corners only: do not promote overhang offsets,
+    dimension-line ticks, or drawing noise into corners -- trace only genuine
+    direction-changes in the single outermost exterior wall, never an interior
+    partition. When unsure whether a jog is exterior, OMIT it -- a missing
+    visual corner is harmless (this field is decorative) but a phantom corner
+    misleads the contractor. building_footprint corners do NOT each need a
+    matching gutter_run or excluded_edge -- <perimeter_closure> is checked
+    against the gutter geometry, not this polygon; never add a gutter_run or
+    excluded_edge to account for a footprint vertex. Does NOT change the shape
+    SOURCE priority, and is VISUAL ONLY: never changes gutter_runs, length_ft,
+    or the CAP.
 
 3a. ROOF TYPE FIRST -- before slope arrows. A HIP line (diagonal from an
     OUTSIDE corner inward) makes BOTH sides there EAVES, not rakes
@@ -611,7 +626,23 @@ const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
         },
         required: ["feet_per_unit", "unit", "source"],
       },
-      building_footprint: { type: "array", items: POINT_SCHEMA },
+      building_footprint: {
+        type: "array",
+        items: POINT_SCHEMA,
+        description:
+          "FULL ARTICULATED EXTERIOR OUTLINE of the building, traced per " +
+          "<method> step 2a / <cross_reference> item 3: a point at every " +
+          "exterior corner the plan ACTUALLY draws (each garage-wing offset, " +
+          "bump-out, recess, projection, L/T/U step) -- no more, no fewer. A " +
+          "genuinely rectangular house is correctly 4 points; an articulated " +
+          "house naturally lands higher. Do NOT target a point count or " +
+          "promote overhang offsets / dimension ticks / interior partitions " +
+          "into corners; when unsure a jog is exterior, OMIT it. This is the " +
+          "roof outline the contractor SEES under the gutter trace, so it " +
+          "must match the real building shape. VISUAL ONLY -- a footprint " +
+          "corner needs no matching gutter_run or excluded_edge and does NOT " +
+          "change gutter_runs, any length_ft, the total, or the CAP.",
+      },
       gutter_runs: {
         type: "array",
         items: {
