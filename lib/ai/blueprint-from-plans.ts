@@ -262,6 +262,38 @@ Follow these steps in order. Think carefully before producing JSON.
    elevations. If there are multiple structures (main house + detached
    garage), trace each.
 
+2a. PRESERVE FOOTPRINT JOGS -- do NOT flatten an articulated outline to a
+    rectangle. Trace the ACTUAL stepped polyline the foundation / floor
+    plan draws (garage offset, bump-out, recess, L/T/U); each jog moves
+    gutter breaks, downspouts, and miters. Trace the SAME single outermost
+    exterior wall polyline as <cross_reference> item 3; a jog is real only
+    if exterior -- confirm on the elevations (a vertical break in the
+    outline). Each jog is an orthogonal RIGHT-ANGLE step (RECTILINEAR EAVES
+    in <rules>); only a corner drawn slanted stays angled. Does NOT change
+    the shape SOURCE priority; never changes length_ft or the CAP.
+
+3a. ROOF TYPE FIRST -- before slope arrows. A HIP line (diagonal from an
+    OUTSIDE corner inward) makes BOTH sides there EAVES, not rakes
+    (classification only; an EAVE can still close as kind eave_no_gutter
+    under <perimeter_closure>). On L/T/U or hip-and-gable plans confirm the
+    diagonal is a hip for THIS plane, not an adjoining wing's gable rake.
+    These 2-story homes are usually HIP / HIP-GABLE, so EAVES make up MOST
+    of the perimeter -- but guttering still follows <lf_accounting>; gutter
+    LF stays a strict subset of eaves within the HARD CAP. A gable-only
+    two-opposite-sides read is usually WRONG unless BOTH ends show a gable
+    triangle as the dominant shape (a small eave-return sliver still counts
+    as a gable); a genuine two-gable house is fine -- both ends are rakes.
+    Does NOT override prefer-RAKE, nor that a full gable END (two correlated
+    sloped sides) closes as rakes -- if ambiguous, prefer RAKE.
+3b. PER-SIDE ELEVATION (beats slope arrows on a dense truss plan). Read
+    each side's OWN SOLID outline; IGNORE any DASHED roof-beyond line (a
+    wing seen THROUGH this face). HORIZONTAL bottom eave (flat, hip
+    trapezoid, OR jerkinhead/clipped gable with a full-width eave under a
+    small hip) = EAVE -- gutter even with a triangle above. TRIANGULAR end,
+    no horizontal bottom = RAKE. A side with BOTH is a CROSS-GABLE: keep
+    the eave runs as EAVES, split at the gable's BOTTOM corners (SAME split
+    as elevations-for-COUNT); its RAKES are on the gable's side / return
+    walls, NOT the through eave. Sets CLASSIFICATION + split LOCATION only.
 3. Classify EVERY perimeter edge as EAVE, RAKE, HIP, RIDGE, or VALLEY. Use
    slope arrows, pitch labels ("6/12", "4:12"), and ridge/hip line symbols.
    When two classifications seem equally likely, prefer RAKE over EAVE — a
