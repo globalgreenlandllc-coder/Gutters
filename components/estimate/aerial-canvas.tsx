@@ -77,11 +77,14 @@ export function AerialCanvas({
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  // Roof-structure perimeter (the white outline the AI detected) used
-  // to render by default — useful for verifying the AI's roof
-  // recognition, distracting once the contractor is editing the
-  // gutter trace. Toolbar still has the eye toggle to bring it back.
-  const [showRoofStructure, setShowRoofStructure] = useState(false);
+  // Roof outline + interior ridge/hip/valley lines. ON by default for
+  // PLAN takeoffs — seeing the whole roof shape under the trace is how the
+  // contractor reads where the gutters sit and where a run is missing.
+  // OFF for satellite estimates (the roof is already visible in the photo).
+  // Toolbar eye toggle flips it either way.
+  const [showRoofStructure, setShowRoofStructure] = useState(
+    () => !!planSource,
+  );
   // Rakes (the gray-dashed 'no gutter here' gable/hip edges) ship ON for
   // PLAN takeoffs and OFF for satellite ones. On a plan, showing the
   // gables next to the gutter eaves is the whole point — together they
@@ -127,8 +130,11 @@ export function AerialCanvas({
     for (const l of eaves) for (const p of l.points) pts.push(p);
     for (const l of rakes) for (const p of l.points) pts.push(p);
     for (const d of downspouts) pts.push({ x: d.x, y: d.y });
+    // Frame the roof outline too — it can sit just outside the eaves
+    // (overhang) and would otherwise get clipped by the auto-fit.
+    if (roofStructure) for (const p of roofStructure.perimeter) pts.push(p);
     return pts;
-  }, [eaves, rakes, downspouts]);
+  }, [eaves, rakes, downspouts, roofStructure]);
 
   // "Fit to view" frames the trace in plan mode (where the geometry is
   // laid out at a fixed ft scale and a small house would otherwise sit
@@ -860,7 +866,11 @@ export function AerialCanvas({
         )}
 
         {roofStructure && showRoofStructure && (
-          <RoofStructureOverlay structure={roofStructure} />
+          <RoofStructureOverlay
+            structure={roofStructure}
+            tone={theme === "tactical" ? "onDark" : "onLight"}
+            scale={renderScale}
+          />
         )}
 
         {/* Rakes — gray-dashed "no-gutter" lines for verification.

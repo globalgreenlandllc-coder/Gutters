@@ -26,7 +26,7 @@ export type EditableLine = {
   side?: EaveSide;
 };
 
-export type RoofStructureLineKind = "ridge" | "valley";
+export type RoofStructureLineKind = "ridge" | "valley" | "hip";
 
 export type RoofStructureLine = {
   id: string;
@@ -47,6 +47,9 @@ export type RoofStructure = {
   perimeter: { x: number; y: number }[];
   ridges: RoofStructureLine[];
   valleys: RoofStructureLine[];
+  /** Hip lines (sloped ridges at outside corners). Optional for
+   *  back-compat with the satellite flow, which doesn't detect them. */
+  hips?: RoofStructureLine[];
   /** 0–1, surfaces an "approximation only" warning when low. */
   confidence: number;
 };

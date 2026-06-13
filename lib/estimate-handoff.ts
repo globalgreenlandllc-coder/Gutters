@@ -1,6 +1,11 @@
 "use client";
 
-import type { Downspout, EditableLine, Measurements } from "./types";
+import type {
+  Downspout,
+  EditableLine,
+  Measurements,
+  RoofStructure,
+} from "./types";
 
 /**
  * Estimate → Proposal handoff via localStorage.
@@ -39,6 +44,9 @@ export interface EstimateHandoff {
   rakes: EditableLine[];
   /** Downspout pins to render on the canvas. */
   downspouts: Downspout[];
+  /** Roof outline + ridge/hip/valley lines for the read-only overlay.
+   *  Optional — older payloads and satellite estimates may omit it. */
+  roofStructure?: RoofStructure;
   /** Background satellite image. Optional because mock/partial estimate
    *  runs don't always produce one — fall back to the cartoon scene. */
   aerial?: EstimateHandoffAerial;
@@ -88,6 +96,7 @@ export function readEstimateHandoff(): EstimateHandoff | null {
       eaves: Array.isArray(parsed.eaves) ? parsed.eaves : [],
       rakes: Array.isArray(parsed.rakes) ? parsed.rakes : [],
       downspouts: Array.isArray(parsed.downspouts) ? parsed.downspouts : [],
+      roofStructure: parsed.roofStructure,
       aerial: parsed.aerial,
       capturedAt: parsed.capturedAt,
     };

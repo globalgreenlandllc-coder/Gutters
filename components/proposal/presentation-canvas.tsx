@@ -11,8 +11,9 @@ import {
   VIEWBOX_H,
   pathFor,
   lineLengthFt,
+  RoofStructureOverlay,
 } from "@/components/estimate/aerial-shared";
-import type { Downspout, EditableLine } from "@/lib/types";
+import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
 
 /**
  * Proposal-quality canvas. Same data shape as AerialCanvas but stripped
@@ -34,6 +35,7 @@ export function PresentationCanvas({
   eaves,
   rakes = [],
   downspouts,
+  roofStructure,
   onEavesChange,
   onDownspoutsChange,
   aerialImageUrl,
@@ -42,6 +44,9 @@ export function PresentationCanvas({
   eaves: EditableLine[];
   rakes?: EditableLine[];
   downspouts: Downspout[];
+  /** Roof outline + ridge/hip/valley lines, drawn under the trace so the
+   *  full roof shape reads on the proposal. Plan takeoffs only. */
+  roofStructure?: RoofStructure;
   /** Optional — when omitted, the canvas renders strictly read-only
    *  (no drag handles ever). Provide to allow vertex/downspout nudges. */
   onEavesChange?: (next: EditableLine[]) => void;
@@ -273,6 +278,15 @@ export function PresentationCanvas({
             small trace fills the frame while the drafting border stays at
             full size. `geomTransform` is undefined (identity) otherwise. */}
         <g transform={geomTransform}>
+        {/* Roof outline + ridge/hip/valley lines under the trace, so the
+            full roof shape reads and missing runs show as bare outline. */}
+        {planMode && roofStructure && (
+          <RoofStructureOverlay
+            structure={roofStructure}
+            tone="onLight"
+            scale={vs}
+          />
+        )}
         {/* Rakes — gray-dashed, low-opacity, non-interactive.
             On the drafting-paper plan background we use a darker
             indigo so the dashes stay legible on warm off-white. */}

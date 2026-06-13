@@ -120,6 +120,7 @@ function Inner() {
             eaves: handoff.eaves,
             rakes: handoff.rakes,
             downspouts: handoff.downspouts,
+            roofStructure: handoff.roofStructure,
             aerial: handoff.aerial,
           },
         }));

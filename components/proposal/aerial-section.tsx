@@ -103,6 +103,7 @@ export function AerialSection({
                 eaves={takeoff!.eaves}
                 rakes={takeoff!.rakes}
                 downspouts={takeoff!.downspouts}
+                roofStructure={takeoff!.roofStructure}
                 onEavesChange={editable ? handleEavesChange : undefined}
                 onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
                 aerialImageUrl={takeoff!.aerial?.imageDataUrl}

@@ -71,6 +71,7 @@ export function ResultsView({
     eaves,
     rakes: initial.rakes,
     downspouts,
+    roofStructure: initial.roofStructure,
     aerial: initial.aerial,
   };
 

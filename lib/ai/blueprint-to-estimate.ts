@@ -9,6 +9,8 @@ import type {
   EaveSide,
   EaveTier,
   EditableLine,
+  RoofStructure,
+  RoofStructureLine,
   Stories,
 } from "@/lib/types";
 // Import from the directive-free constants module, NOT from aerial-shared
@@ -459,12 +461,13 @@ export function blueprintToEstimateResult(
       return dx * dx + dy * dy < 1; // < 1 canvas px²
     });
 
-  // Hips + rakes + dormer_rakes ARE perimeter edges the contractor needs
-  // to see so they can verify what the AI excluded. Ridges and valleys are
-  // interior to the roof plane — we drop them here, they're not "edges of
-  // the building" and would just confuse the no-gutter dashed rendering.
+  // Gable rakes (rake + dormer_rake) are the dashed "GABLE — no gutter"
+  // edges. Hips, ridges, and valleys are NOT gables — they go into the
+  // roof-structure overlay below (perimeter outline + interior roof
+  // lines) so the contractor sees the whole roof shape, not a hip
+  // mislabeled as a gable.
   let rakes: EditableLine[] = analysis.excluded_edges
-    .filter((e) => e.kind !== "ridge" && e.kind !== "valley")
+    .filter((e) => e.kind === "rake" || e.kind === "dormer_rake")
     .map((e, i): EditableLine | null => {
       if (!isGoodPoint(e.start) || !isGoodPoint(e.end)) {
         droppedRakes.push(i);
@@ -496,6 +499,32 @@ export function blueprintToEstimateResult(
       return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
     })
     .filter((d): d is Downspout => d !== null);
+
+  // ── Roof-structure overlay ─────────────────────────────────────────
+  // The AI's full building outline + interior ridge / hip / valley lines.
+  // Drawn UNDER the trace so the contractor sees the whole roof shape and
+  // can read where the gutters sit on it — and where a run is MISSING (a
+  // stretch of outline with no eave on it). Projected with the SAME
+  // transform as the eaves so it registers with the trace; the LF
+  // correction below scales it in lockstep when it runs.
+  const projPts = (pts: readonly BlueprintPoint[]): BlueprintPoint[] =>
+    pts.filter((p) => isGoodPoint(p)).map((p) => project(p));
+  const structLines = (
+    kind: "ridge" | "valley" | "hip",
+  ): RoofStructureLine[] =>
+    analysis.excluded_edges
+      .filter(
+        (e) => e.kind === kind && isGoodPoint(e.start) && isGoodPoint(e.end),
+      )
+      .map((e, i) => ({
+        id: `plan-${kind}-${i}`,
+        kind,
+        points: [project(e.start), project(e.end)],
+      }));
+  let roofPerimeter = projPts(analysis.building_footprint ?? []);
+  let roofRidges = structLines("ridge");
+  let roofValleys = structLines("valley");
+  let roofHips = structLines("hip");
 
   // Synthesis fallback. Triggers in two cases:
   //   1. ALL eaves were dropped because every gutter_run had bad
@@ -580,6 +609,14 @@ export function blueprintToEstimateResult(
       const q = sp({ x: d.x, y: d.y });
       return { ...d, x: q.x, y: q.y };
     });
+    // Scale the roof-structure overlay in lockstep so the outline stays
+    // registered with the corrected eaves.
+    roofPerimeter = roofPerimeter.map(sp);
+    const scaleLines = (ls: RoofStructureLine[]) =>
+      ls.map((l) => ({ ...l, points: l.points.map(sp) }));
+    roofRidges = scaleLines(roofRidges);
+    roofValleys = scaleLines(roofValleys);
+    roofHips = scaleLines(roofHips);
 
     // (2) Cap physically-impossible runs. The longest legitimate run is
     // the longest (clamped) length_ft the AI reported — already capped to
@@ -699,6 +736,28 @@ export function blueprintToEstimateResult(
     );
   }
 
+  // Only surface the roof outline when we have a real traced footprint
+  // that registers with the eaves. When the trace was synthesized (the
+  // AI's coords were unusable and we laid out a rectangle from the run
+  // lengths), the building_footprint coords are unusable too, so an
+  // outline would float misaligned — drop it.
+  const roofConfidence =
+    analysis.confidence === "high"
+      ? 0.9
+      : analysis.confidence === "low"
+        ? 0.35
+        : 0.6;
+  const roofStructure: RoofStructure | undefined =
+    !synthesized && roofPerimeter.length >= 3
+      ? {
+          perimeter: roofPerimeter,
+          ridges: roofRidges,
+          valleys: roofValleys,
+          hips: roofHips,
+          confidence: roofConfidence,
+        }
+      : undefined;
+
   return {
     geocoded: {
       formatted: meta.filename,
@@ -712,6 +771,7 @@ export function blueprintToEstimateResult(
     eaves,
     rakes,
     downspouts,
+    roofStructure,
     source: "ai",
     durationMs: meta.durationMs ?? 0,
     notes,

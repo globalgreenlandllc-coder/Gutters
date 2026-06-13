@@ -4,6 +4,7 @@ import type {
   EstimateConfig,
   LineItem,
   Measurements,
+  RoofStructure,
 } from "./types";
 import { buildLineItems } from "./pricing";
 import { sampleMeasurements } from "./mock-estimate";
@@ -85,6 +86,8 @@ export type ProposalTakeoff = {
   eaves: EditableLine[];
   rakes: EditableLine[];
   downspouts: Downspout[];
+  /** Roof outline + ridge/hip/valley lines for the read-only overlay. */
+  roofStructure?: RoofStructure;
   aerial?: {
     imageDataUrl: string;
     width: number;

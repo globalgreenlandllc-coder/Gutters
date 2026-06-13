@@ -605,42 +605,75 @@ export function fitViewBox(
 }
 
 /**
- * Visual roof-structure annotation. We now draw the clean outer perimeter 
- * of the building footprint instead of rendering messy internal ridges/valleys.
+ * Roof-structure overlay: the building OUTLINE (the roof shape) plus the
+ * interior ridge / hip / valley lines, drawn under the gutter trace. Lets
+ * the contractor read the whole roof at a glance — where the eaves (and
+ * therefore gutters) sit on it, and where a run is MISSING (a stretch of
+ * outline with no eave on top of it).
  */
 export function RoofStructureOverlay({
   structure,
+  tone = "onDark",
+  scale = 1,
 }: {
   structure: RoofStructure;
+  /** "onDark" = light strokes for the dark tactical canvas; "onLight" =
+   *  dark strokes for the cream drafting-paper proposal. */
+  tone?: "onDark" | "onLight";
+  /** Inverse-zoom factor (view.width / VIEWBOX_W) so stroke weights stay
+   *  visually constant when the camera is zoomed in to frame the trace. */
+  scale?: number;
 }) {
-  if (structure.perimeter.length === 0) {
-    return null;
-  }
+  if (structure.perimeter.length < 3) return null;
+  const onDark = tone === "onDark";
+  const perim = onDark ? "rgba(226,232,240,0.85)" : "rgba(30,58,138,0.72)";
+  const ridgeC = onDark ? "rgba(148,163,184,0.7)" : "rgba(71,85,105,0.6)";
+  const hipC = onDark ? "rgba(125,211,252,0.6)" : "rgba(14,116,144,0.55)";
+  const valleyC = onDark ? "rgba(196,181,253,0.65)" : "rgba(109,40,217,0.5)";
+  const interior: { l: RoofStructureLine; c: string }[] = [
+    ...structure.ridges.map((l) => ({ l, c: ridgeC })),
+    ...(structure.hips ?? []).map((l) => ({ l, c: hipC })),
+    ...structure.valleys.map((l) => ({ l, c: valleyC })),
+  ].filter(({ l }) => l.points.length >= 2);
   return (
     <g pointerEvents="none">
+      {/* Interior roof lines first, under the perimeter + the trace */}
+      {interior.map(({ l, c }) => (
+        <path
+          key={l.id}
+          d={linePathD(l.points)}
+          fill="none"
+          stroke={c}
+          strokeWidth={1.4 * scale}
+          strokeDasharray={`${5 * scale} ${4 * scale}`}
+          strokeLinecap="round"
+        />
+      ))}
+      {/* Building outline — the roof shape */}
       <motion.path
         d={closedPathD(structure.perimeter)}
         fill="none"
-        stroke="rgba(255, 255, 255, 0.45)"
-        strokeWidth={3}
+        stroke={perim}
+        strokeWidth={2.4 * scale}
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity={0.9}
         initial={{ pathLength: 0, opacity: 0 }}
-        animate={{ pathLength: 1, opacity: 0.9 }}
-        transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
-        style={{ filter: "drop-shadow(0 0 4px rgba(0,0,0,0.5))" }}
+        animate={{ pathLength: 1, opacity: 1 }}
+        transition={{ duration: 0.6, delay: 0.2, ease: "easeOut" }}
+        style={{
+          filter: onDark ? "drop-shadow(0 0 4px rgba(0,0,0,0.55))" : "none",
+        }}
       />
     </g>
   );
 }
 
-function closedPathD(points: { x: number; y: number }[]): string {
+function linePathD(points: { x: number; y: number }[]): string {
   if (points.length === 0) return "";
   const [first, ...rest] = points;
-  return (
-    `M ${first.x} ${first.y} ` +
-    rest.map((p) => `L ${p.x} ${p.y}`).join(" ") +
-    " Z"
-  );
+  return `M ${first.x} ${first.y} ` + rest.map((p) => `L ${p.x} ${p.y}`).join(" ");
+}
+
+function closedPathD(points: { x: number; y: number }[]): string {
+  return points.length === 0 ? "" : linePathD(points) + " Z";
 }
