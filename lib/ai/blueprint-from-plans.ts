@@ -487,6 +487,35 @@ This means:
   but NOT priced.
 - Rakes, ridges, hips, valleys, dormer rakes ALWAYS go in
   excluded_edges. They never appear in gutter_runs.
+- RECORD THE INTERIOR ROOF-PLANE LINES, not only the perimeter ones. The
+  roof-plan view the contractor sees is building_footprint (the outline)
+  PLUS excluded_edges of kind ridge/hip/valley, so the takeoff should carry
+  the full roof-plane STRUCTURE. RIDGES/VALLEYS are INTERIOR lines and a HIP
+  runs from a corner INWARD, so the perimeter-edge rule is a FLOOR for
+  PERIMETER coverage only — it does not bound the interior lines. Record
+  any ridge, hip, or valley you can CLEARLY SEE drawn on the roof plan
+  (ridge symbol, hip line from an outside corner, valley V at an inside
+  corner) into excluded_edges with the matching kind + a terse reason.
+  These are decorative drawing only: ZERO effect on gutter LF, length_ft,
+  totals, or the HARD CAP. They are NOT priced; adding them changes only
+  what the roof-plan view draws.
+  - NO FABRICATION: record only lines the plan ACTUALLY shows. Do NOT
+    enumerate a textbook hip pattern. If a dense truss / framing sheet
+    obscures the interior geometry, OMIT the lines you cannot read, note
+    it, and lower confidence — never guess. A missing interior line is
+    harmless; an invented one misleads the contractor.
+  - NO MISCLASSIFICATION: a ridge/hip/valley is a roof-plane line, never an
+    eave. Recording one must NEVER pull an edge out of gutter_runs nor
+    convert an eave to a non-gutter line — eave classification (method
+    3 / 3a / 3b) is UNCHANGED.
+  - PRIORITY / TRUNCATION: gutter_runs, downspouts, totals, and the
+    excluded PERIMETER edges (rakes etc.) are required/priced and MUST be
+    fully emitted FIRST. The interior ridge/hip/valley lines are
+    decorative and come LAST. If you are running long, DROP interior lines
+    entirely rather than emit a single incomplete priced field — a
+    takeoff missing a few decorative lines beats one truncated mid-JSON.
+    One entry per drawn line: two endpoints + a terse reason; do not
+    over-segment one straight ridge into many pieces.
 
 If the plan note says "PROVIDE CONTINUOUS GUTTERS @ ALL EAVES,
 TYP." then every horizontal eave on the roof plan becomes a
@@ -533,6 +562,13 @@ every side, NOT a gutter on every side.
   raw pixel coordinates the plan was rendered at; do not rescale.
 - Every excluded perimeter edge MUST appear in excluded_edges with a kind +
   reason. This proves you considered it and rejected it deliberately.
+  This covers the PERIMETER; also record the INTERIOR roof-plane lines (any
+  ridge, hip, or valley you can clearly see drawn) into excluded_edges per
+  <lf_accounting>, so the roof-plan view carries the full plane structure.
+  Decorative no-gutter lines, NOT priced (no LF / total / CAP); never pull
+  an edge out of gutter_runs and never reclassify an eave. One entry per
+  drawn line (two endpoints + terse reason); record only what the plan
+  shows, emit them LAST, and never truncate the priced fields.
 - Hand-sketched / red-line plans → confidence "low" + a clear note. Don't
   refuse — return your best estimate so the contractor has something to edit.
 - For multi-page plan sets, only the roof plan page produces gutter_runs.
@@ -959,9 +995,13 @@ export async function blueprintFromPlanSources(
       // 30-segment trace with full excluded_edges) and trims ~15-25s
       // off wall-clock for typical jobs. Bumped 6000→8000 for headroom
       // now that the result comes back as a forced tool call (no prose
-      // preamble eats the budget). If output gets truncated the
-      // stop_reason check below catches it and surfaces a clear error.
-      max_tokens: 8000,
+      // preamble eats the budget). Bumped 8000→12000 because the prompt
+      // now also records the interior ridge/hip/valley roof-plane lines
+      // into excluded_edges (decorative); a complex cross-gable/hip roof
+      // can add 15-40 interior segments (~+800-2800 tokens) on exactly
+      // the case the cap was tuned tight for. If output still truncates,
+      // the stop_reason branch below salvages the priced fields.
+      max_tokens: 12000,
       temperature: 0,
       system: [
         {
@@ -1007,7 +1047,7 @@ export async function blueprintFromPlanSources(
       return {
         ok: false,
         reason: truncated
-          ? "Claude analysis was truncated before it returned a result (hit max_tokens — bump max_tokens in blueprint-from-plans.ts)."
+          ? "Claude analysis was truncated before it returned any tool call (hit max_tokens — bump max_tokens in blueprint-from-plans.ts)."
           : `Claude did not return a takeoff (stop_reason=${response.stop_reason}). First 200 chars: ${textPreview}`,
       };
     }
@@ -1022,13 +1062,50 @@ export async function blueprintFromPlanSources(
       };
     }
 
-    // record_gutter_takeoff truncated mid-input → the JSON object is
-    // incomplete (missing runs/edges). Don't ship a partial takeoff.
+    // record_gutter_takeoff truncated mid-input. The interior
+    // ridge/hip/valley lines are emitted LAST and are decorative, so a
+    // truncation usually lops off trailing excluded_edges, not the priced
+    // data. If the priced fields (gutter_runs + totals) already came back
+    // intact, salvage the takeoff: drop any partially-emitted trailing
+    // excluded_edges and note it, rather than throwing away a fully-priced
+    // result. Only hard-fail when the priced fields themselves are
+    // incomplete.
     if (response.stop_reason === "max_tokens") {
+      const partial = toolUse.input as Partial<BlueprintAnalysis>;
+      const pricedOk =
+        Array.isArray(partial.gutter_runs) &&
+        partial.gutter_runs.length > 0 &&
+        partial.totals != null;
+      if (!pricedOk) {
+        return {
+          ok: false,
+          reason:
+            "Claude analysis was truncated at max_tokens before the priced gutter_runs/totals were complete. Bump max_tokens in blueprint-from-plans.ts and re-analyze.",
+        };
+      }
+      const salvaged: BlueprintAnalysis = {
+        ...(partial as BlueprintAnalysis),
+        // Last-emitted excluded_edge may be cut off mid-object; drop it.
+        excluded_edges: Array.isArray(partial.excluded_edges)
+          ? partial.excluded_edges.filter(
+              (e) => e && e.kind && e.start && e.end,
+            )
+          : [],
+        notes: [
+          ...(Array.isArray(partial.notes) ? partial.notes : []),
+          "Output truncated at max_tokens; interior roof-plane lines may be incomplete (decorative only). Priced runs/totals are intact.",
+        ],
+      };
       return {
-        ok: false,
-        reason:
-          "Claude analysis was truncated at max_tokens — the takeoff is incomplete. Bump max_tokens in blueprint-from-plans.ts and re-analyze.",
+        ok: true,
+        analysis: salvaged,
+        usage: {
+          model: MODEL,
+          input_tokens: response.usage.input_tokens,
+          output_tokens: response.usage.output_tokens,
+          cache_hit: (response.usage.cache_read_input_tokens ?? 0) > 0,
+          duration_ms: Date.now() - t0,
+        },
       };
     }
 

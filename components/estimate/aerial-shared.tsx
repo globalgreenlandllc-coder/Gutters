@@ -626,26 +626,31 @@ export function RoofStructureOverlay({
 }) {
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";
-  const perim = onDark ? "rgba(226,232,240,0.85)" : "rgba(30,58,138,0.72)";
-  const ridgeC = onDark ? "rgba(148,163,184,0.7)" : "rgba(71,85,105,0.6)";
-  const hipC = onDark ? "rgba(125,211,252,0.6)" : "rgba(14,116,144,0.55)";
-  const valleyC = onDark ? "rgba(196,181,253,0.65)" : "rgba(109,40,217,0.5)";
-  const interior: { l: RoofStructureLine; c: string }[] = [
-    ...structure.ridges.map((l) => ({ l, c: ridgeC })),
-    ...(structure.hips ?? []).map((l) => ({ l, c: hipC })),
-    ...structure.valleys.map((l) => ({ l, c: valleyC })),
+  const perim = onDark ? "rgba(226,232,240,0.92)" : "rgba(30,58,138,0.8)";
+  // Distinct, clearly-visible roof-plane lines so the overlay reads like an
+  // actual roof plan (hips run in from the corners, ridges/valleys cross the
+  // body). Bolder than a faint hint, but still under the bold gutter trace.
+  const ridgeC = onDark ? "rgba(186,200,220,0.92)" : "rgba(51,65,85,0.82)";
+  const hipC = onDark ? "rgba(125,211,252,0.92)" : "rgba(14,116,144,0.82)";
+  const valleyC = onDark ? "rgba(196,181,253,0.92)" : "rgba(109,40,217,0.78)";
+  // Hips (the corner diagonals) are the most roof-defining lines — draw them
+  // a touch heavier than ridges/valleys.
+  const interior: { l: RoofStructureLine; c: string; w: number }[] = [
+    ...structure.ridges.map((l) => ({ l, c: ridgeC, w: 1.6 })),
+    ...(structure.hips ?? []).map((l) => ({ l, c: hipC, w: 2 })),
+    ...structure.valleys.map((l) => ({ l, c: valleyC, w: 1.6 })),
   ].filter(({ l }) => l.points.length >= 2);
   return (
     <g pointerEvents="none">
       {/* Interior roof lines first, under the perimeter + the trace */}
-      {interior.map(({ l, c }) => (
+      {interior.map(({ l, c, w }) => (
         <path
           key={l.id}
           d={linePathD(l.points)}
           fill="none"
           stroke={c}
-          strokeWidth={1.4 * scale}
-          strokeDasharray={`${5 * scale} ${4 * scale}`}
+          strokeWidth={w * scale}
+          strokeDasharray={`${6 * scale} ${4 * scale}`}
           strokeLinecap="round"
         />
       ))}
