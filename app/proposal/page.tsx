@@ -122,6 +122,7 @@ function Inner() {
             downspouts: handoff.downspouts,
             roofStructure: handoff.roofStructure,
             aerial: handoff.aerial,
+            canvasPxPerFt: handoff.canvasPxPerFt,
           },
         }));
         clearEstimateHandoff();

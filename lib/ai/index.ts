@@ -22,6 +22,7 @@ import { detectTierBreakEaves } from "./tier-breaks";
 import {
   buildEditableLines,
   classifyPolygonCorners,
+  canvasPxPerFoot,
   countCorners,
   eavesFromRoofPolygon,
   imagePixelToLatLng,
@@ -68,6 +69,13 @@ export type EstimateResult = {
     height: number;
     zoom: number;
   };
+  /** Canvas-pixels-per-foot for THIS estimate's trace. Set only for
+   *  satellite estimates (where eaves are COVER-fit onto the viewBox and
+   *  1 ft ≠ 2.4 px); absent for plan takeoffs, which are laid out at the
+   *  fixed PX_PER_FT and so use that default. The client divides canvas
+   *  px by this (not the hardcoded 2.4) so the legend + live re-priced LF
+   *  match the server's measurements.eaveLF. */
+  canvasPxPerFt?: number;
   /** Plan-based estimates: PDF page reference for the canvas to render
    *  as the takeoff background. The browser fetches `pdfUrl` (an
    *  authenticated proxy on /api/blueprints/[id]/pdf), rasterizes the
@@ -874,6 +882,12 @@ export async function runAIEstimatePipeline(
           height: image.height,
           zoom: image.zoom,
         },
+        canvasPxPerFt: canvasPxPerFoot(
+          geocoded.lat,
+          image.zoom,
+          image.width,
+          image.height,
+        ),
         roofStructure,
       };
     }
@@ -1055,6 +1069,12 @@ export async function runAIEstimatePipeline(
           height: image.height,
           zoom: image.zoom,
         },
+        canvasPxPerFt: canvasPxPerFoot(
+          geocoded.lat,
+          image.zoom,
+          image.width,
+          image.height,
+        ),
         roofStructure,
       };
     }

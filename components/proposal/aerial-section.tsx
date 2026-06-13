@@ -34,7 +34,10 @@ export function AerialSection({
   // produce "NaN LF" in the overlay. Treat bad lines as 0 — the
   // contractor edits them away rather than seeing junk.
   const safeLineLengthFt = (l: EditableLine): number => {
-    const v = lineLengthFt(l);
+    // Use the satellite trace's own px-per-ft (carried in the takeoff) so
+    // editing eaves here re-prices on the same scale the estimate used,
+    // not the plan-mode 2.4. Undefined → lineLengthFt falls back to it.
+    const v = lineLengthFt(l, takeoff?.canvasPxPerFt);
     return Number.isFinite(v) ? v : 0;
   };
   const liveEaveLF = useMemo(() => {
@@ -106,6 +109,7 @@ export function AerialSection({
                 roofStructure={takeoff!.roofStructure}
                 onEavesChange={editable ? handleEavesChange : undefined}
                 onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
+                pxPerFt={takeoff!.canvasPxPerFt}
                 aerialImageUrl={takeoff!.aerial?.imageDataUrl}
                 // Plan-based takeoffs have no satellite image. Switch
                 // the canvas into drafting-paper mode so the gutter
@@ -140,6 +144,7 @@ export function AerialSection({
             eaves={takeoff!.eaves}
             rakes={takeoff!.rakes}
             downspouts={takeoff!.downspouts}
+            pxPerFt={takeoff!.canvasPxPerFt}
             measurements={{
               ...proposal.measurements,
               eaveLF: liveEaveLF,

@@ -526,7 +526,15 @@ export function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function lineLengthFt(line: EditableLine) {
+/**
+ * Canvas-pixel length of a polyline in feet. `pxPerFt` defaults to the
+ * plan-takeoff scale (PX_PER_FT = 2.4); SATELLITE estimates must pass the
+ * per-estimate `canvasPxPerFt` stamped on EstimateResult, because their
+ * eaves are COVER-fit onto the viewBox where 1 ft ≠ 2.4 px. Passing
+ * undefined falls back to PX_PER_FT, preserving plan behavior + old data.
+ */
+export function lineLengthFt(line: EditableLine, pxPerFt: number = PX_PER_FT) {
+  const scale = Number.isFinite(pxPerFt) && pxPerFt > 0 ? pxPerFt : PX_PER_FT;
   let total = 0;
   for (let i = 1; i < line.points.length; i++) {
     const d = dist(line.points[i - 1], line.points[i]);
@@ -535,7 +543,7 @@ export function lineLengthFt(line: EditableLine) {
     // whole legend with "NaN LF".
     if (Number.isFinite(d)) total += d;
   }
-  return total / PX_PER_FT;
+  return total / scale;
 }
 
 /**

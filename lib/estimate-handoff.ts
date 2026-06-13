@@ -50,6 +50,11 @@ export interface EstimateHandoff {
   /** Background satellite image. Optional because mock/partial estimate
    *  runs don't always produce one — fall back to the cartoon scene. */
   aerial?: EstimateHandoffAerial;
+  /** Canvas-px-per-foot for the satellite trace, so the proposal's LF +
+   *  re-price use the same scale the estimate did (not the plan-mode
+   *  2.4). Absent for plan takeoffs / older payloads → defaults to
+   *  PX_PER_FT downstream. */
+  canvasPxPerFt?: number;
   /** ms epoch — used to ignore handoffs older than a few minutes so a
    *  stale tab doesn't hijack a fresh proposal session. */
   capturedAt: number;
@@ -98,6 +103,10 @@ export function readEstimateHandoff(): EstimateHandoff | null {
       downspouts: Array.isArray(parsed.downspouts) ? parsed.downspouts : [],
       roofStructure: parsed.roofStructure,
       aerial: parsed.aerial,
+      canvasPxPerFt:
+        typeof parsed.canvasPxPerFt === "number"
+          ? parsed.canvasPxPerFt
+          : undefined,
       capturedAt: parsed.capturedAt,
     };
   } catch {

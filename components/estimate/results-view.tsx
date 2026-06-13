@@ -46,7 +46,10 @@ export function ResultsView({
 
   const liveEaveLF = Math.round(
     eaves.reduce((acc, l) => {
-      const v = lineLengthFt(l);
+      // Satellite eaves are COVER-fit onto the canvas, so convert px→ft
+      // with the per-estimate scale (not the plan-mode 2.4) — otherwise
+      // editing an eave re-prices the job on the wrong scale.
+      const v = lineLengthFt(l, initial.canvasPxPerFt);
       return acc + (Number.isFinite(v) ? v : 0);
     }, 0),
   );
@@ -73,6 +76,7 @@ export function ResultsView({
     downspouts,
     roofStructure: initial.roofStructure,
     aerial: initial.aerial,
+    canvasPxPerFt: initial.canvasPxPerFt,
   };
 
   return (
@@ -111,6 +115,7 @@ export function ResultsView({
                 aerialImageUrl={initial.aerial?.imageDataUrl}
                 planSource={initial.planSource}
                 roofStructure={initial.roofStructure}
+                pxPerFt={initial.canvasPxPerFt}
               />
             </div>
             <SiteContext />

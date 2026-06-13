@@ -40,6 +40,7 @@ export function PresentationCanvas({
   onDownspoutsChange,
   aerialImageUrl,
   planMode,
+  pxPerFt,
 }: {
   eaves: EditableLine[];
   rakes?: EditableLine[];
@@ -59,6 +60,9 @@ export function PresentationCanvas({
    *  extracted from architectural plans, not from a satellite tile, so
    *  drawing it on a cartoon roof looks fake. */
   planMode?: boolean;
+  /** Satellite trace's canvas-px-per-foot (from the takeoff). Omit for
+   *  plan takeoffs — lineLengthFt falls back to PX_PER_FT. */
+  pxPerFt?: number;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -71,8 +75,8 @@ export function PresentationCanvas({
   >(null);
 
   const totalEaveLF = useMemo(
-    () => Math.round(eaves.reduce((acc, l) => acc + lineLengthFt(l), 0)),
-    [eaves],
+    () => Math.round(eaves.reduce((acc, l) => acc + lineLengthFt(l, pxPerFt), 0)),
+    [eaves, pxPerFt],
   );
 
   // Enlarge a small trace to fill the canvas in plan mode. A correctly-
@@ -390,6 +394,7 @@ export function PresentationCanvas({
                 minFt={active ? 0 : LABEL_MIN_FT}
                 planMode={planMode}
                 scale={vs}
+                pxPerFt={pxPerFt}
               />
             </g>
           );
@@ -482,11 +487,13 @@ function SegmentLabel({
   minFt,
   planMode,
   scale = 1,
+  pxPerFt,
 }: {
   line: EditableLine;
   emphasized: boolean;
   minFt: number;
   planMode?: boolean;
+  pxPerFt?: number;
   /** Visual scale of the zoomed viewBox window (<1 when the camera is
    *  zoomed in to frame a small trace). Keeps the pill a constant size
    *  on screen instead of ballooning with the zoom. */
@@ -495,7 +502,7 @@ function SegmentLabel({
   if (line.points.length < 2) return null;
   const a = line.points[0];
   const b = line.points[line.points.length - 1];
-  const len = Math.round(lineLengthFt(line));
+  const len = Math.round(lineLengthFt(line, pxPerFt));
   if (len < minFt) return null;
 
   const dx = b.x - a.x;
