@@ -287,6 +287,32 @@ Follow these steps in order. Think carefully before producing JSON.
     SOURCE priority, and is VISUAL ONLY: never changes gutter_runs, length_ft,
     or the CAP.
 
+2b. ELEVATION ROOFLINE INVENTORY -- the gutter-placement step, done for ALL
+    FOUR elevations BEFORE you trace a single gutter_run. This (not a
+    hip-vs-gable guess, not the truss plan) is what DECIDES where gutters go.
+    For each elevation, trace the TOP outline of the roof (the silhouette
+    where the roof meets the sky), left to right, and label every segment by
+    its SLOPE:
+      * HORIZONTAL segment  => an EAVE. A gutter hangs on the wall directly
+        below it (the fascia / "CONT. METAL GUTTER" line). Record it.
+      * SLOPED / diagonal segment (it climbs toward a ridge or a gable peak)
+        => a RAKE. NO gutter -- water sheds OFF it. Record it as a rake.
+      * Two opposing slopes meeting at a "^" peak with NO horizontal edge
+        between them => a GABLE END: its ENTIRE face is rakes, NO gutter
+        anywhere across it. This is the error you keep making -- a gable peak
+        gets ZERO gutter; the gutters for that wing are on its return sides
+        (the 90deg-adjacent elevation).
+    Then build an explicit per-side map, e.g. "front: eave | gable | eave;
+    rear: eave | gable(center) | eave; left: gable (no gutter); right:
+    eave". A side's gutters are EXACTLY its HORIZONTAL roofline segments,
+    each split where the roofline turns sloped (a gable's bottom corners).
+    Carry NOTHING across a sloped segment.
+    SHAPE / JOGS: every STEP-DOWN in a roofline (a horizontal eave dropping
+    to a lower horizontal eave) is a tier change AND a real footprint jog --
+    a lower roof (porch / patio / 1-story wing). The widths of the roofline
+    segments tell you the wing widths; reconcile them with the footprint
+    from step 2 so jogs, projections, and lower wings all appear.
+
 3a. NO ROOF-TYPE PRIOR -- the single most common error is running a
     horizontal GUTTER across a GABLE face. Do NOT assume a house is
     "usually hip" or that "eaves make up most of the perimeter." Many
@@ -463,13 +489,18 @@ SELF-CHECK BEFORE EMITTING JSON:
    full gable end → two excluded_edges of kind "rake"). When ambiguous,
    close as a rake, not a phantom gutter. Re-confirm the total still
    respects max_total_eave_lf after closing the loop.
-5. WALL-LINE CHECK (per 3c): for every gutter_run, confirm a ROOF PLANE
+5. GABLE CHECK (per 2b): every gutter_run must sit under a HORIZONTAL
+   roofline segment from your elevation inventory. If a run sits under a
+   SLOPED roofline or across a "^" gable peak, it is a phantom gutter on a
+   gable — delete it (re-class the edge as a rake). Confirm each elevation's
+   gable peaks carry ZERO gutter.
+6. WALL-LINE CHECK (per 3c): for every gutter_run, confirm a ROOF PLANE
    sits directly above its line (slope / shingles / overhang) — not more
    wall, siding, or windows. Delete any run that is actually sitting on a
    belly band, water table, trim/band board, trellis beam, header, or a
    floor/plate/grade level line. A tall wall with one top eave gets ONE
    gutter, not one per band.
-6. Do this self-correction silently — the response should still be
+7. Do this self-correction silently — the response should still be
    strict JSON, no commentary.
 </scale_discipline>
 
