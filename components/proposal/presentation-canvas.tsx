@@ -285,6 +285,8 @@ export function PresentationCanvas({
             structure={roofStructure}
             tone="onLight"
             scale={vs}
+            derive
+            eaves={eaves}
           />
         )}
         {/* Rakes — gray-dashed, low-opacity, non-interactive.

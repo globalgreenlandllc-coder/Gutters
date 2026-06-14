@@ -673,7 +673,15 @@ const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
           "genuinely rectangular house is correctly 4 points; an articulated " +
           "house naturally lands higher. Do NOT target a point count or " +
           "promote overhang offsets / dimension ticks / interior partitions " +
-          "into corners; when unsure a jog is exterior, OMIT it. This is the " +
+          "into corners; when unsure a jog is exterior, OMIT it. " +
+          "ROOFED PROJECTIONS BEYOND THE FOUNDATION: this is the ROOF/EAVE " +
+          "outline, which can extend PAST the foundation slab. Include any " +
+          "projection that carries roof over it -- covered porch / entry / " +
+          "rear patio cover, a bay-window or fireplace-chase bump-out with a " +
+          "roof, a cantilevered upper floor -- because each has its own eave " +
+          "the gutter sits on. EXCLUDE projections with NO roof (an open deck, " +
+          "a bare chimney stack, a slab patio) -- no roof means no eave means " +
+          "it is not part of this outline. This is the " +
           "roof outline the contractor SEES under the gutter trace, so it " +
           "must match the real building shape. VISUAL ONLY -- a footprint " +
           "corner needs no matching gutter_run or excluded_edge and does NOT " +

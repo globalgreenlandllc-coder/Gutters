@@ -233,29 +233,6 @@ export function AerialCanvas({
     return { x: sx / n, y: sy / n };
   }, [eaves]);
 
-  // Where to drop the "FRONT" marker — average midpoint of the eaves the
-  // plan tagged side:"front", pushed outward from the roof centroid so it
-  // sits just off the front edge. Null when no eave is tagged front.
-  const frontAnchor = useMemo(() => {
-    const fronts = eaves.filter(
-      (l) => l.side === "front" && l.points.length >= 2,
-    );
-    if (fronts.length === 0) return null;
-    let sx = 0;
-    let sy = 0;
-    for (const l of fronts) {
-      const a = l.points[0];
-      const b = l.points[l.points.length - 1];
-      sx += (a.x + b.x) / 2;
-      sy += (a.y + b.y) / 2;
-    }
-    const mx = sx / fronts.length;
-    const my = sy / fronts.length;
-    const dx = mx - eavesCentroid.x;
-    const dy = my - eavesCentroid.y;
-    const d = Math.hypot(dx, dy) || 1;
-    return { x: mx + (dx / d) * 30, y: my + (dy / d) * 30 };
-  }, [eaves, eavesCentroid]);
 
   // Does the plan distinguish roof tiers? Drives the on-canvas tier
   // legend so the amber color reads as "lower roof" rather than "error".
@@ -870,6 +847,8 @@ export function AerialCanvas({
             structure={roofStructure}
             tone={theme === "tactical" ? "onDark" : "onLight"}
             scale={renderScale}
+            derive={!!planSource}
+            eaves={eaves}
           />
         )}
 
@@ -1132,35 +1111,9 @@ export function AerialCanvas({
           );
         })}
 
-        {/* FRONT-of-house marker — anchored off the plan's front eaves so
-            the contractor can orient the trace against the elevations. */}
-        {frontAnchor && (
-          <g pointerEvents="none">
-            <rect
-              x={frontAnchor.x - 27 * renderScale}
-              y={frontAnchor.y - 9 * renderScale}
-              width={54 * renderScale}
-              height={18 * renderScale}
-              rx={4 * renderScale}
-              fill="rgba(2,6,23,0.9)"
-              stroke="#67e8f9"
-              strokeWidth={1}
-              style={{ filter: "drop-shadow(0 0 4px rgba(0,229,255,0.4))" }}
-            />
-            <text
-              x={frontAnchor.x}
-              y={frontAnchor.y + 3.5 * renderScale}
-              textAnchor="middle"
-              fill="#a5f3fc"
-              fontSize={10 * renderScale}
-              fontWeight={700}
-              fontFamily="ui-sans-serif, system-ui"
-              letterSpacing={1.2 * renderScale}
-            >
-              FRONT
-            </text>
-          </g>
-        )}
+        {/* Orientation (FRONT / BACK / LEFT / RIGHT) is rendered by
+            RoofStructureOverlay above so it travels with the roof plan to
+            the proposal canvas too. */}
 
         {downspouts.map((d) => {
           const isSelected = selectedId === d.id;
@@ -1707,16 +1660,34 @@ function Toolbar({
 }
 
 function RoofStructureBanner({ confidence }: { confidence: number }) {
-  const pct = Math.round(confidence * 100);
   const lowConfidence = confidence < 0.7;
+  // Compact key for the derived roof plan: ridge (peak), hip (corner
+  // diagonal), valley (inside-corner drain). Helps the contractor read the
+  // colored lines as an actual roof plan rather than decoration.
+  const Key = ({ color, dashed, label }: { color: string; dashed?: boolean; label: string }) => (
+    <span className="flex items-center gap-1">
+      <span
+        className="inline-block h-0.5 w-4"
+        style={
+          dashed
+            ? { backgroundImage: `repeating-linear-gradient(to right, ${color} 0 4px, transparent 4px 7px)` }
+            : { backgroundColor: color }
+        }
+      />
+      <span className="text-white/75">{label}</span>
+    </span>
+  );
   return (
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
-      <div className="flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
-        <span className="h-2 w-2 rounded-full bg-white" />
-        <span>Perimeter Outline</span>
-        <span className="mx-1 h-3 w-px bg-white/25" />
-        <span className={cn(lowConfidence ? "text-amber-300" : "text-white/70")}>
-          {lowConfidence ? "Visual approx — verify before estimating" : `Approximation · ${pct}% conf`}
+      <div className="flex items-center gap-2.5 rounded-full border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
+        <span className="font-semibold text-white/90">Roof plan</span>
+        <span className="h-3 w-px bg-white/20" />
+        <Key color="#cbd5e1" label="Ridge" />
+        <Key color="#7dd3fc" label="Hip" />
+        <Key color="#c4b5fd" dashed label="Valley" />
+        <span className="h-3 w-px bg-white/20" />
+        <span className={cn(lowConfidence ? "text-amber-300" : "text-white/60")}>
+          {lowConfidence ? "Schematic — verify" : "Schematic"}
         </span>
       </div>
     </div>

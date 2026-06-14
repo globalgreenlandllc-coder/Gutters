@@ -1,12 +1,14 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useMemo } from "react";
 import type {
   Downspout,
+  EaveSide,
   EditableLine,
   RoofStructure,
-  RoofStructureLine,
 } from "@/lib/types";
+import { deriveRoofSkeleton, type Pt } from "@/lib/roof-skeleton";
 
 // Geometry constants live in a directive-free module so the SERVER-ONLY
 // plan→estimate converter can import the real numbers. Importing them
@@ -604,17 +606,55 @@ export function fitViewBox(
   return { x: cx - cw / 2, y: cy - ch / 2, width: cw, height: ch };
 }
 
+function segLen(a: Pt, b: Pt) {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/** Average midpoint of every eave tagged a given side, pushed just outside
+ *  the roof so the orientation chip sits off the correct edge. */
+function sideAnchor(
+  eaves: { points: { x: number; y: number }[]; side?: EaveSide }[],
+  side: EaveSide,
+  centroid: Pt,
+): Pt | null {
+  const matches = eaves.filter((l) => l.side === side && l.points.length >= 2);
+  if (matches.length === 0) return null;
+  let sx = 0;
+  let sy = 0;
+  for (const l of matches) {
+    const a = l.points[0];
+    const b = l.points[l.points.length - 1];
+    sx += (a.x + b.x) / 2;
+    sy += (a.y + b.y) / 2;
+  }
+  const mx = sx / matches.length;
+  const my = sy / matches.length;
+  const dx = mx - centroid.x;
+  const dy = my - centroid.y;
+  const d = Math.hypot(dx, dy) || 1;
+  return { x: mx + (dx / d) * 26, y: my + (dy / d) * 26 };
+}
+
 /**
- * Roof-structure overlay: the building OUTLINE (the roof shape) plus the
- * interior ridge / hip / valley lines, drawn under the gutter trace. Lets
- * the contractor read the whole roof at a glance — where the eaves (and
- * therefore gutters) sit on it, and where a run is MISSING (a stretch of
- * outline with no eave on top of it).
+ * Roof-structure overlay — renders the roof like an architect's roof plan
+ * sitting under the gutter trace: the filled building SHAPE, the interior
+ * roof planes (ridges / hips / valleys), the perimeter (roof edge), and
+ * FRONT / BACK / LEFT / RIGHT orientation chips so the contractor instantly
+ * recognizes the house, its shape, and which way it faces — then can judge
+ * whether the gutters (the bold eaves drawn on top) sit on the right edges.
+ *
+ * The interior roof lines are DERIVED from the footprint (`derive`) rather
+ * than traced — a hip roof's ridges/hips/valleys are almost fully determined
+ * by the outline, and deriving them gives a complete, connected, clean roof
+ * every time instead of the sparse floating dashes the AI returns off a
+ * dense truss sheet. Purely decorative: never affects LF / totals / price.
  */
 export function RoofStructureOverlay({
   structure,
   tone = "onDark",
   scale = 1,
+  derive = false,
+  eaves = [],
 }: {
   structure: RoofStructure;
   /** "onDark" = light strokes for the dark tactical canvas; "onLight" =
@@ -623,43 +663,106 @@ export function RoofStructureOverlay({
   /** Inverse-zoom factor (view.width / VIEWBOX_W) so stroke weights stay
    *  visually constant when the camera is zoomed in to frame the trace. */
   scale?: number;
+  /** Derive a complete ridge/hip/valley skeleton from the footprint
+   *  instead of using the (sparse, unreliable) AI-traced lines. On for
+   *  plan takeoffs; off for satellite (which has real ridge detection). */
+  derive?: boolean;
+  /** Eaves carry building side (front/back/left/right) — used to place the
+   *  orientation chips. Optional; chips are skipped when absent. */
+  eaves?: { points: { x: number; y: number }[]; side?: EaveSide }[];
 }) {
+  // Derived (or structure-provided) roof skeleton. useMemo so the per-frame
+  // re-renders during eave drag don't recompute the grid decomposition.
+  // Hook must run before any early return.
+  const skel = useMemo(
+    () =>
+      derive
+        ? deriveRoofSkeleton(structure.perimeter)
+        : {
+            ridges: structure.ridges.map((l) => ({ points: l.points })),
+            hips: (structure.hips ?? []).map((l) => ({ points: l.points })),
+            valleys: structure.valleys.map((l) => ({ points: l.points })),
+          },
+    [
+      derive,
+      structure.perimeter,
+      structure.ridges,
+      structure.hips,
+      structure.valleys,
+    ],
+  );
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";
-  const perim = onDark ? "rgba(226,232,240,0.92)" : "rgba(30,58,138,0.8)";
-  // Distinct, clearly-visible roof-plane lines so the overlay reads like an
-  // actual roof plan (hips run in from the corners, ridges/valleys cross the
-  // body). Bolder than a faint hint, but still under the bold gutter trace.
-  const ridgeC = onDark ? "rgba(186,200,220,0.92)" : "rgba(51,65,85,0.82)";
-  const hipC = onDark ? "rgba(125,211,252,0.92)" : "rgba(14,116,144,0.82)";
-  const valleyC = onDark ? "rgba(196,181,253,0.92)" : "rgba(109,40,217,0.78)";
-  // Hips (the corner diagonals) are the most roof-defining lines — draw them
-  // a touch heavier than ridges/valleys.
-  const interior: { l: RoofStructureLine; c: string; w: number }[] = [
-    ...structure.ridges.map((l) => ({ l, c: ridgeC, w: 1.6 })),
-    ...(structure.hips ?? []).map((l) => ({ l, c: hipC, w: 2 })),
-    ...structure.valleys.map((l) => ({ l, c: valleyC, w: 1.6 })),
-  ].filter(({ l }) => l.points.length >= 2);
+  const perim = onDark ? "rgba(226,232,240,0.95)" : "rgba(30,58,138,0.85)";
+  const fill = onDark ? "rgba(148,163,184,0.10)" : "rgba(120,113,90,0.07)";
+  // Distinct roof-plane line colors so the overlay reads like a real roof
+  // plan. Ridges run along the peaks, hips up from the outside corners,
+  // valleys drop in at the inside corners (dashed, like a drainage line).
+  const ridgeC = onDark ? "rgba(203,213,225,0.85)" : "rgba(51,65,85,0.78)";
+  const hipC = onDark ? "rgba(125,211,252,0.85)" : "rgba(14,116,144,0.78)";
+  const valleyC = onDark ? "rgba(196,181,253,0.9)" : "rgba(109,40,217,0.75)";
+
+  // Interior roof lines (skel derived above). Map to render descriptors.
+  const lines: { pts: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
+    ...skel.ridges.map((l) => ({ pts: l.points, c: ridgeC, w: 1.5, dash: false })),
+    ...skel.hips.map((l) => ({ pts: l.points, c: hipC, w: 1.6, dash: false })),
+    ...skel.valleys.map((l) => ({ pts: l.points, c: valleyC, w: 1.6, dash: true })),
+  ].filter(
+    (l) => l.pts.length >= 2 && segLen(l.pts[0], l.pts[l.pts.length - 1]) > 1.5,
+  );
+
+  // Roof centroid (perimeter average) — orientation chips push outward
+  // from it so each sits just off its edge.
+  let cx = 0;
+  let cy = 0;
+  for (const p of structure.perimeter) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= structure.perimeter.length;
+  cy /= structure.perimeter.length;
+  const centroid = { x: cx, y: cy };
+  const chips: { side: EaveSide; label: string; at: Pt }[] = (
+    [
+      ["front", "FRONT"],
+      ["back", "BACK"],
+      ["left", "LEFT"],
+      ["right", "RIGHT"],
+    ] as [EaveSide, string][]
+  )
+    .map(([side, label]) => {
+      const at = sideAnchor(eaves, side, centroid);
+      return at ? { side, label, at } : null;
+    })
+    .filter((c): c is { side: EaveSide; label: string; at: Pt } => c !== null);
+
+  const chipText = onDark ? "#e2e8f0" : "#1e3a8a";
+  const chipFill = onDark ? "rgba(2,6,23,0.78)" : "rgba(255,255,255,0.92)";
+  const chipStroke = onDark ? "rgba(148,163,184,0.45)" : "rgba(30,58,138,0.35)";
+
   return (
     <g pointerEvents="none">
-      {/* Interior roof lines first, under the perimeter + the trace */}
-      {interior.map(({ l, c, w }) => (
+      {/* Filled roof shape so the building reads as a solid mass */}
+      <path d={closedPathD(structure.perimeter)} fill={fill} stroke="none" />
+      {/* Interior roof-plane lines, under the perimeter + the trace */}
+      {lines.map((l, i) => (
         <path
-          key={l.id}
-          d={linePathD(l.points)}
+          key={`rl-${i}`}
+          d={linePathD(l.pts)}
           fill="none"
-          stroke={c}
-          strokeWidth={w * scale}
-          strokeDasharray={`${6 * scale} ${4 * scale}`}
+          stroke={l.c}
+          strokeWidth={l.w * scale}
+          strokeDasharray={l.dash ? `${5 * scale} ${3.5 * scale}` : undefined}
           strokeLinecap="round"
+          strokeLinejoin="round"
         />
       ))}
-      {/* Building outline — the roof shape */}
+      {/* Building outline — the roof edge */}
       <motion.path
         d={closedPathD(structure.perimeter)}
         fill="none"
         stroke={perim}
-        strokeWidth={2.4 * scale}
+        strokeWidth={2.2 * scale}
         strokeLinecap="round"
         strokeLinejoin="round"
         initial={{ pathLength: 0, opacity: 0 }}
@@ -669,6 +772,37 @@ export function RoofStructureOverlay({
           filter: onDark ? "drop-shadow(0 0 4px rgba(0,0,0,0.55))" : "none",
         }}
       />
+      {/* Orientation chips — FRONT / BACK / LEFT / RIGHT off each edge */}
+      {chips.map(({ side, label, at }) => {
+        const w = (label.length * 6.2 + 12) * scale;
+        const h = 14 * scale;
+        return (
+          <g key={side}>
+            <rect
+              x={at.x - w / 2}
+              y={at.y - h / 2}
+              width={w}
+              height={h}
+              rx={3 * scale}
+              fill={chipFill}
+              stroke={chipStroke}
+              strokeWidth={scale}
+            />
+            <text
+              x={at.x}
+              y={at.y + 3.4 * scale}
+              textAnchor="middle"
+              fill={chipText}
+              fontSize={8 * scale}
+              fontWeight={700}
+              fontFamily="ui-sans-serif, system-ui"
+              letterSpacing={1 * scale}
+            >
+              {label}
+            </text>
+          </g>
+        );
+      })}
     </g>
   );
 }
