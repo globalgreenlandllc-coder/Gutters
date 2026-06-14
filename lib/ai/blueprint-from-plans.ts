@@ -511,6 +511,27 @@ tier is "unknown", default to upper_tier_ft (conservative — labor
 priced for the taller drop).
 </tier_assignment>
 
+<orientation>
+Assign each gutter_run.side (and downspout.drop_direction) from the plan's
+OWN elevation TITLES — NOT from the roof-plan view. A top-down roof plan
+MIRRORS left/right (north-up: east draws on the right but is the "LEFT"
+elevation), which is the #1 cause of swapped sides. So read the titles:
+- the eaves drawn in the elevation titled "FRONT" (often "FRONT/NORTH" —
+  the street / entry / main address / garage-door face) => side "front".
+- "REAR" or "BACK" (e.g. "REAR/SOUTH") => side "back".
+- "LEFT" (e.g. "LEFT/EAST") => side "left".
+- "RIGHT" (e.g. "RIGHT/WEST") => side "right".
+Use the WORD in the title, never the compass letter: "LEFT/EAST" is side
+"left" even though it faces east; "RIGHT/WEST" is side "right". LEFT/RIGHT
+are named the way the architect labeled them — a viewer standing at the
+FRONT looking at the house: the left hand points to the LEFT elevation.
+SELF-CHECK: if your "left" runs ended up on the elevation the plan titles
+"RIGHT" (or vice-versa), you inverted them — swap every side left<->right.
+If the set has only compass titles, anchor on the front: facing the front,
+your left = "left", your right = "right", behind you = "back".
+"interior" = a valley-fed eave facing no single exterior side.
+</orientation>
+
 <lf_accounting>
 The contractor prices gutter LF off sum(gutter_runs.length_ft).
 Nothing else enters the LF total — not rakes, not ridges, not hips,
