@@ -324,6 +324,24 @@ Follow these steps in order. Think carefully before producing JSON.
     - "F.P. FLUE", "FIREPLACE", chimney/flue, or "MASONRY FIRE-PIT" is a
       vertical stack, NOT a roof edge -- never a gutter and never a
       building_footprint corner unless it is a fully roofed chase.
+3c. WALL LINES ARE NOT EAVES -- a gutter sits ONLY at the bottom edge of a
+    ROOF PLANE (the fascia, where the roof overhangs the wall). An elevation
+    is full of OTHER horizontal lines that are NOT roof edges and must NEVER
+    get a gutter; the giveaway is what sits ABOVE the line:
+    - ROOF above the line (shingles/standing-seam, a pitch arrow, the slope
+      climbing to a ridge, an overhang shadow) => it is an EAVE (gutter).
+    - WALL above the line (more siding, windows, another story) => it is
+      WALL TRIM, not an eave. These include: a BELLY BAND / WATER TABLE /
+      BAND BOARD between the 1st and 2nd floor, a horizontal TRIM band, a
+      "2x__ TRIM" or "TRELLIS BEAM" / "BEAM PER PLAN" line, a header over
+      windows/doors, a "MAIN PLATE" / "UPPER PLATE" / "FLOOR" / "SUBFLOOR"
+      level tick, or a foundation / "ABE" grade line. NONE of these are
+      gutters.
+    A 2-story wall typically shows ONE eave near the top plus several trim /
+    band / floor lines below it -- do NOT read the lower bands as extra
+    gutters. A genuinely LOWER roof (porch / patio / 1-story wing) only
+    counts when you can see its OWN roof plane (slope / shingles / overhang)
+    directly above that horizontal line, not just a band on a tall wall.
 3. Classify EVERY perimeter edge as EAVE, RAKE, HIP, RIDGE, or VALLEY. Use
    slope arrows, pitch labels ("6/12", "4:12"), and ridge/hip line symbols.
    When two classifications seem equally likely, prefer RAKE over EAVE — a
@@ -445,7 +463,13 @@ SELF-CHECK BEFORE EMITTING JSON:
    full gable end → two excluded_edges of kind "rake"). When ambiguous,
    close as a rake, not a phantom gutter. Re-confirm the total still
    respects max_total_eave_lf after closing the loop.
-5. Do this self-correction silently — the response should still be
+5. WALL-LINE CHECK (per 3c): for every gutter_run, confirm a ROOF PLANE
+   sits directly above its line (slope / shingles / overhang) — not more
+   wall, siding, or windows. Delete any run that is actually sitting on a
+   belly band, water table, trim/band board, trellis beam, header, or a
+   floor/plate/grade level line. A tall wall with one top eave gets ONE
+   gutter, not one per band.
+6. Do this self-correction silently — the response should still be
    strict JSON, no commentary.
 </scale_discipline>
 
