@@ -287,28 +287,43 @@ Follow these steps in order. Think carefully before producing JSON.
     SOURCE priority, and is VISUAL ONLY: never changes gutter_runs, length_ft,
     or the CAP.
 
-3a. ROOF TYPE FIRST -- before slope arrows. A HIP line (diagonal from an
-    OUTSIDE corner inward) makes BOTH sides there EAVES, not rakes
-    (classification only; an EAVE can still close as kind eave_no_gutter
-    under <perimeter_closure>). On L/T/U or hip-and-gable plans confirm the
-    diagonal is a hip for THIS plane, not an adjoining wing's gable rake.
-    These 2-story homes are usually HIP / HIP-GABLE, so EAVES make up MOST
-    of the perimeter -- but guttering still follows <lf_accounting>; gutter
-    LF stays a strict subset of eaves within the HARD CAP. A gable-only
-    two-opposite-sides read is usually WRONG unless BOTH ends show a gable
-    triangle as the dominant shape (a small eave-return sliver still counts
-    as a gable); a genuine two-gable house is fine -- both ends are rakes.
-    Does NOT override prefer-RAKE, nor that a full gable END (two correlated
-    sloped sides) closes as rakes -- if ambiguous, prefer RAKE.
-3b. PER-SIDE ELEVATION (beats slope arrows on a dense truss plan). Read
-    each side's OWN SOLID outline; IGNORE any DASHED roof-beyond line (a
-    wing seen THROUGH this face). HORIZONTAL bottom eave (flat, hip
-    trapezoid, OR jerkinhead/clipped gable with a full-width eave under a
-    small hip) = EAVE -- gutter even with a triangle above. TRIANGULAR end,
-    no horizontal bottom = RAKE. A side with BOTH is a CROSS-GABLE: keep
-    the eave runs as EAVES, split at the gable's BOTTOM corners (SAME split
-    as elevations-for-COUNT); its RAKES are on the gable's side / return
-    walls, NOT the through eave. Sets CLASSIFICATION + split LOCATION only.
+3a. NO ROOF-TYPE PRIOR -- the single most common error is running a
+    horizontal GUTTER across a GABLE face. Do NOT assume a house is
+    "usually hip" or that "eaves make up most of the perimeter." Many
+    homes (craftsman / cross-gabled / farmhouse) are GABLE-DOMINANT, with
+    a projecting gable on the front, the rear, and/or each end. Decide
+    EACH side independently from that side's elevation SHAPE; the
+    elevation always beats any prior and beats the truss plan.
+    Read each side's OWN SOLID outline; IGNORE any DASHED "roof beyond"
+    line (a wing seen THROUGH this face). Then classify the END:
+    - GABLE END = a peaked TRIANGLE whose two sloped sides run down to the
+      wall plate with NO horizontal roof edge across the top. => two
+      RAKES, and NO gutter across that face. The gutters for that wing are
+      on its two PERPENDICULAR return sides (edge-on here, head-on in the
+      90deg-adjacent elevation). A "gable-fronted" wing whose triangle
+      faces the street has NO front gutter -- gutters on its sides.
+    - HIP / EAVE END = a horizontal roof edge (flat eave, hip TRAPEZOID,
+      or jerkinhead/clipped gable with a full-width eave under a small
+      hip). => EAVE (gutter), even if a triangle sits above it.
+    - CROSS-GABLE side (a horizontal eave AND a projecting gable): keep
+      the horizontal eave run(s) as EAVES, SPLIT them at the gable's
+      BOTTOM corners, and the gable's two sloped sides are RAKES -- never
+      carry the gutter up or across the gable.
+    A HIP line (diagonal from an OUTSIDE corner inward) does make both of
+    its sides EAVES -- but only confirm a diagonal is a hip (not an
+    adjoining wing's gable rake) from the elevations. When genuinely
+    ambiguous, prefer RAKE (a phantom gutter on a rake is worse than a
+    missed eave).
+3b. ANNOTATION CUES -- standard architectural callouts appear on most
+    plan sets and are the most reliable disambiguator; match each label to
+    the edge its leader points at, and use them BEFORE slope arrows:
+    - "CONT. METAL GUTTER OVER ... FASCIA", a fascia/eave line, or a
+      "LINE OF DOWNSPOUT" tick => that horizontal edge is an EAVE (gutter).
+    - "BARGE BOARD ... @ GABLE ENDS & RAKES", or barge/rake trim along a
+      diagonal => that edge is a RAKE (no gutter).
+    - "F.P. FLUE", "FIREPLACE", chimney/flue, or "MASONRY FIRE-PIT" is a
+      vertical stack, NOT a roof edge -- never a gutter and never a
+      building_footprint corner unless it is a fully roofed chase.
 3. Classify EVERY perimeter edge as EAVE, RAKE, HIP, RIDGE, or VALLEY. Use
    slope arrows, pitch labels ("6/12", "4:12"), and ridge/hip line symbols.
    When two classifications seem equally likely, prefer RAKE over EAVE — a
@@ -436,9 +451,13 @@ SELF-CHECK BEFORE EMITTING JSON:
 
 <tier_assignment>
 Each gutter_run sits on a roof tier:
-- "lower" tier = TRUE single-story sections — covered front porch /
-  entry, rear covered patio, or a 1-story garage with NOTHING built
-  above it. Drop height typically 9-11 ft.
+- "lower" tier = TRUE single-story sections — a covered porch / entry /
+  patio on ANY side (front, rear, OR a side/wrap porch on the left or
+  right), or a 1-story garage with NOTHING built above it. Drop height
+  typically 9-11 ft. A side porch is easy to miss: check every elevation,
+  not just front/rear, for a low post-supported roof with its own gutter
+  line. If the porch's open face is itself a GABLE, that face is rakes
+  (no gutter) per 3a -- only its horizontal eave gets a lower gutter.
 - "upper" tier = anything under the 2-story envelope. Drop height
   typically 18-26 ft.
 
@@ -903,12 +922,12 @@ function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
     "- PERIMETER CLOSURE — every side of the traced building_footprint " +
       "must be accounted for: covered by a gutter_run OR recorded as an " +
       "excluded_edge with a kind + reason. A side in neither list means " +
-      "you silently dropped a wall — a common under-count, especially on " +
-      "a hip-dominant roof where nearly every side is an eave. Coverage " +
+      "you silently dropped a wall — a common under-count. Coverage " +
       "is of perimeter length, not a 1:1 side count (merged/split runs are " +
-      "fine). Default a clear horizontal eave to a gutter; close a " +
-      "non-draining eave or party wall as kind 'eave_no_gutter', and a " +
-      "gable end via its rakes. Decide every side, do NOT gutter every " +
+      "fine). Classify each side from its elevation SHAPE (no hip-vs-gable " +
+      "prior): a clear horizontal eave is a gutter; a gable end is its two " +
+      "rakes (NO gutter across the face); close a non-draining eave or " +
+      "party wall as kind 'eave_no_gutter'. Decide every side, do NOT gutter every " +
       "side — keep sum(gutter_runs.length_ft) within the HARD CAP above " +
       "and never fabricate a run just to close a side.",
   );

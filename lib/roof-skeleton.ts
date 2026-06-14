@@ -35,6 +35,7 @@
  */
 
 export type Pt = { x: number; y: number };
+export type Seg = [Pt, Pt];
 export type SkeletonLine = { points: [Pt, Pt] };
 export type RoofSkeleton = {
   ridges: SkeletonLine[];
@@ -182,7 +183,7 @@ function sideIsInterior(
  */
 function rectRoof(
   r: Rect,
-  interior: { top: boolean; bottom: boolean; left: boolean; right: boolean },
+  flush: { top: boolean; bottom: boolean; left: boolean; right: boolean },
 ): { ridges: SkeletonLine[]; hips: SkeletonLine[] } {
   const w = r.x1 - r.x0;
   const h = r.y1 - r.y0;
@@ -191,46 +192,75 @@ function rectRoof(
   const hips: SkeletonLine[] = [];
 
   // Ridge runs along the LONGER dimension. inset = half the SHORTER
-  // dimension gives 45° hips. A hip end is inset; a gable/interior end
-  // runs flush to the wall.
+  // dimension gives 45° hips. A HIP end is inset (with two hip diagonals);
+  // a FLUSH end — a gable end, or a wall shared with a neighbour wing —
+  // runs the ridge out to the wall with NO hip there.
   if (w >= h) {
     const yc = (r.y0 + r.y1) / 2;
     const inset = h / 2;
-    const leftEnd = interior.left ? r.x0 : r.x0 + inset;
-    const rightEnd = interior.right ? r.x1 : r.x1 - inset;
+    const leftEnd = flush.left ? r.x0 : r.x0 + inset;
+    const rightEnd = flush.right ? r.x1 : r.x1 - inset;
     const lo = Math.min(leftEnd, rightEnd);
     const hi = Math.max(leftEnd, rightEnd);
     // Skip a zero-length ridge: a square footprint is a pyramid whose four
     // hips already meet at the apex — there is no ridge line to draw.
     if (hi - lo > 1e-6)
       ridges.push({ points: [{ x: lo, y: yc }, { x: hi, y: yc }] });
-    if (!interior.left) {
+    if (!flush.left) {
       hips.push({ points: [{ x: leftEnd, y: yc }, { x: r.x0, y: r.y0 }] });
       hips.push({ points: [{ x: leftEnd, y: yc }, { x: r.x0, y: r.y1 }] });
     }
-    if (!interior.right) {
+    if (!flush.right) {
       hips.push({ points: [{ x: rightEnd, y: yc }, { x: r.x1, y: r.y0 }] });
       hips.push({ points: [{ x: rightEnd, y: yc }, { x: r.x1, y: r.y1 }] });
     }
   } else {
     const xc = (r.x0 + r.x1) / 2;
     const inset = w / 2;
-    const topEnd = interior.top ? r.y0 : r.y0 + inset;
-    const botEnd = interior.bottom ? r.y1 : r.y1 - inset;
+    const topEnd = flush.top ? r.y0 : r.y0 + inset;
+    const botEnd = flush.bottom ? r.y1 : r.y1 - inset;
     const lo = Math.min(topEnd, botEnd);
     const hi = Math.max(topEnd, botEnd);
     if (hi - lo > 1e-6)
       ridges.push({ points: [{ x: xc, y: lo }, { x: xc, y: hi }] });
-    if (!interior.top) {
+    if (!flush.top) {
       hips.push({ points: [{ x: xc, y: topEnd }, { x: r.x0, y: r.y0 }] });
       hips.push({ points: [{ x: xc, y: topEnd }, { x: r.x1, y: r.y0 }] });
     }
-    if (!interior.bottom) {
+    if (!flush.bottom) {
       hips.push({ points: [{ x: xc, y: botEnd }, { x: r.x0, y: r.y1 }] });
       hips.push({ points: [{ x: xc, y: botEnd }, { x: r.x1, y: r.y1 }] });
     }
   }
   return { ridges, hips };
+}
+
+/** Does an eave segment run ALONG this axis-aligned rectangle side? Used to
+ *  decide hip vs gable: a side with a gutter on it is an eave side (hip
+ *  allowed); a side with no gutter is a gable/return end (flush, no hip). */
+function sideHasEave(
+  axis: "h" | "v",
+  fixed: number,
+  lo: number,
+  hi: number,
+  eaves: readonly Seg[],
+  tol: number,
+): boolean {
+  for (const [a, b] of eaves) {
+    if (axis === "v") {
+      // vertical side at x=fixed, y in [lo,hi]; eave must be ~vertical there
+      if (Math.abs(a.x - fixed) > tol || Math.abs(b.x - fixed) > tol) continue;
+      const elo = Math.min(a.y, b.y);
+      const ehi = Math.max(a.y, b.y);
+      if (Math.min(hi, ehi) - Math.max(lo, elo) > tol) return true;
+    } else {
+      if (Math.abs(a.y - fixed) > tol || Math.abs(b.y - fixed) > tol) continue;
+      const elo = Math.min(a.x, b.x);
+      const ehi = Math.max(a.x, b.x);
+      if (Math.min(hi, ehi) - Math.max(lo, elo) > tol) return true;
+    }
+  }
+  return false;
 }
 
 /** Cross-product sign at vertex b for the ring a→b→c. Sign tells convex
@@ -307,7 +337,10 @@ function norm(v: Pt): Pt {
  * Returns clean ridge/hip/valley line segments. Never throws — returns
  * empty on degenerate input so the caller can fall back to a bare outline.
  */
-export function deriveRoofSkeleton(perimeter: readonly Pt[]): RoofSkeleton {
+export function deriveRoofSkeleton(
+  perimeter: readonly Pt[],
+  opts?: { eaveSegments?: readonly Seg[] },
+): RoofSkeleton {
   try {
     const finite = (perimeter ?? []).filter(isFinitePt);
     if (finite.length < 4) return EMPTY;
@@ -371,10 +404,45 @@ export function deriveRoofSkeleton(perimeter: readonly Pt[]): RoofSkeleton {
             y1: ys[rc.j1 + 1],
           }));
 
+    // Eave segments (gutter runs) let us tell a HIP side (gutter present)
+    // from a GABLE side (no gutter). Without them we fall back to all-hip.
+    const eaveSegs = (opts?.eaveSegments ?? []).filter(
+      (s) => s && isFinitePt(s[0]) && isFinitePt(s[1]),
+    );
+    const haveEaves = eaveSegs.length > 0;
+    const eaveTol = tol * 2; // eaves sit ~1-2 ft inside the eave line (overhang)
+
+    // Guard: if eaves were passed but NONE align with any rectangle side
+    // (coordinate-space mismatch / bad data), don't turn every side into a
+    // gable — fall back to all-hip so we still draw a recognizable roof.
+    let anyEaveMatch = false;
+    if (haveEaves) {
+      for (const rc of rectCells.length
+        ? rectCells.map((c) => ({
+            x0: xs[c.i0],
+            x1: xs[c.i1 + 1],
+            y0: ys[c.j0],
+            y1: ys[c.j1 + 1],
+          }))
+        : [{ x0: minX, x1: maxX, y0: minY, y1: maxY }]) {
+        if (
+          sideHasEave("h", rc.y0, rc.x0, rc.x1, eaveSegs, eaveTol) ||
+          sideHasEave("h", rc.y1, rc.x0, rc.x1, eaveSegs, eaveTol) ||
+          sideHasEave("v", rc.x0, rc.y0, rc.y1, eaveSegs, eaveTol) ||
+          sideHasEave("v", rc.x1, rc.y0, rc.y1, eaveSegs, eaveTol)
+        ) {
+          anyEaveMatch = true;
+          break;
+        }
+      }
+    }
+    const useEaves = haveEaves && anyEaveMatch;
+
     const ridges: SkeletonLine[] = [];
     const hips: SkeletonLine[] = [];
     const single = rects.length === 1 && rectCells.length <= 1;
     for (let k = 0; k < rects.length; k++) {
+      const r = rects[k];
       const interior =
         single || rectCells.length === 0
           ? { top: false, bottom: false, left: false, right: false }
@@ -384,7 +452,21 @@ export function deriveRoofSkeleton(perimeter: readonly Pt[]): RoofSkeleton {
               left: sideIsInterior(inside, nx, ny, rectCells[k], "left"),
               right: sideIsInterior(inside, nx, ny, rectCells[k], "right"),
             };
-      const rr = rectRoof(rects[k], interior);
+      // A side runs FLUSH (gable / shared wall, no hip) when it's interior,
+      // OR — when we know the eaves — when it carries NO gutter (a gable end).
+      const gable = (
+        axis: "h" | "v",
+        fixed: number,
+        lo: number,
+        hi: number,
+      ) => useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol);
+      const flush = {
+        top: interior.top || gable("h", r.y0, r.x0, r.x1),
+        bottom: interior.bottom || gable("h", r.y1, r.x0, r.x1),
+        left: interior.left || gable("v", r.x0, r.y0, r.y1),
+        right: interior.right || gable("v", r.x1, r.y0, r.y1),
+      };
+      const rr = rectRoof(r, flush);
       ridges.push(...rr.ridges);
       hips.push(...rr.hips);
     }

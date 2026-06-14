@@ -674,23 +674,29 @@ export function RoofStructureOverlay({
   // Derived (or structure-provided) roof skeleton. useMemo so the per-frame
   // re-renders during eave drag don't recompute the grid decomposition.
   // Hook must run before any early return.
-  const skel = useMemo(
-    () =>
-      derive
-        ? deriveRoofSkeleton(structure.perimeter)
-        : {
-            ridges: structure.ridges.map((l) => ({ points: l.points })),
-            hips: (structure.hips ?? []).map((l) => ({ points: l.points })),
-            valleys: structure.valleys.map((l) => ({ points: l.points })),
-          },
-    [
-      derive,
-      structure.perimeter,
-      structure.ridges,
-      structure.hips,
-      structure.valleys,
-    ],
-  );
+  const skel = useMemo(() => {
+    if (!derive) {
+      return {
+        ridges: structure.ridges.map((l) => ({ points: l.points })),
+        hips: (structure.hips ?? []).map((l) => ({ points: l.points })),
+        valleys: structure.valleys.map((l) => ({ points: l.points })),
+      };
+    }
+    // Pass the eaves (gutter runs) so the skeleton draws a HIP only on sides
+    // that actually carry a gutter, and a flush GABLE end on sides that
+    // don't — instead of assuming a hip roof everywhere.
+    const eaveSegments = eaves
+      .filter((e) => e.points.length >= 2)
+      .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
+    return deriveRoofSkeleton(structure.perimeter, { eaveSegments });
+  }, [
+    derive,
+    eaves,
+    structure.perimeter,
+    structure.ridges,
+    structure.hips,
+    structure.valleys,
+  ]);
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";
   const perim = onDark ? "rgba(226,232,240,0.95)" : "rgba(30,58,138,0.85)";
