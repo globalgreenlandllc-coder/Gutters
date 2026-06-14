@@ -38,6 +38,11 @@ import {
   transformToCanvas,
 } from "./geometry";
 import {
+  assessSatelliteTrace,
+  type FootprintBboxCanvas,
+  type TraceQuality,
+} from "./trace-quality";
+import {
   sampleEaves,
   sampleDownspouts,
   sampleMeasurements,
@@ -89,7 +94,76 @@ export type EstimateResult = {
    *  layer. Detected via GPT-4o vision in parallel with the eaves
    *  pipeline; null when the vision call fails or no image is available. */
   roofStructure?: RoofStructure;
+  /** Trust signal for the satellite auto-trace. Drives the "bad pic —
+   *  draw it yourself" banner on the results screen. Absent for plan
+   *  takeoffs (their geometry comes from the PDF, not image tracing). */
+  traceQuality?: TraceQuality;
 };
+
+/**
+ * Union of the Google Solar roof-segment bounding boxes, projected into
+ * canvas (900×580) space and padded for overhang — a coarse "is the
+ * trace even on the building?" gate for assessSatelliteTrace, plus the
+ * footprint area in ft². null when there's no Solar coverage or no
+ * satellite image to project against.
+ */
+function solarFootprintCanvas(
+  segments: RoofSegment[],
+  geocoded: { lat: number; lng: number },
+  image: { width: number; height: number; zoom: number } | null,
+): { areaFt2: number; bbox: FootprintBboxCanvas } | null {
+  if (!image) return null;
+  const M2_TO_FT2 = 10.7639;
+  let areaFt2 = 0;
+  const latLngs: { lat: number; lng: number }[] = [];
+  for (const s of segments) {
+    areaFt2 += (s.areaMeters2 ?? 0) * M2_TO_FT2;
+    if (s.boundingBoxNE) latLngs.push(s.boundingBoxNE);
+    if (s.boundingBoxSW) latLngs.push(s.boundingBoxSW);
+    if (s.center) latLngs.push(s.center);
+  }
+  if (latLngs.length === 0) return null;
+  const canvasPts = transformToCanvas(
+    latLngs.map((p) =>
+      latLngToImagePixel(
+        p.lat,
+        p.lng,
+        geocoded.lat,
+        geocoded.lng,
+        image.zoom,
+        image.width,
+        image.height,
+      ),
+    ),
+    image.width,
+    image.height,
+  );
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of canvasPts) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  if (!Number.isFinite(minX)) return null;
+  // Pad ~7% of the viewBox so eave overhang + the axis-aligned-bbox slack
+  // don't read as "off the roof".
+  const PAD_X = 64;
+  const PAD_Y = 42;
+  return {
+    areaFt2,
+    bbox: {
+      minX: minX - PAD_X,
+      minY: minY - PAD_Y,
+      maxX: maxX + PAD_X,
+      maxY: maxY + PAD_Y,
+    },
+  };
+}
 
 /**
  * Project a vision-detected roof structure (cropped-image-pixel coords)
@@ -888,6 +962,16 @@ export async function runAIEstimatePipeline(
           image.width,
           image.height,
         ),
+        traceQuality: (() => {
+          const fp = solarFootprintCanvas(solarRoofSegments, geocoded, image);
+          return assessSatelliteTrace({
+            source: "ai",
+            eaves,
+            totalEaveLF,
+            footprintAreaFt2: fp?.areaFt2 ?? null,
+            footprintBboxCanvas: fp?.bbox ?? null,
+          });
+        })(),
         roofStructure,
       };
     }
@@ -1075,6 +1159,16 @@ export async function runAIEstimatePipeline(
           image.width,
           image.height,
         ),
+        traceQuality: (() => {
+          const fp = solarFootprintCanvas(solarRoofSegments, geocoded, image);
+          return assessSatelliteTrace({
+            source: "ai",
+            eaves,
+            totalEaveLF,
+            footprintAreaFt2: fp?.areaFt2 ?? null,
+            footprintBboxCanvas: fp?.bbox ?? null,
+          });
+        })(),
         roofStructure,
       };
     }
@@ -1105,6 +1199,17 @@ export async function runAIEstimatePipeline(
           zoom: image.zoom,
         }
       : undefined,
+    // Mock/partial fallback ships SAMPLE cartoon geometry, never a real
+    // trace — always steer the contractor to the drawing tool.
+    traceQuality: {
+      status: "unusable",
+      confidence: 0,
+      reasons: [
+        image
+          ? "We loaded the satellite image but couldn't trace the roof from it."
+          : "Couldn't load a clear satellite image for this address.",
+      ],
+    },
     roofStructure,
   };
 }

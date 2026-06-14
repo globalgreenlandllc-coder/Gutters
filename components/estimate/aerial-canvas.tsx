@@ -56,6 +56,7 @@ export function AerialCanvas({
   planSource,
   roofStructure,
   pxPerFt,
+  armDrawNonce,
 }: {
   eaves: EditableLine[];
   /** Edges the classifier flagged as rakes (no-gutter). Rendered as
@@ -74,6 +75,10 @@ export function AerialCanvas({
    *  estimates pass EstimateResult.canvasPxPerFt; omit for plan takeoffs
    *  (defaults to PX_PER_FT inside lineLengthFt). */
   pxPerFt?: number;
+  /** Incrementing nonce from an outside "draw it yourself" banner — when
+   *  it changes, the canvas arms the eave-drawing tool so the contractor
+   *  can start tracing immediately. */
+  armDrawNonce?: number;
 }) {
   const [theme, setTheme] = useState<CanvasTheme>("tactical");
   const t = THEMES[theme];
@@ -82,6 +87,11 @@ export function AerialCanvas({
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  // An outside banner ("bad satellite pic — draw it yourself") bumps
+  // armDrawNonce to drop the contractor straight into eave-drawing mode.
+  useEffect(() => {
+    if (armDrawNonce) setTool("add-eave");
+  }, [armDrawNonce]);
   // Roof outline + interior ridge/hip/valley lines. ON by default for
   // PLAN takeoffs — seeing the whole roof shape under the trace is how the
   // contractor reads where the gutters sit and where a run is missing.

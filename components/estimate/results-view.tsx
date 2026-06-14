@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
+  AlertTriangle,
   Building2,
   Camera,
+  PencilRuler,
   RefreshCcw,
   Ruler,
   Sparkles,
@@ -13,6 +15,7 @@ import { TopBar } from "./top-bar";
 import { AerialCanvas, lineLengthFt } from "./aerial-canvas";
 import { PricingPanel } from "./pricing-panel";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import type { Measurements } from "@/lib/types";
 import type { EstimateResult } from "@/lib/ai";
 import type { EstimateHandoff } from "@/lib/estimate-handoff";
@@ -43,6 +46,10 @@ export function ResultsView({
   // looks 1-story on satellite. Default seeded from the AI estimate;
   // contractor overrides with one click.
   const [stories, setStories] = useState(initial.measurements.stories);
+  // Bumped by the "bad satellite pic — draw it yourself" banner to arm the
+  // canvas's eave-drawing tool.
+  const [drawNonce, setDrawNonce] = useState(0);
+  const traceQuality = initial.traceQuality;
 
   const liveEaveLF = Math.round(
     eaves.reduce((acc, l) => {
@@ -105,6 +112,17 @@ export function ResultsView({
               notes={initial.notes}
               onStoriesChange={setStories}
             />
+            {traceQuality && traceQuality.status !== "ok" && (
+              <BadTraceBanner
+                quality={traceQuality}
+                hasLines={eaves.length > 0}
+                onDrawFresh={() => {
+                  setEaves([]);
+                  setDrawNonce((n) => n + 1);
+                }}
+                onKeepAndEdit={() => setDrawNonce((n) => n + 1)}
+              />
+            )}
             <div className="min-h-[520px] flex-1">
               <AerialCanvas
                 eaves={eaves}
@@ -116,6 +134,7 @@ export function ResultsView({
                 planSource={initial.planSource}
                 roofStructure={initial.roofStructure}
                 pxPerFt={initial.canvasPxPerFt}
+                armDrawNonce={drawNonce}
               />
             </div>
             <SiteContext />
@@ -295,6 +314,82 @@ function SiteContext() {
             <div className="mt-0.5 text-xs text-zinc-500">{it.note}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Bad satellite pic — draw it yourself" banner. Shown above the canvas
+ * when the server flags the auto-trace as low/unusable (blurry tile, lines
+ * off the roof, length that can't be this roof). The CTA arms the canvas's
+ * eave-drawing tool; for an unusable trace it can also clear the junk lines
+ * so the contractor starts from a clean roof.
+ */
+function BadTraceBanner({
+  quality,
+  hasLines,
+  onDrawFresh,
+  onKeepAndEdit,
+}: {
+  quality: NonNullable<EstimateResult["traceQuality"]>;
+  hasLines: boolean;
+  onDrawFresh: () => void;
+  onKeepAndEdit: () => void;
+}) {
+  const unusable = quality.status === "unusable";
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border p-4 shadow-card",
+        unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-white",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+            unusable ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600",
+          )}
+        >
+          <AlertTriangle className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-zinc-900">
+            {unusable
+              ? "Sorry — this satellite image was too unclear to measure"
+              : "Heads up — double-check this trace"}
+          </div>
+          <p className="mt-0.5 text-sm text-zinc-600">
+            {unusable
+              ? "We couldn't reliably trace the gutters from this aerial. Switch to the drawing tool and click along each roof edge to measure them yourself."
+              : "Part of the auto-trace looks off the roof. Verify it, or redraw it with the drawing tool."}
+            {quality.reasons[0] ? (
+              <span className="text-zinc-400"> — {quality.reasons[0]}</span>
+            ) : null}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onDrawFresh}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-zinc-900 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
+            >
+              <PencilRuler className="h-4 w-4" />
+              {unusable && hasLines
+                ? "Clear & draw gutters"
+                : "Draw gutters myself"}
+            </button>
+            {unusable && hasLines && (
+              <button
+                type="button"
+                onClick={onKeepAndEdit}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
+              >
+                Keep AI lines & edit
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
