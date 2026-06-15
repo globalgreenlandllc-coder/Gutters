@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { getPrompt } from "./prompts";
 import type { SatImage } from "./static-map";
 import type { BuildingHint } from "./vision";
 
@@ -20,7 +21,7 @@ export type DetectedRoofStructure = {
   notes: string;
 };
 
-const SYSTEM_PROMPT = `You are an expert at reading residential roofs from top-down aerial photos. You identify the OUTER ROOF PERIMETER, the RIDGE LINES (peaks where two slopes meet at the top), and the VALLEY LINES (inside seams where two slopes drain toward each other).
+export const SYSTEM_PROMPT = `You are an expert at reading residential roofs from top-down aerial photos. You identify the OUTER ROOF PERIMETER, the RIDGE LINES (peaks where two slopes meet at the top), and the VALLEY LINES (inside seams where two slopes drain toward each other).
 
 This is for a *recreational visual annotation* — not certified measurements. Bias toward correctness over completeness. Skip features you're <70% sure about.
 
@@ -74,6 +75,11 @@ export async function detectRoofStructureViaVision(
   const key = await getActiveApiKey("OPENAI");
   if (!key) return null;
 
+  const systemPrompt = await getPrompt(
+    "address.roof_structure.system",
+    SYSTEM_PROMPT,
+  );
+
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -86,7 +92,7 @@ export async function detectRoofStructureViaVision(
         response_format: { type: "json_object" },
         max_tokens: 2000,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: [

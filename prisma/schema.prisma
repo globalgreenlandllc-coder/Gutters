@@ -392,6 +392,7 @@ enum AuditAction {
   API_KEY_VIEWED
   PRICING_UPDATED
   MATERIAL_DEFAULTS_UPDATED
+  PROMPT_TEMPLATE_UPDATED
 }
 
 model AuditLog {
@@ -509,6 +510,21 @@ model MaterialDefault {
   updatedBy    String?
 
   @@map("material_defaults")
+}
+
+/// Admin-editable AI prompt overrides. Keyed by a stable prompt key
+/// (see lib/ai/prompts.ts). When a row exists, the pipeline uses its
+/// `content`; otherwise it falls back to the hardcoded default in code.
+model PromptTemplate {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  category  String // "address" | "blueprint"
+  content   String
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("prompt_templates")
 }
 
 model PlatformSetting {

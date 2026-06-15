@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { getPrompt } from "./prompts";
 import type { PlanSource } from "./blueprint-from-plans";
 
 /**
@@ -238,7 +239,7 @@ const CLASSIFY_TOOL: Anthropic.Tool = {
   },
 };
 
-const CLASSIFIER_SYSTEM = `
+export const CLASSIFIER_SYSTEM = `
 You are a senior rain-gutter estimator triaging a multi-page residential
 construction plan set. You will NOT produce a takeoff in this call — only
 a sheet-by-sheet inventory. A downstream call will use your output to
@@ -501,6 +502,10 @@ export async function classifyPlanSheets(
   })();
 
   try {
+    const classifierSystem = await getPrompt(
+      "blueprint.classify.system",
+      CLASSIFIER_SYSTEM,
+    );
     const response = await client.messages.create({
       model: MODEL,
       // Classifier output is structured-but-small: one entry per page
@@ -511,7 +516,7 @@ export async function classifyPlanSheets(
       system: [
         {
           type: "text",
-          text: CLASSIFIER_SYSTEM,
+          text: classifierSystem,
           cache_control: { type: "ephemeral" },
         },
       ],
