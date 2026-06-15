@@ -849,15 +849,16 @@ export function AerialCanvas({
             scale={renderScale}
             derive={!!planSource}
             eaves={eaves}
+            rakes={rakes}
           />
         )}
 
         {/* Rakes — gray-dashed "no-gutter" lines for verification.
-            Rendered BEFORE eaves so cyan eaves draw over the gray when
-            the AI classified the same edge two ways (rare but
-            possible). Non-interactive — the contractor doesn't edit
-            rakes; they confirm visually or ignore. */}
-        {showRakes &&
+            In PLAN mode the roof-structure overlay draws connected GABLE
+            ends (ridge flush to the wall) from these rakes, so we suppress
+            the separate floating stubs here to avoid the disconnected look.
+            Satellite mode keeps them (no derived skeleton there). */}
+        {showRakes && !planSource &&
           rakes.map((line) => {
             const a = line.points[0];
             const b = line.points[line.points.length - 1];

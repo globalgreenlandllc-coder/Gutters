@@ -41,9 +41,13 @@ export type RoofSkeleton = {
   ridges: SkeletonLine[];
   hips: SkeletonLine[];
   valleys: SkeletonLine[];
+  /** Perimeter segments that are GABLE ends (rake-only, no gutter). The
+   *  ridge runs flush to these so the gable reads as part of the connected
+   *  roof; callers can label them. */
+  gables: SkeletonLine[];
 };
 
-const EMPTY: RoofSkeleton = { ridges: [], hips: [], valleys: [] };
+const EMPTY: RoofSkeleton = { ridges: [], hips: [], valleys: [], gables: [] };
 
 function isFinitePt(p: Pt | undefined | null): p is Pt {
   return !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -339,7 +343,7 @@ function norm(v: Pt): Pt {
  */
 export function deriveRoofSkeleton(
   perimeter: readonly Pt[],
-  opts?: { eaveSegments?: readonly Seg[] },
+  opts?: { eaveSegments?: readonly Seg[]; rakeSegments?: readonly Seg[] },
 ): RoofSkeleton {
   try {
     const finite = (perimeter ?? []).filter(isFinitePt);
@@ -409,6 +413,12 @@ export function deriveRoofSkeleton(
     const eaveSegs = (opts?.eaveSegments ?? []).filter(
       (s) => s && isFinitePt(s[0]) && isFinitePt(s[1]),
     );
+    // Rake (gable) segments: the AI's explicit gable classification. A side
+    // a rake runs along is a GABLE end — render it flush (ridge to wall) so
+    // the gable connects to the roof, instead of as a floating stub.
+    const rakeSegs = (opts?.rakeSegments ?? []).filter(
+      (s) => s && isFinitePt(s[0]) && isFinitePt(s[1]),
+    );
     const haveEaves = eaveSegs.length > 0;
     const eaveTol = tol * 2; // eaves sit ~1-2 ft inside the eave line (overhang)
 
@@ -440,6 +450,7 @@ export function deriveRoofSkeleton(
 
     const ridges: SkeletonLine[] = [];
     const hips: SkeletonLine[] = [];
+    const gables: SkeletonLine[] = [];
     const single = rects.length === 1 && rectCells.length <= 1;
     for (let k = 0; k < rects.length; k++) {
       const r = rects[k];
@@ -452,20 +463,30 @@ export function deriveRoofSkeleton(
               left: sideIsInterior(inside, nx, ny, rectCells[k], "left"),
               right: sideIsInterior(inside, nx, ny, rectCells[k], "right"),
             };
-      // A side runs FLUSH (gable / shared wall, no hip) when it's interior,
-      // OR — when we know the eaves — when it carries NO gutter (a gable end).
-      const gable = (
-        axis: "h" | "v",
-        fixed: number,
-        lo: number,
-        hi: number,
-      ) => useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol);
-      const flush = {
-        top: interior.top || gable("h", r.y0, r.x0, r.x1),
-        bottom: interior.bottom || gable("h", r.y1, r.x0, r.x1),
-        left: interior.left || gable("v", r.x0, r.y0, r.y1),
-        right: interior.right || gable("v", r.x1, r.y0, r.y1),
-      };
+      // A side is a GABLE end when a RAKE runs along it (the AI's explicit
+      // classification — wins), OR — knowing the eaves — when it carries no
+      // gutter. A gable side renders FLUSH (ridge to wall, no hip) so it
+      // connects to the roof, and is recorded so the caller can label it.
+      const isGable = (axis: "h" | "v", fixed: number, lo: number, hi: number) =>
+        sideHasEave(axis, fixed, lo, hi, rakeSegs, eaveTol) ||
+        (useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol));
+      const SIDES = [
+        { k: "top" as const, axis: "h" as const, fixed: r.y0, lo: r.x0, hi: r.x1, a: { x: r.x0, y: r.y0 }, b: { x: r.x1, y: r.y0 } },
+        { k: "bottom" as const, axis: "h" as const, fixed: r.y1, lo: r.x0, hi: r.x1, a: { x: r.x0, y: r.y1 }, b: { x: r.x1, y: r.y1 } },
+        { k: "left" as const, axis: "v" as const, fixed: r.x0, lo: r.y0, hi: r.y1, a: { x: r.x0, y: r.y0 }, b: { x: r.x0, y: r.y1 } },
+        { k: "right" as const, axis: "v" as const, fixed: r.x1, lo: r.y0, hi: r.y1, a: { x: r.x1, y: r.y0 }, b: { x: r.x1, y: r.y1 } },
+      ];
+      const flush = { top: false, bottom: false, left: false, right: false };
+      for (const s of SIDES) {
+        if (interior[s.k]) {
+          flush[s.k] = true;
+          continue;
+        }
+        if (isGable(s.axis, s.fixed, s.lo, s.hi)) {
+          flush[s.k] = true;
+          gables.push({ points: [s.a, s.b] });
+        }
+      }
       const rr = rectRoof(r, flush);
       ridges.push(...rr.ridges);
       hips.push(...rr.hips);
@@ -473,7 +494,7 @@ export function deriveRoofSkeleton(
 
     const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12));
 
-    return { ridges, hips, valleys };
+    return { ridges, hips, valleys, gables };
   } catch {
     return EMPTY;
   }

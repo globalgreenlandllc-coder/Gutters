@@ -655,6 +655,7 @@ export function RoofStructureOverlay({
   scale = 1,
   derive = false,
   eaves = [],
+  rakes = [],
 }: {
   structure: RoofStructure;
   /** "onDark" = light strokes for the dark tactical canvas; "onLight" =
@@ -670,6 +671,10 @@ export function RoofStructureOverlay({
   /** Eaves carry building side (front/back/left/right) — used to place the
    *  orientation chips. Optional; chips are skipped when absent. */
   eaves?: { points: { x: number; y: number }[]; side?: EaveSide }[];
+  /** Rakes (gable edges) the AI classified. In derive mode they tell the
+   *  skeleton which sides are gable ends so it draws a connected gable
+   *  (ridge to the wall) instead of a floating stub. */
+  rakes?: { points: { x: number; y: number }[] }[];
 }) {
   // Derived (or structure-provided) roof skeleton. useMemo so the per-frame
   // re-renders during eave drag don't recompute the grid decomposition.
@@ -680,18 +685,25 @@ export function RoofStructureOverlay({
         ridges: structure.ridges.map((l) => ({ points: l.points })),
         hips: (structure.hips ?? []).map((l) => ({ points: l.points })),
         valleys: structure.valleys.map((l) => ({ points: l.points })),
+        gables: [] as { points: { x: number; y: number }[] }[],
       };
     }
-    // Pass the eaves (gutter runs) so the skeleton draws a HIP only on sides
-    // that actually carry a gutter, and a flush GABLE end on sides that
-    // don't — instead of assuming a hip roof everywhere.
-    const eaveSegments = eaves
-      .filter((e) => e.points.length >= 2)
-      .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
-    return deriveRoofSkeleton(structure.perimeter, { eaveSegments });
+    // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
+    // edges). A side draws a HIP only where a gutter runs; a side with a
+    // rake — or no gutter — draws a flush GABLE end (ridge to the wall), so
+    // the gable connects to the roof instead of floating as a separate stub.
+    const toSegs = (ls: { points: { x: number; y: number }[] }[]) =>
+      ls
+        .filter((e) => e.points.length >= 2)
+        .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
+    return deriveRoofSkeleton(structure.perimeter, {
+      eaveSegments: toSegs(eaves),
+      rakeSegments: toSegs(rakes),
+    });
   }, [
     derive,
     eaves,
+    rakes,
     structure.perimeter,
     structure.ridges,
     structure.hips,
@@ -707,6 +719,8 @@ export function RoofStructureOverlay({
   const ridgeC = onDark ? "rgba(203,213,225,0.85)" : "rgba(51,65,85,0.78)";
   const hipC = onDark ? "rgba(125,211,252,0.85)" : "rgba(14,116,144,0.78)";
   const valleyC = onDark ? "rgba(196,181,253,0.9)" : "rgba(109,40,217,0.75)";
+  const gableC = onDark ? "rgba(148,163,184,0.95)" : "rgba(71,85,105,0.85)";
+  const gableText = onDark ? "#cbd5e1" : "#475569";
 
   // Interior roof lines (skel derived above). Map to render descriptors.
   const lines: { pts: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
@@ -778,6 +792,59 @@ export function RoofStructureOverlay({
           filter: onDark ? "drop-shadow(0 0 4px rgba(0,0,0,0.55))" : "none",
         }}
       />
+      {/* Gable ends — emphasize the rake edge on the outline + label it, so
+          a gable reads as a CONNECTED part of the roof (the ridge already
+          runs flush to this wall) rather than a floating stub. */}
+      {skel.gables.map((g, i) => {
+        const a = g.points[0];
+        const b = g.points[1];
+        if (!a || !b) return null;
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        // Nudge the label toward the roof centroid so it sits just inside
+        // the gable edge.
+        const dx = centroid.x - mx;
+        const dy = centroid.y - my;
+        const d = Math.hypot(dx, dy) || 1;
+        const lx = mx + (dx / d) * 13 * scale;
+        const ly = my + (dy / d) * 13 * scale;
+        const w = 42 * scale;
+        const h = 13 * scale;
+        return (
+          <g key={`gable-${i}`}>
+            <path
+              d={linePathD([a, b])}
+              fill="none"
+              stroke={gableC}
+              strokeWidth={2.6 * scale}
+              strokeDasharray={`${5 * scale} ${4 * scale}`}
+              strokeLinecap="round"
+            />
+            <rect
+              x={lx - w / 2}
+              y={ly - h / 2}
+              width={w}
+              height={h}
+              rx={3 * scale}
+              fill={chipFill}
+              stroke={chipStroke}
+              strokeWidth={scale}
+            />
+            <text
+              x={lx}
+              y={ly + 3.2 * scale}
+              textAnchor="middle"
+              fill={gableText}
+              fontSize={7.5 * scale}
+              fontWeight={700}
+              fontFamily="ui-sans-serif, system-ui"
+              letterSpacing={0.8 * scale}
+            >
+              GABLE
+            </text>
+          </g>
+        );
+      })}
       {/* Orientation chips — FRONT / BACK / LEFT / RIGHT off each edge */}
       {chips.map(({ side, label, at }) => {
         const w = (label.length * 6.2 + 12) * scale;

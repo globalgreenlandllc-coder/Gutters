@@ -287,12 +287,13 @@ export function PresentationCanvas({
             scale={vs}
             derive
             eaves={eaves}
+            rakes={rakes}
           />
         )}
-        {/* Rakes — gray-dashed, low-opacity, non-interactive.
-            On the drafting-paper plan background we use a darker
-            indigo so the dashes stay legible on warm off-white. */}
-        {rakes.map((line) => (
+        {/* Rakes — gray-dashed, low-opacity, non-interactive. In PLAN mode
+            the overlay draws connected GABLE ends from these rakes, so skip
+            the separate floating stubs there. */}
+        {!planMode && rakes.map((line) => (
           <motion.path
             key={line.id}
             d={pathFor(line)}
