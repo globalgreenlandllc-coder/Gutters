@@ -9,6 +9,12 @@ import type {
   RoofStructure,
 } from "@/lib/types";
 import { deriveRoofSkeleton, type Pt } from "@/lib/roof-skeleton";
+import {
+  perimBBox,
+  anchorForSide,
+  sideSplit,
+  type OrientSide,
+} from "@/lib/orientation-anchor";
 
 // Geometry constants live in a directive-free module so the SERVER-ONLY
 // plan→estimate converter can import the real numbers. Importing them
@@ -610,29 +616,40 @@ function segLen(a: Pt, b: Pt) {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
-/** Average midpoint of every eave tagged a given side, pushed just outside
- *  the roof so the orientation chip sits off the correct edge. */
+/**
+ * Off-edge anchor for a side's orientation chip. Snaps the chip to the
+ * building bounding-box EDGE (length-weighted, axis-restricted) so it can
+ * never float in the roof interior — see lib/orientation-anchor.ts for the
+ * geometry + why this replaced the old "average-of-midpoints + 26px" approach.
+ * Builds a fresh midpoint/length array (never sorts/mutates the shared `eaves`
+ * — that array also feeds the priced LF). Decorative only.
+ */
 function sideAnchor(
   eaves: { points: { x: number; y: number }[]; side?: EaveSide }[],
-  side: EaveSide,
-  centroid: Pt,
+  side: OrientSide,
+  bbox: ReturnType<typeof perimBBox>,
+  scale: number,
 ): Pt | null {
   const matches = eaves.filter((l) => l.side === side && l.points.length >= 2);
   if (matches.length === 0) return null;
-  let sx = 0;
-  let sy = 0;
-  for (const l of matches) {
+  const mids = matches.map((l) => {
     const a = l.points[0];
     const b = l.points[l.points.length - 1];
-    sx += (a.x + b.x) / 2;
-    sy += (a.y + b.y) / 2;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, len: segLen(a, b) };
+  });
+  if (process.env.NODE_ENV !== "production") {
+    const s = sideSplit(mids, side, bbox);
+    if (s.split && s.minorityFrac >= 0.35) {
+      const edges = side === "front" || side === "back" ? "top/bottom" : "left/right";
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[orientation] "${side}" eaves split across both ${edges} edges ` +
+          `(minority ${Math.round(s.minorityFrac * 100)}%) — likely a mis-tagged ` +
+          `side upstream (blueprint-from-plans <orientation>).`,
+      );
+    }
   }
-  const mx = sx / matches.length;
-  const my = sy / matches.length;
-  const dx = mx - centroid.x;
-  const dy = my - centroid.y;
-  const d = Math.hypot(dx, dy) || 1;
-  return { x: mx + (dx / d) * 26, y: my + (dy / d) * 26 };
+  return anchorForSide(mids, side, bbox, scale);
 }
 
 /**
@@ -731,8 +748,8 @@ export function RoofStructureOverlay({
     (l) => l.pts.length >= 2 && segLen(l.pts[0], l.pts[l.pts.length - 1]) > 1.5,
   );
 
-  // Roof centroid (perimeter average) — orientation chips push outward
-  // from it so each sits just off its edge.
+  // Roof centroid (perimeter average) — used to nudge the GABLE labels just
+  // inside their edge.
   let cx = 0;
   let cy = 0;
   for (const p of structure.perimeter) {
@@ -742,19 +759,22 @@ export function RoofStructureOverlay({
   cx /= structure.perimeter.length;
   cy /= structure.perimeter.length;
   const centroid = { x: cx, y: cy };
-  const chips: { side: EaveSide; label: string; at: Pt }[] = (
+  // Orientation chips snap to the building bounding-box edge (off-edge by
+  // construction), so FRONT/BACK/LEFT/RIGHT never float in the roof interior.
+  const chipBBox = perimBBox(structure.perimeter);
+  const chips: { side: OrientSide; label: string; at: Pt }[] = (
     [
       ["front", "FRONT"],
       ["back", "BACK"],
       ["left", "LEFT"],
       ["right", "RIGHT"],
-    ] as [EaveSide, string][]
+    ] as [OrientSide, string][]
   )
     .map(([side, label]) => {
-      const at = sideAnchor(eaves, side, centroid);
+      const at = sideAnchor(eaves, side, chipBBox, scale);
       return at ? { side, label, at } : null;
     })
-    .filter((c): c is { side: EaveSide; label: string; at: Pt } => c !== null);
+    .filter((c): c is { side: OrientSide; label: string; at: Pt } => c !== null);
 
   const chipText = onDark ? "#e2e8f0" : "#1e3a8a";
   const chipFill = onDark ? "rgba(2,6,23,0.78)" : "rgba(255,255,255,0.92)";

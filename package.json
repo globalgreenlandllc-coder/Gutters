@@ -7,7 +7,7 @@
     "build": "npm run db:check-drift && prisma generate && node scripts/migrate-deploy.mjs && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "npx --yes tsx --test lib/ai/*.test.mts",
+    "test": "npx --yes tsx --test lib/*.test.mts lib/ai/*.test.mts",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
