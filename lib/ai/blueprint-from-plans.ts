@@ -183,21 +183,24 @@ Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile
 across them before emitting geometry:
 
-1. ROOF PLAN — gives the geometry and is ALWAYS the source for
-   eave-vs-rake / ridge / hip / valley CLASSIFICATION. For the
-   footprint SHAPE (the polygon you trace) use the cleanest ORTHOGONAL
-   plan-view, in priority order:
+1. ROOF PLAN (and ELEVATIONS) — the roof plan gives the footprint
+   GEOMETRY / SHAPE; the ELEVATIONS give the eave-vs-rake / ridge / hip /
+   valley CLASSIFICATION. For the footprint SHAPE (the polygon you trace)
+   use the cleanest ORTHOGONAL plan-view, in priority order:
      (a) a CLEAN roof plan with a clear outlined perimeter — trace it
          directly; best shape source.
      (b) else, when the only roof sheet is a DENSE framing / truss
-         layout, do NOT trace the outline off the trusses (notation
-         obscures corners) — borrow the clean orthogonal outline from
-         the floor / foundation plan (item 3) and OVERLAY this sheet's
-         edge classification + slope arrows onto it.
+         layout (hard to read for classification), do NOT trace the outline
+         off the trusses (notation obscures corners) — borrow the clean
+         orthogonal outline from the floor / foundation plan (item 3) and
+         OVERLAY this sheet's edge classification + slope arrows onto it.
      (c) tracing off a dense truss diagram is the LAST resort.
-   Classification always comes from this roof sheet; only the polygon
-   SHAPE may be borrowed. Outer edge of a truss layout = roof
-   perimeter; eaves are perpendicular to the truss span.
+   Classification ALWAYS comes from the elevations (step 2b/2c), which
+   show each side's roofline directly. The roof plan confirms the
+   classification but is not the primary source; when they disagree, trust
+   the elevations. Only the polygon SHAPE may be borrowed from the roof
+   plan. Outer edge of a truss layout = roof perimeter; eaves are
+   perpendicular to the truss span.
 
 2. ELEVATIONS — give you the eave count per side, the gable/dormer
    geometry, and the tier heights. If the front elevation shows
@@ -242,26 +245,30 @@ actually there.
 <method>
 Follow these steps in order. Think carefully before producing JSON.
 
-1. Locate the roof plan page in the supplied document. If no roof plan AND
+1. BUILD THE ELEVATION ROOF MODEL FIRST (step 2b/2c below): read each
+   elevation's roofline, classify each side as gable-end / eave-side / hip,
+   and inventory the per-side horizontal eaves. This is the SOURCE OF TRUTH
+   for where gutters go — commit to the per-side model before tracing any
+   geometry.
+
+2. Locate the roof plan page in the supplied document. If no roof plan AND
    no roof framing / truss sheet is visible AND no floor / foundation plan
    exists to borrow a footprint from, output
    {"error":"no_roof_plan","reason":"<what you see instead>"} and stop.
    Otherwise proceed using the shape-source priority in <cross_reference>
-   item 1.
-
-2. Trace the footprint from the CLEANEST ORTHOGONAL plan-view, in the
-   <cross_reference> priority: a clean roof plan if one exists, else
+   item 1. Then trace the footprint from the CLEANEST ORTHOGONAL plan-view,
+   in the <cross_reference> priority: a clean roof plan if one exists, else
    the floor / foundation exterior outline (item 3, covered projections
-   added, roof-sheet classification overlaid), and only as a last
-   resort a dense truss diagram. Trace it rectilinear — axis-aligned
-   sides at right-angle corners — wherever the plan shows an orthogonal
-   footprint (the norm), so a true right angle is not freehanded into a
-   diagonal. But PRESERVE any eave the plan clearly draws at a genuine
-   angle (clipped/chamfered corner, bay, polygonal turret, angled
-   garage/wing) at its real direction and length — see RECTILINEAR
-   EAVES in <rules>. Classification still comes from the roof sheet +
-   elevations. If there are multiple structures (main house + detached
-   garage), trace each.
+   added, roof-sheet classification overlaid), and only as a last resort a
+   dense truss diagram. Trace it rectilinear — axis-aligned sides at
+   right-angle corners — wherever the plan shows an orthogonal footprint
+   (the norm), so a true right angle is not freehanded into a diagonal.
+   But PRESERVE any eave the plan clearly draws at a genuine angle
+   (clipped/chamfered corner, bay, polygonal turret, angled garage/wing) at
+   its real direction and length — see RECTILINEAR EAVES in <rules>. The
+   roof plan's edge classification now CONFIRMS the elevation model (step
+   2b/2c) — they should match. If there are multiple structures (main house
+   + detached garage), trace each.
 
 2a. PRESERVE FOOTPRINT JOGS -- do NOT flatten an articulated outline to a
     rectangle. Trace the ACTUAL stepped polyline the foundation / floor
