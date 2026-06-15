@@ -397,9 +397,13 @@ export function deriveRoofSkeleton(
 
     const rectCells = coverRectangles(inside, nx, ny);
     // If decomposition fragmented badly, fall back to a single bounding
-    // hip roof — still clean, still reads as a roof.
+    // hip roof — still clean, still reads as a roof. Threshold kept high
+    // (was 8 — too eager: an articulated house with a garage + porch +
+    // patio + a few jogs legitimately exceeds 8 wings, and collapsing it to
+    // a bounding box was a real cause of "just a box" renders). Only a truly
+    // over-fragmented (noisy) footprint should fall back.
     const rects: Rect[] =
-      rectCells.length === 0 || rectCells.length > 8
+      rectCells.length === 0 || rectCells.length > 18
         ? [{ x0: minX, x1: maxX, y0: minY, y1: maxY }]
         : rectCells.map((rc) => ({
             x0: xs[rc.i0],
