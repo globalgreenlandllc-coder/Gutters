@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { getPrompt } from "./prompts";
 import type { SatImage } from "./static-map";
 import type { RoofPolygon } from "./sam";
 
@@ -63,7 +64,7 @@ export type BuildingHint =
   | { x: number; y: number }
   | { x1: number; y1: number; x2: number; y2: number };
 
-const SYSTEM_PROMPT = `You are a senior gutter estimator producing a takeoff from a NADIR (top-down, directly-overhead) aerial satellite image. You think like a pro doing a real bid, not a generic image-tagging model.
+export const SYSTEM_PROMPT = `You are a senior gutter estimator producing a takeoff from a NADIR (top-down, directly-overhead) aerial satellite image. You think like a pro doing a real bid, not a generic image-tagging model.
 
 This is a true overhead view — NOT an oblique / Bird's-Eye. Roofs project as their footprint. Slopes are inferred from texture, shadow, and intersection geometry, never from "facing" the camera.
 
@@ -182,6 +183,8 @@ export async function segmentEavesViaVision(
   const key = await getActiveApiKey("OPENAI");
   if (!key) return null;
 
+  const systemPrompt = await getPrompt("address.vision.system", SYSTEM_PROMPT);
+
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -194,7 +197,7 @@ export async function segmentEavesViaVision(
         response_format: { type: "json_object" },
         max_tokens: 1500,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: [

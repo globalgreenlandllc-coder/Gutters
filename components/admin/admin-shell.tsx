@@ -15,6 +15,7 @@ import {
   Menu,
   Palette,
   ShieldAlert,
+  Sparkles,
   Tag,
   Users,
   X,
@@ -32,6 +33,7 @@ const NAV: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: "/admin/api-keys", label: "API keys", icon: Key },
   { href: "/admin/pricing", label: "Pricing", icon: Tag },
   { href: "/admin/material-defaults", label: "Material defaults", icon: Palette },
+  { href: "/admin/prompts", label: "AI prompts", icon: Sparkles },
 ];
 
 export function AdminShell({

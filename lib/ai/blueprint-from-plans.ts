@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { getPrompt } from "./prompts";
 import type { GeometryConstraints } from "./classify-plans";
 
 export type BlueprintPoint = { x: number; y: number };
@@ -93,7 +94,7 @@ export type BlueprintResult =
       };
     };
 
-const BLUEPRINT_FROM_PLANS_SYSTEM = `
+export const BLUEPRINT_FROM_PLANS_SYSTEM = `
 You are a senior rain-gutter estimator analyzing residential construction plans
 to produce a complete gutter installation layout for a homeowner proposal.
 
@@ -1088,6 +1089,10 @@ export async function blueprintFromPlanSources(
   ];
 
   try {
+    const blueprintSystem = await getPrompt(
+      "blueprint.takeoff.system",
+      BLUEPRINT_FROM_PLANS_SYSTEM,
+    );
     const response = await client.messages.create({
       model: MODEL,
       // Sonnet's per-token generation rate is the main wall-clock cost
@@ -1109,7 +1114,7 @@ export async function blueprintFromPlanSources(
       system: [
         {
           type: "text",
-          text: BLUEPRINT_FROM_PLANS_SYSTEM,
+          text: blueprintSystem,
           // Cache the ~3k-token system prompt across blueprint runs.
           // Cuts input cost ~90% from the second blueprint onward.
           cache_control: { type: "ephemeral" },
