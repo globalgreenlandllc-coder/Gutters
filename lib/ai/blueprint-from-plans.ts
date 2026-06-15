@@ -589,10 +589,13 @@ SELF-CHECK BEFORE EMITTING JSON:
    close as a rake, not a phantom gutter. Re-confirm the total still
    respects max_total_eave_lf after closing the loop.
 5. GABLE CHECK (per 2b + 2c): two passes. (a) WHOLE-SIDE: every side you
-   marked a GABLE END in 2c carries ZERO gutter_run — its two slopes are
-   excluded_edges of kind "rake"; if you placed a long upper eave on a
-   gable-end side, delete it. Do NOT do this to a HIPPED end (a trapezoid
-   roofline with a visible horizontal eave) — that eave stays. (b) PER-RUN:
+   marked a GABLE END in 2c carries ZERO gutter_run on its MAIN face — its
+   two slopes are excluded_edges of kind "rake"; if you placed an upper-tier
+   eave on a gable-end side's main face, delete it. BUT preserve any
+   LOWER-tier porch/patio/entry eave on that side per the EXCEPTION in 2c —
+   a gable end can still have a lower covered porch that keeps its gutter.
+   Do NOT strip the eave off a HIPPED end (a trapezoid roofline with a
+   visible horizontal eave) either — that eave stays. (b) PER-RUN:
    every remaining gutter_run must sit under a HORIZONTAL roofline segment;
    if a run sits under a SLOPED roofline or across a "^" gable peak, delete
    it (re-class as a rake). Confirm every gable peak carries ZERO gutter.
