@@ -341,6 +341,40 @@ Follow these steps in order. Think carefully before producing JSON.
     overrides the shape you read. Label all four sides gable/eave/hip in your
     map before tracing.
 
+2d. RECONCILE ACROSS SHEETS -- the takeoff MUST agree across the roof plan,
+    the elevations, and the floor/foundation plan. You built the footprint
+    from the plan view (2, 2a) and read the rooflines from the elevations
+    (2b, 2c). The step most often skipped is feeding the elevation findings
+    BACK into the geometry -- which is why features drawn on an elevation go
+    missing from the layout. Walk each elevation once more; for anything it
+    actually DRAWS that your geometry is missing, add/fix it. Add ONLY what
+    is visibly drawn -- the prefer-RAKE / no-phantom-gutter rules still
+    govern; if it is not on a sheet, do NOT invent it.
+    - SHAPE (footprint -- VISUAL): a pop-out / jog / projection / step-down an
+      elevation shows (a wing, bump-out, a lower roof in front of or behind
+      the main wall) that is missing from building_footprint => add its
+      corners. Per 2a this stays VISUAL -- adding a footprint corner does NOT
+      by itself add any gutter_run.
+    - EAVES (gutter_runs): a HORIZONTAL eave line an elevation actually shows
+      that is missing from gutter_runs => add a gutter_run there. Watch the
+      eave BESIDE/BEHIND a projecting gable: when the elevation shows a
+      horizontal eave line next to or behind the gable (the gable sits like a
+      dormer / cross-gable ON a continuous eave wall), that eave is REAL --
+      trace it; the gable's own forward slopes stay rakes. BUT a FULL-FACE
+      gable end (a triangle plate-to-peak with NO horizontal roof edge, per
+      2c/3a) has NO eave -- do not add one. Decide by the VISIBLE roofline
+      shape, never by assuming an eave is "behind" the gable.
+    - COVERED PROJECTIONS (per <covered_projections>): reconcile every
+      covered porch / entry / REAR deck / patio cover you can see -- each is a
+      lower-tier gutter_run AND a footprint projection. These are the
+      single most-missed gutters.
+    - GABLES / TIERS: if an elevation's shape disagrees with how you
+      classified a side, fix it (gable<->eave) and set its tier, and update
+      the 2c side map.
+    A confirmed change in ONE place propagates EVERYWHERE: footprint,
+    gutter_runs, excluded_edges, downspouts, totals. Loop until the three
+    sheets agree.
+
 3a. NO ROOF-TYPE PRIOR -- the single most common error is running a
     horizontal GUTTER across a GABLE face. Do NOT assume a house is
     "usually hip" or that "eaves make up most of the perimeter." Many
@@ -531,7 +565,14 @@ SELF-CHECK BEFORE EMITTING JSON:
    belly band, water table, trim/band board, trellis beam, header, or a
    floor/plate/grade level line. A tall wall with one top eave gets ONE
    gutter, not one per band.
-7. Do this self-correction silently — the response should still be
+7. CONSISTENCY CHECK (per 2d): walk EACH elevation one final time. Every
+   feature it actually DRAWS must appear in the layout — each visible
+   pop-out/jog in building_footprint, each visible HORIZONTAL eave (incl. one
+   beside/behind a front-or-rear gable, and any rear deck/patio cover) in
+   gutter_runs, each gable in excluded_edges. Add only what is drawn; a
+   full-face gable end has no eave, so do not invent one — if it is not on a
+   sheet, leave it out.
+8. Do this self-correction silently — the response should still be
    strict JSON, no commentary.
 </scale_discipline>
 
