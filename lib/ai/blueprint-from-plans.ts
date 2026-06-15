@@ -342,6 +342,19 @@ Follow these steps in order. Think carefully before producing JSON.
       (front & back, or left & right) -- NOT on the two gable ends.
     - An EAVE SIDE: the roofline shows a long HORIZONTAL edge running across
       the elevation (ridge perpendicular to your view). => GUTTER on it.
+    - A MULTI-GABLE / CROSS-GABLED SIDE (the COMMON case for a FRONT, and the
+      one most often mis-read): the roofline shows SEVERAL gable peaks WITH
+      HORIZONTAL eave sections between and beside them. This is NOT a gable
+      end -- do NOT mark the whole side "no gutter," and do NOT gutter the
+      gable faces. Instead: GUTTER every horizontal eave section (the runs
+      between the gables, behind a dormer, and any covered entry/porch eave --
+      the "CONT. METAL GUTTER ... TYPICAL" callout marks these, the entry
+      porch usually at the LOWER tier); RAKE only the gable triangle faces
+      themselves. KEY DISTINCTION: a GABLE END is exactly ONE triangle
+      spanning the WHOLE side (no horizontal roofline anywhere => no gutter);
+      TWO OR MORE peaks with horizontal eave between them is a MULTI-GABLE
+      side that DOES carry gutters on those horizontals. Most fronts are this
+      case, not a gable end.
     Determine each side from its OWN elevation shape. A cross-gabled house
     typically splits into TWO gable ends (rakes, no gutter) + TWO eave sides
     (gutters); the opposite-side check only CONFIRMS the pattern, it never
