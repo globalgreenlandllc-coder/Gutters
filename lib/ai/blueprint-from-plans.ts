@@ -314,6 +314,33 @@ Follow these steps in order. Think carefully before producing JSON.
     segments tell you the wing widths; reconcile them with the footprint
     from step 2 so jogs, projections, and lower wings all appear.
 
+2c. GABLE END vs. EAVE SIDE IDENTIFICATION -- from your step-2b inventory,
+    decide which WHOLE SIDES of the main body are GABLE ENDS (zero gutter)
+    BEFORE you trace any gutter_run. This is the determination that was
+    missing: an AI that skips it defaults to "hip on all sides" and drops
+    phantom gutters on the gable ends. Read each elevation's roofline SHAPE;
+    never guess.
+    - A HIPPED END (NOT a gable): the roofline is a TRAPEZOID -- a horizontal
+      eave at the bottom under a small diagonal hip climbing to the ridge.
+      The horizontal eave is present. => GUTTER on that eave (the hip itself
+      carries none, but the eave it terminates DOES). Listed first so you
+      never strip a real eave off a hipped end.
+    - A GABLE END: the roofline is a peaked TRIANGLE -- two opposing slopes
+      to a "^" peak with NO horizontal roof edge ANYWHERE on that side's
+      roofline (the wall plate is horizontal, but the ROOFLINE is two slopes
+      only). => ZERO gutter on that whole side; its two slopes are RAKES.
+      The gutters for that wing are on its two PERPENDICULAR return sides
+      (the 90deg-adjacent elevations, which show horizontal eaves). A
+      gable-ENDED main body carries gutters on its two OPPOSITE eave sides
+      (front & back, or left & right) -- NOT on the two gable ends.
+    - An EAVE SIDE: the roofline shows a long HORIZONTAL edge running across
+      the elevation (ridge perpendicular to your view). => GUTTER on it.
+    Determine each side from its OWN elevation shape. A cross-gabled house
+    typically splits into TWO gable ends (rakes, no gutter) + TWO eave sides
+    (gutters); the opposite-side check only CONFIRMS the pattern, it never
+    overrides the shape you read. Label all four sides gable/eave/hip in your
+    map before tracing.
+
 3a. NO ROOF-TYPE PRIOR -- the single most common error is running a
     horizontal GUTTER across a GABLE face. Do NOT assume a house is
     "usually hip" or that "eaves make up most of the perimeter." Many
@@ -490,11 +517,14 @@ SELF-CHECK BEFORE EMITTING JSON:
    full gable end → two excluded_edges of kind "rake"). When ambiguous,
    close as a rake, not a phantom gutter. Re-confirm the total still
    respects max_total_eave_lf after closing the loop.
-5. GABLE CHECK (per 2b): every gutter_run must sit under a HORIZONTAL
-   roofline segment from your elevation inventory. If a run sits under a
-   SLOPED roofline or across a "^" gable peak, it is a phantom gutter on a
-   gable — delete it (re-class the edge as a rake). Confirm each elevation's
-   gable peaks carry ZERO gutter.
+5. GABLE CHECK (per 2b + 2c): two passes. (a) WHOLE-SIDE: every side you
+   marked a GABLE END in 2c carries ZERO gutter_run — its two slopes are
+   excluded_edges of kind "rake"; if you placed a long upper eave on a
+   gable-end side, delete it. Do NOT do this to a HIPPED end (a trapezoid
+   roofline with a visible horizontal eave) — that eave stays. (b) PER-RUN:
+   every remaining gutter_run must sit under a HORIZONTAL roofline segment;
+   if a run sits under a SLOPED roofline or across a "^" gable peak, delete
+   it (re-class as a rake). Confirm every gable peak carries ZERO gutter.
 6. WALL-LINE CHECK (per 3c): for every gutter_run, confirm a ROOF PLANE
    sits directly above its line (slope / shingles / overhang) — not more
    wall, siding, or windows. Delete any run that is actually sitting on a
