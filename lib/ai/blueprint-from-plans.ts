@@ -609,9 +609,15 @@ SELF-CHECK BEFORE EMITTING JSON:
    feature it actually DRAWS must appear in the layout — each visible
    pop-out/jog in building_footprint, each visible HORIZONTAL eave (incl. one
    beside/behind a front-or-rear gable, and any rear deck/patio cover) in
-   gutter_runs, each gable in excluded_edges. Add only what is drawn; a
-   full-face gable end has no eave, so do not invent one — if it is not on a
-   sheet, leave it out.
+   gutter_runs, each gable in excluded_edges. SPECIFIC RECURRING MISS: when a
+   side shows TWO flanking gables (the common front, and a symmetric rear), the
+   roof DROPS to a recessed center wall BETWEEN them — that recessed section
+   carries a HORIZONTAL eave whenever a roof (covered porch/entry/patio, or the
+   continuing main eave) sits over it. Confirm a gutter_run on that
+   between-gables center on BOTH long sides independently (front porch and rear
+   patio are usually BOTH present and the REAR one is the most-missed). Add only
+   what is drawn; a full-face gable end has no eave, so do not invent one — if
+   a side genuinely has nothing drawn between its gables, leave it out.
 8. Do this self-correction silently — the response should still be
    strict JSON, no commentary.
 </scale_discipline>

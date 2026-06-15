@@ -336,6 +336,78 @@ function norm(v: Pt): Pt {
   return { x: v.x / l, y: v.y / l };
 }
 
+/** Distance along ray (P + t·D, t≥0) to its intersection with segment [a,b],
+ *  or null if they don't cross (parallel, behind, or off the segment). */
+function rayHitSeg(p: Pt, d: Pt, a: Pt, b: Pt): number | null {
+  const ex = b.x - a.x;
+  const ey = b.y - a.y;
+  const det = ex * d.y - ey * d.x; // cross(E, D)
+  if (Math.abs(det) < 1e-9) return null; // parallel / collinear
+  const fx = a.x - p.x;
+  const fy = a.y - p.y;
+  const t = (ex * fy - ey * fx) / det; // distance along the ray
+  const u = (d.x * fy - d.y * fx) / det; // position along the segment
+  if (t <= 0 || u < -1e-6 || u > 1 + 1e-6) return null;
+  return t;
+}
+
+/**
+ * Connect each GABLE end to the body of the roof with a ridge line, so the
+ * gable reads as a finished, attached gable instead of a floating dashed
+ * stub. From the gable edge's midpoint we shoot a ray straight inward
+ * (perpendicular to the gable wall) and stop at the first existing ridge/hip
+ * it meets — that meeting point is the gable wing's apex, and the line we
+ * draw is that wing's ridge. A gable end whose ridge already lands on it
+ * (the flush main-body case) is skipped so we don't double a line.
+ */
+function gableConnectors(
+  gables: SkeletonLine[],
+  interior: SkeletonLine[],
+  centroid: Pt,
+  tol: number,
+  maxReach: number,
+): SkeletonLine[] {
+  const out: SkeletonLine[] = [];
+  for (const g of gables) {
+    const a = g.points[0];
+    const b = g.points[1];
+    if (!isFinitePt(a) || !isFinitePt(b)) continue;
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    // Skip gables that a ridge already reaches (flush main-body gable end).
+    const reached = interior.some(
+      (l) =>
+        Math.hypot(l.points[0].x - m.x, l.points[0].y - m.y) <= tol * 1.5 ||
+        Math.hypot(l.points[1].x - m.x, l.points[1].y - m.y) <= tol * 1.5,
+    );
+    if (reached) continue;
+    // Inward unit normal to the gable wall (toward the roof centroid).
+    let ex = b.x - a.x;
+    let ey = b.y - a.y;
+    const el = Math.hypot(ex, ey) || 1;
+    ex /= el;
+    ey /= el;
+    let nx = -ey;
+    let ny = ex;
+    if ((centroid.x - m.x) * nx + (centroid.y - m.y) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    const d = { x: nx, y: ny };
+    // First ridge/hip the inward ray meets = the wing's apex.
+    let bestT = Infinity;
+    for (const l of interior) {
+      const t = rayHitSeg(m, d, l.points[0], l.points[1]);
+      if (t !== null && t > tol && t < bestT) bestT = t;
+    }
+    const reach = Number.isFinite(bestT)
+      ? bestT
+      : Math.min(Math.hypot(centroid.x - m.x, centroid.y - m.y), maxReach);
+    if (reach <= tol) continue;
+    out.push({ points: [m, { x: m.x + d.x * reach, y: m.y + d.y * reach }] });
+  }
+  return out;
+}
+
 /**
  * Derive the roof skeleton from a footprint polygon (canvas coordinates).
  * Returns clean ridge/hip/valley line segments. Never throws — returns
@@ -497,6 +569,24 @@ export function deriveRoofSkeleton(
     }
 
     const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12));
+
+    // Tie every gable end into the roof body with a ridge line so it reads as
+    // a finished, attached gable rather than a floating stub + label.
+    let rcx = 0;
+    let rcy = 0;
+    for (const p of ring) {
+      rcx += p.x;
+      rcy += p.y;
+    }
+    const centroid = { x: rcx / ring.length, y: rcy / ring.length };
+    const connectors = gableConnectors(
+      gables,
+      [...ridges, ...hips],
+      centroid,
+      tol,
+      span * 0.5,
+    );
+    ridges.push(...connectors);
 
     return { ridges, hips, valleys, gables };
   } catch {
