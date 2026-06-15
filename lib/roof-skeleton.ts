@@ -49,12 +49,12 @@ export type RoofSkeleton = {
 
 const EMPTY: RoofSkeleton = { ridges: [], hips: [], valleys: [], gables: [] };
 
-function isFinitePt(p: Pt | undefined | null): p is Pt {
+export function isFinitePt(p: Pt | undefined | null): p is Pt {
   return !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
 }
 
 /** Drop consecutive duplicates and a trailing point equal to the first. */
-function cleanRing(poly: readonly Pt[], tol: number): Pt[] {
+export function cleanRing(poly: readonly Pt[], tol: number): Pt[] {
   const pts = poly.filter(isFinitePt);
   const out: Pt[] = [];
   for (const p of pts) {

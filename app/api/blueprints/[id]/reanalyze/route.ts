@@ -13,6 +13,7 @@ import {
   classificationToConstraints,
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
+import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 
 export const maxDuration = 300;
 
@@ -211,8 +212,18 @@ export async function POST(
       if (clampNotes.length > 0) {
         clamped.notes = [...clamped.notes, ...clampNotes];
       }
+      // Deterministic closure (same as the upload path — keep both in sync):
+      // recover symmetric dropped eaves, flag the rest, then re-clamp.
+      const { analysis: reconciled, reconcileNotes } = reconcileEaves(clamped);
+      if (reconcileNotes.length > 0) {
+        reconciled.notes = [...reconciled.notes, ...reconcileNotes];
+      }
+      const { analysis: finalAnalysis } = clampBlueprintToEnvelope(
+        reconciled,
+        constraints,
+      );
       const analysisJson: Record<string, unknown> = {
-        ...(clamped as unknown as Record<string, unknown>),
+        ...(finalAnalysis as unknown as Record<string, unknown>),
       };
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
@@ -235,7 +246,7 @@ export async function POST(
         data: {
           status: "SUCCEEDED",
           analysisJson: analysisJson as Prisma.InputJsonValue,
-          confidence: clamped.confidence,
+          confidence: finalAnalysis.confidence,
           modelUsed: result.usage.model,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,

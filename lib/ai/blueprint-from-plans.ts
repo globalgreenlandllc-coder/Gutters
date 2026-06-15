@@ -295,14 +295,23 @@ Follow these steps in order. Think carefully before producing JSON.
     count. Real exterior corners only: do not promote overhang offsets,
     dimension-line ticks, or drawing noise into corners -- trace only genuine
     direction-changes in the single outermost exterior wall, never an interior
-    partition. When unsure whether a jog is exterior, OMIT it -- a missing
-    visual corner is harmless (this field is decorative) but a phantom corner
-    misleads the contractor. building_footprint corners do NOT each need a
-    matching gutter_run or excluded_edge -- <perimeter_closure> is checked
-    against the gutter geometry, not this polygon; never add a gutter_run or
-    excluded_edge to account for a footprint vertex. Does NOT change the shape
-    SOURCE priority, and is VISUAL ONLY: never changes gutter_runs, length_ft,
-    or the CAP.
+    partition. building_footprint is now LOAD-BEARING, not decorative: a
+    deterministic code pass CLOSES gutter coverage against this polygon (every
+    exterior WALL must end up either guttered or raked), so a wall you leave
+    OUT of the footprint can hide a dropped eave. You MUST trace every exterior
+    wall the plan/elevations draw -- ESPECIALLY a wall that is set BACK
+    (recessed) between two gable ends or projections: a covered porch at the
+    front and a covered patio at the rear read as the SAME stepped shape (the
+    roofline steps IN then OUT); trace BOTH jog vertices on BOTH the front and
+    the rear so the recessed center wall exists on each. The footprint and
+    gutter_runs share the same source-pixel coordinate space (so the code can
+    match a wall to its gutter). Still emit REAL corners only: do not promote
+    overhang offsets, dimension ticks, or drawing noise into corners -- a
+    phantom corner is as harmful as a missing one. A footprint VERTEX does not
+    need its own gutter_run, but every exterior EDGE should be accounted for in
+    gutter_runs OR excluded_edges (that is exactly what the closure pass now
+    verifies). Does NOT change the shape SOURCE priority and never changes
+    length_ft or the CAP -- it changes only WHICH walls exist to be checked.
 
 2b. ELEVATION ROOFLINE INVENTORY -- the gutter-placement step, done for ALL
     FOUR elevations BEFORE you trace a single gutter_run. This (not a
@@ -747,6 +756,16 @@ you silently dropped — that is the #1 way LF gets under-counted (a whole
 eave vanishes with no decision recorded). Closure forces a DECISION on
 every side, NOT a gutter on every side.
 
+This is now MACHINE-VERIFIED: after you return, a deterministic code pass
+walks building_footprint and finds any exterior wall covered by neither a
+gutter_run nor an excluded_edge. If that dropped wall has a SYMMETRIC
+guttered twin (e.g. you guttered the front porch eave but dropped the
+mirror-image rear patio eave), the code AUTO-ADDS the missing gutter for
+you — so trace the footprint faithfully and the safety net catches a
+symmetric miss. It is still YOUR job to classify every side: the code only
+recovers symmetric drops; an ASYMMETRIC dropped eave is merely flagged for
+human review, not recovered. Do not rely on the net — close every side.
+
 - The test is coverage of the perimeter LENGTH, not a 1:1 side-to-entry
   match. A single gutter_run may span several collinear sides after
   merging, and one long side may be split across runs at outside
@@ -996,6 +1015,7 @@ const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
     },
     required: [
       "scale",
+      "building_footprint",
       "gutter_runs",
       "downspouts",
       "excluded_edges",

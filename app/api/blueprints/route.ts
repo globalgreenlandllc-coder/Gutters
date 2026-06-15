@@ -13,6 +13,7 @@ import {
   classificationToConstraints,
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
+import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -400,11 +401,28 @@ export async function POST(request: Request) {
         );
       }
 
+      // Deterministic closure: walk the footprint and recover any SYMMETRIC
+      // dropped eave (e.g. front porch guttered, mirror rear patio dropped) by
+      // copying the twin's measured length_ft; flag the rest. Fail-safe (any
+      // error returns the input unchanged). Then re-clamp so an auto-added run
+      // can't push the priced total past the envelope (idempotent if under).
+      const { analysis: reconciled, reconcileNotes } = reconcileEaves(clamped);
+      if (reconcileNotes.length > 0) {
+        reconciled.notes = [...reconciled.notes, ...reconcileNotes];
+        console.log(
+          `[/api/blueprints after()] reconcile: ${reconcileNotes.length} note(s) — ${reconcileNotes[0]}`,
+        );
+      }
+      const { analysis: finalAnalysis } = clampBlueprintToEnvelope(
+        reconciled,
+        constraints,
+      );
+
       // Stash the classifier output alongside the geometry under
       // `_classifier` so the detail page can show it without a schema
       // migration. analysisJson is a free-form Json column.
       const analysisJson: Record<string, unknown> = {
-        ...(clamped as unknown as Record<string, unknown>),
+        ...(finalAnalysis as unknown as Record<string, unknown>),
       };
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
@@ -431,7 +449,7 @@ export async function POST(request: Request) {
         data: {
           status: "SUCCEEDED",
           analysisJson: analysisJson as object,
-          confidence: clamped.confidence,
+          confidence: finalAnalysis.confidence,
           modelUsed: result.usage.model,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
