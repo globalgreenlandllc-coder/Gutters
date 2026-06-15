@@ -209,7 +209,12 @@ export async function updateAppointment(
       return { ok: false, reason: "End time must be after start" };
     }
 
-    const row = await db.appointment.update({ where: { id }, data });
+    // Scope the write itself to the owner (defense-in-depth — don't rely
+    // only on the findFirst check above surviving future refactors).
+    const row = await db.appointment.update({
+      where: { id, userId: me.user.id },
+      data,
+    });
     revalidatePath("/dashboard/calendar");
     return { ok: true, appointment: toDTO(row) };
   } catch (e) {
