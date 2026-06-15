@@ -333,13 +333,21 @@ Follow these steps in order. Think carefully before producing JSON.
       carries none, but the eave it terminates DOES). Listed first so you
       never strip a real eave off a hipped end.
     - A GABLE END: the roofline is a peaked TRIANGLE -- two opposing slopes
-      to a "^" peak with NO horizontal roof edge ANYWHERE on that side's
-      roofline (the wall plate is horizontal, but the ROOFLINE is two slopes
-      only). => ZERO gutter on that whole side; its two slopes are RAKES.
-      The gutters for that wing are on its two PERPENDICULAR return sides
-      (the 90deg-adjacent elevations, which show horizontal eaves). A
-      gable-ENDED main body carries gutters on its two OPPOSITE eave sides
-      (front & back, or left & right) -- NOT on the two gable ends.
+      to a "^" peak with NO horizontal roof edge ANYWHERE on the MAIN
+      roofline of that side (the wall plate is horizontal, but the main
+      ROOFLINE is two slopes only). => ZERO gutter on the GABLE FACE; its
+      two slopes are RAKES. The main-body gutters for that wing are on its
+      two PERPENDICULAR return sides (the 90deg-adjacent elevations, which
+      show horizontal eaves). A gable-ENDED main body carries its main
+      gutters on its two OPPOSITE eave sides (front & back, or left & right)
+      -- NOT on the two gable ends.
+      EXCEPTION — a gable-end side can STILL carry a LOWER gutter: a
+      separately-roofed lower structure attached at that side (a covered
+      porch / patio / 1-story wing with its OWN posts and lower roof, often
+      with the main roof drawn as a "DASH LINE OF ROOF BEYOND" behind it)
+      keeps its own LOWER-tier eave. Add it ONLY if that lower roof + eave
+      is visibly drawn (per <covered_projections>). A masonry fire-pit /
+      F.P. flue / chimney is NOT a roof edge -- never gutter it.
     - An EAVE SIDE: the roofline shows a long HORIZONTAL edge running across
       the elevation (ridge perpendicular to your view). => GUTTER on it.
     - A MULTI-GABLE / CROSS-GABLED SIDE (the COMMON case for a FRONT, and the
