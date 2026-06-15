@@ -165,6 +165,15 @@ sides of the projection that abut the main body's wall are NOT eaves
 main body IS the eave (drains into a gutter that empties via a
 downspout at one or both ends).
 
+NUANCE — read the COVER'S OWN roof shape, same as a main side:
+- a SHED / FLAT / HIP cover has its eave on that OUTER edge → gutter there.
+- a GABLE-FRONTED cover (its outer face is a peaked TRIANGLE facing out —
+  common on a covered rear patio or a front entry porch) has RAKES on that
+  outer face → NO gutter across it; its gutters are on the two SIDE
+  RETURNS instead. Do NOT run a gutter across the patio/porch gable face.
+Either way the cover's eaves are LOWER tier, and a masonry fire-pit /
+chimney under the cover is NOT a roof edge.
+
 Typical counts on a residential plan:
 - Covered front porch: 1-3 eave segments (1 if straight-across, 2-3
   if it wraps a front-corner or has a gabled center bump)
