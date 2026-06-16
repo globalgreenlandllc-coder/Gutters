@@ -267,6 +267,55 @@ function sideHasEave(
   return false;
 }
 
+/** Fraction of a side's [lo,hi] span covered by collinear eave segments
+ *  (merged intervals). A side with a FULL-LENGTH eave is an EAVE side, never a
+ *  gable end (a real gable end carries no gutter across its face); but a PARTIAL
+ *  eave — a lower porch on a gable-end side — must NOT veto the gable. */
+function sideEaveCoverage(
+  axis: "h" | "v",
+  fixed: number,
+  lo: number,
+  hi: number,
+  eaves: readonly Seg[],
+  tol: number,
+): number {
+  const span = hi - lo;
+  if (span <= 0) return 0;
+  const ivals: [number, number][] = [];
+  for (const [a, b] of eaves) {
+    let elo: number;
+    let ehi: number;
+    if (axis === "v") {
+      if (Math.abs(a.x - fixed) > tol || Math.abs(b.x - fixed) > tol) continue;
+      elo = Math.min(a.y, b.y);
+      ehi = Math.max(a.y, b.y);
+    } else {
+      if (Math.abs(a.y - fixed) > tol || Math.abs(b.y - fixed) > tol) continue;
+      elo = Math.min(a.x, b.x);
+      ehi = Math.max(a.x, b.x);
+    }
+    const cl = Math.max(lo, elo);
+    const ch = Math.min(hi, ehi);
+    if (ch - cl > 0) ivals.push([cl, ch]);
+  }
+  if (ivals.length === 0) return 0;
+  ivals.sort((p, q) => p[0] - q[0]);
+  let total = 0;
+  let curLo = ivals[0][0];
+  let curHi = ivals[0][1];
+  for (let i = 1; i < ivals.length; i++) {
+    const [l, h] = ivals[i];
+    if (l <= curHi) curHi = Math.max(curHi, h);
+    else {
+      total += curHi - curLo;
+      curLo = l;
+      curHi = h;
+    }
+  }
+  total += curHi - curLo;
+  return total / span;
+}
+
 /** Cross-product sign at vertex b for the ring a→b→c. Sign tells convex
  *  vs reflex once we know the ring's winding. */
 function cross(a: Pt, b: Pt, c: Pt): number {
@@ -720,9 +769,18 @@ export function deriveRoofSkeleton(
       // classification — wins), OR — knowing the eaves — when it carries no
       // gutter. A gable side renders FLUSH (ridge to wall, no hip) so it
       // connects to the roof, and is recorded so the caller can label it.
-      const isGable = (axis: "h" | "v", fixed: number, lo: number, hi: number) =>
-        sideHasEave(axis, fixed, lo, hi, rakeSegs, eaveTol) ||
-        (useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol));
+      const isGable = (axis: "h" | "v", fixed: number, lo: number, hi: number) => {
+        // A side with a FULL-LENGTH eave is an EAVE side, never a gable end —
+        // a real gable end has no gutter across its face. This vetoes a stray
+        // rake that would otherwise paint a GABLE on a genuine eave side. A
+        // PARTIAL eave (a lower porch on a gable-end side) does NOT veto it.
+        if (sideEaveCoverage(axis, fixed, lo, hi, eaveSegs, eaveTol) > 0.6)
+          return false;
+        return (
+          sideHasEave(axis, fixed, lo, hi, rakeSegs, eaveTol) ||
+          (useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol))
+        );
+      };
       const SIDES = [
         { k: "top" as const, axis: "h" as const, fixed: r.y0, lo: r.x0, hi: r.x1, a: { x: r.x0, y: r.y0 }, b: { x: r.x1, y: r.y0 } },
         { k: "bottom" as const, axis: "h" as const, fixed: r.y1, lo: r.x0, hi: r.x1, a: { x: r.x0, y: r.y1 }, b: { x: r.x1, y: r.y1 } },
