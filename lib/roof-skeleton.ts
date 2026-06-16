@@ -352,6 +352,86 @@ function rayHitSeg(p: Pt, d: Pt, a: Pt, b: Pt): number | null {
 }
 
 /**
+ * Merge the per-rectangle gable EDGES into the handful of real gable ends.
+ * The grid decomposition splits one physical gable wall into several
+ * collinear, touching fragments (one per rectangle column/row it spans), so a
+ * single front gable can surface as 4-5 separate edges — each of which the
+ * overlay would label "GABLE", piling boxes on top of each other.
+ *
+ * Group by orientation + the (clustered) fixed coordinate, then union spans
+ * that touch or overlap (gap <= tol). Two GENUINELY separate gables on the
+ * same wall sit more than tol apart (a real recess/step) and stay distinct.
+ * Drop merged slivers shorter than minLen. Pure + deterministic.
+ */
+export function mergeGables(
+  gables: SkeletonLine[],
+  tol: number,
+  minLen: number,
+): SkeletonLine[] {
+  type S = { fixed: number; lo: number; hi: number; vertical: boolean };
+  const segs: S[] = [];
+  for (const g of gables) {
+    const a = g.points[0];
+    const b = g.points[1];
+    if (!isFinitePt(a) || !isFinitePt(b)) continue;
+    // A gable edge from a rect side is axis-aligned; classify by its longer run.
+    const vertical = Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
+    if (vertical) {
+      segs.push({ fixed: (a.x + b.x) / 2, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y), vertical: true });
+    } else {
+      segs.push({ fixed: (a.y + b.y) / 2, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x), vertical: false });
+    }
+  }
+  const out: SkeletonLine[] = [];
+  const emit = (vertical: boolean, lo: number, hi: number, f: number) => {
+    if (hi - lo < minLen) return;
+    out.push(
+      vertical
+        ? { points: [{ x: f, y: lo }, { x: f, y: hi }] }
+        : { points: [{ x: lo, y: f }, { x: hi, y: f }] },
+    );
+  };
+  for (const vertical of [false, true]) {
+    const group = segs
+      .filter((s) => s.vertical === vertical)
+      .sort((p, q) => p.fixed - q.fixed || p.lo - q.lo);
+    let i = 0;
+    while (i < group.length) {
+      // Cluster segments whose fixed coord is within tol of this run's first.
+      const ref = group[i].fixed;
+      const cluster: S[] = [];
+      let j = i;
+      while (j < group.length && Math.abs(group[j].fixed - ref) <= tol) {
+        cluster.push(group[j]);
+        j++;
+      }
+      cluster.sort((p, q) => p.lo - q.lo);
+      let lo = cluster[0].lo;
+      let hi = cluster[0].hi;
+      let fSum = cluster[0].fixed;
+      let fCount = 1;
+      for (let k = 1; k < cluster.length; k++) {
+        const s = cluster[k];
+        if (s.lo <= hi + tol) {
+          hi = Math.max(hi, s.hi); // touching/overlapping fragment of same wall
+          fSum += s.fixed;
+          fCount++;
+        } else {
+          emit(vertical, lo, hi, fSum / fCount);
+          lo = s.lo;
+          hi = s.hi;
+          fSum = s.fixed;
+          fCount = 1;
+        }
+      }
+      emit(vertical, lo, hi, fSum / fCount);
+      i = j;
+    }
+  }
+  return out;
+}
+
+/**
  * Connect each GABLE end to the body of the roof with a ridge line, so the
  * gable reads as a finished, attached gable instead of a floating dashed
  * stub. From the gable edge's midpoint we shoot a ray straight inward
@@ -570,6 +650,10 @@ export function deriveRoofSkeleton(
 
     const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12));
 
+    // Collapse the per-rectangle gable fragments into the real gable ends so
+    // the overlay doesn't stack a "GABLE" label per fragment (the 8-pill pile).
+    const mergedGables = mergeGables(gables, tol, Math.max(span * 0.03, 4));
+
     // Tie every gable end into the roof body with a ridge line so it reads as
     // a finished, attached gable rather than a floating stub + label.
     let rcx = 0;
@@ -580,7 +664,7 @@ export function deriveRoofSkeleton(
     }
     const centroid = { x: rcx / ring.length, y: rcy / ring.length };
     const connectors = gableConnectors(
-      gables,
+      mergedGables,
       [...ridges, ...hips],
       centroid,
       tol,
@@ -588,7 +672,7 @@ export function deriveRoofSkeleton(
     );
     ridges.push(...connectors);
 
-    return { ridges, hips, valleys, gables };
+    return { ridges, hips, valleys, gables: mergedGables };
   } catch {
     return EMPTY;
   }
