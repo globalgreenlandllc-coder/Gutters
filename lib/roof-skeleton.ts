@@ -431,6 +431,103 @@ export function mergeGables(
   return out;
 }
 
+/** Are two segments roughly COLLINEAR and OVERLAPPING (>50% of the shorter)?
+ *  Used to tell whether an AI rake is the same edge as a gable/eave already
+ *  drawn, so we don't double-draw it. */
+export function segmentsOverlap(s1: Seg, s2: Seg, tol: number): boolean {
+  const [a, b] = s1;
+  let ex = b.x - a.x;
+  let ey = b.y - a.y;
+  const el = Math.hypot(ex, ey);
+  if (el <= 1e-6) return false;
+  ex /= el;
+  ey /= el;
+  const perp = (p: Pt) => Math.abs((p.x - a.x) * -ey + (p.y - a.y) * ex);
+  if (perp(s2[0]) > tol || perp(s2[1]) > tol) return false; // not collinear
+  const t = (p: Pt) => (p.x - a.x) * ex + (p.y - a.y) * ey; // 0..el along s1
+  let u0 = t(s2[0]);
+  let u1 = t(s2[1]);
+  if (u0 > u1) [u0, u1] = [u1, u0];
+  const overlap = Math.max(0, Math.min(el, u1) - Math.max(0, u0));
+  const s2len = Math.hypot(s2[1].x - s2[0].x, s2[1].y - s2[0].y);
+  return overlap > 0.5 * Math.min(el, s2len || el);
+}
+
+export type Dormer = { points: [Pt, Pt]; mid: Pt; dir: Pt };
+
+/**
+ * Gables the AI traced (rakes) that the derived skeleton does NOT already show
+ * as whole-side gable ends — i.e. DORMERS / CROSS-GABLES that sit on or above
+ * a continuous eave (a gable in the middle of a wall, not a whole side). These
+ * have no footprint side to derive from, so they can only come from the AI.
+ *
+ * Dedup: drop a rake that overlaps a skeleton gable (already drawn) OR an eave
+ * (it would paint a gable along the gutter line — a mis-read). Drop slivers.
+ * Merge collinear-adjacent survivors. Return a marker (edge + midpoint + the
+ * inward direction toward the roof centroid) so the overlay can draw a small
+ * connected gable chevron. Pure + never throws — decorative only.
+ */
+export function extraGablesFromRakes(
+  rakeSegs: readonly Seg[],
+  skeletonGables: readonly SkeletonLine[],
+  perimeter: readonly Pt[],
+  eaveSegs: readonly Seg[] = [],
+): Dormer[] {
+  try {
+    const finite = (perimeter ?? []).filter(isFinitePt);
+    if (finite.length < 3) return [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let cxs = 0, cys = 0;
+    for (const p of finite) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+      cxs += p.x;
+      cys += p.y;
+    }
+    const span = Math.max(maxX - minX, maxY - minY);
+    if (!Number.isFinite(span) || span <= 0) return [];
+    const tol = Math.max(2, span * 0.03);
+    const eaveTol = tol * 2; // SAME coupling deriveRoofSkeleton uses to make gables
+    const minLen = Math.max(8, span * 0.04);
+    const centroid = { x: cxs / finite.length, y: cys / finite.length };
+
+    const segLenPt = (s: Seg) => Math.hypot(s[1].x - s[0].x, s[1].y - s[0].y);
+    const survivors = (rakeSegs ?? []).filter(
+      (r) =>
+        r &&
+        isFinitePt(r[0]) &&
+        isFinitePt(r[1]) &&
+        segLenPt(r) >= minLen &&
+        // not already shown as a whole-side gable…
+        !skeletonGables.some(
+          (g) => segmentsOverlap(r, [g.points[0], g.points[1]], eaveTol),
+        ) &&
+        // …and not lying along an eave (would read as a gable on the gutter)
+        !eaveSegs.some((e) => segmentsOverlap(r, e, eaveTol)),
+    );
+    if (survivors.length === 0) return [];
+
+    const merged = mergeGables(
+      survivors.map((s) => ({ points: [s[0], s[1]] as [Pt, Pt] })),
+      tol,
+      minLen,
+    );
+    return merged.map((g) => {
+      const a = g.points[0];
+      const b = g.points[1];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      let dx = centroid.x - mid.x;
+      let dy = centroid.y - mid.y;
+      const d = Math.hypot(dx, dy) || 1;
+      return { points: [a, b] as [Pt, Pt], mid, dir: { x: dx / d, y: dy / d } };
+    });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Connect each GABLE end to the body of the roof with a ridge line, so the
  * gable reads as a finished, attached gable instead of a floating dashed

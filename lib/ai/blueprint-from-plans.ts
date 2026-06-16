@@ -406,14 +406,22 @@ Follow these steps in order. Think carefully before producing JSON.
       eave BESIDE/BEHIND a projecting gable: when the elevation shows a
       horizontal eave line next to or behind the gable (the gable sits like a
       dormer / cross-gable ON a continuous eave wall), that eave is REAL --
-      trace it; the gable's own forward slopes stay rakes. BUT a FULL-FACE
-      gable end (a triangle plate-to-peak with NO horizontal roof edge, per
-      2c/3a) has NO eave -- do not add one. Decide by the VISIBLE roofline
-      shape, never by assuming an eave is "behind" the gable.
+      trace it; the gable's own forward slopes stay rakes -- and EMIT those two
+      slopes as excluded_edges kind "dormer_rake" so the takeoff can DRAW the
+      gable sitting ON/ABOVE the eave. Do NOT omit a gable just because an eave
+      runs under or beside it (the common front board-and-batten gables). BUT a
+      FULL-FACE gable end (a triangle plate-to-peak with NO horizontal roof
+      edge, per 2c/3a) has NO eave -- do not add one. Decide by the VISIBLE
+      roofline shape, never by assuming an eave is "behind" the gable.
     - COVERED PROJECTIONS (per <covered_projections>): reconcile every
       covered porch / entry / REAR deck / patio cover you can see -- each is a
-      lower-tier gutter_run AND a footprint projection. These are the
-      single most-missed gutters.
+      lower-tier gutter_run AND a footprint projection. A "COV'D REAR PATIO" /
+      covered rear patio AND a covered FRONT ENTRY PORCH the plan draws MUST
+      both appear (footprint projection + a lower-tier gutter on the cover's
+      NON-gable returns); a gable-fronted cover keeps RAKES on its outer face
+      and gutters on its two SIDE returns. An UNCOVERED patio slab (no roof) is
+      NOT a projection and gets NO gutter. These are the single most-missed
+      gutters.
     - GABLES / TIERS: if an elevation's shape disagrees with how you
       classified a side, fix it (gable<->eave) and set its tier, and update
       the 2c side map.
@@ -457,7 +465,11 @@ Follow these steps in order. Think carefully before producing JSON.
       diagonal => that edge is a RAKE (no gutter).
     - "F.P. FLUE", "FIREPLACE", chimney/flue, or "MASONRY FIRE-PIT" is a
       vertical stack, NOT a roof edge -- never a gutter and never a
-      building_footprint corner unless it is a fully roofed chase.
+      building_footprint corner unless it is a fully roofed chase. It is a
+      NARROW masonry stack: a 48-in (4 ft) firebox plus chase is at most ~7-8
+      ft wide. NEVER trace it as a wide (~18 ft) roof edge, gable face, rake,
+      or footprint wing/jog. If you do include a roofed chase, trace only the
+      masonry chase width (~7-8 ft) -- never a room-width jog.
 3c. WALL LINES ARE NOT EAVES -- a gutter sits ONLY at the bottom edge of a
     ROOF PLANE (the fascia, where the roof overhangs the wall). An elevation
     is full of OTHER horizontal lines that are NOT roof edges and must NEVER
@@ -910,10 +922,14 @@ const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
           "outline, which can extend PAST the foundation slab. Include any " +
           "projection that carries roof over it -- covered porch / entry / " +
           "rear patio cover, a bay-window or fireplace-chase bump-out with a " +
-          "roof, a cantilevered upper floor -- because each has its own eave " +
-          "the gutter sits on. EXCLUDE projections with NO roof (an open deck, " +
-          "a bare chimney stack, a slab patio) -- no roof means no eave means " +
-          "it is not part of this outline. This is the " +
+          "roof (the masonry chase ONLY, ~7-8 ft wide -- NEVER a room-width " +
+          "jog), a cantilevered upper floor -- because each has its own eave " +
+          "the gutter sits on. EXCLUDE projections with NO roof: an open deck, " +
+          "a bare chimney/fireplace stack, and an UNCOVERED patio slab " +
+          "(concrete only, no roof drawn over it) -- no roof means no eave " +
+          "means it is NOT part of this outline. Distinguish an UNCOVERED " +
+          "patio (excluded, no gutter) from a COVERED patio cover (included, " +
+          "lower-tier gutter on its returns). This is the " +
           "roof outline the contractor SEES under the gutter trace, so it " +
           "must match the real building shape. VISUAL ONLY -- a footprint " +
           "corner needs no matching gutter_run or excluded_edge and does NOT " +

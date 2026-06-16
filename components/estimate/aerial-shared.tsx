@@ -8,7 +8,12 @@ import type {
   EditableLine,
   RoofStructure,
 } from "@/lib/types";
-import { deriveRoofSkeleton, type Pt } from "@/lib/roof-skeleton";
+import {
+  deriveRoofSkeleton,
+  extraGablesFromRakes,
+  type Pt,
+  type Dormer,
+} from "@/lib/roof-skeleton";
 import {
   perimBBox,
   anchorForSide,
@@ -703,6 +708,7 @@ export function RoofStructureOverlay({
         hips: (structure.hips ?? []).map((l) => ({ points: l.points })),
         valleys: structure.valleys.map((l) => ({ points: l.points })),
         gables: [] as { points: { x: number; y: number }[] }[],
+        dormers: [] as Dormer[],
       };
     }
     // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
@@ -713,10 +719,23 @@ export function RoofStructureOverlay({
       ls
         .filter((e) => e.points.length >= 2)
         .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
-    return deriveRoofSkeleton(structure.perimeter, {
-      eaveSegments: toSegs(eaves),
-      rakeSegments: toSegs(rakes),
+    const eaveSegs = toSegs(eaves);
+    const rakeSegs = toSegs(rakes);
+    const base = deriveRoofSkeleton(structure.perimeter, {
+      eaveSegments: eaveSegs,
+      rakeSegments: rakeSegs,
     });
+    // Gables the AI traced that AREN'T whole-side ends — dormers / cross-gables
+    // that sit on or above a continuous eave. The skeleton can't derive these
+    // (no footprint side), so surface them from the AI rakes, deduped against
+    // the skeleton gables + eaves so nothing is drawn twice.
+    const dormers = extraGablesFromRakes(
+      rakeSegs,
+      base.gables,
+      structure.perimeter,
+      eaveSegs,
+    );
+    return { ...base, dormers };
   }, [
     derive,
     eaves,
@@ -862,6 +881,41 @@ export function RoofStructureOverlay({
             >
               GABLE
             </text>
+          </g>
+        );
+      })}
+      {/* Dormers / cross-gables the AI traced that aren't whole-side ends — a
+          gable sitting ON or ABOVE a continuous eave. Drawn as a small gable
+          triangle (base edge + two rakes to an inward peak) so it reads as a
+          gable without adding another "GABLE" word-pill to the layout. */}
+      {(skel.dormers ?? []).map((dm, i) => {
+        const a = dm.points[0];
+        const b = dm.points[1];
+        if (!a || !b) return null;
+        const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
+        const peakH = Math.min(edgeLen * 0.4, 20 * scale);
+        const peak = {
+          x: dm.mid.x + dm.dir.x * peakH,
+          y: dm.mid.y + dm.dir.y * peakH,
+        };
+        return (
+          <g key={`dormer-${i}`}>
+            <path
+              d={linePathD([a, b])}
+              fill="none"
+              stroke={gableC}
+              strokeWidth={2.2 * scale}
+              strokeDasharray={`${5 * scale} ${4 * scale}`}
+              strokeLinecap="round"
+            />
+            <path
+              d={`M ${a.x} ${a.y} L ${peak.x} ${peak.y} L ${b.x} ${b.y}`}
+              fill="none"
+              stroke={gableC}
+              strokeWidth={1.6 * scale}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </g>
         );
       })}
