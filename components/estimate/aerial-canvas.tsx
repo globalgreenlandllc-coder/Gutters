@@ -40,6 +40,7 @@ import {
   dist,
   lineLengthFt,
   fitViewBox,
+  PX_PER_FT,
 } from "./aerial-shared";
 
 type Tool = "select" | "add-eave" | "add-downspout";
@@ -345,10 +346,44 @@ export function AerialCanvas({
     return best ?? p;
   }
 
+  // Right-angle (orthogonal) lock. Residential gutter runs are rectilinear, so
+  // when the segment from `anchor` to `p` is within ~12° of horizontal or
+  // vertical, snap it flush — the contractor draws clean square corners
+  // without pixel-fiddling. Left alone when the angle is clearly diagonal
+  // (a genuinely raked/angled run).
+  function orthoSnap(
+    p: { x: number; y: number },
+    anchor: { x: number; y: number } | null,
+  ): { x: number; y: number } {
+    if (!anchor) return p;
+    const dx = p.x - anchor.x;
+    const dy = p.y - anchor.y;
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+    if (adx < 1e-3 && ady < 1e-3) return p;
+    const TAN = 0.21; // tan(~12°)
+    if (ady <= adx * TAN) return { x: p.x, y: anchor.y }; // ~horizontal → flat
+    if (adx <= ady * TAN) return { x: anchor.x, y: p.y }; // ~vertical → plumb
+    return p;
+  }
+
+  // Combined snap used while drawing/dragging: a nearby corner magnet WINS
+  // (clean chaining); otherwise the right-angle lock relative to the segment's
+  // fixed anchor keeps the run square.
+  function snapPoint(
+    p: { x: number; y: number },
+    anchor: { x: number; y: number } | null,
+    excludeLineId: string | null = null,
+  ): { x: number; y: number } {
+    const corner = snapToCorner(p, excludeLineId);
+    if (dist(corner, p) > 1e-3) return corner; // a real corner snapped
+    return orthoSnap(p, anchor);
+  }
+
   function handlePointerDown(e: React.PointerEvent) {
     const p = svgPoint(e);
     if (tool === "add-eave") {
-      const snapped = snapToCorner(p);
+      const snapped = snapPoint(p, drawing ? drawing.start : null);
       if (drawing) {
         // SECOND click — commit the eave from the stored start to here.
         // Two-click flow matches the contractor's mental model: same
@@ -389,15 +424,23 @@ export function AerialCanvas({
     if (drawing && tool === "add-eave") {
       // Live-update the preview end. Works WITHOUT a held drag —
       // pointermove fires whenever the cursor moves over the SVG so
-      // the preview follows the mouse from click-1 to click-2.
-      setDrawing({ ...drawing, end: snapToCorner(p) });
+      // the preview follows the mouse from click-1 to click-2. Corner
+      // magnet wins, else right-angle lock relative to the start point.
+      setDrawing({ ...drawing, end: snapPoint(p, drawing.start) });
       return;
     }
     if (drag?.kind === "vertex") {
       // Snap dragged vertex to another eave's endpoint — but exclude
       // the line we're dragging, otherwise the snap pulls onto our
-      // own opposite endpoint and collapses the eave.
-      const snapped = snapToCorner(p, drag.lineId);
+      // own opposite endpoint and collapses the eave. Falls back to a
+      // right-angle lock relative to the vertex's adjacent point so a
+      // run stays square while you nudge a corner.
+      const dragLine = eaves.find((l) => l.id === drag.lineId);
+      const anchorPt =
+        dragLine && dragLine.points.length > 1
+          ? dragLine.points[drag.index === 0 ? 1 : drag.index - 1]
+          : null;
+      const snapped = snapPoint(p, anchorPt, drag.lineId);
       onEavesChange(
         eaves.map((l) =>
           l.id === drag.lineId
@@ -1209,6 +1252,57 @@ export function AerialCanvas({
             }}
           />
         )}
+        {/* Live length readout — while drawing a new eave or dragging a vertex,
+            float the current run length (ft) by the cursor so the contractor
+            can match the plan dimension exactly. */}
+        {(() => {
+          let pt: { x: number; y: number } | null = null;
+          let ft = NaN;
+          if (drawing) {
+            pt = drawing.end;
+            ft = dist(drawing.start, drawing.end) / PX_PER_FT;
+          } else if (drag?.kind === "vertex") {
+            const l = eaves.find((e) => e.id === drag.lineId);
+            if (l && l.points[drag.index]) {
+              pt = l.points[drag.index];
+              ft = lineLengthFt(l);
+            }
+          }
+          if (!pt || !Number.isFinite(ft)) return null;
+          const w = 46 * renderScale;
+          const h = 16 * renderScale;
+          const lx = pt.x;
+          const ly = pt.y - 18 * renderScale;
+          return (
+            <g pointerEvents="none">
+              <rect
+                x={lx - w / 2}
+                y={ly - h / 2}
+                width={w}
+                height={h}
+                rx={4 * renderScale}
+                fill={
+                  theme === "tactical"
+                    ? "rgba(2,6,23,0.9)"
+                    : "rgba(255,255,255,0.96)"
+                }
+                stroke={t.eave}
+                strokeWidth={renderScale}
+              />
+              <text
+                x={lx}
+                y={ly + 4 * renderScale}
+                textAnchor="middle"
+                fill={theme === "tactical" ? "#5eead4" : "#0e7490"}
+                fontSize={10 * renderScale}
+                fontWeight={700}
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              >
+                {ft.toFixed(1)} ft
+              </text>
+            </g>
+          );
+        })()}
       </svg>
 
       <AnimatePresence>
