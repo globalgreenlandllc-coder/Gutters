@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { deriveRoofSkeleton } from "@/lib/roof-skeleton";
+import { deriveRoofSkeleton, segmentsOverlap } from "@/lib/roof-skeleton";
 import type {
   Downspout,
   EditableLine,
@@ -94,12 +94,34 @@ export function Massing3D({
       : { ridges: [], hips: [], valleys: [], gables: [] };
 
     const r = modelRadius(perimeter, center);
-    const shortSpanPx = (() => {
-      const bb = bboxOf(perimeter)!;
-      return Math.min(bb.maxX - bb.minX, bb.maxY - bb.minY);
-    })();
-    const ridgeRiseFt = (0.35 * shortSpanPx) / PX_PER_FT; // decorative pitch
-    const { faces, edges } = buildMassing(perimeter, wallFt, skeleton, ridgeRiseFt);
+    const bb = bboxOf(perimeter)!;
+    const shortSpanPx = Math.min(bb.maxX - bb.minX, bb.maxY - bb.minY);
+    const ridgeRiseFt = (0.22 * shortSpanPx) / PX_PER_FT; // gentle decorative pitch
+
+    // Per-edge wall height: a wall that a LOWER-tier eave runs along (covered
+    // porch / patio / garage) steps DOWN below the 2-story body, so the massing
+    // reads as real tiers instead of one flat-topped box.
+    const lowerFt = Math.min(wallHeightFt(1), wallFt);
+    const eaveTol = Math.max(8, Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY) * 0.06);
+    const lowerSegs = eaves
+      .filter((e) => e.tier === "lower" && e.points.length >= 2)
+      .map(
+        (e) =>
+          [e.points[0], e.points[e.points.length - 1]] as [
+            { x: number; y: number },
+            { x: number; y: number },
+          ],
+      );
+    const wallFtFor = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      lowerSegs.some((s) => segmentsOverlap([a, b], s, eaveTol)) ? lowerFt : wallFt;
+
+    const { faces, edges } = buildMassing(
+      perimeter,
+      wallFtFor,
+      skeleton,
+      ridgeRiseFt,
+      wallFt,
+    );
 
     return { center, wallFt, ridgeRiseFt, faces, edges, r };
   }, [eaves, rakes, roofStructure, planSource, stories]);

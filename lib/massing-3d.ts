@@ -125,27 +125,46 @@ const nearAny = (p: Pt, pts: readonly Pt[], tol: number) =>
  */
 export function buildMassing(
   perimeter: readonly Pt[],
-  wallFt: number,
+  /** Wall height in feet — a single number, or a per-edge function so lower-tier
+   *  sections (porch/patio/garage) step DOWN below the 2-story body. */
+  wallFtFor: number | ((a: Pt, b: Pt) => number),
   skeleton: Skeleton,
   ridgeRiseFt: number,
+  /** The main-body wall height the roof sits on. Defaults to wallFtFor when
+   *  that's a number, else the tallest per-edge height. */
+  bodyFt?: number,
 ): { faces: Face[]; edges: Edge3[] } {
   const ring = perimeter.filter(isFinitePt);
+  const resolveWall = (a: Pt, b: Pt) =>
+    typeof wallFtFor === "function" ? wallFtFor(a, b) : wallFtFor;
+  let body = bodyFt;
+  if (body === undefined) {
+    if (typeof wallFtFor === "number") body = wallFtFor;
+    else {
+      body = 0;
+      for (let i = 0; i < ring.length; i++) {
+        body = Math.max(body, resolveWall(ring[i], ring[(i + 1) % ring.length]));
+      }
+    }
+  }
+
   const faces: Face[] = [];
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
+    const h = resolveWall(a, b);
     faces.push({
       verts: [
         { x: a.x, y: a.y, z: 0 },
         { x: b.x, y: b.y, z: 0 },
-        { x: b.x, y: b.y, z: wallFt },
-        { x: a.x, y: a.y, z: wallFt },
+        { x: b.x, y: b.y, z: h },
+        { x: a.x, y: a.y, z: h },
       ],
       kind: "wall",
     });
   }
 
-  const high = wallFt + Math.max(0, ridgeRiseFt);
+  const high = body + Math.max(0, ridgeRiseFt);
   // tolerance for "this skeleton endpoint sits on a perimeter corner".
   const span = (() => {
     const bb = bboxOf(ring);
@@ -160,7 +179,7 @@ export function buildMassing(
     if (!isFinitePt(a) || !isFinitePt(b)) continue;
     edges.push({ a: { ...a, z: high }, b: { ...b, z: high }, kind: "ridge" });
   }
-  const liftEnd = (p: Pt): P3 => ({ x: p.x, y: p.y, z: nearAny(p, ring, tol) ? wallFt : high });
+  const liftEnd = (p: Pt): P3 => ({ x: p.x, y: p.y, z: nearAny(p, ring, tol) ? body : high });
   for (const h of skeleton.hips ?? []) {
     const a = h.points[0];
     const b = h.points[h.points.length - 1];
@@ -179,9 +198,9 @@ export function buildMassing(
     const b = g.points[g.points.length - 1];
     if (!isFinitePt(a) || !isFinitePt(b)) continue;
     const peak: P3 = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: high };
-    edges.push({ a: { ...a, z: wallFt }, b: { ...b, z: wallFt }, kind: "gable" });
-    edges.push({ a: { ...a, z: wallFt }, b: peak, kind: "gable" });
-    edges.push({ a: { ...b, z: wallFt }, b: peak, kind: "gable" });
+    edges.push({ a: { ...a, z: body }, b: { ...b, z: body }, kind: "gable" });
+    edges.push({ a: { ...a, z: body }, b: peak, kind: "gable" });
+    edges.push({ a: { ...b, z: body }, b: peak, kind: "gable" });
   }
   return { faces, edges };
 }
