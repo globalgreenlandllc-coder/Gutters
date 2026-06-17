@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { TopBar } from "./top-bar";
 import { AerialCanvas, lineLengthFt } from "./aerial-canvas";
+import { Massing3D } from "./massing-3d";
 import { PricingPanel } from "./pricing-panel";
 import { Badge } from "@/components/ui/badge";
 import type { Measurements } from "@/lib/types";
@@ -38,6 +39,11 @@ export function ResultsView({
 }) {
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
+  const [viewMode, setViewMode] = useState<"plan" | "3d">("plan");
+  const can3d =
+    (initial.roofStructure?.perimeter?.filter(
+      (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
+    ).length ?? 0) >= 3;
   // Story count is editable from the property header — homeowners
   // sometimes second-guess a 2-story call when an attached garage
   // looks 1-story on satellite. Default seeded from the AI estimate;
@@ -102,16 +108,57 @@ export function ResultsView({
               onStoriesChange={setStories}
             />
             <div className="min-h-[520px] flex-1">
-              <AerialCanvas
-                eaves={eaves}
-                rakes={initial.rakes}
-                downspouts={downspouts}
-                onEavesChange={setEaves}
-                onDownspoutsChange={setDownspouts}
-                aerialImageUrl={initial.aerial?.imageDataUrl}
-                planSource={initial.planSource}
-                roofStructure={initial.roofStructure}
-              />
+              {/* Roof plan ⇄ 3D view toggle. 3D is a read-only, decorative
+                  massing — pricing/LF comes from the same live eaves either
+                  way. Disabled without a real roof outline. */}
+              <div className="mb-2 inline-flex rounded-full border border-zinc-200 p-0.5 text-xs dark:border-zinc-700">
+                {(["plan", "3d"] as const).map((m) => {
+                  const active = viewMode === m;
+                  const disabled = m === "3d" && !can3d;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setViewMode(m)}
+                      title={
+                        disabled ? "Needs a roof outline (run a plan takeoff)" : undefined
+                      }
+                      className={
+                        "rounded-full px-3 py-1 font-medium transition " +
+                        (active
+                          ? "bg-emerald-600 text-white"
+                          : disabled
+                            ? "cursor-not-allowed text-zinc-400"
+                            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
+                      }
+                    >
+                      {m === "plan" ? "Roof plan" : "3D"}
+                    </button>
+                  );
+                })}
+              </div>
+              {viewMode === "3d" && can3d ? (
+                <Massing3D
+                  eaves={eaves}
+                  rakes={initial.rakes}
+                  downspouts={downspouts}
+                  roofStructure={initial.roofStructure}
+                  planSource={initial.planSource}
+                  stories={stories}
+                />
+              ) : (
+                <AerialCanvas
+                  eaves={eaves}
+                  rakes={initial.rakes}
+                  downspouts={downspouts}
+                  onEavesChange={setEaves}
+                  onDownspoutsChange={setDownspouts}
+                  aerialImageUrl={initial.aerial?.imageDataUrl}
+                  planSource={initial.planSource}
+                  roofStructure={initial.roofStructure}
+                />
+              )}
             </div>
             <SiteContext />
           </div>
