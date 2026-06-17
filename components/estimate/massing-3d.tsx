@@ -170,6 +170,20 @@ export function Massing3D({
     return Math.min(Math.max(0, d.heightFt) || wallFt, wallFt);
   };
 
+  // Occlusion: a line is "back" when its mean projected depth sits well behind
+  // center — cull it so the near side reads cleanly instead of x-raying through.
+  const meanDepth = (...ps: P3[]) =>
+    ps.reduce((s, p) => s + proj(p).depth, 0) / Math.max(1, ps.length);
+  const cullThresh = safeR * 0.15;
+  const isBack = (...ps: P3[]) => meanDepth(...ps) > cullThresh;
+  // Solid wall shading: near faces lighter, far faces darker → reads as a 3D
+  // mass (opaque, so painter order hides whatever is behind it).
+  const faceFill = (f: Face) => {
+    const tt = Math.min(1, Math.max(0, (meanDepth(...f.verts) + safeR) / (2 * safeR)));
+    const v = Math.round(76 - 46 * tt);
+    return `rgb(${v}, ${v + 12}, ${v + 26})`;
+  };
+
   return (
     <div className="relative overflow-hidden rounded-2xl border border-cyan-900/40 bg-slate-950">
       <svg
@@ -187,19 +201,21 @@ export function Massing3D({
           ry={safeR * scale * Math.sin(TILT) * 1.05}
           fill="rgba(0,0,0,0.25)"
         />
-        {/* walls — far faces first (painter's algorithm) */}
+        {/* walls — far faces first (painter's algorithm), OPAQUE + depth-shaded
+            so the near mass occludes everything behind it (no x-ray tangle) */}
         {orderedFaces.map((f: Face, i) => (
           <path
             key={`wall-${i}`}
             d={polyD(f.verts, true)}
-            fill="rgba(148,163,184,0.13)"
-            stroke="rgba(226,232,240,0.35)"
+            fill={faceFill(f)}
+            stroke="rgba(226,232,240,0.45)"
             strokeWidth={1}
             strokeLinejoin="round"
           />
         ))}
-        {/* roof skeleton as lifted lines */}
+        {/* roof skeleton — FRONT-facing lines only (back lines culled) */}
         {edges.map((e: Edge3, i) => {
+          if (isBack(e.a, e.b)) return null;
           const st = edgeStyle[e.kind];
           return (
             <path
@@ -213,11 +229,12 @@ export function Massing3D({
             />
           );
         })}
-        {/* GUTTERS — each eave lifted onto its wall top at its tier height */}
+        {/* GUTTERS — each eave lifted onto its wall top; front-facing only */}
         {eaves.map((e) => {
           if (e.points.length < 2) return null;
           const z = tierFt(e.tier);
           const lifted: P3[] = e.points.map((p) => ({ x: p.x, y: p.y, z }));
+          if (isBack(lifted[0], lifted[lifted.length - 1])) return null;
           const lower = e.tier === "lower";
           return (
             <path
@@ -232,10 +249,11 @@ export function Massing3D({
             />
           );
         })}
-        {/* DOWNSPOUTS — vertical from the gutter to grade */}
+        {/* DOWNSPOUTS — vertical from the gutter to grade; front-facing only */}
         {downspouts.map((d) => {
           const top: P3 = { x: d.x, y: d.y, z: dsTopFt(d) };
           const bot: P3 = { x: d.x, y: d.y, z: 0 };
+          if (isBack(top, bot)) return null;
           const s = screen(top);
           return (
             <g key={`ds-${d.id}`}>
