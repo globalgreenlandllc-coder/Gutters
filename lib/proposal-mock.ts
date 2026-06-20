@@ -94,6 +94,10 @@ export type ProposalTakeoff = {
     height: number;
     zoom: number;
   };
+  /** Canvas-px-per-foot for the satellite trace, carried from the
+   *  estimate so the proposal's eave LF + re-price use the same scale
+   *  (not the plan-mode PX_PER_FT=2.4). Absent for plan/older takeoffs. */
+  canvasPxPerFt?: number;
 };
 
 export type Proposal = {

@@ -135,19 +135,23 @@ export function GutterSystemBreakdown({
   downspouts,
   measurements,
   selectedPackageName,
+  pxPerFt,
 }: {
   eaves: EditableLine[];
   rakes: EditableLine[];
   downspouts: Downspout[];
   measurements: Measurements;
   selectedPackageName?: string;
+  /** Satellite trace's canvas-px-per-foot. Omit for plan takeoffs
+   *  (lineLengthFt falls back to PX_PER_FT). */
+  pxPerFt?: number;
 }) {
   const totalLF = useMemo(
     () =>
       Math.round(
-        eaves.reduce((acc, l) => acc + lineLengthFt(l), 0),
+        eaves.reduce((acc, l) => acc + lineLengthFt(l, pxPerFt), 0),
       ),
-    [eaves],
+    [eaves, pxPerFt],
   );
 
   // Centroid of the building = centroid of all eave centroids. Used to
@@ -171,16 +175,16 @@ export function GutterSystemBreakdown({
       .map((e, i) => ({
         id: e.id,
         label: labels[i],
-        lengthFt: Math.round(lineLengthFt(e)),
+        lengthFt: Math.round(lineLengthFt(e, pxPerFt)),
         downspoutCount: downspoutsOnEave(e, downspouts),
       }))
       .sort((a, b) => b.lengthFt - a.lengthFt);
-  }, [eaves, buildingCentroid, downspouts]);
+  }, [eaves, buildingCentroid, downspouts, pxPerFt]);
 
   const rakeLF = useMemo(
     () =>
-      Math.round(rakes.reduce((acc, l) => acc + lineLengthFt(l), 0)),
-    [rakes],
+      Math.round(rakes.reduce((acc, l) => acc + lineLengthFt(l, pxPerFt), 0)),
+    [rakes, pxPerFt],
   );
 
   const cornerTotal =

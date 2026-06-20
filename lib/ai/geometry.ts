@@ -117,6 +117,31 @@ export function transformToCanvas(
 }
 
 /**
+ * Canvas-pixels-per-foot for a SATELLITE estimate. The eaves are laid on
+ * the 900×580 viewBox via transformToCanvas (a COVER fit of the source
+ * tile), so one foot is NOT 2.4 px — that constant (PX_PER_FT) is for
+ * plan takeoffs laid out at a fixed scale. For a satellite trace the
+ * ratio depends on the tile's meters-per-pixel and the COVER scale.
+ * Stamp this onto EstimateResult so the client legend + live re-price
+ * convert canvas px → feet on the SAME basis the server used for
+ * measurements.eaveLF (pixelLengthToFeet), instead of the wrong 2.4.
+ *
+ *   1 canvas px = (1/coverScale) image px = mpp/coverScale meters
+ *               = (mpp/coverScale)/0.3048 feet  ⇒ invert for px/ft
+ */
+export function canvasPxPerFoot(
+  lat: number,
+  zoom: number,
+  imageWidth: number,
+  imageHeight: number,
+): number {
+  const coverScale = Math.max(CANVAS_W / imageWidth, CANVAS_H / imageHeight);
+  const mpp = metersPerPixel(lat, zoom);
+  if (!Number.isFinite(mpp) || mpp <= 0) return NaN;
+  return (coverScale * METERS_PER_FOOT) / mpp;
+}
+
+/**
  * Merge consecutive eaves whose endpoints touch and whose directions are
  * within `angleToleranceDeg` of each other. A long architectural wall
  * traced through 3 near-collinear vertices reads as 3 short eaves in

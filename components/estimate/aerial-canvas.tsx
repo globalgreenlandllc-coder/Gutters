@@ -56,6 +56,8 @@ export function AerialCanvas({
   aerialImageUrl,
   planSource,
   roofStructure,
+  pxPerFt,
+  armDrawNonce,
 }: {
   eaves: EditableLine[];
   /** Edges the classifier flagged as rakes (no-gutter). Rendered as
@@ -70,6 +72,14 @@ export function AerialCanvas({
    *  — address mode sets aerialImageUrl, plan mode sets planSource. */
   planSource?: { pdfUrl: string; pageIndex: number };
   roofStructure?: RoofStructure;
+  /** Canvas-px-per-foot for converting drawn lengths to LF. Satellite
+   *  estimates pass EstimateResult.canvasPxPerFt; omit for plan takeoffs
+   *  (defaults to PX_PER_FT inside lineLengthFt). */
+  pxPerFt?: number;
+  /** Incrementing nonce from an outside "draw it yourself" banner — when
+   *  it changes, the canvas arms the eave-drawing tool so the contractor
+   *  can start tracing immediately. */
+  armDrawNonce?: number;
 }) {
   const [theme, setTheme] = useState<CanvasTheme>("tactical");
   const t = THEMES[theme];
@@ -78,6 +88,11 @@ export function AerialCanvas({
   const [tool, setTool] = useState<Tool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  // An outside banner ("bad satellite pic — draw it yourself") bumps
+  // armDrawNonce to drop the contractor straight into eave-drawing mode.
+  useEffect(() => {
+    if (armDrawNonce) setTool("add-eave");
+  }, [armDrawNonce]);
   // Roof outline + interior ridge/hip/valley lines. ON by default for
   // PLAN takeoffs — seeing the whole roof shape under the trace is how the
   // contractor reads where the gutters sit and where a run is missing.
@@ -198,12 +213,12 @@ export function AerialCanvas({
     () =>
       Math.round(
         eaves.reduce((acc, l) => {
-          const v = lineLengthFt(l);
+          const v = lineLengthFt(l, pxPerFt);
           // Never let one bad line surface "NaN LF" in the legend.
           return acc + (Number.isFinite(v) ? v : 0);
         }, 0),
       ),
-    [eaves],
+    [eaves, pxPerFt],
   );
 
   // Render scale — inverse of zoom. As the user zooms in (view.width
@@ -250,7 +265,7 @@ export function AerialCanvas({
   const labelVisibleIds = useMemo(() => {
     if (showLfLabels === "off") return new Set<string>();
     if (showLfLabels === "on") return new Set(eaves.map((l) => l.id));
-    const lengths = eaves.map((l) => lineLengthFt(l));
+    const lengths = eaves.map((l) => lineLengthFt(l, pxPerFt));
     const totalSegments = lengths.length;
     const tinyCount = lengths.filter((ft) => ft < 10).length;
     const crowded = totalSegments >= 12 && tinyCount / totalSegments >= 0.4;
@@ -260,7 +275,7 @@ export function AerialCanvas({
       if (lengths[i] >= threshold) ids.add(l.id);
     });
     return ids;
-  }, [eaves, showLfLabels]);
+  }, [eaves, showLfLabels, pxPerFt]);
 
   const selectedDownspout = useMemo(
     () => downspouts.find((d) => d.id === selectedId) ?? null,
@@ -1100,6 +1115,7 @@ export function AerialCanvas({
                     animationDelay={0.6 + i * 0.06}
                     outsideAnchor={eavesCentroid}
                     renderScale={renderScale}
+                    pxPerFt={pxPerFt}
                   />
                 )}
               {/* Vertex handles render LAST so they sit on top of any
@@ -1946,6 +1962,7 @@ function LineLabel({
   animationDelay = 0,
   outsideAnchor,
   renderScale = 1,
+  pxPerFt,
 }: {
   line: EditableLine;
   theme: CanvasTheme;
@@ -1962,11 +1979,12 @@ function LineLabel({
    *  this, a 60-unit-wide label balloons to fill the screen when the
    *  contractor zooms in to nudge an eave. */
   renderScale?: number;
+  pxPerFt?: number;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
   const b = line.points[line.points.length - 1];
-  const len = Math.round(lineLengthFt(line));
+  const len = Math.round(lineLengthFt(line, pxPerFt));
 
   const tactical = theme === "tactical";
   // Roof-tier tag shown under the footage so the contractor reads which
