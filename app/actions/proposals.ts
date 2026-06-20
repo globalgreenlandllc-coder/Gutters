@@ -49,8 +49,14 @@ export async function sendProposal(args: {
   const data = proposal as unknown as Prisma.InputJsonValue;
   const contractorSnap = proposal.contractor as unknown as Prisma.InputJsonValue;
 
+  // Scope the lookup to the current user. publicToken travels in the
+  // emailed portal link, so it's semi-public — without the userId filter a
+  // logged-in contractor could pass someone else's token and overwrite
+  // their proposal (cross-tenant write / IDOR).
   const existing = proposal.token
-    ? await db.proposal.findUnique({ where: { publicToken: proposal.token } })
+    ? await db.proposal.findFirst({
+        where: { publicToken: proposal.token, userId: me.user.id },
+      })
     : null;
 
   const row = existing
