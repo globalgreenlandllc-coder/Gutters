@@ -1,23 +1,17 @@
 import "server-only";
-import { getDocumentProxy } from "unpdf";
+import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
 
 /**
- * Phase 1 of "read the blueprint better": pull the PDF's REAL text layer
- * (printed dimensions + labels, each with its coordinate) and hand it to
- * the Stage-2 geometry model as ground truth, instead of making it eyeball
- * the rendered page. Today the pipeline is 100% vision — Claude reads the
- * raster and guesses pixel coordinates + scale, which is exactly why dense
- * plans come back the wrong size / shape.
+ * "Read the blueprint better": pull the PDF's REAL vector layer — printed
+ * dimensions/labels (text) AND the actual drawn line segments — and hand
+ * them to the Stage-2 geometry model as ground truth, instead of making it
+ * eyeball the rendered page. The pipeline was 100% vision: Claude read the
+ * raster and guessed pixel coordinates + scale, which is why dense plans
+ * came back the wrong size/shape.
  *
- * Vector PDFs carry the dimensions as selectable text; extracting them is
- * cheap and reliable (`getTextContent`), so the model can calibrate scale
- * and verify each wall length against the architect's printed numbers.
- *
- * Runs server-side via `unpdf` (a serverless-safe pdfjs build) — note this
- * is TEXT extraction only, NOT rasterization, so it avoids the DOM-polyfill
- * problem that pulled pdfjs-dist off the server before. Raw line-segment /
- * outline extraction (parsing path operators) is Phase 2 — it needs
- * real-plan iteration to be trustworthy, so it's deliberately not here.
+ * Runs server-side via `unpdf` (a serverless-safe pdfjs build). This is
+ * TEXT + path-OPERATOR extraction, NOT rasterization, so it avoids the
+ * DOM-polyfill problem that pulled pdfjs-dist off the server before.
  *
  * Fully fail-safe: ANY error returns null and the caller falls back to the
  * existing vision-only path. It can never break an analysis.
@@ -31,33 +25,145 @@ export type PdfTextItem = {
   y: number;
 };
 
-export type PdfPageText = {
-  /** 1-based page the text was read from. */
+export type PdfPageVectors = {
+  /** 1-based page the data was read from. */
   page: number;
   widthPt: number;
   heightPt: number;
-  /** Dimension-like strings (contain a digit + a feet/inch/scale mark) —
-   *  the load-bearing ground truth for scale + per-wall length. */
+  /** Dimension-like strings (digit + a feet/inch/scale mark) — the
+   *  load-bearing ground truth for scale + per-wall length. */
   dimensions: PdfTextItem[];
   /** Other short labels useful for classification: sheet titles,
    *  GABLE/RIDGE/EAVE tags, slope ratios, elevation side names, etc. */
   labels: PdfTextItem[];
+  /** Candidate drawn line segments `[x1,y1,x2,y2]` in the SAME PDF user
+   *  space as the text — the long orthogonal ones include the building
+   *  footprint perimeter; longer diagonals are hips/ridges. */
+  segments: number[][];
 };
 
-const MAX_ITEMS = 90; // keep each list tight so the prompt block stays small
-// A digit plus an architectural size mark: ' " ′ ″ , ft, LF, or a dash-run
-// like 24-6. Catches 24'-6", 32', 1/4" = 1'-0", 4:12, etc.
+const MAX_TEXT = 90;
+const MAX_SEGMENTS = 140;
+const MIN_SEG_LEN = 18; // points — drops dimension ticks / hatching
 const DIM_RE = /\d/;
 const SIZE_MARK_RE = /['"′″]|\bft\b|\bLF\b|\d\s*[-:]\s*\d|\d\/\d/i;
 
+type Mat = [number, number, number, number, number, number];
+const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+const mul = (a: Mat, b: Mat): Mat => [
+  a[0] * b[0] + a[2] * b[1],
+  a[1] * b[0] + a[3] * b[1],
+  a[0] * b[2] + a[2] * b[3],
+  a[1] * b[2] + a[3] * b[3],
+  a[0] * b[4] + a[2] * b[5] + a[4],
+  a[1] * b[4] + a[3] * b[5] + a[5],
+];
+const apply = (m: Mat, x: number, y: number): [number, number] => [
+  m[0] * x + m[2] * y + m[4],
+  m[1] * x + m[3] * y + m[5],
+];
+
 /**
- * Extract the text layer of one PDF page. `page1Based` should be the roof
- * plan page the Stage-1 classifier identified (falls back to page 1).
+ * Walk a pdfjs operator list and recover stroked/filled straight LINE
+ * segments in page user space. constructPath args are
+ * `[paintOp, subPaths, bbox]`; each subPath is a flat array of
+ * `[op, x, y, …]` where (validated empirically for the pinned pdfjs)
+ * op 0 = moveTo, 1 = lineTo, 4 = closePath. Unknown ops (curves) end the
+ * subpath safely rather than mis-aligning the coordinate stream.
+ */
+function segmentsFromOps(
+  ops: { fnArray: number[]; argsArray: unknown[] },
+  OPS: Record<string, number>,
+): number[][] {
+  const out: number[][] = [];
+  const stack: Mat[] = [];
+  let ctm: Mat = IDENTITY;
+  for (let k = 0; k < ops.fnArray.length && out.length < 8000; k++) {
+    const fn = ops.fnArray[k];
+    if (fn === OPS.save) {
+      stack.push(ctm);
+    } else if (fn === OPS.restore) {
+      ctm = stack.pop() ?? IDENTITY;
+    } else if (fn === OPS.transform) {
+      const a = ops.argsArray[k] as number[] | undefined;
+      if (a && a.length >= 6) {
+        ctm = mul(ctm, [a[0], a[1], a[2], a[3], a[4], a[5]]);
+      }
+    } else if (fn === OPS.constructPath) {
+      const subPaths = (ops.argsArray[k] as unknown[])?.[1];
+      if (!Array.isArray(subPaths)) continue;
+      for (const raw of subPaths as ArrayLike<number>[]) {
+        const p = Array.from(raw);
+        let i = 0;
+        let cx = 0;
+        let cy = 0;
+        let sx = 0;
+        let sy = 0;
+        let have = false;
+        while (i < p.length) {
+          const op = p[i];
+          if (op === 0) {
+            if (i + 2 >= p.length) break;
+            [cx, cy] = apply(ctm, p[i + 1], p[i + 2]);
+            sx = cx;
+            sy = cy;
+            have = true;
+            i += 3;
+          } else if (op === 1) {
+            if (i + 2 >= p.length) break;
+            const [nx, ny] = apply(ctm, p[i + 1], p[i + 2]);
+            if (have) out.push([cx, cy, nx, ny]);
+            cx = nx;
+            cy = ny;
+            i += 3;
+          } else if (op === 4) {
+            if (have) out.push([cx, cy, sx, sy]);
+            cx = sx;
+            cy = sy;
+            i += 1;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Keep the meaningful lines (drop ticks/hatching), dedupe undirected
+ *  duplicates, prefer the longest, cap for prompt size. */
+function filterSegments(raw: number[][]): number[][] {
+  const seen = new Set<string>();
+  const kept: { seg: number[]; len: number }[] = [];
+  for (const [x1, y1, x2, y2] of raw) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < MIN_SEG_LEN) continue;
+    const axisAligned = Math.abs(dx) < 1.5 || Math.abs(dy) < 1.5;
+    if (!axisAligned && len < 60) continue; // short diagonals are noise
+    const a = [Math.round(x1), Math.round(y1)];
+    const b = [Math.round(x2), Math.round(y2)];
+    const [p, q] =
+      a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]) ? [a, b] : [b, a];
+    const key = `${p[0]},${p[1]},${q[0]},${q[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push({ seg: [p[0], p[1], q[0], q[1]], len });
+  }
+  kept.sort((m, n) => n.len - m.len);
+  return kept.slice(0, MAX_SEGMENTS).map((k) => k.seg);
+}
+
+/**
+ * Extract the vector layer of one PDF page. `page1Based` should be the
+ * roof plan page the Stage-1 classifier identified (falls back to page 1).
  */
 export async function extractPdfPageText(
   base64: string,
   page1Based: number | null | undefined,
-): Promise<PdfPageText | null> {
+): Promise<PdfPageVectors | null> {
   try {
     if (!base64) return null;
     const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
@@ -67,11 +173,10 @@ export async function extractPdfPageText(
     const pageNum = Math.min(Math.max(1, Math.round(page1Based || 1)), total);
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1 });
-    const content = await page.getTextContent();
 
+    const content = await page.getTextContent();
     const dimensions: PdfTextItem[] = [];
     const labels: PdfTextItem[] = [];
-
     for (const raw of content.items as Array<{
       str?: string;
       transform?: number[];
@@ -79,18 +184,29 @@ export async function extractPdfPageText(
       const s = (raw.str ?? "").trim();
       if (!s || s.length > 40) continue;
       const tx = raw.transform ?? [];
-      // transform = [a,b,c,d,e,f]; (e,f) is the text origin in user space.
       const x = Math.round(Number(tx[4]) || 0);
       const y = Math.round(Number(tx[5]) || 0);
       if (DIM_RE.test(s) && SIZE_MARK_RE.test(s)) {
-        if (dimensions.length < MAX_ITEMS) dimensions.push({ s, x, y });
+        if (dimensions.length < MAX_TEXT) dimensions.push({ s, x, y });
       } else if (s.length <= 24 && /[A-Za-z0-9]/.test(s)) {
-        if (labels.length < MAX_ITEMS) labels.push({ s, x, y });
+        if (labels.length < MAX_TEXT) labels.push({ s, x, y });
       }
     }
 
-    // Nothing useful → behave as if there were no vector text at all.
-    if (dimensions.length === 0 && labels.length === 0) return null;
+    let segments: number[][] = [];
+    try {
+      const { OPS } = await getResolvedPDFJS();
+      const opList = await page.getOperatorList();
+      segments = filterSegments(segmentsFromOps(opList, OPS));
+    } catch (e) {
+      console.warn(
+        "[pdf-vectors] segment extraction failed (text still used):",
+        e instanceof Error ? e.message : e,
+      );
+    }
+
+    if (dimensions.length === 0 && labels.length === 0 && segments.length === 0)
+      return null;
 
     return {
       page: pageNum,
@@ -98,10 +214,11 @@ export async function extractPdfPageText(
       heightPt: Math.round(viewport.height),
       dimensions,
       labels,
+      segments,
     };
   } catch (e) {
     console.warn(
-      "[pdf-vectors] text extraction failed (continuing vision-only):",
+      "[pdf-vectors] extraction failed (continuing vision-only):",
       e instanceof Error ? e.message : e,
     );
     return null;
@@ -109,29 +226,44 @@ export async function extractPdfPageText(
 }
 
 /**
- * Render the extracted text into a compact ground-truth block for the
- * Stage-2 user message. Empty string when there's nothing to add (so the
- * prompt is unchanged on raster/scanned plans or extraction failure).
- * The guidance lives HERE (in the user message) rather than the system
- * prompt, so it applies even when the system prompt is overridden via
- * /admin/prompts.
+ * Render the extracted vectors into a compact ground-truth block for the
+ * Stage-2 user message. Empty string when there's nothing to add. The
+ * guidance lives HERE (user message) rather than the system prompt, so it
+ * applies even when the system prompt is overridden via /admin/prompts.
  */
-export function buildVectorBlock(v: PdfPageText | null | undefined): string {
+export function buildVectorBlock(v: PdfPageVectors | null | undefined): string {
   if (!v) return "";
-  const fmt = (items: PdfTextItem[]) =>
+  const fmtText = (items: PdfTextItem[]) =>
     items.map((i) => `${i.s}@(${i.x},${i.y})`).join("  ");
   const lines: string[] = [
-    `EXTRACTED VECTOR-PDF TEXT (page ${v.page}, ${v.widthPt}×${v.heightPt} pt, origin bottom-left) — GROUND TRUTH:`,
-    "These strings + coordinates were read from the PDF's real text layer, not",
-    "your visual estimate. Trust them over pixel-eyeballing:",
-    "- Use the DIMENSIONS to set scale and to check each wall length you trace;",
-    "  if your traced footprint disagrees with the printed dimensions, the",
-    "  dimensions win — re-read the outline.",
-    "- Use the labels (sheet titles, GABLE/RIDGE/EAVE tags, slope ratios, side",
-    "  names) to confirm which sheet is the roof plan and to classify edges.",
+    `EXTRACTED VECTOR-PDF DATA (page ${v.page}, ${v.widthPt}×${v.heightPt} pt, origin bottom-left) — GROUND TRUTH (read from the PDF's real vector layer, not your visual estimate; trust it over pixel-eyeballing):`,
   ];
-  if (v.dimensions.length) lines.push(`DIMENSIONS: ${fmt(v.dimensions)}`);
-  if (v.labels.length) lines.push(`LABELS: ${fmt(v.labels)}`);
+  if (v.dimensions.length) {
+    lines.push(
+      "- DIMENSIONS: set scale from these and verify every wall length you " +
+        "trace; if your footprint disagrees with the printed dimensions, the " +
+        "dimensions win — re-read the outline.",
+    );
+    lines.push(`DIMENSIONS: ${fmtText(v.dimensions)}`);
+  }
+  if (v.labels.length) {
+    lines.push(
+      "- LABELS: use to confirm which sheet is the roof plan and to classify " +
+        "edges (GABLE/RIDGE/EAVE tags, slope ratios, side names).",
+    );
+    lines.push(`LABELS: ${fmtText(v.labels)}`);
+  }
+  if (v.segments.length) {
+    lines.push(
+      "- DRAWN LINE SEGMENTS [x1,y1,x2,y2]: these are REAL strokes from the " +
+        "PDF. The building_footprint perimeter is made of the long orthogonal " +
+        "segments here — SNAP your footprint corners to these endpoints " +
+        "instead of inventing coordinates; long diagonals are hips/ridges.",
+    );
+    lines.push(
+      `SEGMENTS: ${v.segments.map((s) => `[${s.join(",")}]`).join(" ")}`,
+    );
+  }
   lines.push("");
   return lines.join("\n");
 }
