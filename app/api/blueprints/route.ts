@@ -14,6 +14,7 @@ import {
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
+import { extractPdfPageText } from "@/lib/ai/pdf-vectors";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -373,8 +374,23 @@ export async function POST(request: Request) {
         );
       }
 
+      // Pull the PDF's real text layer (printed dimensions + labels with
+      // coordinates) as ground truth so Stage 2 sizes/classifies from the
+      // architect's numbers instead of eyeballing pixels. Fail-safe → null
+      // on any error, which keeps the existing vision-only behavior.
+      const vectorGeometry =
+        isPdf && source.kind === "pdf"
+          ? await extractPdfPageText(
+              source.base64,
+              constraints?.roof_plan_page ?? 1,
+            )
+          : null;
+
       // Stage 2: geometry trace, constrained by Stage 1 findings.
-      const result = await blueprintFromPlanSources([source], { constraints });
+      const result = await blueprintFromPlanSources([source], {
+        constraints,
+        vectorGeometry,
+      });
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id: analysis.id },
@@ -429,6 +445,11 @@ export async function POST(request: Request) {
           classification: stage1.classification,
           usage: stage1.usage,
         };
+      }
+      // Stash the extracted text layer so it's inspectable on the detail
+      // page (what dimensions/labels the model actually got).
+      if (vectorGeometry) {
+        analysisJson._vectorGeometry = vectorGeometry;
       }
 
       // Telemetry rolls up both calls so the dashboard's "cost per
