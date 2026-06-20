@@ -4,12 +4,20 @@ import { ChevronLeft, AlertCircle } from "lucide-react";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
+import {
+  VectorInspector,
+  type ExtractedVectors,
+} from "@/components/blueprints/vector-inspector";
 
 interface Props {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ inspect?: string }>;
 }
 
-export default async function BlueprintDetailPage({ params }: Props) {
+export default async function BlueprintDetailPage({
+  params,
+  searchParams,
+}: Props) {
   const { userId: clerkId } = await auth();
   if (!clerkId) notFound();
   const user = await db.user.findUnique({
@@ -19,17 +27,23 @@ export default async function BlueprintDetailPage({ params }: Props) {
   if (!user) notFound();
 
   const { id } = await params;
+  const inspect = (await searchParams)?.inspect === "1";
   const row = await db.planAnalysis.findFirst({
     where: { id, userId: user.id },
   });
   if (!row) notFound();
+
+  const vectors = (
+    row.analysisJson as { _vectorGeometry?: ExtractedVectors } | null
+  )?._vectorGeometry;
 
   // Successful analyses now flow into the unified estimate view so the
   // contractor can edit eaves + downspouts and Save/Send a proposal
   // exactly the way address-based estimates work. This page stays as
   // the failed-state viewer (showing the error) and as the legacy
   // entry point — anything that 404s the modern path will land here.
-  if (row.status === "SUCCEEDED") {
+  // ?inspect=1 overrides the redirect to debug the extracted vector layer.
+  if (row.status === "SUCCEEDED" && !inspect) {
     redirect(`/estimate?planId=${row.id}`);
   }
 
@@ -79,7 +93,26 @@ export default async function BlueprintDetailPage({ params }: Props) {
           Analysis is still in progress. Refresh this page in a few seconds.
         </div>
       )}
-      {/* Successful analyses redirect to /estimate?planId=... above. */}
+      {inspect &&
+        (vectors ? (
+          <div className="space-y-3">
+            <Link
+              href={`/estimate?planId=${row.id}`}
+              className="inline-flex items-center gap-1.5 text-sm text-cyan-300 transition hover:text-white"
+            >
+              Open the takeoff →
+            </Link>
+            <VectorInspector vg={vectors} />
+          </div>
+        ) : (
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-sm text-slate-300">
+            No vector data was extracted for this plan — it may be a raster /
+            scanned PDF, a non-vector export, or the page had no usable text or
+            line geometry. Stage 2 ran vision-only.
+          </div>
+        ))}
+      {/* Successful analyses redirect to /estimate?planId=... above (unless
+          ?inspect=1, which shows the extracted-vector debug view here). */}
     </div>
   );
 }
