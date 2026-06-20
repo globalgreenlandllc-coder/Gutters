@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import {
   VectorInspector,
   type ExtractedVectors,
+  type PageVectors,
 } from "@/components/blueprints/vector-inspector";
 
 interface Props {
@@ -33,9 +34,18 @@ export default async function BlueprintDetailPage({
   });
   if (!row) notFound();
 
-  const vectors = (
-    row.analysisJson as { _vectorGeometry?: ExtractedVectors } | null
+  // _vectorGeometry is PlanVectors ({ footprint, roof }) on current rows;
+  // legacy rows stored a single flat page — normalize those as the footprint.
+  const rawVectors = (
+    row.analysisJson as {
+      _vectorGeometry?: ExtractedVectors | PageVectors;
+    } | null
   )?._vectorGeometry;
+  const vectors: ExtractedVectors | undefined = rawVectors
+    ? "footprint" in rawVectors || "roof" in rawVectors
+      ? (rawVectors as ExtractedVectors)
+      : { footprint: rawVectors as PageVectors, roof: null }
+    : undefined;
 
   // Successful analyses now flow into the unified estimate view so the
   // contractor can edit eaves + downspouts and Save/Send a proposal

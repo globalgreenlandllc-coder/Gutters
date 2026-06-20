@@ -2,7 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
 import { getPrompt } from "./prompts";
-import { buildVectorBlock, type PdfPageVectors } from "./pdf-vectors";
+import { buildVectorBlock, type PlanVectors } from "./pdf-vectors";
 import type { GeometryConstraints } from "./classify-plans";
 
 export type BlueprintPoint = { x: number; y: number };
@@ -1174,11 +1174,13 @@ export type BlueprintRunOptions = {
    *  the model regularly traces the site plan and returns a
    *  rectangular ~8-run trace for houses with 12-18 distinct eaves. */
   constraints?: GeometryConstraints;
-  /** Text layer extracted from the vector PDF (printed dimensions +
-   *  labels with coordinates). Injected as ground truth so the model
-   *  sizes/classifies from the architect's real numbers instead of
-   *  eyeballing pixels. null/absent → unchanged vision-only behavior. */
-  vectorGeometry?: PdfPageVectors | null;
+  /** Vector layer extracted from the PDF — the foundation/floor-plan
+   *  building outline + dimensions (authoritative footprint) and the
+   *  roof-plan lines (edge-classification cross-reference). Injected as
+   *  ground truth so the model sizes/shapes from the architect's real
+   *  geometry instead of eyeballing pixels. null/absent → unchanged
+   *  vision-only behavior. */
+  vectorGeometry?: PlanVectors | null;
 };
 
 export async function blueprintFromPlanSources(

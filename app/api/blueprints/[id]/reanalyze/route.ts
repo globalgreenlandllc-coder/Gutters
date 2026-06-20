@@ -14,7 +14,7 @@ import {
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
-import { extractPdfPageText } from "@/lib/ai/pdf-vectors";
+import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 
 export const maxDuration = 300;
 
@@ -200,10 +200,10 @@ export async function POST(
 
       const vectorGeometry =
         isPdf && finalSource.kind === "pdf"
-          ? await extractPdfPageText(
-              finalSource.base64,
-              constraints?.roof_plan_page ?? 1,
-            )
+          ? await extractPlanVectors(finalSource.base64, {
+              footprintPage: constraints?.footprint_page ?? null,
+              roofPage: constraints?.roof_plan_page ?? 1,
+            })
           : null;
 
       const result = await blueprintFromPlanSources([finalSource], {

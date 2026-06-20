@@ -592,6 +592,24 @@ export async function classifyPlanSheets(
  * message. Kept here so both producer and consumer share the same
  * vocabulary.
  */
+/**
+ * Pick the page whose vector layer carries the CLEAN building outline +
+ * overall dimensions — the foundation plan first (least interior clutter),
+ * then any floor plan. Returns null when no floor/foundation sheet was
+ * identified, in which case the extractor falls back to the roof plan.
+ */
+function pickFootprintPage(sheets: PlanSheet[]): number | null {
+  const floors = (sheets ?? []).filter((s) => s.sheet_type === "floor_plan");
+  if (floors.length === 0) return null;
+  const foundation = floors.find((s) =>
+    /found|footing|slab|stem\s*wall/i.test(
+      `${s.sheet_label ?? ""} ${s.summary ?? ""}`,
+    ),
+  );
+  const pick = foundation ?? floors[0];
+  return pick.page_index ?? null;
+}
+
 export function classificationToConstraints(
   c: PlanClassification,
 ): GeometryConstraints {
@@ -651,6 +669,7 @@ export function classificationToConstraints(
 
   return {
     roof_plan_page: c.roof_plan_page,
+    footprint_page: pickFootprintPage(c.sheets),
     min_gutter_runs: c.min_expected_gutter_runs,
     min_downspouts: c.min_expected_downspouts,
     elevation_summary: elevationSummary || null,
@@ -669,6 +688,10 @@ export function classificationToConstraints(
 
 export type GeometryConstraints = {
   roof_plan_page: number | null;
+  /** Page with the clean building outline + overall dimensions (foundation
+   *  / floor plan). The vector extractor reads the AUTHORITATIVE footprint
+   *  from here instead of the roof/framing sheet. null → use roof plan. */
+  footprint_page: number | null;
   min_gutter_runs: number | null;
   min_downspouts: number | null;
   elevation_summary: string | null;

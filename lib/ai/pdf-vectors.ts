@@ -28,6 +28,9 @@ export type PdfTextItem = {
 export type PdfPageVectors = {
   /** 1-based page the data was read from. */
   page: number;
+  /** Which sheet this page is, for prompt wording — e.g.
+   *  "foundation/floor plan" (authoritative footprint) vs "roof plan". */
+  sheet?: string;
   widthPt: number;
   heightPt: number;
   /** Dimension-like strings (digit + a feet/inch/scale mark) — the
@@ -40,6 +43,22 @@ export type PdfPageVectors = {
    *  space as the text — the long orthogonal ones include the building
    *  footprint perimeter; longer diagonals are hips/ridges. */
   segments: number[][];
+};
+
+/**
+ * Vectors pulled from the TWO pages that matter for a takeoff:
+ * - `footprint` — the foundation / floor plan, which carries the CLEAN
+ *   building outline + the overall ("64'-0 OVERALL") dimensions. This is
+ *   the authoritative footprint shape. (Falls back to the roof plan when
+ *   the classifier didn't identify a separate floor/foundation sheet.)
+ * - `roof` — the roof plan, used only to CROSS-REFERENCE edge
+ *   classification (ridges/hips/valleys, GABLE/EAVE tags). On some sets
+ *   this is a dense framing/truss sheet whose lines are NOT the footprint,
+ *   so the prompt is careful never to snap the footprint to them.
+ */
+export type PlanVectors = {
+  footprint: PdfPageVectors | null;
+  roof: PdfPageVectors | null;
 };
 
 const MAX_TEXT = 90;
@@ -226,44 +245,114 @@ export async function extractPdfPageText(
 }
 
 /**
+ * Extract the vector layer of BOTH the footprint source (foundation /
+ * floor plan) and the roof plan. The footprint sheet is the authoritative
+ * outline; the roof sheet is cross-reference only (and may be a dense
+ * framing/truss page). When the classifier didn't identify a separate
+ * floor/foundation sheet, the roof plan stands in as the footprint source
+ * (a clean roof plan's perimeter IS the outline) and `roof` is left null
+ * so we don't double-extract the same page.
+ *
+ * Fully fail-safe: each page is read independently and any failure yields
+ * null for that page; the whole call returns null only if BOTH are empty.
+ */
+export async function extractPlanVectors(
+  base64: string,
+  opts: { footprintPage?: number | null; roofPage?: number | null },
+): Promise<PlanVectors | null> {
+  const fpPage = opts.footprintPage ?? null;
+  const rfPage = opts.roofPage ?? null;
+
+  if (fpPage) {
+    const footprint = await extractPdfPageText(base64, fpPage);
+    if (footprint) footprint.sheet = "foundation/floor plan";
+    const roof =
+      rfPage && rfPage !== fpPage ? await extractPdfPageText(base64, rfPage) : null;
+    if (roof) roof.sheet = "roof plan";
+    if (!footprint && !roof) return null;
+    return { footprint, roof };
+  }
+
+  // No dedicated floor/foundation sheet — the roof plan is the best
+  // available footprint source.
+  const footprint = rfPage ? await extractPdfPageText(base64, rfPage) : null;
+  if (footprint) footprint.sheet = "roof plan";
+  if (!footprint) return null;
+  return { footprint, roof: null };
+}
+
+const fmtText = (items: PdfTextItem[]) =>
+  items.map((i) => `${i.s}@(${i.x},${i.y})`).join("  ");
+const fmtSegs = (segs: number[][]) =>
+  segs.map((s) => `[${s.join(",")}]`).join(" ");
+
+/**
  * Render the extracted vectors into a compact ground-truth block for the
  * Stage-2 user message. Empty string when there's nothing to add. The
  * guidance lives HERE (user message) rather than the system prompt, so it
  * applies even when the system prompt is overridden via /admin/prompts.
+ *
+ * Two clearly-separated sections: the footprint sheet is the AUTHORITY for
+ * the building outline + scale; the roof sheet is cross-reference for edge
+ * classification only — the model is explicitly told NOT to snap the
+ * footprint to roof-plan/truss lines.
  */
-export function buildVectorBlock(v: PdfPageVectors | null | undefined): string {
-  if (!v) return "";
-  const fmtText = (items: PdfTextItem[]) =>
-    items.map((i) => `${i.s}@(${i.x},${i.y})`).join("  ");
-  const lines: string[] = [
-    `EXTRACTED VECTOR-PDF DATA (page ${v.page}, ${v.widthPt}×${v.heightPt} pt, origin bottom-left) — GROUND TRUTH (read from the PDF's real vector layer, not your visual estimate; trust it over pixel-eyeballing):`,
-  ];
-  if (v.dimensions.length) {
+export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
+  if (!plan || (!plan.footprint && !plan.roof)) return "";
+  const lines: string[] = [];
+
+  const fp = plan.footprint;
+  if (fp) {
+    const where = fp.sheet ?? "foundation/floor plan";
     lines.push(
-      "- DIMENSIONS: set scale from these and verify every wall length you " +
-        "trace; if your footprint disagrees with the printed dimensions, the " +
-        "dimensions win — re-read the outline.",
+      `EXTRACTED VECTOR DATA — BUILDING OUTLINE (page ${fp.page}, ${fp.widthPt}×${fp.heightPt} pt, origin bottom-left, read from the ${where}'s real vector layer). This is the AUTHORITATIVE footprint shape + scale — trust it over pixel-eyeballing:`,
     );
-    lines.push(`DIMENSIONS: ${fmtText(v.dimensions)}`);
+    if (fp.dimensions.length) {
+      lines.push(
+        "- DIMENSIONS: the architect's real overall + per-wall lengths. Set " +
+          "scale from these and make every building_footprint wall match a " +
+          "printed dimension; if your trace disagrees, the dimension wins.",
+      );
+      lines.push(`DIMENSIONS: ${fmtText(fp.dimensions)}`);
+    }
+    if (fp.segments.length) {
+      lines.push(
+        "- OUTLINE SEGMENTS [x1,y1,x2,y2]: real strokes from the " +
+          `${where}. The building_footprint perimeter is the OUTERMOST closed ` +
+          "loop of these — snap your footprint corners to these endpoints and " +
+          "capture every jog/bump-out (porch, patio, garage, fireplace). IGNORE " +
+          "interior partition walls (segments that sit inside the outer loop).",
+      );
+      lines.push(`OUTLINE: ${fmtSegs(fp.segments)}`);
+    }
+    if (fp.labels.length) {
+      lines.push(`OUTLINE LABELS: ${fmtText(fp.labels)}`);
+    }
+    lines.push("");
   }
-  if (v.labels.length) {
+
+  const rf = plan.roof;
+  if (rf) {
     lines.push(
-      "- LABELS: use to confirm which sheet is the roof plan and to classify " +
-        "edges (GABLE/RIDGE/EAVE tags, slope ratios, side names).",
+      `EXTRACTED VECTOR DATA — ROOF PLAN (page ${rf.page}, ${rf.widthPt}×${rf.heightPt} pt, origin bottom-left). Cross-reference for edge classification ONLY — NOT the footprint authority (this sheet may be a dense framing/truss plan):`,
     );
-    lines.push(`LABELS: ${fmtText(v.labels)}`);
+    if (rf.labels.length) {
+      lines.push(
+        "- ROOF LABELS: use to classify edges (GABLE/RIDGE/HIP/EAVE tags, " +
+          "slope ratios, side names).",
+      );
+      lines.push(`ROOF LABELS: ${fmtText(rf.labels)}`);
+    }
+    if (rf.segments.length) {
+      lines.push(
+        "- ROOF LINES [x1,y1,x2,y2]: candidate ridges/hips/valleys + roof-plane " +
+          "edges. Use ONLY to classify eave-vs-rake; do NOT snap the footprint " +
+          "to these (they include interior framing/truss members).",
+      );
+      lines.push(`ROOF LINES: ${fmtSegs(rf.segments)}`);
+    }
+    lines.push("");
   }
-  if (v.segments.length) {
-    lines.push(
-      "- DRAWN LINE SEGMENTS [x1,y1,x2,y2]: these are REAL strokes from the " +
-        "PDF. The building_footprint perimeter is made of the long orthogonal " +
-        "segments here — SNAP your footprint corners to these endpoints " +
-        "instead of inventing coordinates; long diagonals are hips/ridges.",
-    );
-    lines.push(
-      `SEGMENTS: ${v.segments.map((s) => `[${s.join(",")}]`).join(" ")}`,
-    );
-  }
-  lines.push("");
+
   return lines.join("\n");
 }

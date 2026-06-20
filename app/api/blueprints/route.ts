@@ -14,7 +14,7 @@ import {
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
-import { extractPdfPageText } from "@/lib/ai/pdf-vectors";
+import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -374,16 +374,18 @@ export async function POST(request: Request) {
         );
       }
 
-      // Pull the PDF's real text layer (printed dimensions + labels with
-      // coordinates) as ground truth so Stage 2 sizes/classifies from the
-      // architect's numbers instead of eyeballing pixels. Fail-safe → null
-      // on any error, which keeps the existing vision-only behavior.
+      // Pull the PDF's real vector layer as ground truth so Stage 2
+      // sizes/shapes from the architect's geometry instead of eyeballing
+      // pixels: the CLEAN building outline + overall dimensions from the
+      // foundation/floor plan (authoritative footprint), plus the roof-plan
+      // lines for edge classification. Fail-safe → null on any error, which
+      // keeps the existing vision-only behavior.
       const vectorGeometry =
         isPdf && source.kind === "pdf"
-          ? await extractPdfPageText(
-              source.base64,
-              constraints?.roof_plan_page ?? 1,
-            )
+          ? await extractPlanVectors(source.base64, {
+              footprintPage: constraints?.footprint_page ?? null,
+              roofPage: constraints?.roof_plan_page ?? 1,
+            })
           : null;
 
       // Stage 2: geometry trace, constrained by Stage 1 findings.
