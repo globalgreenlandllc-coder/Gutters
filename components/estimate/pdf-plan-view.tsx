@@ -1,23 +1,61 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Maximize2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Hand,
+  Maximize2,
+  Loader2,
+  Pencil,
+  Ruler,
+  Trash2,
+  Undo2,
+  Check,
+} from "lucide-react";
 
 import { VIEWBOX_W, VIEWBOX_H } from "./aerial-constants";
 import { PdfPageImage } from "./pdf-page-image";
 
+type Pt = { x: number; y: number };
 type Sheet = { pageIndex: number; label: string };
+type Tool = "pan" | "scale" | "draw";
+
+const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+const mid = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+/** Shortest distance from point p to segment a-b (canvas units). */
+function distToSeg(p: Pt, a: Pt, b: Pt): number {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  if (len2 === 0) return dist(p, a);
+  let t = ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
 
 /**
- * "Exact copy of the roof": render the actual PDF sheet from the uploaded
- * plan set — the architect's real drawing — zoomable and pannable, with a
- * selector to flip to the right sheet (roof plan / foundation / elevation).
- * No AI reconstruction. The schematic trace + pricing live in the other
- * tabs; this is the ground-truth reference the contractor verifies against
- * (and the surface a manual takeoff will draw on next).
+ * "Exact copy of the roof" + manual takeoff ON it. Renders the architect's
+ * real PDF sheet (zoom/pan, sheet selector), then lets the contractor:
+ *   1. SET SCALE — click the two ends of a known dimension, type its feet →
+ *      px/ft for THIS sheet (no AI scale guessing).
+ *   2. DRAW eave runs on the real drawing — each gets exact LF from the
+ *      calibrated scale, shown live.
+ *   3. APPLY — the drawn runs become the priced eaves (replacing the AI
+ *      trace), at the calibrated scale, so the proposal prices off what the
+ *      contractor traced on the actual plan.
+ *
+ * Scale + finished runs live in the parent (results-view) so they survive
+ * tab switches; the in-progress click and the active tool are local.
  */
 export function PdfPlanView({
   planSource,
+  scalePxPerFt,
+  onScaleChange,
+  runs,
+  onRunsChange,
+  onApply,
 }: {
   planSource: {
     pdfUrl: string;
@@ -25,6 +63,14 @@ export function PdfPlanView({
     pageCount?: number;
     sheets?: Sheet[];
   };
+  /** Calibrated px-per-foot in the 900×580 canvas space, or null. */
+  scalePxPerFt: number | null;
+  onScaleChange: (pxPerFt: number) => void;
+  /** Finished eave runs (each a 2-point segment) in canvas space. */
+  runs: Pt[][];
+  onRunsChange: (runs: Pt[][]) => void;
+  /** Commit the drawn runs as the priced takeoff. */
+  onApply: () => void;
 }) {
   const sheets = planSource.sheets ?? [];
   const pageCount =
@@ -34,15 +80,55 @@ export function PdfPlanView({
   const [page, setPage] = useState(planSource.pageIndex || 1);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [view, setView] = useState({ x: 0, y: 0, w: VIEWBOX_W, h: VIEWBOX_H });
+  const [tool, setTool] = useState<Tool>("pan");
+
+  // In-progress interaction (ephemeral).
+  const [scalePts, setScalePts] = useState<Pt[]>([]);
+  const [feetInput, setFeetInput] = useState("");
+  const [pendingStart, setPendingStart] = useState<Pt | null>(null);
+  const [cursor, setCursor] = useState<Pt | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+
   const svgRef = useRef<SVGSVGElement>(null);
-  const pan = useRef<{ px: number; py: number; vx: number; vy: number } | null>(
-    null,
-  );
+  const down = useRef<{
+    px: number;
+    py: number;
+    vx: number;
+    vy: number;
+    moved: boolean;
+  } | null>(null);
 
   const resetView = () => setView({ x: 0, y: 0, w: VIEWBOX_W, h: VIEWBOX_H });
   const goPage = (p: number) => {
     setPage(p);
     resetView();
+  };
+
+  // Esc cancels the in-progress click; Backspace deletes a selected run.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPendingStart(null);
+        setScalePts([]);
+        setCursor(null);
+      } else if (
+        (e.key === "Backspace" || e.key === "Delete") &&
+        selected != null
+      ) {
+        onRunsChange(runs.filter((_, i) => i !== selected));
+        setSelected(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, runs, onRunsChange]);
+
+  const toVB = (clientX: number, clientY: number): Pt => {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return {
+      x: view.x + ((clientX - rect.left) / rect.width) * view.w,
+      y: view.y + ((clientY - rect.top) / rect.height) * view.h,
+    };
   };
 
   const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
@@ -51,43 +137,114 @@ export function PdfPlanView({
     const rect = svgRef.current.getBoundingClientRect();
     const fx = (e.clientX - rect.left) / rect.width;
     const fy = (e.clientY - rect.top) / rect.height;
-    const cursorVX = view.x + fx * view.w;
-    const cursorVY = view.y + fy * view.h;
+    const cvx = view.x + fx * view.w;
+    const cvy = view.y + fy * view.h;
     const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
-    const minW = VIEWBOX_W / 10;
-    const maxW = VIEWBOX_W * 6;
-    const nextW = Math.max(minW, Math.min(maxW, view.w * factor));
+    const nextW = Math.max(VIEWBOX_W / 12, Math.min(VIEWBOX_W * 8, view.w * factor));
     const nextH = nextW * (view.h / view.w);
-    setView({
-      x: cursorVX - fx * nextW,
-      y: cursorVY - fy * nextH,
-      w: nextW,
-      h: nextH,
-    });
+    setView({ x: cvx - fx * nextW, y: cvy - fy * nextH, w: nextW, h: nextH });
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    pan.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!pan.current || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const dx = ((e.clientX - pan.current.px) / rect.width) * view.w;
-    const dy = ((e.clientY - pan.current.py) / rect.height) * view.h;
-    setView((v) => ({ ...v, x: pan.current!.vx - dx, y: pan.current!.vy - dy }));
-  };
-  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
-    pan.current = null;
-    if (e.currentTarget.hasPointerCapture(e.pointerId))
-      e.currentTarget.releasePointerCapture(e.pointerId);
+    down.current = {
+      px: e.clientX,
+      py: e.clientY,
+      vx: view.x,
+      vy: view.y,
+      moved: false,
+    };
+    svgRef.current?.setPointerCapture(e.pointerId);
   };
 
-  const btn =
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    // Live rubber-band for scale/draw, regardless of drag state.
+    if (
+      (tool === "draw" && pendingStart) ||
+      (tool === "scale" && scalePts.length === 1)
+    ) {
+      setCursor(toVB(e.clientX, e.clientY));
+    }
+    if (!down.current || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const dxPx = e.clientX - down.current.px;
+    const dyPx = e.clientY - down.current.py;
+    if (Math.hypot(dxPx, dyPx) > 4) down.current.moved = true;
+    // Drag pans in every tool (so you can draw AND navigate).
+    const dx = (dxPx / rect.width) * view.w;
+    const dy = (dyPx / rect.height) * view.h;
+    setView((v) => ({ ...v, x: down.current!.vx - dx, y: down.current!.vy - dy }));
+  };
+
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    const moved = down.current?.moved ?? false;
+    down.current = null;
+    if (svgRef.current?.hasPointerCapture(e.pointerId))
+      svgRef.current.releasePointerCapture(e.pointerId);
+    if (moved) return; // it was a pan, not a click
+    const p = toVB(e.clientX, e.clientY);
+
+    if (tool === "scale") {
+      setScalePts((prev) => (prev.length >= 2 ? [p] : [...prev, p]));
+      return;
+    }
+    if (tool === "draw") {
+      if (!scalePxPerFt) return; // must calibrate first
+      if (!pendingStart) {
+        setPendingStart(p);
+      } else {
+        onRunsChange([...runs, [pendingStart, p]]);
+        setPendingStart(null);
+        setCursor(null);
+      }
+      return;
+    }
+    // pan tool → select the nearest run for deletion
+    let best = -1;
+    let bestD = Infinity;
+    runs.forEach((r, i) => {
+      const d = distToSeg(p, r[0], r[1]);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    setSelected(bestD < view.w / 40 ? best : null);
+  };
+
+  const commitScale = () => {
+    const feet = parseFloat(feetInput);
+    if (scalePts.length === 2 && Number.isFinite(feet) && feet > 0) {
+      const px = dist(scalePts[0], scalePts[1]);
+      if (px > 0) {
+        onScaleChange(px / feet);
+        setScalePts([]);
+        setFeetInput("");
+        setTool("draw");
+      }
+    }
+  };
+
+  const runLF = (r: Pt[]) =>
+    scalePxPerFt ? dist(r[0], r[1]) / scalePxPerFt : null;
+  const totalLF = scalePxPerFt
+    ? runs.reduce((a, r) => a + dist(r[0], r[1]) / scalePxPerFt, 0)
+    : 0;
+
+  // Zoom-stable sizes (constant on screen regardless of zoom).
+  const sw = view.w / 320;
+  const dot = view.w / 90;
+
+  const toolBtn = (active: boolean) =>
+    "inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium transition " +
+    (active
+      ? "border-emerald-600 bg-emerald-600 text-white"
+      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800");
+  const plainBtn =
     "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800";
 
   return (
     <div className="space-y-2">
+      {/* Sheet + view controls */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {sheets.length > 0 ? (
           <select
@@ -105,7 +262,7 @@ export function PdfPlanView({
           <div className="inline-flex items-center gap-1">
             <button
               type="button"
-              className={btn}
+              className={plainBtn}
               disabled={page <= 1}
               onClick={() => goPage(Math.max(1, page - 1))}
             >
@@ -117,7 +274,7 @@ export function PdfPlanView({
             </span>
             <button
               type="button"
-              className={btn}
+              className={plainBtn}
               disabled={pageCount != null && page >= pageCount}
               onClick={() =>
                 goPage(pageCount ? Math.min(pageCount, page + 1) : page + 1)
@@ -127,20 +284,149 @@ export function PdfPlanView({
             </button>
           </div>
         )}
-        <button type="button" className={btn} onClick={resetView}>
+        <button type="button" className={plainBtn} onClick={resetView}>
           <Maximize2 size={13} /> Fit
         </button>
-        <span className="text-zinc-400 dark:text-zinc-500">
-          Actual sheet from your PDF — scroll to zoom, drag to pan.
-        </span>
       </div>
+
+      {/* Takeoff tools */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button
+          type="button"
+          className={toolBtn(tool === "pan")}
+          onClick={() => {
+            setTool("pan");
+            setPendingStart(null);
+          }}
+        >
+          <Hand size={13} /> Pan
+        </button>
+        <button
+          type="button"
+          className={toolBtn(tool === "scale")}
+          onClick={() => {
+            setTool("scale");
+            setScalePts([]);
+            setPendingStart(null);
+          }}
+        >
+          <Ruler size={13} /> Set scale
+        </button>
+        <button
+          type="button"
+          className={toolBtn(tool === "draw")}
+          disabled={!scalePxPerFt}
+          title={!scalePxPerFt ? "Set the scale first" : "Draw eave runs"}
+          onClick={() => {
+            if (scalePxPerFt) setTool("draw");
+          }}
+        >
+          <Pencil size={13} /> Draw eaves
+        </button>
+
+        <span className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
+
+        {scalePxPerFt ? (
+          <span className="rounded-md bg-emerald-50 px-2 py-1 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            Scale set · {runs.length} run{runs.length === 1 ? "" : "s"} ·{" "}
+            {totalLF.toFixed(1)} LF
+          </span>
+        ) : (
+          <span className="text-zinc-400 dark:text-zinc-500">
+            Set the scale to start (click a known dimension, enter its feet).
+          </span>
+        )}
+
+        {selected != null && (
+          <button
+            type="button"
+            className={plainBtn}
+            onClick={() => {
+              onRunsChange(runs.filter((_, i) => i !== selected));
+              setSelected(null);
+            }}
+          >
+            <Trash2 size={13} /> Delete run
+          </button>
+        )}
+        {runs.length > 0 && (
+          <button
+            type="button"
+            className={plainBtn}
+            onClick={() => {
+              onRunsChange(runs.slice(0, -1));
+              setSelected(null);
+            }}
+          >
+            <Undo2 size={13} /> Undo run
+          </button>
+        )}
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!scalePxPerFt || runs.length === 0}
+          title={
+            !scalePxPerFt || runs.length === 0
+              ? "Set scale and draw at least one run"
+              : "Use the drawn runs as the priced takeoff"
+          }
+          onClick={onApply}
+        >
+          <Check size={13} /> Apply to estimate
+        </button>
+      </div>
+
+      {/* Calibration feet input */}
+      {tool === "scale" && scalePts.length === 2 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs dark:border-emerald-800 dark:bg-emerald-950/40">
+          <span className="font-medium text-emerald-800 dark:text-emerald-200">
+            That line is how many feet?
+          </span>
+          <input
+            type="number"
+            inputMode="decimal"
+            autoFocus
+            value={feetInput}
+            onChange={(e) => setFeetInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && commitScale()}
+            placeholder="e.g. 64"
+            className="w-24 rounded-md border border-emerald-300 bg-white px-2 py-1 text-zinc-800 dark:border-emerald-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+          <span className="text-emerald-700 dark:text-emerald-300">ft</span>
+          <button
+            type="button"
+            className="rounded-md bg-emerald-600 px-2.5 py-1 font-semibold text-white hover:bg-emerald-700"
+            onClick={commitScale}
+          >
+            Set scale
+          </button>
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+            onClick={() => {
+              setScalePts([]);
+              setFeetInput("");
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       <div className="relative min-h-[520px] overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700">
         <svg
           ref={svgRef}
           viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
           className="h-full w-full touch-none select-none"
-          style={{ minHeight: 520, cursor: pan.current ? "grabbing" : "grab" }}
+          style={{
+            minHeight: 520,
+            cursor:
+              tool === "pan"
+                ? down.current
+                  ? "grabbing"
+                  : "grab"
+                : "crosshair",
+          }}
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -153,7 +439,117 @@ export function PdfPlanView({
             pageIndex={page}
             onState={setState}
           />
+
+          {/* Finished eave runs */}
+          {runs.map((r, i) => (
+            <g key={i}>
+              <line
+                x1={r[0].x}
+                y1={r[0].y}
+                x2={r[1].x}
+                y2={r[1].y}
+                stroke={i === selected ? "#f43f5e" : "#06b6d4"}
+                strokeWidth={sw * (i === selected ? 1.6 : 1.2)}
+                strokeLinecap="round"
+              />
+              {scalePxPerFt && (
+                <text
+                  x={mid(r[0], r[1]).x}
+                  y={mid(r[0], r[1]).y - dot * 0.8}
+                  fontSize={dot * 1.5}
+                  textAnchor="middle"
+                  fill="#0e7490"
+                  stroke="#ffffff"
+                  strokeWidth={dot * 0.18}
+                  paintOrder="stroke"
+                  style={{ fontWeight: 700 }}
+                >
+                  {runLF(r)!.toFixed(1)} ft
+                </text>
+              )}
+            </g>
+          ))}
+
+          {/* In-progress eave (start → cursor) */}
+          {tool === "draw" && pendingStart && cursor && (
+            <g>
+              <line
+                x1={pendingStart.x}
+                y1={pendingStart.y}
+                x2={cursor.x}
+                y2={cursor.y}
+                stroke="#06b6d4"
+                strokeWidth={sw * 1.2}
+                strokeDasharray={`${sw * 2} ${sw * 2}`}
+                strokeLinecap="round"
+              />
+              <circle cx={pendingStart.x} cy={pendingStart.y} r={dot * 0.6} fill="#06b6d4" />
+              {scalePxPerFt && (
+                <text
+                  x={cursor.x + dot}
+                  y={cursor.y - dot}
+                  fontSize={dot * 1.6}
+                  fill="#0e7490"
+                  stroke="#ffffff"
+                  strokeWidth={dot * 0.18}
+                  paintOrder="stroke"
+                  style={{ fontWeight: 700 }}
+                >
+                  {(dist(pendingStart, cursor) / scalePxPerFt).toFixed(1)} ft
+                </text>
+              )}
+            </g>
+          )}
+
+          {/* Scale calibration markers */}
+          {scalePts.map((p, i) => (
+            <circle
+              key={i}
+              cx={p.x}
+              cy={p.y}
+              r={dot * 0.7}
+              fill="#f59e0b"
+              stroke="#ffffff"
+              strokeWidth={dot * 0.2}
+            />
+          ))}
+          {tool === "scale" && scalePts.length === 1 && cursor && (
+            <line
+              x1={scalePts[0].x}
+              y1={scalePts[0].y}
+              x2={cursor.x}
+              y2={cursor.y}
+              stroke="#f59e0b"
+              strokeWidth={sw}
+              strokeDasharray={`${sw * 2} ${sw * 2}`}
+            />
+          )}
+          {scalePts.length === 2 && (
+            <line
+              x1={scalePts[0].x}
+              y1={scalePts[0].y}
+              x2={scalePts[1].x}
+              y2={scalePts[1].y}
+              stroke="#f59e0b"
+              strokeWidth={sw}
+            />
+          )}
         </svg>
+
+        {/* Tool hint */}
+        <div className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-zinc-900/80 px-2 py-1 text-[11px] text-zinc-100">
+          {tool === "scale"
+            ? scalePts.length === 0
+              ? "Click one end of a known dimension (e.g. the 64'-0\" line)"
+              : scalePts.length === 1
+                ? "Click the other end"
+                : "Enter the length above"
+            : tool === "draw"
+              ? pendingStart
+                ? "Click the eave's end · Esc to cancel"
+                : "Click the start of an eave run"
+              : "Drag to pan · scroll to zoom · click a run to select"}
+        </div>
 
         {state === "loading" && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
@@ -166,8 +562,7 @@ export function PdfPlanView({
           <div className="absolute inset-0 grid place-items-center p-6 text-center">
             <p className="max-w-sm text-sm text-zinc-500">
               Couldn&apos;t render this sheet. It may be a scanned/raster PDF
-              with no rendering layer, or the page is unavailable — try another
-              sheet.
+              with no rendering layer — try another sheet.
             </p>
           </div>
         )}

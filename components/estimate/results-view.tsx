@@ -18,7 +18,7 @@ import { PdfPlanView } from "./pdf-plan-view";
 import { PricingPanel } from "./pricing-panel";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { Measurements } from "@/lib/types";
+import type { EditableLine, Measurements } from "@/lib/types";
 import type { EstimateResult } from "@/lib/ai";
 import type { EstimateHandoff } from "@/lib/estimate-handoff";
 
@@ -46,6 +46,26 @@ export function ResultsView({
   const [viewMode, setViewMode] = useState<"plan" | "sheet" | "3d">("plan");
   // The real PDF sheet view is only meaningful for plan-based estimates.
   const hasSheet = !!initial.planSource;
+  // Px-per-foot driving LF math. Lifted to state so the "Plan sheet" manual
+  // takeoff can re-anchor it to the contractor's click-calibrated scale.
+  const [canvasPxPerFt, setCanvasPxPerFt] = useState(initial.canvasPxPerFt);
+  // "Plan sheet" working state — calibrated scale (px/ft in canvas space)
+  // and the runs traced on the real page. Lifted so they survive tab
+  // switches; committed to the priced eaves via applyPlanTrace().
+  const [planScale, setPlanScale] = useState<number | null>(null);
+  const [planRuns, setPlanRuns] = useState<{ x: number; y: number }[][]>([]);
+
+  const applyPlanTrace = () => {
+    if (!planScale || planRuns.length === 0) return;
+    const lines: EditableLine[] = planRuns.map((r, i) => ({
+      id: `plan-trace-${i}`,
+      kind: "eave",
+      points: r,
+    }));
+    setEaves(lines);
+    setCanvasPxPerFt(planScale);
+    setViewMode("plan");
+  };
   const can3d =
     (initial.roofStructure?.perimeter?.filter(
       (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
@@ -65,7 +85,7 @@ export function ResultsView({
       // Satellite eaves are COVER-fit onto the canvas, so convert px→ft
       // with the per-estimate scale (not the plan-mode 2.4) — otherwise
       // editing an eave re-prices the job on the wrong scale.
-      const v = lineLengthFt(l, initial.canvasPxPerFt);
+      const v = lineLengthFt(l, canvasPxPerFt);
       return acc + (Number.isFinite(v) ? v : 0);
     }, 0),
   );
@@ -92,7 +112,7 @@ export function ResultsView({
     downspouts,
     roofStructure: initial.roofStructure,
     aerial: initial.aerial,
-    canvasPxPerFt: initial.canvasPxPerFt,
+    canvasPxPerFt,
   };
 
   return (
@@ -178,7 +198,14 @@ export function ResultsView({
                 })}
               </div>
               {viewMode === "sheet" && initial.planSource ? (
-                <PdfPlanView planSource={initial.planSource} />
+                <PdfPlanView
+                  planSource={initial.planSource}
+                  scalePxPerFt={planScale}
+                  onScaleChange={setPlanScale}
+                  runs={planRuns}
+                  onRunsChange={setPlanRuns}
+                  onApply={applyPlanTrace}
+                />
               ) : viewMode === "3d" && can3d ? (
                 <Massing3D
                   eaves={eaves}
@@ -198,7 +225,7 @@ export function ResultsView({
                   aerialImageUrl={initial.aerial?.imageDataUrl}
                   planSource={initial.planSource}
                   roofStructure={initial.roofStructure}
-                  pxPerFt={initial.canvasPxPerFt}
+                  pxPerFt={canvasPxPerFt}
                   armDrawNonce={drawNonce}
                 />
               )}
