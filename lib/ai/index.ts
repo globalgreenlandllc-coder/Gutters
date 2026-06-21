@@ -89,6 +89,12 @@ export type EstimateResult = {
   planSource?: {
     pdfUrl: string;
     pageIndex: number;
+    /** Total pages in the PDF — bounds the sheet selector. */
+    pageCount?: number;
+    /** Classifier sheet inventory so the contractor can flip the
+     *  underlay to the right drawing (roof plan vs foundation/floor),
+     *  labelled. 1-based pageIndex. */
+    sheets?: { pageIndex: number; label: string }[];
   };
   /** Optional perimeter + ridge/valley overlay for the visual annotation
    *  layer. Detected via GPT-4o vision in parallel with the eaves

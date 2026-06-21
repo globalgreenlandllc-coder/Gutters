@@ -393,6 +393,11 @@ export interface BlueprintToEstimateMeta {
    *  URL (/api/blueprints/<id>/pdf) so the canvas can rasterize the
    *  source page as its background. */
   planId?: string;
+  /** Total PDF pages — bounds the canvas sheet selector. */
+  pageCount?: number;
+  /** Classifier sheet inventory ({pageIndex, label}) so the contractor
+   *  can flip the underlay to the right drawing. */
+  sheets?: { pageIndex: number; label: string }[];
 }
 
 export function blueprintToEstimateResult(
@@ -783,6 +788,8 @@ export function blueprintToEstimateResult(
       ? {
           pdfUrl: `/api/blueprints/${meta.planId}/pdf`,
           pageIndex: analysis.source_page_index ?? 1,
+          pageCount: meta.pageCount,
+          sheets: meta.sheets,
         }
       : undefined,
   };

@@ -245,10 +245,52 @@ export async function runEstimateFromPlan(
   }
 
   const analysis = row.analysisJson as unknown as BlueprintAnalysis;
+
+  // Surface the classifier's sheet inventory so the takeoff canvas can let
+  // the contractor flip the PDF underlay to the right drawing (roof plan
+  // vs foundation/floor), each labelled.
+  const TYPE_LABEL: Record<string, string> = {
+    roof_plan: "Roof plan",
+    floor_plan: "Floor / foundation",
+    elevation: "Elevation",
+    section: "Section",
+    site_plan: "Site plan",
+    detail: "Detail",
+    cover: "Cover",
+    unknown: "Sheet",
+  };
+  const cls = (
+    row.analysisJson as {
+      _classifier?: {
+        classification?: {
+          sheets?: Array<{
+            page_index: number;
+            sheet_type: string;
+            sheet_label: string | null;
+          }>;
+        };
+      };
+    } | null
+  )?._classifier?.classification;
+  const sheets = (cls?.sheets ?? [])
+    .filter((s) => Number.isFinite(s.page_index))
+    .map((s) => {
+      const type = TYPE_LABEL[s.sheet_type] ?? "Sheet";
+      return {
+        pageIndex: s.page_index,
+        label: s.sheet_label ? `${type} (${s.sheet_label})` : type,
+      };
+    });
+  const pageCount =
+    row.pageCount ??
+    (sheets.length ? Math.max(...sheets.map((s) => s.pageIndex)) : undefined);
+
   const result = blueprintToEstimateResult(analysis, {
     filename: row.filename,
     durationMs: row.durationMs ?? undefined,
     planId: row.id,
+    pageCount,
+    sheets,
   });
 
   return {
