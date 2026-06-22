@@ -1989,13 +1989,33 @@ function LineLabel({
   const tactical = theme === "tactical";
   // Roof-tier tag shown under the footage so the contractor reads which
   // gutter is the upper (2-story) vs lower (porch/patio/1-story) eave.
+  // When the plan named the structure (feature), show THAT — "PORCH",
+  // "PATIO", "DECK", "ENTRY", "GARAGE", "DORMER" — so covered projections
+  // read as what they are instead of an anonymous "LOWER ROOF" line.
+  const FEATURE_LABELS: Record<string, string> = {
+    porch: "PORCH",
+    patio: "PATIO",
+    deck: "DECK",
+    entry: "ENTRY",
+    garage: "GARAGE",
+    dormer: "DORMER",
+  };
+  const featureLabel =
+    line.feature && FEATURE_LABELS[line.feature]
+      ? FEATURE_LABELS[line.feature]
+      : null;
   const tierLabel =
-    line.tier === "lower"
+    featureLabel ??
+    (line.tier === "lower"
       ? "LOWER ROOF"
       : line.tier === "upper"
         ? "UPPER ROOF"
-        : null;
-  const isLower = line.tier === "lower";
+        : null);
+  // Color covered projections amber whether their tier is lower OR the
+  // feature itself marks a projection, so a porch/patio/deck pops.
+  const isLower =
+    line.tier === "lower" ||
+    (!!featureLabel && line.feature !== "garage");
   // All viewBox sizes scale with the current zoom so the label looks
   // the same on screen at any zoom. Floors keep the label readable at
   // extreme zoom-out without going invisible. Tier tag widens/heightens

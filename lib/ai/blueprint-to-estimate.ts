@@ -6,6 +6,7 @@ import type {
 import type { EstimateResult } from "./index";
 import type {
   Downspout,
+  EaveFeature,
   EaveSide,
   EaveTier,
   EditableLine,
@@ -444,9 +445,11 @@ export function blueprintToEstimateResult(
         points: [project(r.start), project(r.end)],
         // Carry the plan's roof tier + side so the canvas can color the
         // run and show whether it's an upper (2-story) or lower
-        // (porch/patio/1-story) eave.
+        // (porch/patio/1-story) eave. `feature` names the covered
+        // projection (porch/patio/deck/…) so the layout can label it.
         tier: (r.tier ?? "unknown") as EaveTier,
         side: r.side as EaveSide,
+        feature: r.feature as EaveFeature | undefined,
       };
     })
     .filter((l): l is EditableLine => l !== null);

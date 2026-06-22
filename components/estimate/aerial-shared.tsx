@@ -842,56 +842,112 @@ export function RoofStructureOverlay({
       {/* Gable ends — emphasize the rake edge on the outline + label it, so
           a gable reads as a CONNECTED part of the roof (the ridge already
           runs flush to this wall) rather than a floating stub. */}
-      {skel.gables.map((g, i) => {
-        const a = g.points[0];
-        const b = g.points[1];
-        if (!a || !b) return null;
-        const mx = (a.x + b.x) / 2;
-        const my = (a.y + b.y) / 2;
-        // Nudge the label toward the roof centroid so it sits just inside
-        // the gable edge.
-        const dx = centroid.x - mx;
-        const dy = centroid.y - my;
-        const d = Math.hypot(dx, dy) || 1;
-        const lx = mx + (dx / d) * 13 * scale;
-        const ly = my + (dy / d) * 13 * scale;
+      {(() => {
+        // Lay the GABLE labels out with de-collision — a multi-gable front
+        // otherwise piles 4 pills on top of each other (unreadable). Each
+        // label starts nudged inward from its gable edge, then we relax
+        // overlapping labels apart and draw a thin leader back to the edge
+        // so you can still tell which gable each label belongs to.
         const w = 42 * scale;
         const h = 13 * scale;
-        return (
-          <g key={`gable-${i}`}>
-            <path
-              d={linePathD([a, b])}
-              fill="none"
-              stroke={gableC}
-              strokeWidth={2.6 * scale}
-              strokeDasharray={`${5 * scale} ${4 * scale}`}
-              strokeLinecap="round"
-            />
-            <rect
-              x={lx - w / 2}
-              y={ly - h / 2}
-              width={w}
-              height={h}
-              rx={3 * scale}
-              fill={chipFill}
-              stroke={chipStroke}
-              strokeWidth={scale}
-            />
-            <text
-              x={lx}
-              y={ly + 3.2 * scale}
-              textAnchor="middle"
-              fill={gableText}
-              fontSize={7.5 * scale}
-              fontWeight={700}
-              fontFamily="ui-sans-serif, system-ui"
-              letterSpacing={0.8 * scale}
-            >
-              GABLE
-            </text>
-          </g>
-        );
-      })}
+        const items: {
+          a: { x: number; y: number };
+          b: { x: number; y: number };
+          mx: number;
+          my: number;
+          lx: number;
+          ly: number;
+        }[] = [];
+        for (const g of skel.gables) {
+          const a = g.points[0];
+          const b = g.points[1];
+          if (!a || !b) continue;
+          const mx = (a.x + b.x) / 2;
+          const my = (a.y + b.y) / 2;
+          const dx = centroid.x - mx;
+          const dy = centroid.y - my;
+          const d = Math.hypot(dx, dy) || 1;
+          items.push({
+            a,
+            b,
+            mx,
+            my,
+            lx: mx + (dx / d) * 16 * scale,
+            ly: my + (dy / d) * 16 * scale,
+          });
+        }
+        for (let it = 0; it < 18; it++) {
+          for (let i = 0; i < items.length; i++) {
+            for (let j = i + 1; j < items.length; j++) {
+              const A = items[i];
+              const B = items[j];
+              const ddx = B.lx - A.lx;
+              const ddy = B.ly - A.ly;
+              const ox = w * 1.08 - Math.abs(ddx);
+              const oy = h * 1.35 - Math.abs(ddy);
+              if (ox > 0 && oy > 0) {
+                if (ox < oy) {
+                  const p = (ox / 2 + 0.5) * (ddx >= 0 ? 1 : -1);
+                  A.lx -= p;
+                  B.lx += p;
+                } else {
+                  const p = (oy / 2 + 0.5) * (ddy >= 0 ? 1 : -1);
+                  A.ly -= p;
+                  B.ly += p;
+                }
+              }
+            }
+          }
+        }
+        return items.map((g, i) => {
+          const moved = Math.hypot(g.lx - g.mx, g.ly - g.my) > 20 * scale;
+          return (
+            <g key={`gable-${i}`}>
+              <path
+                d={linePathD([g.a, g.b])}
+                fill="none"
+                stroke={gableC}
+                strokeWidth={2.6 * scale}
+                strokeDasharray={`${5 * scale} ${4 * scale}`}
+                strokeLinecap="round"
+              />
+              {moved && (
+                <line
+                  x1={g.mx}
+                  y1={g.my}
+                  x2={g.lx}
+                  y2={g.ly}
+                  stroke={chipStroke}
+                  strokeWidth={0.8 * scale}
+                  opacity={0.45}
+                />
+              )}
+              <rect
+                x={g.lx - w / 2}
+                y={g.ly - h / 2}
+                width={w}
+                height={h}
+                rx={3 * scale}
+                fill={chipFill}
+                stroke={chipStroke}
+                strokeWidth={scale}
+              />
+              <text
+                x={g.lx}
+                y={g.ly + 3.2 * scale}
+                textAnchor="middle"
+                fill={gableText}
+                fontSize={7.5 * scale}
+                fontWeight={700}
+                fontFamily="ui-sans-serif, system-ui"
+                letterSpacing={0.8 * scale}
+              >
+                GABLE
+              </text>
+            </g>
+          );
+        });
+      })()}
       {/* Dormers / cross-gables the AI traced that aren't whole-side ends — a
           gable sitting ON or ABOVE a continuous eave. Drawn as a small gable
           triangle (base edge + two rakes to an inward peak) so it reads as a

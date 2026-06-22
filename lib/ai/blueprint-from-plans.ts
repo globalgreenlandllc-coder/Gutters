@@ -20,6 +20,19 @@ export type BlueprintRun = {
    *  (~20 ft). Drives drop_height_ft on the downspouts that drain
    *  this run. */
   tier?: "lower" | "upper" | "unknown";
+  /** What structure this run's eave belongs to, READ FROM THE PLANS
+   *  (elevation/floor-plan callouts) — so the layout can name covered
+   *  projections instead of showing an anonymous "lower" line. "main" =
+   *  the main house body. Absent on older analyses. */
+  feature?:
+    | "porch"
+    | "patio"
+    | "deck"
+    | "entry"
+    | "garage"
+    | "dormer"
+    | "main"
+    | "unknown";
 };
 
 export type BlueprintDownspout = {
@@ -530,7 +543,8 @@ Output ONLY the JSON object below. No prose, no markdown fence, no comments.
       "length_ft": number | null,
       "length_px": number,
       "drains_to": ["d1"],
-      "tier": "lower" | "upper" | "unknown"
+      "tier": "lower" | "upper" | "unknown",
+      "feature": "porch" | "patio" | "deck" | "entry" | "garage" | "dormer" | "main" | "unknown"
     }
   ],
   "downspouts": [
@@ -681,6 +695,26 @@ for its source run's tier (lower_tier_ft or upper_tier_ft). When the
 tier is "unknown", default to upper_tier_ft (conservative — labor
 priced for the taller drop).
 </tier_assignment>
+
+<run_feature>
+Also tag every gutter_run with a "feature" — WHAT STRUCTURE its eave belongs
+to, read from the plan's elevation/floor-plan labels. This drives the
+layout so the contractor sees "PORCH" / "PATIO" / "DECK" etc. instead of an
+anonymous lower line. Use the actual callouts ("COV'D PORCH", "COV'D REAR
+PATIO", "COVERED DECK", "COVERED ENTRY", "GARAGE"):
+- "porch"  — covered front/side porch.
+- "patio"  — covered rear patio/lanai cover.
+- "deck"   — covered deck.
+- "entry"  — covered entry / portico / porte-cochère.
+- "garage" — a garage roof eave (whatever its tier).
+- "dormer" — a dormer's small eave.
+- "main"   — the main house body (the default for the 2-story perimeter).
+- "unknown" — only if you truly can't tell.
+Read it from the LABELS, do not guess from geometry: a lower-tier run is
+USUALLY a porch/patio/deck, but confirm against the floor-plan / elevation
+callout. The main body's long eaves are "main". This is descriptive only —
+it never changes LF, tier, or pricing.
+</run_feature>
 
 <orientation>
 Assign each gutter_run.side (and downspout.drop_direction) from the plan's
@@ -952,6 +986,19 @@ const BLUEPRINT_TAKEOFF_TOOL: Anthropic.Tool = {
             length_px: { type: "number" },
             drains_to: { type: "array", items: { type: "string" } },
             tier: { type: "string", enum: ["lower", "upper", "unknown"] },
+            feature: {
+              type: "string",
+              enum: [
+                "porch",
+                "patio",
+                "deck",
+                "entry",
+                "garage",
+                "dormer",
+                "main",
+                "unknown",
+              ],
+            },
           },
           required: [
             "id",

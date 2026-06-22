@@ -24,7 +24,23 @@ export type EditableLine = {
   /** Building side this run faces (front/back/left/right). Used to mark
    *  the front of the house on the canvas. */
   side?: EaveSide;
+  /** What structure this eave belongs to, read from the plans (porch /
+   *  patio / deck / entry / garage / dormer / main). Lets the layout name
+   *  covered projections instead of a generic "lower" line. Optional —
+   *  manually drawn / satellite eaves and older analyses don't carry it. */
+  feature?: EaveFeature;
 };
+
+/** Named structure an eave belongs to (from the plan analysis). */
+export type EaveFeature =
+  | "porch"
+  | "patio"
+  | "deck"
+  | "entry"
+  | "garage"
+  | "dormer"
+  | "main"
+  | "unknown";
 
 export type RoofStructureLineKind = "ridge" | "valley" | "hip";
 
