@@ -59,6 +59,24 @@ export function ResultsView({
   // Roof outline/skeleton, lifted to state so a traced outline can replace
   // the AI's box footprint and the Roof plan re-derives an accurate roof.
   const [roofStructure, setRoofStructure] = useState(initial.roofStructure);
+  // Rakes (gable edges) lifted too — a traced outline clears the AI's rakes
+  // (they're in the old projected space and would misalign); per-edge gable
+  // marking on the outline repopulates them.
+  const [rakes, setRakes] = useState(initial.rakes);
+  // Gable flags per traced-outline edge (true = rake/gable, no gutter).
+  const [planOutlineGables, setPlanOutlineGables] = useState<boolean[]>([]);
+  const setOutline = (o: { x: number; y: number }[]) => {
+    setPlanOutline(o);
+    setPlanOutlineGables((g) =>
+      o.length === g.length ? g : o.map(() => false),
+    );
+  };
+  const toggleGableEdge = (i: number) =>
+    setPlanOutlineGables((g) => {
+      const next = g.length === planOutline.length ? [...g] : planOutline.map(() => false);
+      next[i] = !next[i];
+      return next;
+    });
 
   const applyPlanTrace = () => {
     if (!planScale || planRuns.length === 0) return;
@@ -74,11 +92,24 @@ export function ResultsView({
 
   const applyOutline = () => {
     if (!planScale || planOutline.length < 3) return;
-    // The traced polygon becomes the footprint (roof shape). Eaves come from
-    // the separately-traced runs when present, else from the outline edges
-    // (all priced as eaves — gable faces get deleted on the Roof plan tab).
-    // Both are in the same Plan-sheet canvas space, so they stay aligned.
+    // The traced polygon becomes the footprint (roof shape). Each edge is an
+    // EAVE (gutter) unless marked a GABLE — gable edges become rakes (no
+    // gutter, and the roof draws a gable end there). When the contractor
+    // traced eave runs separately, those price; otherwise the non-gable
+    // outline edges do. All in the same Plan-sheet space, so they stay aligned.
     const n = planOutline.length;
+    const gable = (i: number) => planOutlineGables[i] === true;
+    const outlineEaves: EditableLine[] = planOutline
+      .map((p, i) =>
+        gable(i)
+          ? null
+          : ({
+              id: `outline-eave-${i}`,
+              kind: "eave",
+              points: [p, planOutline[(i + 1) % n]],
+            } as EditableLine),
+      )
+      .filter((l): l is EditableLine => l !== null);
     const lines: EditableLine[] =
       planRuns.length > 0
         ? planRuns.map((r, i) => ({
@@ -86,12 +117,20 @@ export function ResultsView({
             kind: "eave",
             points: r,
           }))
-        : planOutline.map((p, i) => ({
-            id: `outline-eave-${i}`,
-            kind: "eave",
-            points: [p, planOutline[(i + 1) % n]],
-          }));
+        : outlineEaves;
+    const rakeLines: EditableLine[] = planOutline
+      .map((p, i) =>
+        gable(i)
+          ? ({
+              id: `outline-rake-${i}`,
+              kind: "rake",
+              points: [p, planOutline[(i + 1) % n]],
+            } as EditableLine)
+          : null,
+      )
+      .filter((l): l is EditableLine => l !== null);
     setEaves(lines);
+    setRakes(rakeLines);
     setCanvasPxPerFt(planScale);
     setRoofStructure({
       perimeter: planOutline,
@@ -144,7 +183,7 @@ export function ResultsView({
     address,
     measurements,
     eaves,
-    rakes: initial.rakes,
+    rakes,
     downspouts,
     roofStructure,
     aerial: initial.aerial,
@@ -242,13 +281,15 @@ export function ResultsView({
                   onRunsChange={setPlanRuns}
                   onApply={applyPlanTrace}
                   outline={planOutline}
-                  onOutlineChange={setPlanOutline}
+                  onOutlineChange={setOutline}
                   onApplyOutline={applyOutline}
+                  gableEdges={planOutlineGables}
+                  onToggleGableEdge={toggleGableEdge}
                 />
               ) : viewMode === "3d" && can3d ? (
                 <Massing3D
                   eaves={eaves}
-                  rakes={initial.rakes}
+                  rakes={rakes}
                   downspouts={downspouts}
                   roofStructure={roofStructure}
                   planSource={initial.planSource}
@@ -257,7 +298,7 @@ export function ResultsView({
               ) : (
                 <AerialCanvas
                   eaves={eaves}
-                  rakes={initial.rakes}
+                  rakes={rakes}
                   downspouts={downspouts}
                   onEavesChange={setEaves}
                   onDownspoutsChange={setDownspouts}

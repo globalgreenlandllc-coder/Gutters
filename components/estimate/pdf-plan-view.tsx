@@ -60,6 +60,8 @@ export function PdfPlanView({
   outline,
   onOutlineChange,
   onApplyOutline,
+  gableEdges,
+  onToggleGableEdge,
 }: {
   planSource: {
     pdfUrl: string;
@@ -80,6 +82,9 @@ export function PdfPlanView({
   onOutlineChange: (outline: Pt[]) => void;
   /** Commit the traced outline as the footprint (re-derives the roof). */
   onApplyOutline: () => void;
+  /** Per-edge gable flag (true = rake/gable end, no gutter). */
+  gableEdges: boolean[];
+  onToggleGableEdge: (i: number) => void;
 }) {
   const sheets = planSource.sheets ?? [];
   const pageCount =
@@ -221,7 +226,22 @@ export function PdfPlanView({
       return;
     }
     if (tool === "outline") {
-      // Click near the first vertex closes the polygon.
+      // After the polygon is closed, a click toggles the nearest edge
+      // between EAVE (gutter) and GABLE (rake).
+      if (outline.length >= 3 && draftOutline.length === 0) {
+        let best = -1;
+        let bestD = Infinity;
+        for (let i = 0; i < outline.length; i++) {
+          const d = distToSeg(p, outline[i], outline[(i + 1) % outline.length]);
+          if (d < bestD) {
+            bestD = d;
+            best = i;
+          }
+        }
+        if (best >= 0 && bestD < view.w / 40) onToggleGableEdge(best);
+        return;
+      }
+      // Otherwise we're still tracing — click near the first vertex closes it.
       if (draftOutline.length >= 3 && dist(p, draftOutline[0]) < view.w / 40) {
         onOutlineChange(draftOutline);
         setDraftOutline([]);
@@ -429,7 +449,7 @@ export function PdfPlanView({
             {draftOutline.length > 0
               ? `Outline: ${draftOutline.length} corner${draftOutline.length === 1 ? "" : "s"} — click the first dot (or Enter) to close`
               : outline.length > 0
-                ? `Building outline traced (${outline.length} corners)`
+                ? `Outline traced (${outline.length} corners). Click any edge to mark it a GABLE (no gutter) — gable edges turn amber.`
                 : "Click each corner of the building outline; close the loop to finish."}
           </span>
           {draftOutline.length >= 3 && (
@@ -545,18 +565,35 @@ export function PdfPlanView({
             onState={setState}
           />
 
-          {/* Committed building outline (closed footprint polygon) */}
+          {/* Committed building outline (closed footprint polygon). Each edge
+              is colored EAVE (sky, gutter) or GABLE (amber dashed, rake) so
+              the contractor sets which faces get a gutter before applying. */}
           {outline.length >= 2 && (
             <g>
               <polygon
                 points={outline.map((p) => `${p.x},${p.y}`).join(" ")}
-                fill="rgba(56,189,248,0.10)"
-                stroke="#0284c7"
-                strokeWidth={sw * 1.3}
-                strokeLinejoin="round"
+                fill="rgba(56,189,248,0.08)"
+                stroke="none"
               />
+              {outline.map((p, i) => {
+                const q = outline[(i + 1) % outline.length];
+                const isGable = gableEdges[i] === true;
+                return (
+                  <line
+                    key={`oe-${i}`}
+                    x1={p.x}
+                    y1={p.y}
+                    x2={q.x}
+                    y2={q.y}
+                    stroke={isGable ? "#f59e0b" : "#0284c7"}
+                    strokeWidth={sw * 1.5}
+                    strokeDasharray={isGable ? `${sw * 2.5} ${sw * 2}` : undefined}
+                    strokeLinecap="round"
+                  />
+                );
+              })}
               {outline.map((p, i) => (
-                <circle key={i} cx={p.x} cy={p.y} r={dot * 0.55} fill="#0284c7" />
+                <circle key={`ov-${i}`} cx={p.x} cy={p.y} r={dot * 0.55} fill="#0284c7" />
               ))}
             </g>
           )}
@@ -710,9 +747,11 @@ export function PdfPlanView({
                 ? "Click the eave's end · Esc to cancel"
                 : "Click the start of an eave run"
               : tool === "outline"
-                ? draftOutline.length === 0
-                  ? "Click each corner of the building outline"
-                  : "Click the next corner · click the first dot (or Enter) to close · Backspace undo"
+                ? draftOutline.length > 0
+                  ? "Click the next corner · click the first dot (or Enter) to close · Backspace undo"
+                  : outline.length > 0
+                    ? "Click an edge to toggle EAVE ⇄ GABLE · then Apply as footprint"
+                    : "Click each corner of the building outline"
                 : "Drag to pan · scroll to zoom · click a run to select"}
         </div>
 

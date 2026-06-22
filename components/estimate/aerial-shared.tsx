@@ -717,6 +717,7 @@ export function RoofStructureOverlay({
         valleys: structure.valleys.map((l) => ({ points: l.points })),
         gables: [] as { points: { x: number; y: number }[] }[],
         dormers: [] as Dormer[],
+        faces: [] as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
       };
     }
     // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
@@ -807,10 +808,42 @@ export function RoofStructureOverlay({
   const chipFill = onDark ? "rgba(2,6,23,0.78)" : "rgba(255,255,255,0.92)";
   const chipStroke = onDark ? "rgba(148,163,184,0.45)" : "rgba(30,58,138,0.35)";
 
+  // Shade each roof PLANE by how much its slope faces the light (top-left),
+  // so the roof reads as a solid 3D mass — the look of a real roof report,
+  // not a flat outline with a few dashes. A face sloping down toward the
+  // light is brighter; the far slopes go darker.
+  const LX = -0.45;
+  const LY = -1;
+  const Lmag = Math.hypot(LX, LY);
+  const faceFill = (d: { x: number; y: number }): string => {
+    const m = Math.hypot(d.x, d.y) || 1;
+    const b = (d.x * LX + d.y * LY) / (m * Lmag); // -1..1
+    if (onDark) {
+      const g = Math.round(74 + 34 * b);
+      return `rgb(${g},${g + 6},${g + 13})`;
+    }
+    const g = Math.round(225 + 24 * b);
+    return `rgb(${g},${g - 3},${g - 9})`;
+  };
+  const faceEdge = onDark ? "rgba(15,23,42,0.55)" : "rgba(90,90,90,0.28)";
+
   return (
     <g pointerEvents="none">
       {/* Filled roof shape so the building reads as a solid mass */}
       <path d={closedPathD(structure.perimeter)} fill={fill} stroke="none" />
+      {/* Shaded roof PLANES (the surfaces between ridges/hips and the eaves) */}
+      {skel.faces.map((f, i) =>
+        f.polygon.length >= 3 ? (
+          <polygon
+            key={`face-${i}`}
+            points={f.polygon.map((p) => `${p.x},${p.y}`).join(" ")}
+            fill={faceFill(f.downhill)}
+            stroke={faceEdge}
+            strokeWidth={0.5 * scale}
+            strokeLinejoin="round"
+          />
+        ) : null,
+      )}
       {/* Interior roof-plane lines, under the perimeter + the trace */}
       {lines.map((l, i) => (
         <path

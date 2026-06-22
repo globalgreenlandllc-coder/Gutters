@@ -37,6 +37,11 @@
 export type Pt = { x: number; y: number };
 export type Seg = [Pt, Pt];
 export type SkeletonLine = { points: [Pt, Pt] };
+/** A single roof PLANE (the surface between a ridge/hip and its eave).
+ *  `downhill` is the unit 2D direction the plane slopes DOWN toward its
+ *  eave — used to shade it (faces away from the light read darker) so the
+ *  roof reads as solid 3D, and to lift it to pitch in the 3D view. */
+export type RoofFace = { polygon: Pt[]; downhill: Pt };
 export type RoofSkeleton = {
   ridges: SkeletonLine[];
   hips: SkeletonLine[];
@@ -45,9 +50,17 @@ export type RoofSkeleton = {
    *  ridge runs flush to these so the gable reads as part of the connected
    *  roof; callers can label them. */
   gables: SkeletonLine[];
+  /** The roof PLANES (shaded surfaces) tiling the footprint. */
+  faces: RoofFace[];
 };
 
-const EMPTY: RoofSkeleton = { ridges: [], hips: [], valleys: [], gables: [] };
+const EMPTY: RoofSkeleton = {
+  ridges: [],
+  hips: [],
+  valleys: [],
+  gables: [],
+  faces: [],
+};
 
 export function isFinitePt(p: Pt | undefined | null): p is Pt {
   return !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -188,17 +201,20 @@ function sideIsInterior(
 function rectRoof(
   r: Rect,
   flush: { top: boolean; bottom: boolean; left: boolean; right: boolean },
-): { ridges: SkeletonLine[]; hips: SkeletonLine[] } {
+): { ridges: SkeletonLine[]; hips: SkeletonLine[]; faces: RoofFace[] } {
   const w = r.x1 - r.x0;
   const h = r.y1 - r.y0;
-  if (w <= 0 || h <= 0) return { ridges: [], hips: [] };
+  if (w <= 0 || h <= 0) return { ridges: [], hips: [], faces: [] };
   const ridges: SkeletonLine[] = [];
   const hips: SkeletonLine[] = [];
+  const faces: RoofFace[] = [];
 
   // Ridge runs along the LONGER dimension. inset = half the SHORTER
   // dimension gives 45° hips. A HIP end is inset (with two hip diagonals);
   // a FLUSH end — a gable end, or a wall shared with a neighbour wing —
-  // runs the ridge out to the wall with NO hip there.
+  // runs the ridge out to the wall with NO hip there. The roof PLANES are
+  // the slabs between the ridge/hips and each eave (two trapezoids along
+  // the ridge + a triangle at each hipped end).
   if (w >= h) {
     const yc = (r.y0 + r.y1) / 2;
     const inset = h / 2;
@@ -210,13 +226,48 @@ function rectRoof(
     // hips already meet at the apex — there is no ridge line to draw.
     if (hi - lo > 1e-6)
       ridges.push({ points: [{ x: lo, y: yc }, { x: hi, y: yc }] });
+    // Top + bottom slabs slope down to the y0 / y1 eaves.
+    faces.push({
+      polygon: [
+        { x: r.x0, y: r.y0 },
+        { x: r.x1, y: r.y0 },
+        { x: rightEnd, y: yc },
+        { x: leftEnd, y: yc },
+      ],
+      downhill: { x: 0, y: -1 },
+    });
+    faces.push({
+      polygon: [
+        { x: r.x0, y: r.y1 },
+        { x: leftEnd, y: yc },
+        { x: rightEnd, y: yc },
+        { x: r.x1, y: r.y1 },
+      ],
+      downhill: { x: 0, y: 1 },
+    });
     if (!flush.left) {
       hips.push({ points: [{ x: leftEnd, y: yc }, { x: r.x0, y: r.y0 }] });
       hips.push({ points: [{ x: leftEnd, y: yc }, { x: r.x0, y: r.y1 }] });
+      faces.push({
+        polygon: [
+          { x: r.x0, y: r.y0 },
+          { x: leftEnd, y: yc },
+          { x: r.x0, y: r.y1 },
+        ],
+        downhill: { x: -1, y: 0 },
+      });
     }
     if (!flush.right) {
       hips.push({ points: [{ x: rightEnd, y: yc }, { x: r.x1, y: r.y0 }] });
       hips.push({ points: [{ x: rightEnd, y: yc }, { x: r.x1, y: r.y1 }] });
+      faces.push({
+        polygon: [
+          { x: r.x1, y: r.y0 },
+          { x: r.x1, y: r.y1 },
+          { x: rightEnd, y: yc },
+        ],
+        downhill: { x: 1, y: 0 },
+      });
     }
   } else {
     const xc = (r.x0 + r.x1) / 2;
@@ -227,16 +278,50 @@ function rectRoof(
     const hi = Math.max(topEnd, botEnd);
     if (hi - lo > 1e-6)
       ridges.push({ points: [{ x: xc, y: lo }, { x: xc, y: hi }] });
+    faces.push({
+      polygon: [
+        { x: r.x0, y: r.y0 },
+        { x: xc, y: topEnd },
+        { x: xc, y: botEnd },
+        { x: r.x0, y: r.y1 },
+      ],
+      downhill: { x: -1, y: 0 },
+    });
+    faces.push({
+      polygon: [
+        { x: r.x1, y: r.y0 },
+        { x: r.x1, y: r.y1 },
+        { x: xc, y: botEnd },
+        { x: xc, y: topEnd },
+      ],
+      downhill: { x: 1, y: 0 },
+    });
     if (!flush.top) {
       hips.push({ points: [{ x: xc, y: topEnd }, { x: r.x0, y: r.y0 }] });
       hips.push({ points: [{ x: xc, y: topEnd }, { x: r.x1, y: r.y0 }] });
+      faces.push({
+        polygon: [
+          { x: r.x0, y: r.y0 },
+          { x: r.x1, y: r.y0 },
+          { x: xc, y: topEnd },
+        ],
+        downhill: { x: 0, y: -1 },
+      });
     }
     if (!flush.bottom) {
       hips.push({ points: [{ x: xc, y: botEnd }, { x: r.x0, y: r.y1 }] });
       hips.push({ points: [{ x: xc, y: botEnd }, { x: r.x1, y: r.y1 }] });
+      faces.push({
+        polygon: [
+          { x: r.x0, y: r.y1 },
+          { x: xc, y: botEnd },
+          { x: r.x1, y: r.y1 },
+        ],
+        downhill: { x: 0, y: 1 },
+      });
     }
   }
-  return { ridges, hips };
+  return { ridges, hips, faces };
 }
 
 /** Does an eave segment run ALONG this axis-aligned rectangle side? Used to
@@ -753,6 +838,7 @@ export function deriveRoofSkeleton(
     const ridges: SkeletonLine[] = [];
     const hips: SkeletonLine[] = [];
     const gables: SkeletonLine[] = [];
+    const faces: RoofFace[] = [];
     const single = rects.length === 1 && rectCells.length <= 1;
     for (let k = 0; k < rects.length; k++) {
       const r = rects[k];
@@ -801,6 +887,7 @@ export function deriveRoofSkeleton(
       const rr = rectRoof(r, flush);
       ridges.push(...rr.ridges);
       hips.push(...rr.hips);
+      faces.push(...rr.faces);
     }
 
     const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12));
@@ -827,7 +914,7 @@ export function deriveRoofSkeleton(
     );
     ridges.push(...connectors);
 
-    return { ridges, hips, valleys, gables: mergedGables };
+    return { ridges, hips, valleys, gables: mergedGables, faces };
   } catch {
     return EMPTY;
   }
