@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Hand,
+  Hexagon,
   Maximize2,
   Loader2,
   Pencil,
@@ -19,7 +20,7 @@ import { PdfPageImage } from "./pdf-page-image";
 
 type Pt = { x: number; y: number };
 type Sheet = { pageIndex: number; label: string };
-type Tool = "pan" | "scale" | "draw";
+type Tool = "pan" | "scale" | "draw" | "outline";
 
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 const mid = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
@@ -56,6 +57,9 @@ export function PdfPlanView({
   runs,
   onRunsChange,
   onApply,
+  outline,
+  onOutlineChange,
+  onApplyOutline,
 }: {
   planSource: {
     pdfUrl: string;
@@ -71,6 +75,11 @@ export function PdfPlanView({
   onRunsChange: (runs: Pt[][]) => void;
   /** Commit the drawn runs as the priced takeoff. */
   onApply: () => void;
+  /** Traced building-outline polygon (closed) in canvas space, or []. */
+  outline: Pt[];
+  onOutlineChange: (outline: Pt[]) => void;
+  /** Commit the traced outline as the footprint (re-derives the roof). */
+  onApplyOutline: () => void;
 }) {
   const sheets = planSource.sheets ?? [];
   const pageCount =
@@ -88,6 +97,8 @@ export function PdfPlanView({
   const [pendingStart, setPendingStart] = useState<Pt | null>(null);
   const [cursor, setCursor] = useState<Pt | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  // In-progress building outline (vertices, not yet closed).
+  const [draftOutline, setDraftOutline] = useState<Pt[]>([]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const down = useRef<{
@@ -111,6 +122,16 @@ export function PdfPlanView({
         setPendingStart(null);
         setScalePts([]);
         setCursor(null);
+        setDraftOutline([]);
+      } else if (e.key === "Enter" && draftOutline.length >= 3) {
+        onOutlineChange(draftOutline);
+        setDraftOutline([]);
+        setCursor(null);
+      } else if (
+        (e.key === "Backspace" || e.key === "Delete") &&
+        draftOutline.length > 0
+      ) {
+        setDraftOutline((d) => d.slice(0, -1));
       } else if (
         (e.key === "Backspace" || e.key === "Delete") &&
         selected != null
@@ -121,7 +142,7 @@ export function PdfPlanView({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, runs, onRunsChange]);
+  }, [selected, runs, onRunsChange, draftOutline, onOutlineChange]);
 
   const toVB = (clientX: number, clientY: number): Pt => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -157,10 +178,11 @@ export function PdfPlanView({
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Live rubber-band for scale/draw, regardless of drag state.
+    // Live rubber-band for scale/draw/outline, regardless of drag state.
     if (
       (tool === "draw" && pendingStart) ||
-      (tool === "scale" && scalePts.length === 1)
+      (tool === "scale" && scalePts.length === 1) ||
+      (tool === "outline" && draftOutline.length > 0)
     ) {
       setCursor(toVB(e.clientX, e.clientY));
     }
@@ -195,6 +217,17 @@ export function PdfPlanView({
         onRunsChange([...runs, [pendingStart, p]]);
         setPendingStart(null);
         setCursor(null);
+      }
+      return;
+    }
+    if (tool === "outline") {
+      // Click near the first vertex closes the polygon.
+      if (draftOutline.length >= 3 && dist(p, draftOutline[0]) < view.w / 40) {
+        onOutlineChange(draftOutline);
+        setDraftOutline([]);
+        setCursor(null);
+      } else {
+        setDraftOutline((d) => [...d, p]);
       }
       return;
     }
@@ -323,6 +356,18 @@ export function PdfPlanView({
         >
           <Pencil size={13} /> Draw eaves
         </button>
+        <button
+          type="button"
+          className={toolBtn(tool === "outline")}
+          title="Trace the building outline → the roof shape"
+          onClick={() => {
+            setTool("outline");
+            setPendingStart(null);
+            setSelected(null);
+          }}
+        >
+          <Hexagon size={13} /> Trace outline
+        </button>
 
         <span className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
 
@@ -375,6 +420,66 @@ export function PdfPlanView({
           <Check size={13} /> Apply to estimate
         </button>
       </div>
+
+      {/* Outline status + apply (shown while tracing the building outline) */}
+      {(tool === "outline" || outline.length > 0 || draftOutline.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-xs dark:border-sky-800 dark:bg-sky-950/40">
+          <Hexagon size={13} className="text-sky-600 dark:text-sky-300" />
+          <span className="font-medium text-sky-800 dark:text-sky-200">
+            {draftOutline.length > 0
+              ? `Outline: ${draftOutline.length} corner${draftOutline.length === 1 ? "" : "s"} — click the first dot (or Enter) to close`
+              : outline.length > 0
+                ? `Building outline traced (${outline.length} corners)`
+                : "Click each corner of the building outline; close the loop to finish."}
+          </span>
+          {draftOutline.length >= 3 && (
+            <button
+              type="button"
+              className="rounded-md bg-sky-600 px-2.5 py-1 font-semibold text-white hover:bg-sky-700"
+              onClick={() => {
+                onOutlineChange(draftOutline);
+                setDraftOutline([]);
+                setCursor(null);
+              }}
+            >
+              Close outline
+            </button>
+          )}
+          {draftOutline.length > 0 && (
+            <button
+              type="button"
+              className={plainBtn}
+              onClick={() => setDraftOutline((d) => d.slice(0, -1))}
+            >
+              <Undo2 size={13} /> Undo corner
+            </button>
+          )}
+          {outline.length > 0 && draftOutline.length === 0 && (
+            <>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2.5 py-1 font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!scalePxPerFt}
+                onClick={onApplyOutline}
+                title={
+                  !scalePxPerFt
+                    ? "Set the scale first (the outline edges become priced eaves)"
+                    : "Use this outline as the building footprint (rebuilds the roof)"
+                }
+              >
+                <Check size={13} /> Apply as footprint
+              </button>
+              <button
+                type="button"
+                className={plainBtn}
+                onClick={() => onOutlineChange([])}
+              >
+                <Trash2 size={13} /> Clear outline
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Calibration feet input */}
       {tool === "scale" && scalePts.length === 2 && (
@@ -439,6 +544,62 @@ export function PdfPlanView({
             pageIndex={page}
             onState={setState}
           />
+
+          {/* Committed building outline (closed footprint polygon) */}
+          {outline.length >= 2 && (
+            <g>
+              <polygon
+                points={outline.map((p) => `${p.x},${p.y}`).join(" ")}
+                fill="rgba(56,189,248,0.10)"
+                stroke="#0284c7"
+                strokeWidth={sw * 1.3}
+                strokeLinejoin="round"
+              />
+              {outline.map((p, i) => (
+                <circle key={i} cx={p.x} cy={p.y} r={dot * 0.55} fill="#0284c7" />
+              ))}
+            </g>
+          )}
+
+          {/* In-progress outline trace */}
+          {tool === "outline" && draftOutline.length > 0 && (
+            <g>
+              <polyline
+                points={[...draftOutline, ...(cursor ? [cursor] : [])]
+                  .map((p) => `${p.x},${p.y}`)
+                  .join(" ")}
+                fill="none"
+                stroke="#0284c7"
+                strokeWidth={sw * 1.3}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+              {/* close-preview back to the first corner */}
+              {draftOutline.length >= 2 && cursor && (
+                <line
+                  x1={cursor.x}
+                  y1={cursor.y}
+                  x2={draftOutline[0].x}
+                  y2={draftOutline[0].y}
+                  stroke="#0284c7"
+                  strokeWidth={sw}
+                  strokeDasharray={`${sw * 2} ${sw * 2}`}
+                  opacity={0.5}
+                />
+              )}
+              {draftOutline.map((p, i) => (
+                <circle
+                  key={i}
+                  cx={p.x}
+                  cy={p.y}
+                  r={dot * (i === 0 ? 0.85 : 0.55)}
+                  fill={i === 0 ? "#0ea5e9" : "#0284c7"}
+                  stroke={i === 0 ? "#ffffff" : undefined}
+                  strokeWidth={i === 0 ? dot * 0.2 : 0}
+                />
+              ))}
+            </g>
+          )}
 
           {/* Finished eave runs */}
           {runs.map((r, i) => (
@@ -548,7 +709,11 @@ export function PdfPlanView({
               ? pendingStart
                 ? "Click the eave's end · Esc to cancel"
                 : "Click the start of an eave run"
-              : "Drag to pan · scroll to zoom · click a run to select"}
+              : tool === "outline"
+                ? draftOutline.length === 0
+                  ? "Click each corner of the building outline"
+                  : "Click the next corner · click the first dot (or Enter) to close · Backspace undo"
+                : "Drag to pan · scroll to zoom · click a run to select"}
         </div>
 
         {state === "loading" && (

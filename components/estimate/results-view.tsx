@@ -54,6 +54,11 @@ export function ResultsView({
   // switches; committed to the priced eaves via applyPlanTrace().
   const [planScale, setPlanScale] = useState<number | null>(null);
   const [planRuns, setPlanRuns] = useState<{ x: number; y: number }[][]>([]);
+  // Building outline traced on the Plan sheet → the footprint (roof shape).
+  const [planOutline, setPlanOutline] = useState<{ x: number; y: number }[]>([]);
+  // Roof outline/skeleton, lifted to state so a traced outline can replace
+  // the AI's box footprint and the Roof plan re-derives an accurate roof.
+  const [roofStructure, setRoofStructure] = useState(initial.roofStructure);
 
   const applyPlanTrace = () => {
     if (!planScale || planRuns.length === 0) return;
@@ -66,8 +71,39 @@ export function ResultsView({
     setCanvasPxPerFt(planScale);
     setViewMode("plan");
   };
+
+  const applyOutline = () => {
+    if (!planScale || planOutline.length < 3) return;
+    // The traced polygon becomes the footprint (roof shape). Eaves come from
+    // the separately-traced runs when present, else from the outline edges
+    // (all priced as eaves — gable faces get deleted on the Roof plan tab).
+    // Both are in the same Plan-sheet canvas space, so they stay aligned.
+    const n = planOutline.length;
+    const lines: EditableLine[] =
+      planRuns.length > 0
+        ? planRuns.map((r, i) => ({
+            id: `plan-trace-${i}`,
+            kind: "eave",
+            points: r,
+          }))
+        : planOutline.map((p, i) => ({
+            id: `outline-eave-${i}`,
+            kind: "eave",
+            points: [p, planOutline[(i + 1) % n]],
+          }));
+    setEaves(lines);
+    setCanvasPxPerFt(planScale);
+    setRoofStructure({
+      perimeter: planOutline,
+      ridges: [],
+      valleys: [],
+      hips: [],
+      confidence: 1,
+    });
+    setViewMode("plan");
+  };
   const can3d =
-    (initial.roofStructure?.perimeter?.filter(
+    (roofStructure?.perimeter?.filter(
       (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
     ).length ?? 0) >= 3;
   // Story count is editable from the property header — homeowners
@@ -110,7 +146,7 @@ export function ResultsView({
     eaves,
     rakes: initial.rakes,
     downspouts,
-    roofStructure: initial.roofStructure,
+    roofStructure,
     aerial: initial.aerial,
     canvasPxPerFt,
   };
@@ -205,13 +241,16 @@ export function ResultsView({
                   runs={planRuns}
                   onRunsChange={setPlanRuns}
                   onApply={applyPlanTrace}
+                  outline={planOutline}
+                  onOutlineChange={setPlanOutline}
+                  onApplyOutline={applyOutline}
                 />
               ) : viewMode === "3d" && can3d ? (
                 <Massing3D
                   eaves={eaves}
                   rakes={initial.rakes}
                   downspouts={downspouts}
-                  roofStructure={initial.roofStructure}
+                  roofStructure={roofStructure}
                   planSource={initial.planSource}
                   stories={stories}
                 />
@@ -224,7 +263,7 @@ export function ResultsView({
                   onDownspoutsChange={setDownspouts}
                   aerialImageUrl={initial.aerial?.imageDataUrl}
                   planSource={initial.planSource}
-                  roofStructure={initial.roofStructure}
+                  roofStructure={roofStructure}
                   pxPerFt={canvasPxPerFt}
                   armDrawNonce={drawNonce}
                 />
