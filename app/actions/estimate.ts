@@ -5,10 +5,7 @@ import { db } from "@/lib/db";
 import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
 import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
-import {
-  extractBuildingOutline,
-  outlineEdgesToRuns,
-} from "@/lib/ai/outline-from-vectors";
+import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -260,49 +257,58 @@ export async function runEstimateFromPlan(
   try {
     const aj = row.analysisJson as {
       _vectorGeometry?: { footprint?: { segments?: number[][] } };
-      _classifier?: {
-        classification?: {
-          building_dimensions?: { width_ft?: number | null; depth_ft?: number | null };
-        };
-      };
     } | null;
     const segs = aj?._vectorGeometry?.footprint?.segments;
     if (Array.isArray(segs) && segs.length >= 4) {
       const outline = extractBuildingOutline(segs);
-      // Sanity: a real footprint is a handful of corners, not a blob.
-      if (outline && outline.polygon.length >= 4 && outline.polygon.length <= 40) {
-        const bb = outline.bbox;
-        const dims = aj?._classifier?.classification?.building_dimensions;
-        const maxFt = Math.max(dims?.width_ft ?? 0, dims?.depth_ft ?? 0);
-        const maxPt = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0);
-        const ptPerFt = maxFt > 0 && maxPt > 0 ? maxPt / maxFt : null;
-        const aiRuns = (analysis.gutter_runs ?? []).map((r) => ({
-          start: r.start,
-          end: r.end,
-          tier: r.tier,
-          feature: r.feature,
-          side: r.side,
-        }));
-        const edges = outlineEdgesToRuns(outline.polygon, aiRuns);
-        analysis.building_footprint = outline.polygon.map((p) => ({ x: p.x, y: p.y }));
-        analysis.gutter_runs = edges.map((e, i) => {
-          const len = Math.hypot(e.end.x - e.start.x, e.end.y - e.start.y);
-          return {
-            id: `veave-${i}`,
-            side: (e.side ?? "front") as BlueprintAnalysis["gutter_runs"][number]["side"],
-            start: e.start,
-            end: e.end,
-            length_px: len,
-            length_ft: ptPerFt ? Math.round((len / ptPerFt) * 10) / 10 : null,
-            drains_to: [],
-            tier: e.tier as BlueprintAnalysis["gutter_runs"][number]["tier"],
-            feature: e.feature as BlueprintAnalysis["gutter_runs"][number]["feature"],
-          };
-        });
-        analysis.notes = [
-          ...(analysis.notes ?? []),
-          `Roof outline copied from the plan's vector layer (${outline.polygon.length} corners) — gutters inherit the AI's tier/porch labels; trim any gable faces on the canvas.`,
-        ];
+      // Only copy the outline when it actually adds ARTICULATION (a real jog /
+      // wing — more than a plain rectangle). A 4-corner box is no better than
+      // the AI's footprint and copying it would only risk dropping the AI's
+      // eave/gable read. CRUCIALLY we keep the AI's eave-vs-gable + tier
+      // classification — we align it onto the copied outline (per-axis), not
+      // flatten everything to eaves (which forced a wrong HIP roof before).
+      if (outline && outline.polygon.length > 4 && outline.polygon.length <= 60) {
+        const poly = outline.polygon;
+        const pbb = outline.bbox;
+        const aiPts = [
+          ...analysis.gutter_runs.flatMap((r) => [r.start, r.end]),
+          ...(analysis.excluded_edges ?? []).flatMap((e) => [e.start, e.end]),
+        ].filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (aiPts.length >= 2) {
+          let ax0 = Infinity, ay0 = Infinity, ax1 = -Infinity, ay1 = -Infinity;
+          for (const p of aiPts) {
+            ax0 = Math.min(ax0, p.x); ay0 = Math.min(ay0, p.y);
+            ax1 = Math.max(ax1, p.x); ay1 = Math.max(ay1, p.y);
+          }
+          const sx = (pbb.x1 - pbb.x0) / Math.max(1e-6, ax1 - ax0);
+          const sy = (pbb.y1 - pbb.y0) / Math.max(1e-6, ay1 - ay0);
+          // Map AI geometry onto the outline's bbox so eaves land on the real
+          // edges (the skeleton classifies each side from where eaves sit).
+          const T = (p: { x: number; y: number }) => ({
+            x: pbb.x0 + (p.x - ax0) * sx,
+            y: pbb.y0 + (p.y - ay0) * sy,
+          });
+          analysis.building_footprint = poly.map((p) => ({ x: p.x, y: p.y }));
+          analysis.gutter_runs = analysis.gutter_runs.map((r) => ({
+            ...r,
+            start: T(r.start),
+            end: T(r.end),
+            length_px: Math.hypot(T(r.end).x - T(r.start).x, T(r.end).y - T(r.start).y),
+          }));
+          analysis.excluded_edges = (analysis.excluded_edges ?? []).map((e) => ({
+            ...e,
+            start: T(e.start),
+            end: T(e.end),
+          }));
+          analysis.downspouts = (analysis.downspouts ?? []).map((d) => ({
+            ...d,
+            at: T(d.at),
+          }));
+          analysis.notes = [
+            ...(analysis.notes ?? []),
+            `Footprint shape copied from the plan's vector outline (${poly.length} corners); the AI's eave/gable/tier classification kept.`,
+          ];
+        }
       }
     }
   } catch {

@@ -904,7 +904,10 @@ export type PlanSource =
     }
   | { kind: "image-url"; url: string };
 
-const MODEL = "claude-sonnet-4-6";
+// Geometry/roof read runs on the STRONGEST vision model — dense framing plans
+// reward the extra reasoning (Sonnet flattened complex roofs to a box). Stage 1
+// classification stays on Haiku (cheap structured work).
+const MODEL = "claude-opus-4-8";
 
 // ── Forced structured output ──────────────────────────────────────
 // Sonnet 4.6 does not support assistant prefill, so we can't force the
