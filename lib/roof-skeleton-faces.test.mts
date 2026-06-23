@@ -69,6 +69,26 @@ test("rectangle with gable ends (left/right rakes) → 2 faces, full-width ridge
   );
 });
 
+test("gable-end sides with only LOW corner returns → gable roof, not a hip", () => {
+  // 2-story gable body: full eaves on top+bottom (N/S), but the left+right
+  // (E/W) sides carry ONLY a short porch/patio RETURN clipping a corner — the
+  // gable face (middle) is bare. Must read as a GABLE roof (2 planes), not a
+  // hip (4 planes). This is the Woodinville bug.
+  const W = 120;
+  const H = 60;
+  const r = rect(W, H);
+  const eaves: [Pt, Pt][] = [
+    [{ x: 0, y: 0 }, { x: W, y: 0 }], // full top eave
+    [{ x: 0, y: H }, { x: W, y: H }], // full bottom eave
+    [{ x: 0, y: 0 }, { x: 0, y: 12 }], // left: short porch return at the top
+    [{ x: W, y: H - 12 }, { x: W, y: H }], // right: short patio return at the bottom
+  ];
+  const skel = deriveRoofSkeleton(r, { eaveSegments: eaves });
+  assert.equal(skel.faces.length, 2, "gable roof (2 planes), not a hip (4)");
+  const dirs = skel.faces.map((f) => `${f.downhill.x},${f.downhill.y}`).sort();
+  assert.deepEqual(dirs, ["0,-1", "0,1"], "the two slopes drain N + S");
+});
+
 test("never throws; degenerate input → no faces", () => {
   assert.deepEqual(deriveRoofSkeleton([] as Pt[]).faces, []);
   assert.deepEqual(

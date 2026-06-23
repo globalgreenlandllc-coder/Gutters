@@ -401,6 +401,39 @@ function sideEaveCoverage(
   return total / span;
 }
 
+/** Is the MIDDLE of a side covered by an eave? A genuine eave side runs a
+ *  continuous eave across its middle; a GABLE END is bare in the middle (the
+ *  gable face carries no gutter) with at most short end-returns (a low
+ *  porch/patio drip clipping the corners). This is what distinguishes a
+ *  gable-end-with-returns from a real eave side — total coverage alone can't. */
+function sideMiddleHasEave(
+  axis: "h" | "v",
+  fixed: number,
+  lo: number,
+  hi: number,
+  eaves: readonly Seg[],
+  tol: number,
+): boolean {
+  const span = hi - lo;
+  if (span <= 0) return false;
+  const mid = (lo + hi) / 2;
+  for (const [a, b] of eaves) {
+    let elo: number;
+    let ehi: number;
+    if (axis === "v") {
+      if (Math.abs(a.x - fixed) > tol || Math.abs(b.x - fixed) > tol) continue;
+      elo = Math.min(a.y, b.y);
+      ehi = Math.max(a.y, b.y);
+    } else {
+      if (Math.abs(a.y - fixed) > tol || Math.abs(b.y - fixed) > tol) continue;
+      elo = Math.min(a.x, b.x);
+      ehi = Math.max(a.x, b.x);
+    }
+    if (elo <= mid + tol && ehi >= mid - tol) return true;
+  }
+  return false;
+}
+
 /** Cross-product sign at vertex b for the ring a→b→c. Sign tells convex
  *  vs reflex once we know the ring's winding. */
 function cross(a: Pt, b: Pt, c: Pt): number {
@@ -862,10 +895,16 @@ export function deriveRoofSkeleton(
         // PARTIAL eave (a lower porch on a gable-end side) does NOT veto it.
         if (sideEaveCoverage(axis, fixed, lo, hi, eaveSegs, eaveTol) > 0.6)
           return false;
-        return (
-          sideHasEave(axis, fixed, lo, hi, rakeSegs, eaveTol) ||
-          (useEaves && !sideHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol))
-        );
+        // An explicit rake along the side is a gable end (AI classification).
+        if (sideHasEave(axis, fixed, lo, hi, rakeSegs, eaveTol)) return true;
+        if (!useEaves) return false;
+        // No rake + not a full eave: it's a GABLE END when the MIDDLE of the
+        // side (the gable face) carries no gutter. This is the key fix for a
+        // 2-story gable body whose gable-end sides only have a LOW porch/patio
+        // RETURN eave clipping the corners — total coverage is non-zero so the
+        // old "no eave at all" test missed it and drew a wrong HIP. A genuine
+        // eave side runs a continuous eave across its middle.
+        return !sideMiddleHasEave(axis, fixed, lo, hi, eaveSegs, eaveTol);
       };
       const SIDES = [
         { k: "top" as const, axis: "h" as const, fixed: r.y0, lo: r.x0, hi: r.x1, a: { x: r.x0, y: r.y0 }, b: { x: r.x1, y: r.y0 } },
