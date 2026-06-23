@@ -5,7 +5,7 @@ import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
 import {
-  blueprintFromPlanSources,
+  blueprintFromPlanSourcesBestOf,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
 import {
@@ -388,11 +388,14 @@ export async function POST(request: Request) {
             })
           : null;
 
-      // Stage 2: geometry trace, constrained by Stage 1 findings.
-      const result = await blueprintFromPlanSources([source], {
-        constraints,
-        vectorGeometry,
-      });
+      // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of-3
+      // ensemble — three independent Opus reads in parallel, keep the most
+      // complete / in-envelope one (kills the occasional collapsed trace).
+      const result = await blueprintFromPlanSourcesBestOf(
+        [source],
+        { constraints, vectorGeometry },
+        3,
+      );
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id: analysis.id },

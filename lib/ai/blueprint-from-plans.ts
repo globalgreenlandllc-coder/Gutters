@@ -1233,6 +1233,78 @@ export type BlueprintRunOptions = {
   vectorGeometry?: PlanVectors | null;
 };
 
+/**
+ * Heuristic quality score for a blueprint trace (higher = better) — used to
+ * pick the best of several independent Opus reads. Rewards valid, articulated,
+ * in-envelope geometry; punishes degenerate coords, collapsed footprints, and
+ * over-cap LF.
+ */
+export function scoreBlueprintAnalysis(
+  a: BlueprintAnalysis,
+  c?: GeometryConstraints,
+): number {
+  const fin = (p?: { x: number; y: number } | null) =>
+    !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const runs = a.gutter_runs ?? [];
+  const valid = runs.filter((r) => fin(r.start) && fin(r.end));
+  let s = 0;
+  s += valid.length * 2;
+  s -= (runs.length - valid.length) * 6; // bad coords are very bad
+  const fp = (a.building_footprint ?? []).filter(fin);
+  s += Math.min(fp.length, 16); // articulation, capped
+  if (c?.min_gutter_runs && c.min_gutter_runs > 0)
+    s -= Math.abs(valid.length - c.min_gutter_runs) * 1.5;
+  const totalLF = valid.reduce((t, r) => t + (r.length_ft ?? 0), 0);
+  if (totalLF <= 0) s -= 20; // no priced geometry at all
+  if (c?.max_total_eave_lf && totalLF > c.max_total_eave_lf)
+    s -= (totalLF - c.max_total_eave_lf) * 0.1 + 8;
+  s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
+  // A real footprint encloses area; a collapsed / single-dot trace doesn't.
+  if (fp.length >= 3) {
+    let area = 0;
+    for (let i = 0; i < fp.length; i++) {
+      const p = fp[i];
+      const q = fp[(i + 1) % fp.length];
+      area += p.x * q.y - q.x * p.y;
+    }
+    if (Math.abs(area) < 1) s -= 15;
+  }
+  return s;
+}
+
+/**
+ * Best-of-N ensemble: run the geometry read several times IN PARALLEL and keep
+ * the highest-scoring trace. Opus has no temperature pin, so independent reads
+ * vary — scoring + pick-best kills the occasional bad/collapsed trace and lands
+ * the most complete, in-envelope one. samples=1 is the plain single call.
+ */
+export async function blueprintFromPlanSourcesBestOf(
+  sources: PlanSource[],
+  opts: BlueprintRunOptions = {},
+  samples = 3,
+): Promise<BlueprintResult> {
+  const n = Math.max(1, Math.min(5, samples));
+  if (n === 1) return blueprintFromPlanSources(sources, opts);
+  const results = await Promise.all(
+    Array.from({ length: n }, () => blueprintFromPlanSources(sources, opts)),
+  );
+  const ok = results.filter(
+    (r): r is Extract<BlueprintResult, { ok: true }> => r.ok,
+  );
+  if (ok.length === 0) return results[0]; // all failed — surface the reason
+  ok.sort(
+    (a, b) =>
+      scoreBlueprintAnalysis(b.analysis, opts.constraints) -
+      scoreBlueprintAnalysis(a.analysis, opts.constraints),
+  );
+  const best = ok[0];
+  best.analysis.notes = [
+    ...(best.analysis.notes ?? []),
+    `Best of ${n} independent Opus reads — kept the most complete, in-envelope trace.`,
+  ];
+  return best;
+}
+
 export async function blueprintFromPlanSources(
   sources: PlanSource[],
   opts: BlueprintRunOptions = {},

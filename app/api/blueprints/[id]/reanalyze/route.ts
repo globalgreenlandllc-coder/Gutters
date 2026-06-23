@@ -5,7 +5,7 @@ import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
 import {
-  blueprintFromPlanSources,
+  blueprintFromPlanSourcesBestOf,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
 import {
@@ -206,10 +206,12 @@ export async function POST(
             })
           : null;
 
-      const result = await blueprintFromPlanSources([finalSource], {
-        constraints,
-        vectorGeometry,
-      });
+      // Best-of-3 ensemble: three independent Opus reads, keep the best.
+      const result = await blueprintFromPlanSourcesBestOf(
+        [finalSource],
+        { constraints, vectorGeometry },
+        3,
+      );
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id },
