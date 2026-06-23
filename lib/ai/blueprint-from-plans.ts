@@ -1322,7 +1322,8 @@ export async function blueprintFromPlanSources(
       // the case the cap was tuned tight for. If output still truncates,
       // the stop_reason branch below salvages the priced fields.
       max_tokens: 12000,
-      temperature: 0,
+      // NOTE: Opus 4.8 rejects `temperature` ("deprecated for this model"),
+      // so it's omitted — the model is deterministic enough here without it.
       system: [
         {
           type: "text",
