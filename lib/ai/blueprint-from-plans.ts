@@ -1202,7 +1202,11 @@ export function buildConstraintsBlock(c: GeometryConstraints | undefined): strin
   lines.push(
     "- PERIMETER CLOSURE — every side of the traced building_footprint " +
       "must be accounted for: covered by a gutter_run OR recorded as an " +
-      "excluded_edge with a kind + reason. A side in neither list means " +
+      "excluded_edge with a kind + reason. EXACTLY ONE, never BOTH: a wall " +
+      "segment must NOT appear in both gutter_runs and excluded_edges — a " +
+      "gable face is a rake (no gutter), an eave is a gutter, never the same " +
+      "edge as both (that double-classification breaks the roof solver). " +
+      "A side in neither list means " +
       "you silently dropped a wall — a common under-count. Coverage " +
       "is of perimeter length, not a 1:1 side count (merged/split runs are " +
       "fine). Classify each side from its elevation SHAPE (no hip-vs-gable " +

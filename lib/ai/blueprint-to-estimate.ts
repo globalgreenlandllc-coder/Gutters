@@ -401,10 +401,82 @@ export interface BlueprintToEstimateMeta {
   sheets?: { pageIndex: number; label: string }[];
 }
 
+/** True when two segments are collinear (within tol) AND overlap along their
+ *  shared direction — i.e. the SAME wall. Used to catch a wall the AI marked
+ *  as BOTH a gutter and a gable rake. */
+function segmentsCollinearOverlap(
+  a0: BlueprintPoint,
+  a1: BlueprintPoint,
+  b0: BlueprintPoint,
+  b1: BlueprintPoint,
+  tol: number,
+): boolean {
+  const adx = a1.x - a0.x;
+  const ady = a1.y - a0.y;
+  const alen = Math.hypot(adx, ady);
+  if (alen < 1e-6) return false;
+  const ux = adx / alen;
+  const uy = ady / alen;
+  const perp = (p: BlueprintPoint) =>
+    Math.abs((p.x - a0.x) * -uy + (p.y - a0.y) * ux);
+  if (perp(b0) > tol || perp(b1) > tol) return false; // not the same line
+  const proj = (p: BlueprintPoint) => (p.x - a0.x) * ux + (p.y - a0.y) * uy;
+  const bLo = Math.min(proj(b0), proj(b1));
+  const bHi = Math.max(proj(b0), proj(b1));
+  return Math.min(alen, bHi) - Math.max(0, bLo) > tol; // real overlap
+}
+
 export function blueprintToEstimateResult(
   analysis: BlueprintAnalysis,
   meta: BlueprintToEstimateMeta,
 ): EstimateResult {
+  // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
+  // gable rake. When the AI double-classifies an edge — a gutter_run that
+  // overlaps an excluded_edge rake — it renders a gutter AND a GABLE label on
+  // the same wall and hands the roof-skeleton solver contradictory input
+  // (wrong ridge direction). Drop the duplicate gutter and keep the explicit
+  // rake: that clears the visual conflict, fixes the skeleton, AND removes a
+  // phantom gutter pricing a gable face. Runs at load → no re-analyze needed.
+  {
+    const finite = (p?: BlueprintPoint | null) =>
+      !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+    const rakes = (analysis.excluded_edges ?? []).filter(
+      (e) =>
+        (e.kind === "rake" || e.kind === "dormer_rake") &&
+        finite(e.start) &&
+        finite(e.end),
+    );
+    if (rakes.length > 0 && analysis.gutter_runs.length > 0) {
+      const pts = [
+        ...analysis.gutter_runs.flatMap((r) => [r.start, r.end]),
+        ...rakes.flatMap((e) => [e.start, e.end]),
+      ].filter(finite);
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      const span = Math.max(
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...ys) - Math.min(...ys),
+        1,
+      );
+      const tol = Math.max(span * 0.025, 2);
+      const deduped = analysis.gutter_runs.filter((r) => {
+        if (!finite(r.start) || !finite(r.end)) return true;
+        return !rakes.some((e) =>
+          segmentsCollinearOverlap(r.start, r.end, e.start, e.end, tol),
+        );
+      });
+      if (deduped.length !== analysis.gutter_runs.length) {
+        analysis = {
+          ...analysis,
+          gutter_runs: deduped,
+          notes: [
+            ...(analysis.notes ?? []),
+            `Cleaned ${analysis.gutter_runs.length - deduped.length} gutter run(s) that overlapped a gable rake (a wall can't be both) — kept the gable.`,
+          ],
+        };
+      }
+    }
+  }
   // ONLY load-bearing geometry feeds the bbox: gutter_runs (what we
   // price + render solid) + downspouts (drainage points). The
   // building_footprint and excluded_edges fields are decorative — and
