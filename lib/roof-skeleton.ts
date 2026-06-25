@@ -461,7 +461,11 @@ function signedArea(poly: readonly Pt[]): number {
  * decorative-only, so an approximate direction on a rare angled corner is
  * acceptable — it never affects measurements.
  */
-function valleyLines(poly: readonly Pt[], reach: number): SkeletonLine[] {
+function valleyLines(
+  poly: readonly Pt[],
+  reach: number,
+  interior: readonly SkeletonLine[] = [],
+): SkeletonLine[] {
   const n = poly.length;
   if (n < 4) return [];
   const area = signedArea(poly);
@@ -487,11 +491,23 @@ function valleyLines(poly: readonly Pt[], reach: number): SkeletonLine[] {
     bx /= bl;
     by /= bl;
     // For a reflex corner the inward direction is the bisector NEGATED
-    // (the d1+d2 bisector points back out of the notch).
+    // (the d1+d2 bisector points back out of the notch). TERMINATE the
+    // valley where its inward ray first meets a ridge/hip — a real valley
+    // runs UP to the roof body and stops; a fixed-length stub that floats
+    // off into the middle of a plane is exactly the "random dashed line"
+    // that reads as noise. Fall back to `reach` only when nothing is hit.
+    const dir = { x: -bx, y: -by };
+    let bestT = Infinity;
+    for (const l of interior) {
+      const t = rayHitSeg(cur, dir, l.points[0], l.points[1]);
+      if (t !== null && t > 1e-6 && t < bestT) bestT = t;
+    }
+    const r = Number.isFinite(bestT) ? bestT : reach;
+    if (r <= 1e-6) continue;
     out.push({
       points: [
         { x: cur.x, y: cur.y },
-        { x: cur.x - bx * reach, y: cur.y - by * reach },
+        { x: cur.x + dir.x * r, y: cur.y + dir.y * r },
       ],
     });
   }
@@ -929,7 +945,12 @@ export function deriveRoofSkeleton(
       faces.push(...rr.faces);
     }
 
-    const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12));
+    // Valleys terminate on the ridges/hips already built (so they connect to
+    // the roof body instead of dangling); fall back to a short stub otherwise.
+    const valleys = valleyLines(ring, Math.max(tol * 2, span * 0.12), [
+      ...ridges,
+      ...hips,
+    ]);
 
     // Collapse the per-rectangle gable fragments into the real gable ends so
     // the overlay doesn't stack a "GABLE" label per fragment (the 8-pill pile).

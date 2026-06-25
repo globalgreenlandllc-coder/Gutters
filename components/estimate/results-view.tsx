@@ -312,6 +312,7 @@ export function ResultsView({
                   rakes={rakes}
                   downspouts={downspouts}
                   onEavesChange={setEaves}
+                  onRakesChange={setRakes}
                   onDownspoutsChange={setDownspouts}
                   aerialImageUrl={initial.aerial?.imageDataUrl}
                   planSource={initial.planSource}

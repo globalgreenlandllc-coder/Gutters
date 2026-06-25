@@ -52,6 +52,7 @@ export function AerialCanvas({
   rakes = [],
   downspouts,
   onEavesChange,
+  onRakesChange,
   onDownspoutsChange,
   aerialImageUrl,
   planSource,
@@ -65,6 +66,11 @@ export function AerialCanvas({
   rakes?: EditableLine[];
   downspouts: Downspout[];
   onEavesChange: (next: EditableLine[]) => void;
+  /** Reclassify a side EAVE⇄GABLE: an eave the AI guttered that's really a
+   *  gable end (no gutter) gets converted to a rake — drops its LF and
+   *  re-draws that side as a gable instead of a hip — and vice-versa. When
+   *  omitted, the reclassify affordance is hidden (rakes stay read-only). */
+  onRakesChange?: (next: EditableLine[]) => void;
   onDownspoutsChange: (next: Downspout[]) => void;
   aerialImageUrl?: string;
   /** Plan-based takeoffs: PDF reference for the canvas to rasterize as
@@ -280,6 +286,14 @@ export function AerialCanvas({
   const selectedDownspout = useMemo(
     () => downspouts.find((d) => d.id === selectedId) ?? null,
     [downspouts, selectedId],
+  );
+  const selectedIsEave = useMemo(
+    () => eaves.some((l) => l.id === selectedId),
+    [eaves, selectedId],
+  );
+  const selectedIsRake = useMemo(
+    () => rakes.some((l) => l.id === selectedId),
+    [rakes, selectedId],
   );
 
   // Recompute popover anchor whenever the selection or the view
@@ -506,9 +520,37 @@ export function AerialCanvas({
     if (!selectedId) return;
     if (eaves.some((l) => l.id === selectedId)) {
       onEavesChange(eaves.filter((l) => l.id !== selectedId));
+    } else if (rakes.some((l) => l.id === selectedId)) {
+      onRakesChange?.(rakes.filter((l) => l.id !== selectedId));
     } else if (downspouts.some((d) => d.id === selectedId)) {
       onDownspoutsChange(downspouts.filter((d) => d.id !== selectedId));
     }
+    setSelectedId(null);
+  }
+
+  // Reclassify the selected EAVE as a GABLE end (no gutter): move it from
+  // the priced eaves into the rakes. Two effects, live: its LF drops out of
+  // the total, and the derived roof draws that whole side as a connected
+  // gable (ridge flush to the wall) instead of a hip — the exact fix for a
+  // gable end the AI guttered as a hip eave. Reversible via the gable's own
+  // "Add gutter" affordance below. No-ops without an onRakesChange wire.
+  function convertSelectedToGable() {
+    if (!selectedId || !onRakesChange) return;
+    const e = eaves.find((l) => l.id === selectedId);
+    if (!e) return;
+    onEavesChange(eaves.filter((l) => l.id !== selectedId));
+    onRakesChange([...rakes, { ...e, kind: "rake" }]);
+    setSelectedId(null);
+  }
+
+  // The reverse: a side the contractor (or AI) marked a gable that actually
+  // carries a gutter — move the selected rake back into the priced eaves.
+  function convertSelectedToEave() {
+    if (!selectedId || !onRakesChange) return;
+    const r = rakes.find((l) => l.id === selectedId);
+    if (!r) return;
+    onRakesChange(rakes.filter((l) => l.id !== selectedId));
+    onEavesChange([...eaves, { ...r, kind: "eave" }]);
     setSelectedId(null);
   }
 
@@ -749,9 +791,11 @@ export function AerialCanvas({
               >
                 <strong>Select a line</strong>, drag the body to slide it
                 or grab a corner to extend. <strong>Double-click</strong> a
-                line to split it. <strong>Add eave</strong>: click once to
-                start, click again to finish. <strong>Scroll</strong> to
-                zoom, <strong>drag empty space</strong> to pan,{" "}
+                line to split it. Selected an eave that&apos;s really a gable
+                end? Hit <strong>No gutter (gable)</strong> — its LF drops and
+                that side redraws as a gable. <strong>Add eave</strong>: click
+                once to start, click again to finish. <strong>Scroll</strong>{" "}
+                to zoom, <strong>drag empty space</strong> to pan,{" "}
                 <strong>Delete</strong> removes the selected line. Totals
                 re-price as you edit.
               </div>
@@ -910,6 +954,46 @@ export function AerialCanvas({
             rakes={rakes}
           />
         )}
+
+        {/* Plan mode: the derived overlay draws the GABLE ends, so we don't
+            re-draw the rake stubs — but we lay an invisible, clickable hit-line
+            over each rake so a gable can be SELECTED (to add a gutter back, or
+            delete it). A selected gable gets a visible amber highlight so the
+            contractor sees which side they picked. */}
+        {planSource && onRakesChange &&
+          rakes.map((line) => {
+            const selected = selectedId === line.id;
+            return (
+              <g key={`rake-hit-${line.id}`}>
+                {selected && (
+                  <path
+                    d={pathFor(line)}
+                    stroke={theme === "tactical" ? "#fbbf24" : "#d97706"}
+                    strokeWidth={3.5 * renderScale}
+                    strokeDasharray={`${6 * renderScale} ${5 * renderScale}`}
+                    strokeLinecap="round"
+                    fill="none"
+                    pointerEvents="none"
+                  />
+                )}
+                <path
+                  d={pathFor(line)}
+                  stroke="transparent"
+                  strokeWidth={14 * renderScale}
+                  strokeLinecap="round"
+                  fill="none"
+                  style={{ cursor: "pointer" }}
+                  onPointerDown={(e) => {
+                    if (tool !== "select") return;
+                    e.stopPropagation();
+                    setSelectedId(line.id);
+                  }}
+                  onPointerEnter={() => setHoverId(line.id)}
+                  onPointerLeave={() => setHoverId(null)}
+                />
+              </g>
+            );
+          })}
 
         {/* Rakes — gray-dashed "no-gutter" lines for verification.
             In PLAN mode the roof-structure overlay draws connected GABLE
@@ -1361,16 +1445,57 @@ export function AerialCanvas({
               <span
                 className={cn(
                   "rounded-full px-2 py-0.5",
-                  theme === "tactical"
-                    ? "bg-cyan-500/15 text-cyan-200"
-                    : "bg-cyan-50 text-cyan-700",
+                  selectedIsRake
+                    ? theme === "tactical"
+                      ? "bg-slate-500/20 text-slate-200"
+                      : "bg-zinc-100 text-zinc-600"
+                    : theme === "tactical"
+                      ? "bg-cyan-500/15 text-cyan-200"
+                      : "bg-cyan-50 text-cyan-700",
                 )}
               >
-                Selected
+                {selectedIsRake ? "Gable · no gutter" : "Eave · gutter"}
               </span>
-              <span>Drag handles to adjust · Delete to remove</span>
+              <span>
+                {selectedIsRake
+                  ? "This side carries no gutter"
+                  : "Drag handles to adjust"}
+              </span>
+              {/* Reclassify EAVE⇄GABLE — the "adjust gutters if needed"
+                  lever: flip a side the AI mis-called. Converting an eave to
+                  a gable drops its LF and redraws the side as a gable; the
+                  reverse adds a gutter back. */}
+              {onRakesChange && selectedIsEave && (
+                <button
+                  onClick={convertSelectedToGable}
+                  title="This side is a gable end — no gutter. Drops its LF and draws it as a gable."
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 font-medium transition",
+                    theme === "tactical"
+                      ? "border-slate-400/40 text-slate-200 hover:border-amber-400 hover:text-amber-300"
+                      : "border-zinc-300 text-zinc-700 hover:border-amber-400 hover:text-amber-600",
+                  )}
+                >
+                  No gutter (gable)
+                </button>
+              )}
+              {onRakesChange && selectedIsRake && (
+                <button
+                  onClick={convertSelectedToEave}
+                  title="This side does carry a gutter — add it back as a priced eave."
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 font-medium transition",
+                    theme === "tactical"
+                      ? "border-cyan-500/40 text-cyan-200 hover:border-cyan-300 hover:text-white"
+                      : "border-cyan-300 text-cyan-700 hover:border-cyan-500 hover:text-cyan-800",
+                  )}
+                >
+                  Add gutter (eave)
+                </button>
+              )}
               <button
                 onClick={deleteSelected}
+                title="Remove this edge"
                 className={cn(
                   "ml-1 rounded-full border px-2 py-0.5 transition",
                   theme === "tactical"
