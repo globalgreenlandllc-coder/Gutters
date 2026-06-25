@@ -396,9 +396,15 @@ export interface BlueprintToEstimateMeta {
   planId?: string;
   /** Total PDF pages — bounds the canvas sheet selector. */
   pageCount?: number;
-  /** Classifier sheet inventory ({pageIndex, label}) so the contractor
-   *  can flip the underlay to the right drawing. */
-  sheets?: { pageIndex: number; label: string }[];
+  /** Classifier sheet inventory ({pageIndex, label, ...}) so the contractor
+   *  can flip the underlay to the right drawing; sheetType/elevationSide
+   *  drive the Elevations view. */
+  sheets?: {
+    pageIndex: number;
+    label: string;
+    sheetType?: string;
+    elevationSide?: string;
+  }[];
 }
 
 /** True when two segments are collinear (within tol) AND overlap along their

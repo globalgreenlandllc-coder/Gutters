@@ -52,6 +52,7 @@ function distToSeg(p: Pt, a: Pt, b: Pt): number {
  */
 export function PdfPlanView({
   planSource,
+  initialPage,
   scalePxPerFt,
   onScaleChange,
   runs,
@@ -69,6 +70,9 @@ export function PdfPlanView({
     pageCount?: number;
     sheets?: Sheet[];
   };
+  /** When the Elevations view hands off "trace gutters here", the page to
+   *  open on. Changing it navigates the viewer to that sheet. */
+  initialPage?: number | null;
   /** Calibrated px-per-foot in the 900×580 canvas space, or null. */
   scalePxPerFt: number | null;
   onScaleChange: (pxPerFt: number) => void;
@@ -119,6 +123,15 @@ export function PdfPlanView({
     setPage(p);
     resetView();
   };
+
+  // Honor a "trace gutters here" handoff from the Elevations view: when the
+  // requested page changes, navigate to it (reset zoom so the sheet fits).
+  useEffect(() => {
+    if (initialPage != null && initialPage >= 1) {
+      setPage(initialPage);
+      setView({ x: 0, y: 0, w: VIEWBOX_W, h: VIEWBOX_H });
+    }
+  }, [initialPage]);
 
   // Esc cancels the in-progress click; Backspace deletes a selected run.
   useEffect(() => {

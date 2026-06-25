@@ -93,8 +93,15 @@ export type EstimateResult = {
     pageCount?: number;
     /** Classifier sheet inventory so the contractor can flip the
      *  underlay to the right drawing (roof plan vs foundation/floor),
-     *  labelled. 1-based pageIndex. */
-    sheets?: { pageIndex: number; label: string }[];
+     *  labelled. 1-based pageIndex. `sheetType`/`elevationSide` carry the
+     *  classifier's per-sheet type + (for elevations) which face it shows —
+     *  used by the Elevations view to show the four real side drawings. */
+    sheets?: {
+      pageIndex: number;
+      label: string;
+      sheetType?: string;
+      elevationSide?: string;
+    }[];
   };
   /** Optional perimeter + ridge/valley overlay for the visual annotation
    *  layer. Detected via GPT-4o vision in parallel with the eaves

@@ -336,6 +336,7 @@ export async function runEstimateFromPlan(
             page_index: number;
             sheet_type: string;
             sheet_label: string | null;
+            elevation_side?: string | null;
           }>;
         };
       };
@@ -348,6 +349,12 @@ export async function runEstimateFromPlan(
       return {
         pageIndex: s.page_index,
         label: s.sheet_label ? `${type} (${s.sheet_label})` : type,
+        // Carry the classifier's per-sheet type + (for elevations) which
+        // face it draws, so the Elevations view can show the four real
+        // side drawings labelled FRONT/REAR/LEFT/RIGHT. Load-time — no
+        // re-analyze needed (rebuilt from the stored classifier output).
+        sheetType: s.sheet_type,
+        elevationSide: s.elevation_side ?? undefined,
       };
     });
   const pageCount =

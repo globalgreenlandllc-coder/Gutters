@@ -15,6 +15,7 @@ import { TopBar } from "./top-bar";
 import { AerialCanvas, lineLengthFt } from "./aerial-canvas";
 import { Massing3D } from "./massing-3d";
 import { PdfPlanView } from "./pdf-plan-view";
+import { ElevationsView } from "./elevations-view";
 import { PricingPanel } from "./pricing-panel";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -43,7 +44,12 @@ export function ResultsView({
 }) {
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
-  const [viewMode, setViewMode] = useState<"plan" | "sheet" | "3d">("plan");
+  const [viewMode, setViewMode] = useState<
+    "plan" | "sheet" | "elevations" | "3d"
+  >("plan");
+  // When the Elevations view hands off to the trace tool, it carries the
+  // page to open the Plan-sheet on.
+  const [sheetInitialPage, setSheetInitialPage] = useState<number | null>(null);
   // The real PDF sheet view is only meaningful for plan-based estimates.
   const hasSheet = !!initial.planSource;
   // Px-per-foot driving LF math. Lifted to state so the "Plan sheet" manual
@@ -244,9 +250,14 @@ export function ResultsView({
                   way. Disabled without a real roof outline. */}
               <div className="mb-2 inline-flex rounded-full border border-zinc-200 p-0.5 text-xs dark:border-zinc-700">
                 {(
-                  ["plan", hasSheet ? "sheet" : null, "3d"].filter(
-                    Boolean,
-                  ) as Array<"plan" | "sheet" | "3d">
+                  [
+                    "plan",
+                    hasSheet ? "sheet" : null,
+                    hasSheet ? "elevations" : null,
+                    "3d",
+                  ].filter(Boolean) as Array<
+                    "plan" | "sheet" | "elevations" | "3d"
+                  >
                 ).map((m) => {
                   const active = viewMode === m;
                   const disabled = m === "3d" && !can3d;
@@ -255,7 +266,9 @@ export function ResultsView({
                       ? "Roof plan"
                       : m === "sheet"
                         ? "Plan sheet"
-                        : "3D";
+                        : m === "elevations"
+                          ? "Elevations"
+                          : "3D";
                   return (
                     <button
                       key={m}
@@ -265,9 +278,11 @@ export function ResultsView({
                       title={
                         m === "sheet"
                           ? "The actual roof-plan sheet from your PDF"
-                          : disabled
-                            ? "Needs a roof outline (run a plan takeoff)"
-                            : undefined
+                          : m === "elevations"
+                            ? "Your roof from the side — the architect's elevation drawings + per-side gutters"
+                            : disabled
+                              ? "Needs a roof outline (run a plan takeoff)"
+                              : undefined
                       }
                       className={
                         "rounded-full px-3 py-1 font-medium transition " +
@@ -286,6 +301,7 @@ export function ResultsView({
               {viewMode === "sheet" && initial.planSource ? (
                 <PdfPlanView
                   planSource={initial.planSource}
+                  initialPage={sheetInitialPage}
                   scalePxPerFt={planScale}
                   onScaleChange={setPlanScale}
                   runs={planRuns}
@@ -296,6 +312,17 @@ export function ResultsView({
                   onApplyOutline={applyOutline}
                   gableEdges={planOutlineGables}
                   onToggleGableEdge={toggleGableEdge}
+                />
+              ) : viewMode === "elevations" && initial.planSource ? (
+                <ElevationsView
+                  planSource={initial.planSource}
+                  eaves={eaves}
+                  rakes={rakes}
+                  pxPerFt={canvasPxPerFt}
+                  onTraceSheet={(p) => {
+                    setSheetInitialPage(p);
+                    setViewMode("sheet");
+                  }}
                 />
               ) : viewMode === "3d" && can3d ? (
                 <Massing3D
