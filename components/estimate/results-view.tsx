@@ -139,6 +139,17 @@ export function ResultsView({
       hips: [],
       confidence: 1,
     });
+    // Re-seat downspouts on the traced corners — the AI's were in the old
+    // projected space and would float off the new roof (and skew the canvas
+    // auto-fit). One per corner is a sensible starting point; delete extras.
+    setDownspouts(
+      planOutline.map((p, i) => ({
+        id: `outline-ds-${i}`,
+        x: p.x,
+        y: p.y,
+        heightFt: 20,
+      })),
+    );
     setViewMode("plan");
   };
   const can3d =
