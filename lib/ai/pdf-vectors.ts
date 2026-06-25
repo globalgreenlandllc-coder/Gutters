@@ -1,5 +1,6 @@
 import "server-only";
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
+import { segmentsFromOps, selectSegments } from "./pdf-segments";
 
 /**
  * "Read the blueprint better": pull the PDF's REAL vector layer — printed
@@ -62,126 +63,23 @@ export type PlanVectors = {
 };
 
 const MAX_TEXT = 90;
-const MAX_SEGMENTS = 140;
-const MIN_SEG_LEN = 18; // points — drops dimension ticks / hatching
 const DIM_RE = /\d/;
 const SIZE_MARK_RE = /['"′″]|\bft\b|\bLF\b|\d\s*[-:]\s*\d|\d\/\d/i;
 
-type Mat = [number, number, number, number, number, number];
-const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
-const mul = (a: Mat, b: Mat): Mat => [
-  a[0] * b[0] + a[2] * b[1],
-  a[1] * b[0] + a[3] * b[1],
-  a[0] * b[2] + a[2] * b[3],
-  a[1] * b[2] + a[3] * b[3],
-  a[0] * b[4] + a[2] * b[5] + a[4],
-  a[1] * b[4] + a[3] * b[5] + a[5],
-];
-const apply = (m: Mat, x: number, y: number): [number, number] => [
-  m[0] * x + m[2] * y + m[4],
-  m[1] * x + m[3] * y + m[5],
-];
-
-/**
- * Walk a pdfjs operator list and recover stroked/filled straight LINE
- * segments in page user space. constructPath args are
- * `[paintOp, subPaths, bbox]`; each subPath is a flat array of
- * `[op, x, y, …]` where (validated empirically for the pinned pdfjs)
- * op 0 = moveTo, 1 = lineTo, 4 = closePath. Unknown ops (curves) end the
- * subpath safely rather than mis-aligning the coordinate stream.
- */
-function segmentsFromOps(
-  ops: { fnArray: number[]; argsArray: unknown[] },
-  OPS: Record<string, number>,
-): number[][] {
-  const out: number[][] = [];
-  const stack: Mat[] = [];
-  let ctm: Mat = IDENTITY;
-  for (let k = 0; k < ops.fnArray.length && out.length < 8000; k++) {
-    const fn = ops.fnArray[k];
-    if (fn === OPS.save) {
-      stack.push(ctm);
-    } else if (fn === OPS.restore) {
-      ctm = stack.pop() ?? IDENTITY;
-    } else if (fn === OPS.transform) {
-      const a = ops.argsArray[k] as number[] | undefined;
-      if (a && a.length >= 6) {
-        ctm = mul(ctm, [a[0], a[1], a[2], a[3], a[4], a[5]]);
-      }
-    } else if (fn === OPS.constructPath) {
-      const subPaths = (ops.argsArray[k] as unknown[])?.[1];
-      if (!Array.isArray(subPaths)) continue;
-      for (const raw of subPaths as ArrayLike<number>[]) {
-        const p = Array.from(raw);
-        let i = 0;
-        let cx = 0;
-        let cy = 0;
-        let sx = 0;
-        let sy = 0;
-        let have = false;
-        while (i < p.length) {
-          const op = p[i];
-          if (op === 0) {
-            if (i + 2 >= p.length) break;
-            [cx, cy] = apply(ctm, p[i + 1], p[i + 2]);
-            sx = cx;
-            sy = cy;
-            have = true;
-            i += 3;
-          } else if (op === 1) {
-            if (i + 2 >= p.length) break;
-            const [nx, ny] = apply(ctm, p[i + 1], p[i + 2]);
-            if (have) out.push([cx, cy, nx, ny]);
-            cx = nx;
-            cy = ny;
-            i += 3;
-          } else if (op === 4) {
-            if (have) out.push([cx, cy, sx, sy]);
-            cx = sx;
-            cy = sy;
-            i += 1;
-          } else {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return out;
-}
-
-/** Keep the meaningful lines (drop ticks/hatching), dedupe undirected
- *  duplicates, prefer the longest, cap for prompt size. */
-function filterSegments(raw: number[][]): number[][] {
-  const seen = new Set<string>();
-  const kept: { seg: number[]; len: number }[] = [];
-  for (const [x1, y1, x2, y2] of raw) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.hypot(dx, dy);
-    if (len < MIN_SEG_LEN) continue;
-    const axisAligned = Math.abs(dx) < 1.5 || Math.abs(dy) < 1.5;
-    if (!axisAligned && len < 60) continue; // short diagonals are noise
-    const a = [Math.round(x1), Math.round(y1)];
-    const b = [Math.round(x2), Math.round(y2)];
-    const [p, q] =
-      a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]) ? [a, b] : [b, a];
-    const key = `${p[0]},${p[1]},${q[0]},${q[1]}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    kept.push({ seg: [p[0], p[1], q[0], q[1]], len });
-  }
-  kept.sort((m, n) => n.len - m.len);
-  return kept.slice(0, MAX_SEGMENTS).map((k) => k.seg);
-}
+// The operator-list → segment logic (incl. stroke-weight tracking + the
+// bold-line filter) lives in the pure, node-tested ./pdf-segments module.
 
 /**
  * Extract the vector layer of one PDF page. `page1Based` should be the
  * roof plan page the Stage-1 classifier identified (falls back to page 1).
+ * `boldOnly` keeps just the heavy structural strokes (roof outline +
+ * ridge/hip/valley) and drops thin truss/dimension/hatching noise — use it
+ * for the dense roof-framing sheet, NOT the footprint authority page.
  */
 export async function extractPdfPageText(
   base64: string,
   page1Based: number | null | undefined,
+  opts?: { boldOnly?: boolean },
 ): Promise<PdfPageVectors | null> {
   try {
     if (!base64) return null;
@@ -216,7 +114,10 @@ export async function extractPdfPageText(
     try {
       const { OPS } = await getResolvedPDFJS();
       const opList = await page.getOperatorList();
-      segments = filterSegments(segmentsFromOps(opList, OPS));
+      segments = selectSegments(
+        segmentsFromOps(opList, OPS),
+        opts?.boldOnly ?? false,
+      );
     } catch (e) {
       console.warn(
         "[pdf-vectors] segment extraction failed (text still used):",
@@ -264,10 +165,16 @@ export async function extractPlanVectors(
   const rfPage = opts.roofPage ?? null;
 
   if (fpPage) {
+    // Footprint sheet stays geometry-driven (the outline + interior partitions
+    // often share a weight, so bold-filtering could drop the perimeter).
     const footprint = await extractPdfPageText(base64, fpPage);
     if (footprint) footprint.sheet = "foundation/floor plan";
+    // Roof sheet is the dense truss page this feature targets → keep only the
+    // BOLD roof lines (outline + ridge/hip/valley), drop the truss noise.
     const roof =
-      rfPage && rfPage !== fpPage ? await extractPdfPageText(base64, rfPage) : null;
+      rfPage && rfPage !== fpPage
+        ? await extractPdfPageText(base64, rfPage, { boldOnly: true })
+        : null;
     if (roof) roof.sheet = "roof plan";
     if (!footprint && !roof) return null;
     return { footprint, roof };
