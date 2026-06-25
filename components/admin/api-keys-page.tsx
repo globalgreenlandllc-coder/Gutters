@@ -101,6 +101,11 @@ const PROVIDER_META: Record<
     sub: "Claude vision for reading construction plans → gutter blueprint",
     tone: "violet",
   },
+  GEMINI: {
+    label: "Google Gemini",
+    sub: "Second vision model for the blueprint roof read (cross-checks Claude)",
+    tone: "violet",
+  },
 };
 
 // Per-provider hint that renders inside the Add Key dialog. Tells the
@@ -114,6 +119,8 @@ const ADD_KEY_HINTS: Partial<Record<ApiKeyProvider, string>> = {
     "platform.openai.com → API keys → Create new secret key. Starts with 'sk-'.",
   ANTHROPIC:
     "console.anthropic.com → API Keys → Create Key. Starts with 'sk-ant-'.",
+  GEMINI:
+    "aistudio.google.com → Get API key → Create API key. Starts with 'AIza'. Free tier available.",
   GOOGLE_MAPS:
     "console.cloud.google.com → APIs & Services → Credentials → API Key. Starts with 'AIza'.",
   GOOGLE_SOLAR:
@@ -137,6 +144,7 @@ const ADD_KEY_PLACEHOLDERS: Partial<Record<ApiKeyProvider, string>> = {
   RESEND: "re_…",
   OPENAI: "sk-…",
   ANTHROPIC: "sk-ant-…",
+  GEMINI: "AIza…",
   GOOGLE_MAPS: "AIza…",
   GOOGLE_SOLAR: "AIza…",
   MAPBOX: "pk.…",

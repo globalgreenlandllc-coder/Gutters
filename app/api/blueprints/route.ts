@@ -9,6 +9,10 @@ import {
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
 import {
+  geminiAvailable,
+  geminiBlueprintFromPlan,
+} from "@/lib/ai/blueprint-gemini";
+import {
   classifyPlanSheets,
   classificationToConstraints,
 } from "@/lib/ai/classify-plans";
@@ -388,13 +392,18 @@ export async function POST(request: Request) {
             })
           : null;
 
-      // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of-3
-      // ensemble — three independent Opus reads in parallel, keep the most
-      // complete / in-envelope one (kills the occasional collapsed trace).
+      // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of
+      // ensemble — three independent Opus reads PLUS a Gemini read when a
+      // Gemini key is configured (genuine cross-provider second opinion);
+      // keep the most complete / in-envelope one.
+      const geminiReaders = (await geminiAvailable())
+        ? [() => geminiBlueprintFromPlan([source], { constraints, vectorGeometry })]
+        : [];
       const result = await blueprintFromPlanSourcesBestOf(
         [source],
         { constraints, vectorGeometry },
         3,
+        geminiReaders,
       );
       if (!result.ok) {
         await db.planAnalysis.update({

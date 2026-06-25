@@ -18,6 +18,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
     "@clerk/nextjs": "^7.2.9",
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.22.0",
     "@turf/buffer": "^7.3.5",
     "@turf/helpers": "^7.3.5",

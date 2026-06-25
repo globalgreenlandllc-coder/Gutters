@@ -446,6 +446,7 @@ enum ApiKeyProvider {
   STRIPE_WEBHOOK
   SOCRATA
   ANTHROPIC
+  GEMINI
 }
 
 model ApiKey {

@@ -1121,7 +1121,7 @@ const BLUEPRINT_PROBLEM_TOOL: Anthropic.Tool = {
  * constraints supplied (legacy single-call mode still works for direct
  * image uploads that skip the classifier).
  */
-function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
+export function buildConstraintsBlock(c: GeometryConstraints | undefined): string {
   if (!c) return "";
   const lines: string[] = [
     "GROUND-TRUTH FROM SHEET-INVENTORY PASS (already run on this PDF):",
@@ -1282,12 +1282,23 @@ export async function blueprintFromPlanSourcesBestOf(
   sources: PlanSource[],
   opts: BlueprintRunOptions = {},
   samples = 3,
+  /** Extra readers (e.g. a different vision model like Gemini) whose results
+   *  join the same scoring pool — the genuine cross-provider ensemble. Each
+   *  is wrapped so a throw / missing key can't sink the whole run. */
+  extraReaders: Array<() => Promise<BlueprintResult>> = [],
 ): Promise<BlueprintResult> {
   const n = Math.max(1, Math.min(5, samples));
-  if (n === 1) return blueprintFromPlanSources(sources, opts);
-  const results = await Promise.all(
-    Array.from({ length: n }, () => blueprintFromPlanSources(sources, opts)),
-  );
+  if (n === 1 && extraReaders.length === 0)
+    return blueprintFromPlanSources(sources, opts);
+  const safe = (p: Promise<BlueprintResult>) =>
+    p.catch((e): BlueprintResult => ({
+      ok: false,
+      reason: e instanceof Error ? e.message : "reader threw",
+    }));
+  const results = await Promise.all([
+    ...Array.from({ length: n }, () => safe(blueprintFromPlanSources(sources, opts))),
+    ...extraReaders.map((r) => safe(r())),
+  ]);
   const ok = results.filter(
     (r): r is Extract<BlueprintResult, { ok: true }> => r.ok,
   );
@@ -1298,9 +1309,10 @@ export async function blueprintFromPlanSourcesBestOf(
       scoreBlueprintAnalysis(a.analysis, opts.constraints),
   );
   const best = ok[0];
+  const models = ok.map((r) => r.usage.model);
   best.analysis.notes = [
     ...(best.analysis.notes ?? []),
-    `Best of ${n} independent Opus reads — kept the most complete, in-envelope trace.`,
+    `Best of ${ok.length} reads (${[...new Set(models)].join(", ")}) — kept the most complete, in-envelope trace from ${best.usage.model}.`,
   ];
   return best;
 }

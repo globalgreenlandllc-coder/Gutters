@@ -9,6 +9,10 @@ import {
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
 import {
+  geminiAvailable,
+  geminiBlueprintFromPlan,
+} from "@/lib/ai/blueprint-gemini";
+import {
   classifyPlanSheets,
   classificationToConstraints,
 } from "@/lib/ai/classify-plans";
@@ -206,11 +210,22 @@ export async function POST(
             })
           : null;
 
-      // Best-of-3 ensemble: three independent Opus reads, keep the best.
+      // Best-of ensemble: three independent Opus reads + a Gemini read when a
+      // Gemini key is configured (cross-provider). Keep the best.
+      const geminiReaders = (await geminiAvailable())
+        ? [
+            () =>
+              geminiBlueprintFromPlan([finalSource], {
+                constraints,
+                vectorGeometry,
+              }),
+          ]
+        : [];
       const result = await blueprintFromPlanSourcesBestOf(
         [finalSource],
         { constraints, vectorGeometry },
         3,
+        geminiReaders,
       );
       if (!result.ok) {
         await db.planAnalysis.update({

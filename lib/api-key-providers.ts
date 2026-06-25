@@ -13,4 +13,5 @@ export const ALL_PROVIDERS: ApiKeyProvider[] = [
   "STRIPE_WEBHOOK",
   "SOCRATA",
   "ANTHROPIC",
+  "GEMINI",
 ];
