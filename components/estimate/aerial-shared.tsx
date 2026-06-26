@@ -11,6 +11,7 @@ import type {
 import {
   deriveRoofSkeleton,
   extraGablesFromRakes,
+  gableWingFaces,
   type Pt,
   type Dormer,
 } from "@/lib/roof-skeleton";
@@ -982,36 +983,54 @@ export function RoofStructureOverlay({
         });
       })()}
       {/* Dormers / cross-gables the AI traced that aren't whole-side ends — a
-          gable sitting ON or ABOVE a continuous eave. Drawn as a small gable
-          triangle (base edge + two rakes to an inward peak) so it reads as a
-          gable without adding another "GABLE" word-pill to the layout. */}
+          gable PROJECTING from a wall (the front garage/entry gables, a side
+          cross-gable). Drawn as a real gable WING — two shaded roof planes
+          meeting at a ridge that runs inward from the gable end — so every
+          gable on the layout reads as an actual gable shape, not a faint dash. */}
       {(skel.dormers ?? []).map((dm, i) => {
         const a = dm.points[0];
         const b = dm.points[1];
         if (!a || !b) return null;
         const edgeLen = Math.hypot(b.x - a.x, b.y - a.y);
-        const peakH = Math.min(edgeLen * 0.4, 20 * scale);
-        const peak = {
-          x: dm.mid.x + dm.dir.x * peakH,
-          y: dm.mid.y + dm.dir.y * peakH,
-        };
+        const toC = Math.hypot(centroid.x - dm.mid.x, centroid.y - dm.mid.y);
+        // Wing depth ≈ its width (a ~45° gable), capped so it doesn't shoot
+        // past the roof centre.
+        const depth = Math.max(
+          8 * scale,
+          Math.min(edgeLen * 0.9, toC * 0.85),
+        );
+        const wing = gableWingFaces(a, b, dm.dir, depth);
         return (
           <g key={`dormer-${i}`}>
+            {/* The two sloped planes of the gable wing, shaded like the roof */}
+            {wing.faces.map((f, j) =>
+              f.polygon.length >= 3 ? (
+                <polygon
+                  key={`dwf-${j}`}
+                  points={f.polygon.map((p) => `${p.x},${p.y}`).join(" ")}
+                  fill={faceFill(f.downhill)}
+                  stroke={faceEdge}
+                  strokeWidth={0.5 * scale}
+                  strokeLinejoin="round"
+                />
+              ) : null,
+            )}
+            {/* Ridge of the wing */}
+            <path
+              d={linePathD(wing.ridge.points)}
+              fill="none"
+              stroke={ridgeC}
+              strokeWidth={1.4 * scale}
+              strokeLinecap="round"
+            />
+            {/* The gable END (the wide base on the wall) — bold so the gable
+                shape is unmistakable. */}
             <path
               d={linePathD([a, b])}
               fill="none"
               stroke={gableC}
-              strokeWidth={2.2 * scale}
-              strokeDasharray={`${5 * scale} ${4 * scale}`}
+              strokeWidth={2.6 * scale}
               strokeLinecap="round"
-            />
-            <path
-              d={`M ${a.x} ${a.y} L ${peak.x} ${peak.y} L ${b.x} ${b.y}`}
-              fill="none"
-              stroke={gableC}
-              strokeWidth={1.6 * scale}
-              strokeLinecap="round"
-              strokeLinejoin="round"
             />
           </g>
         );

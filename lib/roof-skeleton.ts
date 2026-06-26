@@ -712,6 +712,49 @@ export function extraGablesFromRakes(
 }
 
 /**
+ * Plan-view geometry of a CROSS-GABLE — a gable WING projecting inward from a
+ * wall (the front garage/entry gables, a side cross-gable). Lets the overlay
+ * draw it as a real gable FORM — a ridge with two sloped planes — instead of a
+ * flat chevron, so every gable on the roof reads as an actual gable shape.
+ *
+ * The gable END is the base edge a→b (on the wall). The ridge runs from the
+ * base midpoint inward along unit `dir` for `depth`; one plane slopes from that
+ * ridge down to the a-side eave, the other down to the b-side — exactly the two
+ * faces of a gabled wing seen from above. Pure; returns no faces on degenerate
+ * input (zero-length base or direction) so a caller can fall back.
+ */
+export function gableWingFaces(
+  a: Pt,
+  b: Pt,
+  dir: Pt,
+  depth: number,
+): { ridge: SkeletonLine; faces: RoofFace[] } {
+  const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const empty: { ridge: SkeletonLine; faces: RoofFace[] } = {
+    ridge: { points: [m, m] },
+    faces: [],
+  };
+  const dl = Math.hypot(dir.x, dir.y);
+  const baseLen = Math.hypot(b.x - a.x, b.y - a.y);
+  if (!isFinitePt(a) || !isFinitePt(b) || dl < 1e-6 || baseLen < 1e-6 || !(depth > 0))
+    return empty;
+  const d = { x: dir.x / dl, y: dir.y / dl };
+  const r1 = { x: m.x + d.x * depth, y: m.y + d.y * depth };
+  const aIn = { x: a.x + d.x * depth, y: a.y + d.y * depth };
+  const bIn = { x: b.x + d.x * depth, y: b.y + d.y * depth };
+  // Each plane slopes DOWN off the ridge toward its side eave — the downhill
+  // direction is perpendicular to the ridge, pointing at the a- / b-side.
+  const perp = { x: -d.y, y: d.x };
+  const towardA =
+    (a.x - m.x) * perp.x + (a.y - m.y) * perp.y >= 0 ? 1 : -1;
+  const faces: RoofFace[] = [
+    { polygon: [a, m, r1, aIn], downhill: { x: perp.x * towardA, y: perp.y * towardA } },
+    { polygon: [b, bIn, r1, m], downhill: { x: -perp.x * towardA, y: -perp.y * towardA } },
+  ];
+  return { ridge: { points: [m, r1] }, faces };
+}
+
+/**
  * Connect each GABLE end to the body of the roof with a ridge line, so the
  * gable reads as a finished, attached gable instead of a floating dashed
  * stub. From the gable edge's midpoint we shoot a ray straight inward
