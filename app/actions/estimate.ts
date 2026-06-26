@@ -6,6 +6,7 @@ import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
 import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
+import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -247,14 +248,135 @@ export async function runEstimateFromPlan(
 
   const analysis = row.analysisJson as unknown as BlueprintAnalysis;
 
+  // LAST AUTO SHOT — read the WHOLE roof from the SINGLE A9 roof-framing sheet,
+  // so the footprint + the gables come from ONE coordinate space and self-align
+  // (instead of stitching the A4 footprint to the A9 classification — two pages,
+  // two coord systems, gables never line up). The A9 bold segments + GABLE text
+  // labels were already extracted at analysis time (_vectorGeometry.roof). When
+  // it yields a believable articulated outline, it BECOMES the footprint, the
+  // AI runs remap onto it, and each edge a GABLE label points at is demoted to a
+  // rake (no gutter). Tried FIRST; ANY miss falls through to the A4 block below
+  // (then to AI geometry) unchanged. Fully fail-safe — never blank, never worse.
+  let roofApplied = false;
+  try {
+    const ajR = row.analysisJson as {
+      _vectorGeometry?: {
+        roof?: {
+          segments?: number[][];
+          labels?: { s: string; x: number; y: number }[];
+        };
+      };
+    } | null;
+    const rsegs = ajR?._vectorGeometry?.roof?.segments;
+    const rlabels = ajR?._vectorGeometry?.roof?.labels ?? [];
+    if (Array.isArray(rsegs) && rsegs.length >= 4) {
+      // Reject an A9 read whose SHAPE is wildly unlike the AI footprint (a
+      // truss-blob floodfill happened to enclose) — pass the footprint aspect.
+      const fp = analysis.building_footprint ?? [];
+      let expectedAspect: number | undefined;
+      if (fp.length >= 3) {
+        let fx0 = Infinity, fy0 = Infinity, fx1 = -Infinity, fy1 = -Infinity;
+        for (const p of fp) {
+          if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+          fx0 = Math.min(fx0, p.x); fy0 = Math.min(fy0, p.y);
+          fx1 = Math.max(fx1, p.x); fy1 = Math.max(fy1, p.y);
+        }
+        const w = fx1 - fx0, h = fy1 - fy0;
+        if (w > 0 && h > 0) expectedAspect = Math.max(w, h) / Math.min(w, h);
+      }
+      const roof = readRoofFromVectors(
+        rlabels,
+        rsegs,
+        expectedAspect ? { expectedAspect } : undefined,
+      );
+      if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+        const poly = roof.perimeter;
+        const pbb = roof.bbox;
+        const aiPts = [
+          ...analysis.gutter_runs.flatMap((r) => [r.start, r.end]),
+          ...(analysis.excluded_edges ?? []).flatMap((e) => [e.start, e.end]),
+        ].filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (aiPts.length >= 2) {
+          let ax0 = Infinity, ay0 = Infinity, ax1 = -Infinity, ay1 = -Infinity;
+          for (const p of aiPts) {
+            ax0 = Math.min(ax0, p.x); ay0 = Math.min(ay0, p.y);
+            ax1 = Math.max(ax1, p.x); ay1 = Math.max(ay1, p.y);
+          }
+          const sx = (pbb.x1 - pbb.x0) / Math.max(1e-6, ax1 - ax0);
+          const sy = (pbb.y1 - pbb.y0) / Math.max(1e-6, ay1 - ay0);
+          const T = (p: { x: number; y: number }) => ({
+            x: pbb.x0 + (p.x - ax0) * sx,
+            y: pbb.y0 + (p.y - ay0) * sy,
+          });
+          analysis.building_footprint = poly.map((p) => ({ x: p.x, y: p.y }));
+          analysis.gutter_runs = analysis.gutter_runs.map((r) => ({
+            ...r,
+            start: T(r.start),
+            end: T(r.end),
+            length_px: Math.hypot(T(r.end).x - T(r.start).x, T(r.end).y - T(r.start).y),
+          }));
+          analysis.excluded_edges = (analysis.excluded_edges ?? []).map((e) => ({
+            ...e,
+            start: T(e.start),
+            end: T(e.end),
+          }));
+          analysis.downspouts = (analysis.downspouts ?? []).map((d) => ({
+            ...d,
+            at: T(d.at),
+          }));
+          // For each edge a GABLE label points at, demote the NEAREST gutter_run
+          // to a rake (no gutter) — distance-capped so it can never steal an
+          // eave on the far side of the house. A bare edge with no nearby run
+          // already reads as a gable to the client's deriveRoofSkeleton.
+          const span = Math.max(pbb.x1 - pbb.x0, pbb.y1 - pbb.y0);
+          const cap = 0.15 * span;
+          const mid = (p: { x: number; y: number }, q: { x: number; y: number }) => ({
+            x: (p.x + q.x) / 2,
+            y: (p.y + q.y) / 2,
+          });
+          const np = poly.length;
+          let gableMarks = 0;
+          for (let i = 0; i < np; i++) {
+            if (!roof.gableFlags[i]) continue;
+            const em = mid(poly[i], poly[(i + 1) % np]);
+            let best = -1, bestD = Infinity;
+            analysis.gutter_runs.forEach((r, ri) => {
+              const rm = mid(r.start, r.end);
+              const d = Math.hypot(rm.x - em.x, rm.y - em.y);
+              if (d < bestD) { bestD = d; best = ri; }
+            });
+            if (best >= 0 && bestD <= cap) {
+              const r = analysis.gutter_runs[best];
+              analysis.gutter_runs.splice(best, 1);
+              analysis.excluded_edges = [
+                ...(analysis.excluded_edges ?? []),
+                { kind: "rake", start: r.start, end: r.end, reason: "Gable end marked on the A9 roof-framing sheet" },
+              ];
+              gableMarks++;
+            }
+          }
+          analysis.notes = [
+            ...(analysis.notes ?? []),
+            `Roof read from the A9 roof-framing sheet (single coordinate space, ${poly.length} corners)` +
+              (gableMarks ? `; ${gableMarks} gable end(s) marked from GABLE labels.` : "."),
+          ];
+          roofApplied = true;
+        }
+      }
+    }
+  } catch {
+    // any failure → fall through to the A4 footprint-copy block unchanged
+  }
+
   // COPY the building outline from the PDF's vector layer (the drawn walls on
   // the foundation/floor plan) instead of using the AI's reconstructed
   // footprint, which flattens to a box. The segments were already extracted at
   // analysis time (_vectorGeometry.footprint). When we recover a believable
   // outline, it BECOMES the footprint + the eave runs (geometry from the
   // drawing); the AI's runs only lend their tier/feature labels. Fully
-  // fail-safe: any miss leaves the AI geometry untouched.
-  try {
+  // fail-safe: any miss leaves the AI geometry untouched. SKIPPED when the A9
+  // single-sheet read above already produced a roof.
+  if (!roofApplied) try {
     const aj = row.analysisJson as {
       _vectorGeometry?: { footprint?: { segments?: number[][] } };
     } | null;
