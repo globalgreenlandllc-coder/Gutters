@@ -1299,13 +1299,25 @@ export async function blueprintFromPlanSourcesBestOf(
       ok: false,
       reason: e instanceof Error ? e.message : "reader threw",
     }));
-  const results = await Promise.all([
-    ...Array.from({ length: n }, () => safe(blueprintFromPlanSources(sources, opts))),
+  const isOk = (
+    r: BlueprintResult,
+  ): r is Extract<BlueprintResult, { ok: true }> => r.ok;
+  const primary = () => safe(blueprintFromPlanSources(sources, opts));
+  let results = await Promise.all([
+    ...Array.from({ length: n }, primary),
     ...extraReaders.map((r) => safe(r())),
   ]);
-  const ok = results.filter(
-    (r): r is Extract<BlueprintResult, { ok: true }> => r.ok,
-  );
+  let ok = results.filter(isOk);
+  // Don't let the ensemble silently collapse to a lone read: if a transient
+  // Anthropic error (429 / 5xx / timeout) sank the primary samples and we have
+  // fewer than 2 good traces, retry the primary model once so the scorer still
+  // has a cross-check instead of shipping a single-model best-of-1.
+  if (ok.length < 2) {
+    const need = Math.max(1, 2 - ok.length);
+    const retries = await Promise.all(Array.from({ length: need }, primary));
+    results = [...results, ...retries];
+    ok = results.filter(isOk);
+  }
   if (ok.length === 0) return results[0]; // all failed — surface the reason
   ok.sort(
     (a, b) =>
