@@ -702,10 +702,13 @@ export function RoofStructureOverlay({
   /** Eaves carry building side (front/back/left/right) — used to place the
    *  orientation chips. Optional; chips are skipped when absent. */
   eaves?: { points: { x: number; y: number }[]; side?: EaveSide }[];
-  /** Rakes (gable edges) the AI classified. In derive mode they tell the
-   *  skeleton which sides are gable ends so it draws a connected gable
-   *  (ridge to the wall) instead of a floating stub. */
-  rakes?: { points: { x: number; y: number }[] }[];
+  /** Rakes (gable edges). In derive mode they tell the skeleton which sides
+   *  are gable ends so it draws a connected gable (ridge to the wall). A rake
+   *  whose `id` starts with "gable-" was placed by the contractor with the
+   *  Add-gable tool — those are trusted explicitly (rendered as a gable wing
+   *  even when they sit on an eave wall, where a cross-gable legitimately
+   *  rises above the gutter). */
+  rakes?: { id?: string; points: { x: number; y: number }[] }[];
 }) {
   // Derived (or structure-provided) roof skeleton. useMemo so the per-frame
   // re-renders during eave drag don't recompute the grid decomposition.
@@ -735,17 +738,27 @@ export function RoofStructureOverlay({
       eaveSegments: eaveSegs,
       rakeSegments: rakeSegs,
     });
-    // Gables the AI traced that AREN'T whole-side ends — dormers / cross-gables
-    // that sit on or above a continuous eave. The skeleton can't derive these
-    // (no footprint side), so surface them from the AI rakes, deduped against
-    // the skeleton gables + eaves so nothing is drawn twice.
-    const dormers = extraGablesFromRakes(
-      rakeSegs,
+    // Gables that AREN'T whole-side ends — dormers / cross-gables that sit on
+    // or above a continuous eave. The skeleton can't derive these (no footprint
+    // side), so surface them from the rakes. AI rakes are deduped against the
+    // skeleton gables AND vetoed where they lie on an eave (a mis-read). A
+    // CONTRACTOR-placed gable (Add-gable tool, id "gable-…") is explicit, so it
+    // skips the eave veto — a real cross-gable rises above its gutter.
+    const isUser = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("gable-");
+    const aiDormers = extraGablesFromRakes(
+      toSegs(rakes.filter((l) => !isUser(l))),
       base.gables,
       structure.perimeter,
       eaveSegs,
     );
-    return { ...base, dormers };
+    const userDormers = extraGablesFromRakes(
+      toSegs(rakes.filter(isUser)),
+      base.gables,
+      structure.perimeter,
+      [], // no eave veto — the contractor placed these on purpose
+    );
+    return { ...base, dormers: [...aiDormers, ...userDormers] };
   }, [
     derive,
     eaves,

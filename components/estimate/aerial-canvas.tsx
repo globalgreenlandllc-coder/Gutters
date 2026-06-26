@@ -16,6 +16,7 @@ import {
   Sun,
   SunDim,
   Trash2,
+  Triangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -43,7 +44,7 @@ import {
   PX_PER_FT,
 } from "./aerial-shared";
 
-type Tool = "select" | "add-eave" | "add-downspout";
+type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
 
 export { lineLengthFt };
 
@@ -438,6 +439,31 @@ export function AerialCanvas({
       setDrawing({ start: snapped, end: snapped });
       return;
     }
+    if (tool === "add-gable") {
+      // Place a GABLE: draw its base edge (the gable end, on a wall) with the
+      // same two-click rhythm as add-eave. The segment becomes a RAKE — the
+      // derived overlay then draws it as a real gable form (a whole-side gable
+      // end, or a projecting cross-gable wing). NO gutter LF is added (a gable
+      // sheds water), so the priced total is unchanged — this is pure shape.
+      const snapped = snapPoint(p, drawing ? drawing.start : null);
+      if (drawing) {
+        const len = dist(drawing.start, snapped);
+        const threshold = Math.max(3, view.width * 0.015);
+        if (len > threshold && onRakesChange) {
+          const id = `gable-${Date.now()}`;
+          onRakesChange([
+            ...rakes,
+            { id, kind: "rake", points: [drawing.start, snapped] },
+          ]);
+          setSelectedId(id);
+        }
+        setDrawing(null);
+        setTool("select");
+        return;
+      }
+      setDrawing({ start: snapped, end: snapped });
+      return;
+    }
     if (tool === "add-downspout") {
       const id = `ds-${Date.now()}`;
       onDownspoutsChange([...downspouts, { id, x: p.x, y: p.y, heightFt: 20 }]);
@@ -450,7 +476,7 @@ export function AerialCanvas({
 
   function handlePointerMove(e: React.PointerEvent) {
     const p = svgPoint(e);
-    if (drawing && tool === "add-eave") {
+    if (drawing && (tool === "add-eave" || tool === "add-gable")) {
       // Live-update the preview end. Works WITHOUT a held drag —
       // pointermove fires whenever the cursor moves over the SVG so
       // the preview follows the mouse from click-1 to click-2. Corner
@@ -654,6 +680,7 @@ export function AerialCanvas({
         setTool={setTool}
         canDelete={!!selectedId}
         onDelete={deleteSelected}
+        gableTool={!!onRakesChange}
         theme={theme}
         onThemeToggle={() =>
           setTheme((th) => (th === "tactical" ? "schematic" : "tactical"))
@@ -912,7 +939,7 @@ export function AerialCanvas({
         }}
         className={cn(
           "h-full w-full touch-none select-none",
-          tool === "add-eave" && "cursor-crosshair",
+          (tool === "add-eave" || tool === "add-gable") && "cursor-crosshair",
           tool === "add-downspout" && "cursor-copy",
           panning && "cursor-grabbing",
         )}
@@ -1337,7 +1364,8 @@ export function AerialCanvas({
             y1={drawing.start.y}
             x2={drawing.end.x}
             y2={drawing.end.y}
-            stroke={t.eave}
+            // A gable preview reads gray (no gutter); an eave reads cyan.
+            stroke={tool === "add-gable" ? "#cbd5e1" : t.eave}
             // Stroke + dash pattern scale with zoom so the in-progress
             // preview reads the same on screen at any zoom — was
             // ballooning to a billboard-width dashed line at 5× zoom.
@@ -1346,7 +1374,7 @@ export function AerialCanvas({
             opacity="0.95"
             style={{
               filter:
-                theme === "tactical"
+                theme === "tactical" && tool !== "add-gable"
                   ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
                   : undefined,
             }}
@@ -1638,6 +1666,7 @@ function Toolbar({
   setTool,
   canDelete,
   onDelete,
+  gableTool,
   theme,
   onThemeToggle,
   roofStructureAvailable,
@@ -1657,6 +1686,8 @@ function Toolbar({
   setTool: (t: Tool) => void;
   canDelete: boolean;
   onDelete: () => void;
+  /** Show the "Add gable" tool (plan takeoffs, where rakes render as gables). */
+  gableTool?: boolean;
   theme: CanvasTheme;
   onThemeToggle: () => void;
   roofStructureAvailable: boolean;
@@ -1680,6 +1711,9 @@ function Toolbar({
   const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
     { id: "select", icon: MousePointer2, label: "Select" },
     { id: "add-eave", icon: Plus, label: "Add eave" },
+    ...(gableTool
+      ? [{ id: "add-gable" as const, icon: Triangle, label: "Add gable" }]
+      : []),
     { id: "add-downspout", icon: Layers, label: "Add downspout" },
   ];
   const tactical = theme === "tactical";
