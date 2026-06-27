@@ -34,6 +34,15 @@
  * browser bundle AND under `node` for tests.
  */
 
+// The exact straight-skeleton engine (preferred for rectilinear footprints).
+// Circular import is safe: these are only CALLED inside functions, never at
+// module-eval time, and roof-skeleton-straight.ts imports only types + pure
+// helpers back from here.
+import {
+  deriveRoofSkeletonStraight,
+  validateSkeleton,
+} from "./roof-skeleton-straight";
+
 export type Pt = { x: number; y: number };
 export type Seg = [Pt, Pt];
 export type SkeletonLine = { points: [Pt, Pt] };
@@ -327,7 +336,7 @@ function rectRoof(
 /** Does an eave segment run ALONG this axis-aligned rectangle side? Used to
  *  decide hip vs gable: a side with a gutter on it is an eave side (hip
  *  allowed); a side with no gutter is a gable/return end (flush, no hip). */
-function sideHasEave(
+export function sideHasEave(
   axis: "h" | "v",
   fixed: number,
   lo: number,
@@ -356,7 +365,7 @@ function sideHasEave(
  *  (merged intervals). A side with a FULL-LENGTH eave is an EAVE side, never a
  *  gable end (a real gable end carries no gutter across its face); but a PARTIAL
  *  eave — a lower porch on a gable-end side — must NOT veto the gable. */
-function sideEaveCoverage(
+export function sideEaveCoverage(
   axis: "h" | "v",
   fixed: number,
   lo: number,
@@ -406,7 +415,7 @@ function sideEaveCoverage(
  *  gable face carries no gutter) with at most short end-returns (a low
  *  porch/patio drip clipping the corners). This is what distinguishes a
  *  gable-end-with-returns from a real eave side — total coverage alone can't. */
-function sideMiddleHasEave(
+export function sideMiddleHasEave(
   axis: "h" | "v",
   fixed: number,
   lo: number,
@@ -436,11 +445,11 @@ function sideMiddleHasEave(
 
 /** Cross-product sign at vertex b for the ring a→b→c. Sign tells convex
  *  vs reflex once we know the ring's winding. */
-function cross(a: Pt, b: Pt, c: Pt): number {
+export function cross(a: Pt, b: Pt, c: Pt): number {
   return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
 }
 
-function signedArea(poly: readonly Pt[]): number {
+export function signedArea(poly: readonly Pt[]): number {
   let s = 0;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     s += (poly[j].x * poly[i].y) - (poly[i].x * poly[j].y);
@@ -514,7 +523,7 @@ function valleyLines(
   return out;
 }
 
-function norm(v: Pt): Pt {
+export function norm(v: Pt): Pt {
   const l = Math.hypot(v.x, v.y) || 1;
   return { x: v.x / l, y: v.y / l };
 }
@@ -812,6 +821,25 @@ function gableConnectors(
 }
 
 /**
+ * Try the exact straight-skeleton engine and validate its output. Returns the
+ * skeleton only if it is non-degenerate (caller keeps it); otherwise null so
+ * the caller falls back to the grid-decomposition. Wrapped in try/catch — the
+ * engine never throws on its own, but this is belt-and-suspenders so a future
+ * change there can never break deriveRoofSkeleton.
+ */
+function tryStraight(
+  perimeter: readonly Pt[],
+  opts?: { eaveSegments?: readonly Seg[]; rakeSegments?: readonly Seg[] },
+): RoofSkeleton | null {
+  try {
+    const s = deriveRoofSkeletonStraight(perimeter, opts);
+    return validateSkeleton(s, perimeter) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Derive the roof skeleton from a footprint polygon (canvas coordinates).
  * Returns clean ridge/hip/valley line segments. Never throws — returns
  * empty on degenerate input so the caller can fall back to a bare outline.
@@ -821,6 +849,15 @@ export function deriveRoofSkeleton(
   opts?: { eaveSegments?: readonly Seg[]; rakeSegments?: readonly Seg[] },
 ): RoofSkeleton {
   try {
+    // Prefer the exact straight-skeleton engine on (near-)rectilinear
+    // footprints — it gives the architecturally-correct ridge/hip/valley
+    // network with hips meeting at shared nodes and valleys running
+    // corner-to-ridge. It returns EMPTY (or fails validation) on anything it
+    // can't handle, in which case we SILENTLY fall through to the
+    // grid-decomposition below. Never throws, never regresses.
+    const straight = tryStraight(perimeter, opts);
+    if (straight) return straight;
+
     const finite = (perimeter ?? []).filter(isFinitePt);
     if (finite.length < 4) return EMPTY;
     // Tolerance scales with building size so snapping is resolution-aware.
