@@ -400,3 +400,46 @@ test("jitter: a noisy plain rectangle still gives the clean 4-face hip roof", ()
   assert.ok(validateSkeleton(s, r), "noisy rectangle validates");
   assert.equal(s.faces.length, 4, "exactly 4 hip faces");
 });
+
+// --- degenerate fan rejection (the regression that shipped) ---
+test("validateSkeleton REJECTS a degenerate fan (elongated footprint, no ridge)", () => {
+  // 4 sliver triangles all meeting at the centre apex — tiles the rect (passes
+  // the area gate) but is a collapsed pyramid with NO ridge. Must be rejected.
+  const rect: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 800, y: 0 },
+    { x: 800, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const apex: Pt = { x: 400, y: 150 };
+  const fan = {
+    ridges: [],
+    hips: [
+      { points: [rect[0], apex] },
+      { points: [rect[1], apex] },
+      { points: [rect[2], apex] },
+      { points: [rect[3], apex] },
+    ],
+    valleys: [],
+    gables: [],
+    faces: [
+      { polygon: [rect[0], rect[1], apex], downhill: { x: 0, y: -1 } },
+      { polygon: [rect[1], rect[2], apex], downhill: { x: 1, y: 0 } },
+      { polygon: [rect[2], rect[3], apex], downhill: { x: 0, y: 1 } },
+      { polygon: [rect[3], rect[0], apex], downhill: { x: -1, y: 0 } },
+    ],
+  } as unknown as Parameters<typeof validateSkeleton>[0];
+  assert.equal(validateSkeleton(fan, rect), false, "fan on an elongated rect is rejected");
+});
+
+test("validateSkeleton ACCEPTS the engine's real elongated-rectangle roof (has a ridge)", () => {
+  const rect: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 800, y: 0 },
+    { x: 800, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const s = deriveRoofSkeletonStraight(rect);
+  assert.ok(validateSkeleton(s, rect), "a real hip roof with a ridge still validates");
+  assert.ok(s.ridges.length >= 1, "and it actually has a ridge");
+});

@@ -1028,7 +1028,50 @@ export function validateSkeleton(
     if (footArea <= 0) return false;
     const facesArea = s.faces.reduce((acc, f) => acc + polyArea(f.polygon), 0);
     const rel = Math.abs(facesArea - footArea) / footArea;
-    return rel <= 0.05;
+    if (rel > 0.05) return false;
+
+    // Reject a DEGENERATE "fan / pyramid" that still tiles: when the offset
+    // events all collapse to ONE central apex, every hip meets at the centre and
+    // there is NO ridge spine — the faces are sliver triangles radiating from the
+    // hub. It passes the area gate but renders as a wrong star. A correct roof on
+    // an ELONGATED or ARTICULATED footprint ALWAYS has a real ridge, so require
+    // one there. (A near-square 4-corner footprint legitimately has no ridge — a
+    // true pyramid — so it's exempt.)
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const p of perimeter.filter(isFinitePt)) {
+      if (p.x < bx0) bx0 = p.x;
+      if (p.x > bx1) bx1 = p.x;
+      if (p.y < by0) by0 = p.y;
+      if (p.y > by1) by1 = p.y;
+    }
+    const W = bx1 - bx0;
+    const H = by1 - by0;
+    const aspect = Math.max(W, H) / Math.max(1e-6, Math.min(W, H));
+    const corners = cleanRing(perimeter, Math.max(2, span * 0.03)).length;
+    const ridgeLen = s.ridges.reduce(
+      (a, l) =>
+        a + Math.hypot(l.points[1].x - l.points[0].x, l.points[1].y - l.points[0].y),
+      0,
+    );
+    if ((aspect > 1.35 || corners > 4) && ridgeLen < 0.08 * span) return false;
+
+    // Reject a fan by its HUB too: a single point that is an endpoint of many
+    // skeleton lines (a proper straight-skeleton node has degree ~3).
+    const allLines = [...s.ridges, ...s.hips, ...s.valleys];
+    const hubTol = Math.max(2, span * 0.02);
+    for (const a of allLines) {
+      const c = a.points[0];
+      let deg = 0;
+      for (const b of allLines) {
+        if (
+          Math.hypot(b.points[0].x - c.x, b.points[0].y - c.y) <= hubTol ||
+          Math.hypot(b.points[1].x - c.x, b.points[1].y - c.y) <= hubTol
+        )
+          deg++;
+      }
+      if (deg > 7) return false;
+    }
+    return true;
   } catch {
     return false;
   }
