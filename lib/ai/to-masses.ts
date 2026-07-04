@@ -168,6 +168,30 @@ function shapeCheck(
   return { off: ratio > 1.35 || ratio < 1 / 1.35, traceElong, statedElong, w: d.width_ft, h: d.depth_ft };
 }
 
+/**
+ * The footprint's area in ft² computed WITHOUT trusting the AI's absolute scale
+ * — which is unreliable (the AI's footprint-px and scale-ft frequently disagree,
+ * and runEstimateFromPlan later swaps the footprint into the vector-outline's
+ * coordinate space without updating `scale`). Instead we anchor on the ONE
+ * trusted absolute number, the stated overall dimension, by matching the
+ * footprint's longer bbox side to the larger of width/depth (an isotropic scale
+ * — a plan is drawn to scale). This yields a believable area from the footprint's
+ * own shape; comparing it to the stated schedule area then validates depth / fill
+ * (a missing wing) rather than the meaningless absolute scale.
+ */
+function selfConsistentAreaFt2(ringPx: Pt[], classification?: PlanClassification | null): number | null {
+  const d = classification?.building_dimensions;
+  const w = typeof d?.width_ft === "number" && d.width_ft > 0 ? d.width_ft : 0;
+  const h = typeof d?.depth_ft === "number" && d.depth_ft > 0 ? d.depth_ft : 0;
+  const overallMax = Math.max(w, h);
+  if (!(overallMax > 0)) return null;
+  const bb = bbox(ringPx);
+  const bbMax = Math.max(bb.w, bb.h);
+  if (!(bbMax > 0)) return null;
+  const scale = overallMax / bbMax; // ft per px, from the trusted overall dim
+  return polyArea(ringPx) * scale * scale;
+}
+
 /** Fraction of edge a→b covered by segment s, when s lies on the edge's line
  *  within `tol` and overlaps it. Compact local copy (reconcile-eaves keeps its
  *  own; the two modules stay decoupled). */
@@ -280,21 +304,32 @@ export function validateBlueprintGeometry(
       if (diff > 0.5) {
         // A >50% miss at a DECLARED scale is almost never one missing plane — it
         // means the declared px→ft scale doesn't match the footprint's own
-        // coordinate space (footprint and scale reference frequently come from
-        // different sheets). The measured-run LF is scale-independent, so it's
-        // unaffected; defer the shape verdict to the scale-free check.
-        const verdict = !shape
-          ? "verify the declared plan scale"
-          : shape.off
+        // coordinate space (the AI's footprint-px and scale-ft disagree, and the
+        // footprint is later re-spaced without rescaling). The measured-run LF is
+        // scale-independent, so it's unaffected. Re-check using the footprint's
+        // OWN scale (anchored on the trusted overall dimension) for a real area.
+        const selfArea = selfConsistentAreaFt2(ringPx, classification);
+        let verdict: string;
+        if (selfArea != null) {
+          const selfDiff = Math.abs(selfArea - stated) / stated;
+          verdict =
+            selfDiff <= 0.25
+              ? `re-scaled from the footprint's own geometry it's ~${selfArea.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf (${(selfDiff * 100).toFixed(0)}% — reconciles), so the declared scale was just mislabeled and the priced LF (measured) is unaffected`
+              : `even re-scaled from the footprint's own geometry it's ~${selfArea.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf (${(selfDiff * 100).toFixed(0)}% off) — re-check the footprint trace (a wing/mass may be missing)`;
+        } else if (shape) {
+          verdict = shape.off
             ? `and the footprint PROPORTIONS also look wrong (elongation ${shape.traceElong.toFixed(2)} vs stated ${shape.statedElong.toFixed(2)}) — re-check the footprint trace`
-            : `but the footprint PROPORTIONS match the stated ${shape.w}×${shape.h} ft (elongation ${shape.traceElong.toFixed(2)} ≈ ${shape.statedElong.toFixed(2)}) — the shape is likely fine and only the declared scale is off; the priced LF (from measured run lengths) is unaffected`;
+            : `but the footprint PROPORTIONS match the stated ${shape.w}×${shape.h} ft — the shape is likely fine and only the declared scale is off; the priced LF (measured) is unaffected`;
+        } else {
+          verdict = "verify the declared plan scale";
+        }
         flags.push({
           code: "area_gate",
           severity: "warn",
           mass: mass.name,
           message:
             `[main] area gate: declared scale gives ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
-            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (footprint vs declared plan scale — often different sheets), not a missing plane; ${verdict}.`,
+            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (AI footprint-px vs declared plan scale), not a missing plane; ${verdict}.`,
         });
       } else {
         const over = diff > 0.15;

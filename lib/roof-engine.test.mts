@@ -277,6 +277,57 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   assert.equal(res.reviewFlags.filter((f) => f.severity === "error").length, 0);
 });
 
+// ── the REAL Woodinville roof, from the plan (ground-truth fixture) ─────────
+
+test("Woodinville ground truth: engine draws the real asymmetric roof (front 2 gables, rear 1, projecting porch + patio)", () => {
+  // Faithful-but-schematic model of 05.13.26 DA HOMES — WOODINVILLE, read off the
+  // plan: main upper roof 2902 sf (page 4 ROOF VENTILATION schedule); FRONT/North
+  // is a cross-gable (two gable-ends) with a projecting entry PORCH on posts;
+  // REAR/South is a hip with ONE gable-end and a projecting covered PATIO on
+  // posts. This is exactly the front≠rear asymmetry the per-face read caught and
+  // the freehand canvas trace got wrong. Cardinal facings are OUTWARD normals:
+  // the front edge (y=0) faces "N" (−y), the rear edge (y=51) faces "S" (+y).
+  const main: MassInput = {
+    name: "main",
+    outline: box(64, 51),
+    statedArea: 2902,
+    eaveEdges: [0, 1, 2, 3],
+    gables: [
+      gable(16, 0, 14, 6, 0, "N", "front_gable_L"), // flush gable-end
+      gable(48, 0, 14, 4, 0, "N", "front_gable_R"), // flush gable-end → front shows 2
+      gable(32, 0, 10, 4, 6, "N", "front_porch"), // projecting entry porch (posts)
+      gable(32, 51, 16, 4, 0, "S", "rear_gable"), // flush gable-end → rear shows 1
+      gable(48, 51, 12, 4, 5, "S", "rear_patio"), // projecting covered patio (posts)
+    ],
+  };
+  const res = runRoofEngine([main]);
+
+  // Eave LF = 230 perimeter + porch (2×6) + patio (2×5); flush ends add ZERO.
+  assert.equal(res.eaveLfByMass.main, 252);
+
+  // Only the projecting porch + patio generate ridge-backs + valleys.
+  const ridges = res.masses[0].interior.filter((e) => e.type === "ridge").length;
+  const valleys = res.masses[0].interior.filter((e) => e.type === "valley").length;
+  assert.equal(ridges, 2);
+  assert.equal(valleys, 4);
+
+  // The front≠rear asymmetry is PRESERVED, not mirrored: 2 flush ends on the
+  // front, 1 on the rear.
+  const flush = res.reviewFlags.filter((f) => f.code === "gable_flush");
+  assert.equal(flush.length, 3);
+  assert.equal(flush.filter((f) => /front_gable/.test(f.message)).length, 2);
+  assert.equal(flush.filter((f) => /rear_gable/.test(f.message)).length, 1);
+
+  // Porch + patio each contribute two guttered side eaves (LAW 2).
+  assert.equal(res.masses[0].edges.filter((e) => e.gutter && e.source === "gable:front_porch").length, 2);
+  assert.equal(res.masses[0].edges.filter((e) => e.gutter && e.source === "gable:rear_patio").length, 2);
+
+  // Area gate reconciles with the stated 2902 sf (3264 computed, 12.5% ≤ 15%).
+  const ag = res.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "info");
+  assert.equal(res.reviewFlags.filter((f) => f.severity === "error").length, 0);
+});
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function box(w: number, h: number) {

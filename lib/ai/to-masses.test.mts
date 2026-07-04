@@ -102,17 +102,17 @@ test("huge area miss is diagnosed as a SCALE MISMATCH, not a missing plane; meas
   const ag = v.reviewFlags.find((f) => f.code === "area_gate");
   assert.ok(ag && ag.severity === "warn");
   assert.ok(/SCALE MISMATCH/.test(ag!.message), "should name a scale mismatch");
-  assert.ok(/PROPORTIONS match/.test(ag!.message), "shape matches → reassure");
+  assert.ok(/reconciles/.test(ag!.message), "self-consistent re-scale reconciles the area");
   assert.ok(/priced LF.*unaffected/.test(ag!.message), "measured LF is unaffected");
   assert.ok(!/may be missing/.test(ag!.message), "must NOT use the old 'a plane may be missing' blame");
 });
 
-test("huge area miss AND wrong proportions → flags both the scale and the shape", () => {
-  const v = validateBlueprintGeometry(analysis(), classification(200, 50)); // elong 4.0 vs trace 1.25
+test("huge area miss where even the self-consistent re-scale doesn't match → flags a possible missing wing", () => {
+  const v = validateBlueprintGeometry(analysis(), classification(200, 50));
   const ag = v.reviewFlags.find((f) => f.code === "area_gate");
   assert.ok(ag && ag.severity === "warn");
   assert.ok(/SCALE MISMATCH/.test(ag!.message));
-  assert.ok(/PROPORTIONS also look wrong/.test(ag!.message));
+  assert.ok(/wing.*missing|re-check the footprint/.test(ag!.message));
 });
 
 test("an excluded rake edge is classified rake, not eave", () => {
