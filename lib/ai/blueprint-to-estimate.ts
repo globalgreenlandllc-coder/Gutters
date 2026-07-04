@@ -21,6 +21,7 @@ import type {
 // `PX_PER_FT ÷ …` would silently become NaN, collapsing the projection
 // and the synthesized layout (blank canvas, "Eaves NaN LF").
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
+import { buildEngineTakeoff } from "./engine-takeoff";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -435,6 +436,12 @@ function segmentsCollinearOverlap(
 export function blueprintToEstimateResult(
   analysis: BlueprintAnalysis,
   meta: BlueprintToEstimateMeta,
+  opts?: {
+    /** When true, the deterministic roof engine drives the priced eave LF,
+     *  downspouts, and eave lines instead of the raw gutter_runs sum. Gated by
+     *  the BLUEPRINT_ENGINE_TAKEOFF flag at the caller; default off. */
+    useEngineTakeoff?: boolean;
+  },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
   // gable rake. When the AI double-classifies an edge — a gutter_run that
@@ -500,6 +507,11 @@ export function blueprintToEstimateResult(
     analysis.gutter_runs,
   );
 
+  // Engine-takeoff mode (flag): the deterministic roof engine becomes the
+  // pricing + eave-line authority. Null when there's no footprint / no scale,
+  // in which case the flag no-ops and the gutter_runs path below stands.
+  const engineBundle = opts?.useEngineTakeoff ? buildEngineTakeoff(analysis) : null;
+
   // A point is "bad" when the stored analysis has null/undefined/NaN
   // coords — projection would collapse it to viewBox center and the
   // canvas would render every degenerate eave on top of one another
@@ -531,6 +543,20 @@ export function blueprintToEstimateResult(
       };
     })
     .filter((l): l is EditableLine => l !== null);
+
+  // Engine mode: replace the gutter_runs eaves with the engine's guttered edges
+  // (footprint perimeter + confirmed projecting-gable side eaves), projected
+  // with the SAME transform so the canvas registers and re-prices consistently.
+  if (engineBundle) {
+    eaves = engineBundle.takeoff.masses
+      .flatMap((m) => m.edges)
+      .filter((e) => e.gutter)
+      .map((e, i): EditableLine => ({
+        id: `engine-eave-${i}`,
+        kind: "eave",
+        points: [project(e.p1), project(e.p2)],
+      }));
+  }
 
   // Also detect "all eaves got projected to the same point" — the
   // bbox was so small the load-bearing geometry collapsed. In that
@@ -585,6 +611,14 @@ export function blueprintToEstimateResult(
       return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
     })
     .filter((d): d is Downspout => d !== null);
+
+  // Engine mode: rule-based downspouts (1 per continuous run + 1 per 40 ft).
+  if (engineBundle) {
+    downspouts = engineBundle.takeoff.downspouts.map((d, i): Downspout => {
+      const p = project(d.at);
+      return { id: `engine-ds-${i}`, x: p.x, y: p.y, heightFt: 20 };
+    });
+  }
 
   // ── Roof-structure overlay ─────────────────────────────────────────
   // The AI's full building outline + interior ridge / hip / valley lines.
@@ -658,10 +692,12 @@ export function blueprintToEstimateResult(
   //   2. Cap any single run longer than the building's bounding-box
   //      diagonal — no straight eave can physically exceed it.
   // Then we price from the corrected geometry, not the raw length_ft.
-  const targetEaveLF = analysis.gutter_runs.reduce(
-    (sum, r) => sum + (r.length_ft ?? 0) * ftScale,
-    0,
-  );
+  // Engine mode prices from the engine's real-feet LF; otherwise the clamped,
+  // envelope-capped length_ft sum (scaled to the viewBox). Either way the
+  // length-correction below scales the drawn eaves so header = canvas = price.
+  const targetEaveLF = engineBundle
+    ? engineBundle.eaveLfFt * ftScale
+    : analysis.gutter_runs.reduce((sum, r) => sum + (r.length_ft ?? 0) * ftScale, 0);
 
   let eaveLF: number;
   if (eaves.length > 0 && targetEaveLF > 0) {
@@ -801,6 +837,15 @@ export function blueprintToEstimateResult(
     );
   }
   for (const n of analysis.notes) notes.push(n);
+
+  if (engineBundle) {
+    const eaveCount = engineBundle.takeoff.masses.flatMap((m) => m.edges).filter((e) => e.gutter).length;
+    notes.push(
+      `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
+    );
+    const mark = { error: "⛔", warn: "⚠", info: "🔎" } as const;
+    for (const f of engineBundle.takeoff.reviewFlags) notes.push(`${mark[f.severity]} ${f.message}`);
+  }
 
   // Tell the contractor when the stored analysis had malformed
   // geometry we had to drop. A non-zero count means the takeoff is

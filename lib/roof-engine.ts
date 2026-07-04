@@ -1,0 +1,618 @@
+/**
+ * roof-engine.ts — deterministic roof geometry engine for the gutter takeoff.
+ *
+ * This is the TypeScript port of the spec's `roof_engine.py`. It draws the roof
+ * BY RULE, not by eye: the vision model reads sheets and returns outlines +
+ * gables (span / pitch / projection); this engine reconciles them into
+ * classified edges, generates each gable's ridge-back and paired valleys,
+ * runs the gates (closure, reentrant-corner, gable-anchor, area, long-run), and
+ * computes the eave-LF + downspout takeoff. It NEVER guesses — anything it can't
+ * resolve becomes a structured `ReviewFlag` instead of an invented number.
+ *
+ * TWO LAWS it enforces (see the spec):
+ *  - LAW 1 — the model reads; the code reconciles. Geometry (closure, offsets,
+ *    valley placement, area checks, downspout math) lives HERE, not in a prompt.
+ *  - LAW 2 — a projection's side edges are guttered eaves whose length equals
+ *    its depth; width comes from the facing view, depth from the perpendicular
+ *    view. `buildGableByRule` is the concrete expression of this law.
+ *
+ * DESIGN RULES (mirror roof-skeleton.ts / reconcile-eaves.ts):
+ *  - PURE + directive-free (no "server-only", no DOM, no React) so it runs in
+ *    the browser bundle AND under `node`/`tsx --test`.
+ *  - Deterministic: same input → same output. No Date.now()/Math.random().
+ *  - Never throws on the happy path; malformed input yields flags, not crashes.
+ *  - Coordinate-space agnostic: operates in whatever units it's handed (feet for
+ *    a scaled takeoff, or raw PDF pixels). The +y direction is a caller choice;
+ *    `facing` vectors are relative, so the engine is correct in either.
+ */
+
+import type { Pt } from "./roof-skeleton";
+
+// ── Domain model (canonical, spec-aligned) ─────────────────────────────────
+
+export type EdgeType = "eave" | "rake" | "hip" | "valley" | "ridge";
+export type Facing = "N" | "S" | "E" | "W";
+export type Confidence = "high" | "medium" | "low";
+
+/** One classified roof edge. `gutter` is the load-bearing bit: eave LF sums
+ *  only edges with `gutter === true`. */
+export type Edge = {
+  p1: Pt;
+  p2: Pt;
+  type: EdgeType;
+  gutter: boolean;
+  source?: string;
+  confidence?: Confidence;
+};
+
+/** How the eave BENEATH a gable behaves (spec §1.4). Drives whether the gable
+ *  contributes side eaves (projecting) or leaves a continuous eave whole
+ *  (roof_mounted), or neither (flush). */
+export type EaveCondition = "projecting" | "roof_mounted" | "flush";
+
+/** What carries the gable. A porch/entry gable on posts or a beam is a real
+ *  PROJECTING porch roof (guttered sides), NOT a decorative roof-mounted dormer
+ *  — the most commonly mis-classified gable (spec §1.4 GABLE RULES). */
+export type SupportedOn = "wall" | "posts" | "beam";
+
+/** Where the projection depth was confirmed. Per the correction addendum, a
+ *  gable is FLUSH (no side eaves) unless a side elevation or the roof plan
+ *  positively shows it projecting — the face view alone is not sufficient. */
+export type ProjectionSource = "side_elevation" | "roof_plan" | "none";
+
+/**
+ * A gable to be drawn by rule. `baseCenter` sits on the eave line; `span` is its
+ * width on the facing elevation; `pitch` is rise:12.
+ *
+ * `projection` is how far it juts out in plan. Per the correction addendum it
+ * DEFAULTS TO 0 (flush: rakes only, no side eaves, no ridge-back/valleys, the
+ * eave runs straight past beneath it unbroken) and is only made positive when a
+ * side elevation or the roof-plan footprint confirms the projection — reading
+ * projection from the face view alone inflates the takeoff with side eaves that
+ * often don't exist. `facing` is the outward direction (front gables face one
+ * way, rear gables the other — never copy one face to the other). `intoDepth`
+ * is the ridge run-back into the parent roof (default span/2).
+ */
+export type Gable = {
+  baseCenter: Pt;
+  span: number;
+  pitch: number;
+  projection: number;
+  facing: Facing;
+  intoDepth?: number;
+  name?: string;
+  eaveCondition?: EaveCondition;
+  supportedOn?: SupportedOn;
+  /** Which view confirmed the projection. "none" ⇒ flush by default. */
+  projectionSource?: ProjectionSource;
+};
+
+/** Peak height in the elevation: (span/2) × (pitch/12). A 6:12 gable rises
+ *  twice as steeply as a 4:12 for the same span (spec §1.4). */
+export function gablePeakHeightFt(g: Gable): number {
+  return (g.span / 2) * (g.pitch / 12);
+}
+
+/** A gable projects (juts out, gaining guttered side eaves) only when it has a
+ *  positive projection depth. Zero projection ⇒ flush/roof-mounted: rakes only,
+ *  eave continuous beneath, ZERO gutter contribution. */
+export function isProjecting(g: Gable): boolean {
+  return g.projection > 1e-6;
+}
+
+/** Input for one roof mass/tier. `eaveEdges` names which perimeter edge indices
+ *  (edge i spans outline[i] → outline[i+1]) are guttered eaves; the rest are
+ *  rakes. */
+export type MassInput = {
+  name: string;
+  outline: Pt[];
+  statedArea?: number | null;
+  eaveEdges: number[];
+  gables?: Gable[];
+  overhangFt?: number;
+};
+
+/** An assembled mass: the outline plus every classified perimeter + gable edge
+ *  and the generated interior lines (ridges / valleys). */
+export type Mass = {
+  name: string;
+  outline: Pt[];
+  statedArea: number | null;
+  edges: Edge[];
+  interior: Edge[];
+};
+
+export type FlagSeverity = "info" | "warn" | "error";
+export type FlagCode =
+  | "outline_open"
+  | "gable_unanchored"
+  | "gable_flush"
+  | "gable_roof_mounted"
+  | "reentrant_no_valley"
+  | "area_gate"
+  | "no_schedule"
+  | "long_run";
+
+/** Structured review flag. Replaces the spec's bare strings so the UI can group
+ *  by mass, filter by severity, and place `at` markers on the canvas. */
+export type ReviewFlag = {
+  code: FlagCode;
+  severity: FlagSeverity;
+  mass?: string;
+  message: string;
+  at?: Pt;
+};
+
+/** A continuous gutter run — a maximal chain of guttered edges that physically
+ *  connect (the gutter turns outside corners). Downspouts are placed per run. */
+export type EaveRun = {
+  id: string;
+  mass: string;
+  edges: Edge[];
+  lengthFt: number;
+};
+
+export type EngineDownspout = {
+  mass: string;
+  runId: string;
+  at: Pt;
+};
+
+export type RoofTakeoff = {
+  masses: Mass[];
+  runs: EaveRun[];
+  eaveLfByMass: Record<string, number>;
+  totalEaveLf: number;
+  downspouts: EngineDownspout[];
+  reviewFlags: ReviewFlag[];
+};
+
+export type EngineOptions = {
+  /** How close a gable base must sit to the roof edge to count as anchored. */
+  anchorTolFt?: number;
+  /** Area gate tolerance (fraction). Off by more than this ⇒ flag. */
+  areaTolFrac?: number;
+  /** Downspout spacing: one per run + one per this many feet. */
+  downspoutSpacingFt?: number;
+  /** Runs shorter than this share drainage and get no dedicated downspout. */
+  minDownspoutRunFt?: number;
+  /** A single straight guttered edge longer than this is flagged implausible. */
+  maxSingleEdgeFt?: number;
+};
+
+const DEFAULTS: Required<EngineOptions> = {
+  anchorTolFt: 2.0,
+  areaTolFrac: 0.15,
+  downspoutSpacingFt: 40.0,
+  minDownspoutRunFt: 10.0,
+  maxSingleEdgeFt: 80.0,
+};
+
+// ── Vector / polygon helpers ───────────────────────────────────────────────
+
+function dirVector(f: Facing): Pt {
+  switch (f) {
+    case "S":
+      return { x: 0, y: 1 };
+    case "N":
+      return { x: 0, y: -1 };
+    case "E":
+      return { x: 1, y: 0 };
+    case "W":
+      return { x: -1, y: 0 };
+  }
+}
+
+/** Left-perpendicular of a 2D vector. */
+function perp(v: Pt): Pt {
+  return { x: -v.y, y: v.x };
+}
+
+const add = (a: Pt, b: Pt): Pt => ({ x: a.x + b.x, y: a.y + b.y });
+const scale = (a: Pt, k: number): Pt => ({ x: a.x * k, y: a.y * k });
+const dist = (a: Pt, b: Pt): number => Math.hypot(a.x - b.x, a.y - b.y);
+const finite = (p: Pt): boolean => Number.isFinite(p.x) && Number.isFinite(p.y);
+
+/** Absolute polygon area (shoelace). */
+export function polyArea(poly: Pt[]): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Signed area (shoelace). >0 ⇒ counter-clockwise in a y-up frame. */
+function signedArea(poly: Pt[]): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+
+/** Do segments p1p2 and p3p4 properly intersect (share an interior point)? */
+function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  const d = (a: Pt, b: Pt, c: Pt) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const d1 = d(p3, p4, p1);
+  const d2 = d(p3, p4, p2);
+  const d3 = d(p1, p2, p3);
+  const d4 = d(p1, p2, p4);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
+    return true;
+  return false;
+}
+
+/**
+ * A ring is "simple" (non-self-intersecting) and closable when it has ≥3 finite
+ * vertices and no two non-adjacent edges cross. This is the meaningful closure
+ * gate — a self-crossing outline (bow-tie) is geometrically impossible for a
+ * roof edge and must be flagged, not silently used.
+ */
+export function polygonCloses(pts: Pt[]): boolean {
+  if (pts.length < 3) return false;
+  if (!pts.every(finite)) return false;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a1 = pts[i];
+    const a2 = pts[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      // Skip adjacent edges (they legitimately share a vertex).
+      if (j === i) continue;
+      if ((j + 1) % n === i || (i + 1) % n === j) continue;
+      const b1 = pts[j];
+      const b2 = pts[(j + 1) % n];
+      if (segmentsIntersect(a1, a2, b1, b2)) return false;
+    }
+  }
+  return true;
+}
+
+/** The reentrant (reflex / inside) corners of a polygon — each requires a
+ *  valley where the roof planes meet (spec §2 step 3). */
+export function reentrantCorners(pts: Pt[]): Pt[] {
+  if (pts.length < 4) return [];
+  // Normalize to counter-clockwise so "reflex ⇔ cross < 0" holds.
+  let ring = pts;
+  if (signedArea(ring) < 0) ring = [...ring].reverse();
+  const out: Pt[] = [];
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const a = ring[(i - 1 + n) % n];
+    const b = ring[i];
+    const c = ring[(i + 1) % n];
+    const v1 = { x: b.x - a.x, y: b.y - a.y };
+    const v2 = { x: c.x - b.x, y: c.y - b.y };
+    const cross = v1.x * v2.y - v1.y * v2.x;
+    if (cross < -1e-6) out.push(b);
+  }
+  return out;
+}
+
+/** Distance from a point to a line segment. */
+function distPointToSegment(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (l2 <= 1e-12) return dist(p, a);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return dist(p, { x: a.x + t * dx, y: a.y + t * dy });
+}
+
+/** Min distance from a point to a polygon's boundary. */
+function distPointToBoundary(p: Pt, poly: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const d = distPointToSegment(p, poly[i], poly[(i + 1) % poly.length]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// ── Gable-by-rule (the core of LAW 2) ──────────────────────────────────────
+
+export type GableLines = {
+  rakes: [Pt, Pt][];
+  sideEaves: [Pt, Pt][];
+  ridgeBack: [Pt, Pt][];
+  valleys: [Pt, Pt][];
+  peak: Pt;
+  eaveBreak: [Pt, Pt];
+  /** True when the gable juts out (has guttered side eaves + ridge-back +
+   *  valleys). False ⇒ flush/roof-mounted: rakes only. */
+  projecting: boolean;
+};
+
+/**
+ * Generate a gable's rakes, side eaves, ridge-back, and two valleys from its
+ * span / pitch / projection. This is the deterministic replacement for asking
+ * the model to "draw the gable": the model only supplies the parameters.
+ *
+ * PROJECTING gable ⇒ two rakes (no gutter), two side eaves (gutter, length =
+ * projection), a ridge running back into the parent roof, and two valleys where
+ * the gable planes meet it. FLUSH / ROOF-MOUNTED (projection 0) ⇒ rakes only,
+ * zero gutter; the eave beneath is left whole by the caller. Per the correction
+ * addendum, flush is the DEFAULT — only pass a positive projection when a side
+ * view or the roof plan confirmed it (spec §1.4).
+ */
+export function buildGableByRule(g: Gable): GableLines {
+  const out = dirVector(g.facing);
+  const side = perp(out);
+  const half = g.span / 2;
+  const left = { x: g.baseCenter.x - side.x * half, y: g.baseCenter.y - side.y * half };
+  const right = { x: g.baseCenter.x + side.x * half, y: g.baseCenter.y + side.y * half };
+  const peak = add(g.baseCenter, scale(out, g.projection));
+
+  const lines: GableLines = {
+    rakes: [],
+    sideEaves: [],
+    ridgeBack: [],
+    valleys: [],
+    peak,
+    eaveBreak: [left, right],
+    projecting: isProjecting(g),
+  };
+
+  if (!isProjecting(g)) {
+    lines.rakes = [
+      [left, peak],
+      [peak, right],
+    ];
+    return lines;
+  }
+
+  const lp = add(left, scale(out, g.projection));
+  const rp = add(right, scale(out, g.projection));
+  lines.rakes = [
+    [lp, peak],
+    [peak, rp],
+  ];
+  lines.sideEaves = [
+    [left, lp],
+    [right, rp],
+  ];
+  const into = g.intoDepth ?? half;
+  const ridgeEnd = { x: g.baseCenter.x - out.x * into, y: g.baseCenter.y - out.y * into };
+  lines.ridgeBack = [[peak, ridgeEnd]];
+  lines.valleys = [
+    [left, ridgeEnd],
+    [right, ridgeEnd],
+  ];
+  return lines;
+}
+
+// ── Mass assembly + gates ──────────────────────────────────────────────────
+
+const edgeLen = (e: Edge): number => dist(e.p1, e.p2);
+
+/**
+ * Assemble one mass: classify its perimeter edges, generate every gable's edges
+ * + interior lines by rule, and append gate flags (unanchored gable,
+ * roof-mounted note, reentrant-corner-without-valley) to `flags`.
+ */
+export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Required<EngineOptions>): Mass {
+  const { name, outline } = input;
+  const mass: Mass = { name, outline, statedArea: input.statedArea ?? null, edges: [], interior: [] };
+
+  if (!polygonCloses(outline)) {
+    flags.push({
+      code: "outline_open",
+      severity: "error",
+      mass: name,
+      message: `[${name}] outline does not close / self-intersects — review before pricing.`,
+    });
+    return mass;
+  }
+
+  const eaveSet = new Set(input.eaveEdges);
+  const n = outline.length;
+  for (let i = 0; i < n; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % n];
+    if (eaveSet.has(i)) {
+      mass.edges.push({ p1: a, p2: b, type: "eave", gutter: true, source: "elevation" });
+    } else {
+      mass.edges.push({ p1: a, p2: b, type: "rake", gutter: false, source: "elevation" });
+    }
+  }
+
+  for (const g of input.gables ?? []) {
+    const gname = g.name ?? "gable";
+    const d = distPointToBoundary(g.baseCenter, outline);
+    if (d > opts.anchorTolFt) {
+      flags.push({
+        code: "gable_unanchored",
+        severity: "error",
+        mass: name,
+        at: g.baseCenter,
+        message: `[${name}] gable '${gname}' base is ${d.toFixed(1)} ft off the roof edge — NOT anchored to an eave. A gable cannot float mid-plane; re-read.`,
+      });
+    }
+
+    const L = buildGableByRule(g);
+    for (const [p1, p2] of L.sideEaves)
+      mass.edges.push({ p1, p2, type: "eave", gutter: true, source: `gable:${gname}` });
+    for (const [p1, p2] of L.rakes)
+      mass.edges.push({ p1, p2, type: "rake", gutter: false, source: `gable:${gname}` });
+    for (const [p1, p2] of L.ridgeBack)
+      mass.interior.push({ p1, p2, type: "ridge", gutter: false, source: `gable:${gname}` });
+    for (const [p1, p2] of L.valleys)
+      mass.interior.push({ p1, p2, type: "valley", gutter: false, source: `gable:${gname}` });
+
+    if (!L.projecting) {
+      // Zero projection: rakes only, eave continuous beneath, ZERO gutter. Per
+      // the correction addendum this is the EXPECTED default (flush), not an
+      // error. A roof-mounted dormer is called out separately so it can be
+      // re-checked against the side elevation; a flush gable-end is just noted.
+      if (g.eaveCondition === "roof_mounted") {
+        flags.push({
+          code: "gable_roof_mounted",
+          severity: "info",
+          mass: name,
+          at: g.baseCenter,
+          message: `[${name}] gable '${gname}' is roof-mounted: rakes only, the eave runs whole beneath it. Confirm the eave continues past it on the roof plan.`,
+        });
+      } else {
+        flags.push({
+          code: "gable_flush",
+          severity: "info",
+          mass: name,
+          at: g.baseCenter,
+          message: `[${name}] gable '${gname}' read as flush (rakes only, no side eaves, contributes zero gutter); the eave runs straight past beneath it. If a side elevation or the roof plan shows it projecting, set projection = depth to add its side eaves.`,
+        });
+      }
+    }
+  }
+
+  // Reentrant-corner gate: every inside corner needs a valley within tolerance.
+  const valleyPts = mass.interior.filter((e) => e.type === "valley").flatMap((e) => [e.p1, e.p2]);
+  for (const c of reentrantCorners(outline)) {
+    const covered = valleyPts.some((vp) => dist(c, vp) <= opts.anchorTolFt);
+    if (!covered) {
+      flags.push({
+        code: "reentrant_no_valley",
+        severity: "warn",
+        mass: name,
+        at: c,
+        message: `[${name}] reentrant corner at (${c.x.toFixed(1)}, ${c.y.toFixed(1)}) has no valley within ${opts.anchorTolFt} ft.`,
+      });
+    }
+  }
+
+  // Long-run gate: an implausibly long single guttered edge is usually a scale
+  // misread (spec §2 gates).
+  for (const e of mass.edges) {
+    if (e.gutter && edgeLen(e) > opts.maxSingleEdgeFt) {
+      flags.push({
+        code: "long_run",
+        severity: "warn",
+        mass: name,
+        message: `[${name}] a single guttered edge is ${edgeLen(e).toFixed(0)} ft (> ${opts.maxSingleEdgeFt} ft) — verify the scale / a missed corner.`,
+      });
+    }
+  }
+
+  return mass;
+}
+
+/**
+ * Area gate — the spec's explicit FIRST thing to build. Compares a mass's
+ * computed polygon area to a stated schedule area and flags a mismatch beyond
+ * tolerance, so you learn WHICH mass the reader botched before anything else.
+ * A mass with no stated area gets a `no_schedule` info flag (honest: we can't
+ * cross-check it), never a false failure.
+ */
+export function areaGate(mass: Mass, flags: ReviewFlag[], opts: Required<EngineOptions>): void {
+  if (mass.statedArea == null || !(mass.statedArea > 0)) {
+    flags.push({
+      code: "no_schedule",
+      severity: "info",
+      mass: mass.name,
+      message: `[${mass.name}] no stated schedule area to cross-check — computed ${polyArea(mass.outline).toFixed(0)} sf stands unverified.`,
+    });
+    return;
+  }
+  const computed = polyArea(mass.outline);
+  const diff = Math.abs(computed - mass.statedArea) / mass.statedArea;
+  const over = diff > opts.areaTolFrac;
+  flags.push({
+    code: "area_gate",
+    severity: over ? "warn" : "info",
+    mass: mass.name,
+    message:
+      `[${mass.name}] area gate: computed ${computed.toFixed(0)} sf vs stated ${mass.statedArea.toFixed(0)} sf ` +
+      `(${(diff * 100).toFixed(1)}% off) — ${over ? "FLAG (a plane or gable may be missing)" : "OK"}.`,
+  });
+}
+
+// ── Continuous runs + rule-based downspouts + takeoff ──────────────────────
+
+/** Group a mass's guttered edges into continuous runs (edges that share an
+ *  endpoint — the gutter turns the corner). Rakes break a run. */
+export function continuousEaveRuns(mass: Mass, tol = 0.5): EaveRun[] {
+  const gutters = mass.edges.filter((e) => e.gutter);
+  const parent = gutters.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (i: number, j: number) => {
+    parent[find(i)] = find(j);
+  };
+  const shares = (a: Edge, b: Edge): boolean =>
+    dist(a.p1, b.p1) <= tol ||
+    dist(a.p1, b.p2) <= tol ||
+    dist(a.p2, b.p1) <= tol ||
+    dist(a.p2, b.p2) <= tol;
+  for (let i = 0; i < gutters.length; i++)
+    for (let j = i + 1; j < gutters.length; j++) if (shares(gutters[i], gutters[j])) union(i, j);
+
+  const groups = new Map<number, Edge[]>();
+  gutters.forEach((e, i) => {
+    const r = find(i);
+    (groups.get(r) ?? groups.set(r, []).get(r)!).push(e);
+  });
+
+  const runs: EaveRun[] = [];
+  let k = 0;
+  for (const edges of groups.values()) {
+    const lengthFt = edges.reduce((s, e) => s + edgeLen(e), 0);
+    runs.push({ id: `${mass.name}-run-${k++}`, mass: mass.name, edges, lengthFt: round1(lengthFt) });
+  }
+  return runs;
+}
+
+/** Downspouts on one run: one per run + one per spacing interval; runs shorter
+ *  than `minDownspoutRunFt` share drainage and get none. */
+function downspoutsForRun(run: EaveRun, opts: Required<EngineOptions>): EngineDownspout[] {
+  if (run.lengthFt < opts.minDownspoutRunFt) return [];
+  const k = Math.max(1, Math.ceil(run.lengthFt / opts.downspoutSpacingFt));
+  // Place each downspout at the midpoint of one of the run's longest edges,
+  // cycling — deterministic, and near where a real drop would land.
+  const byLen = [...run.edges].sort((a, b) => edgeLen(b) - edgeLen(a));
+  const out: EngineDownspout[] = [];
+  for (let i = 0; i < k; i++) {
+    const e = byLen[i % byLen.length];
+    out.push({ mass: run.mass, runId: run.id, at: { x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2 } });
+  }
+  return out;
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+/**
+ * The full takeoff: eave LF per mass (sum of guttered edges), continuous runs,
+ * and rule-based downspouts. Flags accumulated by assembly / gates are carried
+ * through unchanged.
+ */
+export function computeTakeoff(masses: Mass[], flags: ReviewFlag[], opts: Required<EngineOptions>): RoofTakeoff {
+  const eaveLfByMass: Record<string, number> = {};
+  const runs: EaveRun[] = [];
+  const downspouts: EngineDownspout[] = [];
+  for (const m of masses) {
+    const lf = m.edges.filter((e) => e.gutter).reduce((s, e) => s + edgeLen(e), 0);
+    eaveLfByMass[m.name] = round1(lf);
+    const massRuns = continuousEaveRuns(m);
+    runs.push(...massRuns);
+    for (const r of massRuns) downspouts.push(...downspoutsForRun(r, opts));
+  }
+  const totalEaveLf = round1(Object.values(eaveLfByMass).reduce((s, v) => s + v, 0));
+  return { masses, runs, eaveLfByMass, totalEaveLf, downspouts, reviewFlags: flags };
+}
+
+/**
+ * Top-level entry: assemble every mass, run the area gate on each, and compute
+ * the takeoff. This is what the pipeline calls after the vision read.
+ */
+export function runRoofEngine(inputs: MassInput[], options: EngineOptions = {}): RoofTakeoff {
+  const opts = { ...DEFAULTS, ...options };
+  const flags: ReviewFlag[] = [];
+  const masses = inputs.map((inp) => {
+    const m = assembleMass(inp, flags, opts);
+    areaGate(m, flags, opts);
+    return m;
+  });
+  return computeTakeoff(masses, flags, opts);
+}

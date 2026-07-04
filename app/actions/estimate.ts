@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
 import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
+import { engineTakeoffEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
@@ -483,13 +484,17 @@ export async function runEstimateFromPlan(
     row.pageCount ??
     (sheets.length ? Math.max(...sheets.map((s) => s.pageIndex)) : undefined);
 
-  const result = blueprintToEstimateResult(analysis, {
-    filename: row.filename,
-    durationMs: row.durationMs ?? undefined,
-    planId: row.id,
-    pageCount,
-    sheets,
-  });
+  const result = blueprintToEstimateResult(
+    analysis,
+    {
+      filename: row.filename,
+      durationMs: row.durationMs ?? undefined,
+      planId: row.id,
+      pageCount,
+      sheets,
+    },
+    { useEngineTakeoff: engineTakeoffEnabled() },
+  );
 
   return {
     ok: true,

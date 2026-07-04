@@ -285,6 +285,13 @@ Elevation sides are labeled in the title block or as a header. Look for:
 
 If you can't determine a side confidently, set elevation_side to
 "unknown" and explain in the sheet's summary. Don't guess.
+
+Treat every elevation as INDEPENDENT — never assume the front and back (or
+left and right) match; a set can be a busy cross-gable in front and a plain
+hip in back. If an elevation sheet is too low-resolution to count its eaves or
+distinguish a horizontal eave from a sloped rake, say so in its takeoff_notes
+("<side> elevation unreadable — needs a higher-res sheet") instead of guessing a
+count.
 </elevation_side_detection>
 
 <building_dimensions>

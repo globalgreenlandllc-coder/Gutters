@@ -201,6 +201,31 @@ Even without that note, default to including them — the residential
 norm is to gutter every covered eave.
 </covered_projections>
 
+<four_faces_and_flush_default>
+Read all FOUR elevations (front, rear, left, right) on their own. NEVER derive
+one face from another and NEVER assume front/back or left/right symmetry — a
+house can be a busy cross-gable in front and a plain hip with a patio in back.
+Run the gable count + eave-vs-rake pass separately on EACH face.
+
+A gable's projection decides whether it has guttered SIDE eaves, and projection
+is visible only in the perpendicular (side) elevation or the roof-plan footprint
+— NOT in the face view. So DEFAULT every gable to FLUSH: rakes only (no gutter),
+no side eaves, and the eave runs straight PAST beneath it as one continuous run.
+Only treat a gable as PROJECTING (adding two guttered side eaves whose length =
+the projection depth) when a side elevation or the roof plan positively shows it
+jutting out. A porch/entry gable carried on POSTS or a BEAM is the one that
+usually IS projecting — confirm its depth from the side view.
+
+Consequence: a flush front gable does NOT break the front eave — keep the front
+eave a single continuous guttered run except where a mass is confirmed to
+project. Do not add side-eave runs for a gable you cannot prove projects;
+assuming projection is what inflates the takeoff.
+
+If an elevation is too low-resolution to tell a horizontal eave from a sloped
+rake, or to judge a projection, say so in the notes (e.g. "front elevation
+unreadable — projection indeterminate") rather than guessing.
+</four_faces_and_flush_default>
+
 <cross_reference>
 Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile

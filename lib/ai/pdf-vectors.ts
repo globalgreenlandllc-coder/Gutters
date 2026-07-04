@@ -1,6 +1,7 @@
 import "server-only";
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
 import { segmentsFromOps, selectSegments } from "./pdf-segments";
+import { parseScheduleAreaFt2, type ScheduleAreaHit } from "./to-masses";
 
 /**
  * "Read the blueprint better": pull the PDF's REAL vector layer — printed
@@ -262,4 +263,44 @@ export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Scan every page's raw text for a stated SCHEDULE / title-block AREA (ft²) —
+ * the authoritative input to the takeoff's area gate. Concatenates each page's
+ * text items and runs the pure `parseScheduleAreaFt2` matcher; returns the first
+ * plausible hit with its page. Fully fail-safe: any error / no text → null, and
+ * the area gate falls back to the classifier's width × depth.
+ */
+export async function extractScheduleArea(
+  base64: string,
+): Promise<(ScheduleAreaHit & { page: number }) | null> {
+  try {
+    if (!base64) return null;
+    const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
+    const pdf = await getDocumentProxy(bytes);
+    const total = pdf.numPages;
+    if (!total) return null;
+    const maxPages = Math.min(total, 30);
+    for (let p = 1; p <= maxPages; p++) {
+      try {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const text = (content.items as Array<{ str?: string }>)
+          .map((i) => i.str ?? "")
+          .join(" ");
+        const hit = parseScheduleAreaFt2(text);
+        if (hit) return { ...hit, page: p };
+      } catch {
+        // Skip an unreadable page; keep scanning the rest.
+      }
+    }
+    return null;
+  } catch (e) {
+    console.warn(
+      "[pdf-vectors] schedule-area extraction failed (falling back to width×depth):",
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
 }

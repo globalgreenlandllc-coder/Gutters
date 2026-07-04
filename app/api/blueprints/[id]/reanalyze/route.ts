@@ -19,6 +19,8 @@ import {
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
+import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
+import { readAllElevations } from "@/lib/ai/read-elevations";
 
 export const maxDuration = 300;
 
@@ -210,6 +212,14 @@ export async function POST(
             })
           : null;
 
+      // Independent per-face elevation reads (Correction 1) — run concurrently
+      // with the takeoff below. Same wire-in as the upload path.
+      const elevationReadsEnabled = process.env.BLUEPRINT_ELEVATION_READS !== "0";
+      const elevationsP =
+        isPdf && elevationReadsEnabled
+          ? readAllElevations(finalSource, stage1 && stage1.ok ? stage1.classification : null)
+          : Promise.resolve(null);
+
       // Best-of ensemble: three independent Opus reads + a Gemini read when a
       // Gemini key is configured (cross-provider). Keep the best.
       const geminiReaders = (await geminiAvailable())
@@ -251,9 +261,41 @@ export async function POST(
         reconciled,
         constraints,
       );
+
+      // Deterministic roof-engine gates — same wire-in as the upload path.
+      const gates = await runBlueprintGates({
+        analysis: finalAnalysis,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+        pdfBase64: isPdf && finalSource.kind === "pdf" ? finalSource.base64 : null,
+      });
+      if (gates.notes.length > 0) {
+        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
+      }
+
+      const elevations = await elevationsP;
+      if (elevations && elevations.review_flags.length > 0) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          ...elevations.review_flags.map((f) => `🧭 ${f}`),
+        ];
+      }
+
       const analysisJson: Record<string, unknown> = {
         ...(finalAnalysis as unknown as Record<string, unknown>),
       };
+      analysisJson._engine = {
+        reviewFlags: gates.reviewFlags,
+        scaleFtPerPx: gates.scaleFtPerPx,
+        scheduleArea: gates.scheduleArea,
+      };
+      if (elevations) {
+        analysisJson._perFace = {
+          per_face: elevations.per_face,
+          symmetry_assumed: false,
+          elevation_unreadable: elevations.elevation_unreadable,
+          usage: elevations.usage,
+        };
+      }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
           classification: stage1.classification,

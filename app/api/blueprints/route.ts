@@ -18,6 +18,8 @@ import {
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
+import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
+import { readAllElevations } from "@/lib/ai/read-elevations";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 
 function resolveBlobToken(): string | null {
@@ -392,6 +394,17 @@ export async function POST(request: Request) {
             })
           : null;
 
+      // INDEPENDENT per-face elevation reads (Correction 1) — kicked off here
+      // so they run CONCURRENTLY with the takeoff below. Each elevation is read
+      // in its own blind call, then merged deterministically; the result only
+      // adds review flags (defaults gables to flush), never inflates pricing.
+      // Disable with BLUEPRINT_ELEVATION_READS=0. Never throws.
+      const elevationReadsEnabled = process.env.BLUEPRINT_ELEVATION_READS !== "0";
+      const elevationsP =
+        isPdf && elevationReadsEnabled
+          ? readAllElevations(source, stage1 && stage1.ok ? stage1.classification : null)
+          : Promise.resolve(null);
+
       // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of
       // ensemble — three independent Opus reads PLUS a Gemini read when a
       // Gemini key is configured (genuine cross-provider second opinion);
@@ -448,12 +461,54 @@ export async function POST(request: Request) {
         constraints,
       );
 
+      // Deterministic roof-engine gates (area gate + closure). Pure
+      // validation: it only appends review notes, never changes the priced
+      // geometry. Fold the flag lines into notes BEFORE the analysisJson
+      // spread so they surface in the results panel, and stash the structured
+      // flags under `_engine` for a future dedicated review UI.
+      const gates = await runBlueprintGates({
+        analysis: finalAnalysis,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+        pdfBase64: isPdf && source.kind === "pdf" ? source.base64 : null,
+      });
+      if (gates.notes.length > 0) {
+        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
+        console.log(
+          `[/api/blueprints after()] engine gates: ${gates.reviewFlags.length} flag(s) — ${gates.notes[0]}`,
+        );
+      }
+
+      // Independent per-face elevation reads (started above, resolved now).
+      const elevations = await elevationsP;
+      if (elevations && elevations.review_flags.length > 0) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          ...elevations.review_flags.map((f) => `🧭 ${f}`),
+        ];
+        console.log(
+          `[/api/blueprints after()] elevation reads: ${elevations.usage.calls} face(s), ${elevations.review_flags.length} flag(s)`,
+        );
+      }
+
       // Stash the classifier output alongside the geometry under
       // `_classifier` so the detail page can show it without a schema
       // migration. analysisJson is a free-form Json column.
       const analysisJson: Record<string, unknown> = {
         ...(finalAnalysis as unknown as Record<string, unknown>),
       };
+      analysisJson._engine = {
+        reviewFlags: gates.reviewFlags,
+        scaleFtPerPx: gates.scaleFtPerPx,
+        scheduleArea: gates.scheduleArea,
+      };
+      if (elevations) {
+        analysisJson._perFace = {
+          per_face: elevations.per_face,
+          symmetry_assumed: false,
+          elevation_unreadable: elevations.elevation_unreadable,
+          usage: elevations.usage,
+        };
+      }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
           classification: stage1.classification,
