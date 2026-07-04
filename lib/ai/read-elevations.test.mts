@@ -45,7 +45,20 @@ test("unreadable and missing faces are listed with a flag", () => {
   assert.ok(merged.elevation_unreadable.includes("east"));
   assert.ok(merged.elevation_unreadable.includes("west"));
   assert.ok(merged.review_flags.some((f) => /elevation_unreadable: east/.test(f) && /muddy crop/.test(f)));
-  assert.ok(merged.review_flags.some((f) => /elevation_unreadable: west/.test(f)));
+  assert.ok(merged.review_flags.some((f) => /west elevation not read/.test(f)));
+});
+
+test("emits a 4-face coverage summary listing which faces were read", () => {
+  const merged = mergeFaceReadings(
+    [face({ face: "north", gable_count: 2 }), face({ face: "south", gable_count: 1 })],
+    ["north", "south", "east", "west"],
+  );
+  const summary = merged.review_flags.find((f) => /4-face check/.test(f));
+  assert.ok(summary, "should emit a coverage summary");
+  assert.ok(/north 2 gable\(s\)/.test(summary!) && /south 1 gable\(s\)/.test(summary!));
+  // The two faces sharing sheets that weren't read are surfaced, not skipped.
+  assert.ok(merged.elevation_unreadable.includes("east") && merged.elevation_unreadable.includes("west"));
+  assert.ok(merged.review_flags.some((f) => /east elevation not read/.test(f)));
 });
 
 test("a projection cue defaults to flush and flags for confirmation (posts ⇒ likely porch)", () => {
@@ -75,11 +88,14 @@ test("a projection cue defaults to flush and flags for confirmation (posts ⇒ l
   assert.ok(/Defaulted to FLUSH/.test(flag!), "no gutter added on a guess");
 });
 
-test("no cues, matching readable opposite faces → no spurious flags", () => {
+test("no cues, matching readable opposite faces → only the coverage summary, no spurious flags", () => {
   const merged = mergeFaceReadings(
     [face({ face: "east", gable_count: 1 }), face({ face: "west", gable_count: 1 })],
     ["east", "west"],
   );
-  assert.equal(merged.review_flags.length, 0);
+  // Coverage summary is always present; nothing else.
+  assert.equal(merged.review_flags.length, 1);
+  assert.ok(/4-face check/.test(merged.review_flags[0]));
+  assert.ok(!merged.review_flags.some((f) => /NOT mirrored/.test(f)));
   assert.equal(merged.symmetry_assumed, false);
 });

@@ -72,12 +72,24 @@ export function mergeFaceReadings(reads: FaceReadingRaw[], expectedFaces: string
   const elevation_unreadable: string[] = [];
   const flags: string[] = [];
 
+  // Coverage summary FIRST so the takeoff shows which of the four faces were
+  // actually read on their own (a page often holds two elevations, so a naive
+  // one-side-per-page read silently skips two faces).
+  const readList = reads.filter((r) => r.readable);
+  flags.push(
+    `4-face check — read independently (no mirroring): ${
+      readList.length
+        ? readList.map((r) => `${r.face} ${r.gable_count ?? "?"} gable(s)`).join(", ")
+        : "none"
+    }.`,
+  );
+
   // Expected-but-missing faces + faces read as unreadable.
   for (const f of expectedFaces) {
     const r = per_face[f];
     if (!r) {
       elevation_unreadable.push(f);
-      flags.push(`elevation_unreadable: ${f} — no readable ${f} elevation; projections needing this view are unconfirmed (not added).`);
+      flags.push(`${f} elevation not read on its own — a sheet may hold two elevations and only one side was picked; that face's eaves/projections were NOT independently verified. Check the ${f} face.`);
     } else if (!r.readable) {
       elevation_unreadable.push(f);
       flags.push(`elevation_unreadable: ${f} — ${r.unreadable_reason ?? "too low-res"}; projections needing this view are unconfirmed (not added).`);

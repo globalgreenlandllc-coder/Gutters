@@ -257,7 +257,11 @@ export async function readAllElevations(
 
     const results = await Promise.all(specs.map((spec) => readElevationFace(source, spec)));
     const reads = results.map((r) => r.reading);
-    const merged = mergeFaceReadings(reads, specs.map((s) => s.face));
+    // Expect ALL FOUR cardinal faces so any side we didn't read (e.g. a second
+    // elevation sharing a sheet) is surfaced, not silently skipped.
+    const CARDINAL_FACES = ["north", "south", "east", "west"];
+    const expected = Array.from(new Set([...CARDINAL_FACES, ...specs.map((s) => s.face as string)]));
+    const merged = mergeFaceReadings(reads, expected);
     const usage = results.reduce(
       (acc, r) => ({
         input_tokens: acc.input_tokens + r.usage.input_tokens,
