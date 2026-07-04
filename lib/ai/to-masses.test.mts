@@ -79,12 +79,40 @@ test("scaled area far off → area_gate warn", () => {
   assert.ok(ag && ag.severity === "warn", "area gate should flag a >15% miss");
 });
 
-test("no independent scale → no_schedule, plus scale-free aspect flag when aspect is wrong", () => {
+test("no independent scale → no_schedule, plus scale-free shape flag when elongation is wrong", () => {
   const noScale = analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "test" } });
-  // footprint aspect = 100/80 = 1.25; stated 40/50 = 0.8 → ratio 1.5625 > 1.35.
-  const v = validateBlueprintGeometry(noScale, classification(40, 50));
+  // footprint elongation = 100/80 = 1.25; stated 100×25 → elongation 4.0 (off).
+  const v = validateBlueprintGeometry(noScale, classification(100, 25));
   assert.ok(v.reviewFlags.some((f) => f.code === "no_schedule"));
   assert.ok(v.reviewFlags.some((f) => f.code === "area_gate" && f.severity === "warn"));
+});
+
+test("shape check is rotation-invariant: a 90° portrait/landscape difference does NOT flag", () => {
+  const noScale = analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "test" } });
+  // footprint 100×80 (elong 1.25) vs stated 40×50 (elong 1.25) — same shape, rotated.
+  const v = validateBlueprintGeometry(noScale, classification(40, 50));
+  assert.ok(v.reviewFlags.some((f) => f.code === "no_schedule"));
+  assert.ok(!v.reviewFlags.some((f) => f.code === "area_gate"), "rotation alone must not flag shape");
+});
+
+test("huge area miss is diagnosed as a SCALE MISMATCH, not a missing plane; measured LF called out as safe when shape matches", () => {
+  // footprint 100×80 px @ 0.5 ft/px = 2000 sf; stated 200×160 = 32000 (16× off,
+  // same 1.25 elongation) → declared scale is wrong, but the shape is fine.
+  const v = validateBlueprintGeometry(analysis(), classification(200, 160));
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "warn");
+  assert.ok(/SCALE MISMATCH/.test(ag!.message), "should name a scale mismatch");
+  assert.ok(/PROPORTIONS match/.test(ag!.message), "shape matches → reassure");
+  assert.ok(/priced LF.*unaffected/.test(ag!.message), "measured LF is unaffected");
+  assert.ok(!/may be missing/.test(ag!.message), "must NOT use the old 'a plane may be missing' blame");
+});
+
+test("huge area miss AND wrong proportions → flags both the scale and the shape", () => {
+  const v = validateBlueprintGeometry(analysis(), classification(200, 50)); // elong 4.0 vs trace 1.25
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "warn");
+  assert.ok(/SCALE MISMATCH/.test(ag!.message));
+  assert.ok(/PROPORTIONS also look wrong/.test(ag!.message));
 });
 
 test("an excluded rake edge is classified rake, not eave", () => {

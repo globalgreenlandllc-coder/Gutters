@@ -130,6 +130,27 @@ function bbox(poly: Pt[]) {
   return { w: maxX - minX, h: maxY - minY };
 }
 
+/**
+ * Scale-free shape check: does the footprint's ELONGATION (long side / short
+ * side) match the stated width:depth? Uses magnitudes so a 90° drawing rotation
+ * (portrait vs landscape) doesn't false-flag — we only care whether the box has
+ * the right proportions, not its orientation. Returns null when no dims.
+ */
+function shapeCheck(
+  ringPx: Pt[],
+  classification?: PlanClassification | null,
+): { off: boolean; traceElong: number; statedElong: number; w: number; h: number } | null {
+  const d = classification?.building_dimensions;
+  if (!d || !(typeof d.width_ft === "number" && d.width_ft > 0) || !(typeof d.depth_ft === "number" && d.depth_ft > 0))
+    return null;
+  const bb = bbox(ringPx);
+  if (!(bb.w > 0) || !(bb.h > 0)) return null;
+  const statedElong = Math.max(d.width_ft, d.depth_ft) / Math.min(d.width_ft, d.depth_ft);
+  const traceElong = Math.max(bb.w, bb.h) / Math.min(bb.w, bb.h);
+  const ratio = traceElong / statedElong;
+  return { off: ratio > 1.35 || ratio < 1 / 1.35, traceElong, statedElong, w: d.width_ft, h: d.depth_ft };
+}
+
 /** Fraction of edge a→b covered by segment s, when s lies on the edge's line
  *  within `tol` and overlaps it. Compact local copy (reconcile-eaves keeps its
  *  own; the two modules stay decoupled). */
@@ -232,19 +253,43 @@ export function validateBlueprintGeometry(
       });
     }
 
-    // 3. Area gate (scaled) — or aspect-ratio fallback (scale-free).
+    // 3. Area gate. Scaled comparison when we have a declared scale, but a HUGE
+    //    miss is diagnosed as a scale mismatch (not a missing plane) and deferred
+    //    to the scale-free shape check.
+    const shape = shapeCheck(ringPx, classification);
     if (ftPerPx && stated != null) {
       const computed = polyArea(ring);
       const diff = Math.abs(computed - stated) / stated;
-      const over = diff > 0.15;
-      flags.push({
-        code: "area_gate",
-        severity: over ? "warn" : "info",
-        mass: mass.name,
-        message:
-          `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
-          `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (a plane, wing, or gable may be missing)" : "OK"}.`,
-      });
+      if (diff > 0.5) {
+        // A >50% miss at a DECLARED scale is almost never one missing plane — it
+        // means the declared px→ft scale doesn't match the footprint's own
+        // coordinate space (footprint and scale reference frequently come from
+        // different sheets). The measured-run LF is scale-independent, so it's
+        // unaffected; defer the shape verdict to the scale-free check.
+        const verdict = !shape
+          ? "verify the declared plan scale"
+          : shape.off
+            ? `and the footprint PROPORTIONS also look wrong (elongation ${shape.traceElong.toFixed(2)} vs stated ${shape.statedElong.toFixed(2)}) — re-check the footprint trace`
+            : `but the footprint PROPORTIONS match the stated ${shape.w}×${shape.h} ft (elongation ${shape.traceElong.toFixed(2)} ≈ ${shape.statedElong.toFixed(2)}) — the shape is likely fine and only the declared scale is off; the priced LF (from measured run lengths) is unaffected`;
+        flags.push({
+          code: "area_gate",
+          severity: "warn",
+          mass: mass.name,
+          message:
+            `[main] area gate: declared scale gives ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
+            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (footprint vs declared plan scale — often different sheets), not a missing plane; ${verdict}.`,
+        });
+      } else {
+        const over = diff > 0.15;
+        flags.push({
+          code: "area_gate",
+          severity: over ? "warn" : "info",
+          mass: mass.name,
+          message:
+            `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
+            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (a plane, wing, or gable may be missing)" : "OK"}.`,
+        });
+      }
     } else {
       const reason = !ftPerPx ? "no independent px→ft scale" : "no schedule area";
       flags.push({
@@ -253,23 +298,14 @@ export function validateBlueprintGeometry(
         mass: mass.name,
         message: `[main] area gate skipped (${reason}); footprint area unverified.`,
       });
-      // Scale-free sanity: footprint bbox aspect vs stated width:depth.
-      const d = classification?.building_dimensions;
-      if (d && typeof d.width_ft === "number" && d.width_ft > 0 && typeof d.depth_ft === "number" && d.depth_ft > 0) {
-        const bb = bbox(ringPx);
-        if (bb.w > 0 && bb.h > 0) {
-          const statedAspect = d.width_ft / d.depth_ft;
-          const traceAspect = bb.w / bb.h;
-          const ratio = traceAspect / statedAspect;
-          if (ratio > 1.35 || ratio < 1 / 1.35) {
-            flags.push({
-              code: "area_gate",
-              severity: "warn",
-              mass: mass.name,
-              message: `[main] footprint aspect ${traceAspect.toFixed(2)} vs stated ${statedAspect.toFixed(2)} (${d.width_ft}×${d.depth_ft} ft) — the trace may be rotated or mis-scaled.`,
-            });
-          }
-        }
+      // Scale-free sanity: footprint elongation vs stated width:depth.
+      if (shape?.off) {
+        flags.push({
+          code: "area_gate",
+          severity: "warn",
+          mass: mass.name,
+          message: `[main] footprint proportions (elongation ${shape.traceElong.toFixed(2)}) don't match stated ${shape.w}×${shape.h} ft (elongation ${shape.statedElong.toFixed(2)}) — the trace may be mis-scaled or missing a wing.`,
+        });
       }
     }
 
