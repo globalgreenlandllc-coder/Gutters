@@ -46,10 +46,18 @@ export type ScheduleAreaHit = {
  * the AUTHORITATIVE input to the area gate when present; width × depth is the
  * always-available backstop. Deterministic + pure so it's node-testable.
  *
- * Prefers a floor / footprint / living / main-level area (which a flat plan
- * polygon compares to directly) over a sloped "roof area", and records the
- * label so the flag names its provenance. Bounds the value to a plausible
- * building range so a "12 SF" detail note or a sitework acreage can't hijack it.
+ * A real plan set is FULL of area callouts that are NOT the building's roof
+ * (a Woodinville set has LOT AREA 21001, TOTAL LOT COV'G 9346, IMPERVIOUS,
+ * DRIVEWAY, GARAGE 674, and a 2-story CONDITIONED FLOOR 4667). So we:
+ *  - REJECT site / coverage / partial-structure contexts outright;
+ *  - PREFER the ROOF area (per the spec, the roof-edge polygon compares to a
+ *    roof-area schedule), then the building FOOTPRINT, then a single FLOOR,
+ *    and DEPRIORITIZE 2-story totals (TOTAL / CONDITIONED / HEATED / GROSS);
+ *  - within the best tier take the LARGEST (the whole/main roof, not a small
+ *    porch/patio sub-roof).
+ * Positive keywords win over the reject list, so "ROOF & GUTTERS AREA" under an
+ * "IMPERVIOUS AREA" header is still read as a roof area. Bounds the value so a
+ * "12 SF" detail note can't hijack it.
  */
 export function parseScheduleAreaFt2(text: string): ScheduleAreaHit | null {
   if (!text || typeof text !== "string") return null;
@@ -69,23 +77,32 @@ export function parseScheduleAreaFt2(text: string): ScheduleAreaHit | null {
     if (numStr.includes(",") && !/^\d{1,3}(?:,\d{3})+$/.test(numStr)) continue;
     const value = Number(numStr.replace(/,/g, ""));
     if (!Number.isFinite(value) || value < 200 || value > 50000) continue;
-    const ctx = T.slice(Math.max(0, m.index - 30), m.index).toUpperCase();
-    let tier = 3;
-    let label = "stated area";
-    if (/FOOT ?PRINT|FLOOR AREA|LIVING|MAIN (?:FLOOR|LEVEL)|PLAN AREA|GROSS|CONDITIONED|HEATED/.test(ctx)) {
+    const ctx = T.slice(Math.max(0, m.index - 26), m.index).toUpperCase();
+    let tier: number;
+    let label: string;
+    if (/ROOF/.test(ctx)) {
       tier = 1;
-      label = "floor/footprint area";
-    } else if (/ROOF/.test(ctx)) {
-      tier = 2;
       label = "roof area";
-    } else if (/TOTAL/.test(ctx)) {
+    } else if (/FOOT ?PRINT/.test(ctx)) {
+      tier = 2;
+      label = "footprint area";
+    } else if (/\b(?:LOT|SITE|IMPERVIOUS|DRIVE|SIDE ?WALK|WALK|HVAC|PAD|COVERAGE|COV'?G|EASEMENT|LANDSCAP|GARAGE)\b/.test(ctx)) {
+      continue; // site / coverage / partial area — never the roof footprint
+    } else if (/TOTAL|CONDITION|HEATED|GROSS/.test(ctx)) {
+      tier = 4; // 2-story aggregate — deprioritize (≈2× a single-mass footprint)
+      label = "total/conditioned area";
+    } else if (/(?:MAIN|FIRST|GROUND|LIVING)\s*(?:FLOOR|LEVEL)|FLOOR AREA|PLAN AREA/.test(ctx)) {
       tier = 3;
-      label = "total area";
+      label = "floor area";
+    } else {
+      tier = 5;
+      label = "stated area";
     }
     hits.push({ value, tier, label });
   }
   if (hits.length === 0) return null;
-  hits.sort((a, b) => a.tier - b.tier);
+  // Best tier wins; within a tier prefer the LARGEST area (whole/main roof).
+  hits.sort((a, b) => a.tier - b.tier || b.value - a.value);
   return { areaFt2: hits[0].value, label: hits[0].label };
 }
 

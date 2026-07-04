@@ -133,12 +133,15 @@ test("an excluded rake edge is classified rake, not eave", () => {
   assert.equal(rakes, 1);
 });
 
-test("parseScheduleAreaFt2: pulls a plausible area, prefers floor/footprint over roof, bounds junk", () => {
-  assert.deepEqual(parseScheduleAreaFt2("TOTAL FLOOR AREA: 2,902 SF"), { areaFt2: 2902, label: "floor/footprint area" });
+test("parseScheduleAreaFt2: prefers ROOF over a 2-story floor total; bounds junk", () => {
   assert.deepEqual(parseScheduleAreaFt2("ROOF AREA 3,450 SQ. FT."), { areaFt2: 3450, label: "roof area" });
-  // Both present → floor/footprint wins over roof.
+  // A 2-story total is deprioritized behind a roof area (spec: compare the
+  // roof-edge polygon to a ROOF-area schedule, not a 2-floor sum).
   const both = parseScheduleAreaFt2("ROOF AREA = 3450 SF   MAIN FLOOR 2416 SF");
-  assert.equal(both?.areaFt2, 2416);
+  assert.equal(both?.areaFt2, 3450);
+  assert.equal(both?.label, "roof area");
+  // "TOTAL FLOOR AREA" is a multi-story aggregate → tier 4 label.
+  assert.equal(parseScheduleAreaFt2("TOTAL FLOOR AREA: 2,902 SF")?.label, "total/conditioned area");
   // Below/above the plausible building range → ignored.
   assert.equal(parseScheduleAreaFt2("WINDOW DETAIL 12 SF"), null);
   assert.equal(parseScheduleAreaFt2("SITE AREA 60000 SF"), null);
@@ -146,8 +149,29 @@ test("parseScheduleAreaFt2: pulls a plausible area, prefers floor/footprint over
   // A number embedded in a larger token must not masquerade as an area.
   assert.equal(parseScheduleAreaFt2("CALL 555-1234 SF OFFICE"), null); // phone-ish
   assert.equal(parseScheduleAreaFt2("MALFORMED 1,2,345 SF"), null); // bad comma grouping
-  // But a well-formed comma-grouped area still parses.
   assert.equal(parseScheduleAreaFt2("FLOOR AREA 12,480 SF")?.areaFt2, 12480);
+});
+
+test("parseScheduleAreaFt2: real Woodinville callouts — rejects site/coverage/partial, prefers the roof area", () => {
+  // Individual callouts straight off the plan.
+  assert.equal(parseScheduleAreaFt2("LOT AREA: 21001 SF"), null); // site area
+  assert.equal(parseScheduleAreaFt2("TOTAL LOT COV'G AREA: 9346 SF"), null); // coverage
+  assert.equal(parseScheduleAreaFt2("GARAGE AREA: 674 SF"), null); // partial structure
+  assert.equal(parseScheduleAreaFt2("BUILDING FOOTPRINT: 2408 SF")?.label, "footprint area");
+  assert.equal(parseScheduleAreaFt2("Roof Area 2902 s.f.")?.areaFt2, 2902);
+  // A roof area under an IMPERVIOUS section header is still a roof area.
+  assert.equal(parseScheduleAreaFt2("IMPERVIOUS AREA ROOF & GUTTERS AREA: 4018 SF")?.label, "roof area");
+
+  // The whole jumble → picks the largest ROOF area, not the lot (21001) or the
+  // 2-story CONDITIONED FLOOR total (4667).
+  const blob =
+    "STRUC LOT COV'GS LOT AREA: 21001 SF BUILDING FOOTPRINT: 2408 SF TOTAL LOT COV'G AREA: 9346 SF " +
+    "IMPERVIOUS AREA ROOF & GUTTERS AREA: 4018 SF GARAGE AREA: 674 SF CONDITIONED FLOOR AREA 4667 SF " +
+    "Roof Area 2902 s.f. Roof Area 228 s.f. Roof Area 180 s.f.";
+  const hit = parseScheduleAreaFt2(blob);
+  assert.ok(hit);
+  assert.equal(hit!.label, "roof area");
+  assert.equal(hit!.areaFt2, 4018);
 });
 
 test("title-block schedule area is preferred over classifier width×depth", () => {
