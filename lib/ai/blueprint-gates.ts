@@ -17,8 +17,8 @@ import "server-only";
 
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import type { PlanClassification } from "./classify-plans";
-import { extractScheduleArea, extractRoofMasses } from "./pdf-vectors";
-import { validateBlueprintGeometry, type RoofMassArea } from "./to-masses";
+import { extractScheduleText } from "./pdf-vectors";
+import { validateBlueprintGeometry, parseScheduleAreaFt2, parseRoofMasses, type RoofMassArea } from "./to-masses";
 import type { ReviewFlag } from "../roof-engine";
 
 export type BlueprintGateResult = {
@@ -43,9 +43,28 @@ export async function runBlueprintGates(args: {
   /** Raw PDF bytes (base64) when the source is a PDF, else null. */
   pdfBase64: string | null;
 }): Promise<BlueprintGateResult> {
-  const [schedule, roofMasses] = args.pdfBase64
-    ? await Promise.all([extractScheduleArea(args.pdfBase64), extractRoofMasses(args.pdfBase64)])
-    : [null, []];
+  // One page-text scan (logged), then run both parsers over it.
+  const texts = args.pdfBase64 ? await extractScheduleText(args.pdfBase64) : [];
+  let schedule: { areaFt2: number; label: string; page: number } | null = null;
+  for (const { page, text } of texts) {
+    const hit = parseScheduleAreaFt2(text);
+    if (hit) {
+      schedule = { ...hit, page };
+      break;
+    }
+  }
+  const byLabel = new Map<string, number>();
+  for (const { text } of texts) {
+    for (const m of parseRoofMasses(text)) {
+      if (m.areaFt2 > (byLabel.get(m.label) ?? 0)) byLabel.set(m.label, m.areaFt2);
+    }
+  }
+  const roofMasses: RoofMassArea[] = [...byLabel.entries()].map(([label, areaFt2]) => ({ label, areaFt2 }));
+  console.log(
+    `[blueprint-gates] schedule area: ${
+      schedule ? `${schedule.areaFt2} sf (${schedule.label}, p${schedule.page})` : "NONE → area gate uses width×depth"
+    }; roof masses: ${roofMasses.length ? roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ") : "NONE → gable depth uses schematic"}.`,
+  );
 
   const v = validateBlueprintGeometry(args.analysis, args.classification, {
     statedScheduleAreaFt2: schedule?.areaFt2 ?? null,

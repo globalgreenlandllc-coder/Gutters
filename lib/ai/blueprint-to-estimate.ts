@@ -874,6 +874,9 @@ export function blueprintToEstimateResult(
     notes.push(
       `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
     );
+    notes.push(
+      "⚠ Engine-drawn geometry is for VERIFICATION — eyeball it against the real roof before quoting. It won't over-bill (flush ≤ projecting by construction) but pop-out depths/positions are schematic until confirmed.",
+    );
     const mark = { error: "⛔", warn: "⚠", info: "🔎" } as const;
     for (const f of engineBundle.takeoff.reviewFlags) notes.push(`${mark[f.severity]} ${f.message}`);
     for (const n of engineBundle.placementNotes) notes.push(`🏠 ${n}`);

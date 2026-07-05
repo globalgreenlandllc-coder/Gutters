@@ -1,7 +1,6 @@
 import "server-only";
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
 import { segmentsFromOps, selectSegments } from "./pdf-segments";
-import { parseScheduleAreaFt2, parseRoofMasses, type ScheduleAreaHit, type RoofMassArea } from "./to-masses";
 
 /**
  * "Read the blueprint better": pull the PDF's REAL vector layer — printed
@@ -266,79 +265,52 @@ export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
 }
 
 /**
- * Scan every page's raw text for a stated SCHEDULE / title-block AREA (ft²) —
- * the authoritative input to the takeoff's area gate. Concatenates each page's
- * text items and runs the pure `parseScheduleAreaFt2` matcher; returns the first
- * plausible hit with its page. Fully fail-safe: any error / no text → null, and
- * the area gate falls back to the classifier's width × depth.
+ * Extract each page's raw text (concatenated items) ONCE — the source the
+ * schedule-area + roof-mass parsers run on. Logs a per-page diagnostic (text
+ * length, whether "ROOF AREA" appears, a snippet around it) plus a summary, so a
+ * re-analyze reveals WHY the roof schedule isn't being read: a genuinely empty
+ * text layer (scanned/image PDF — unpdf can't read it) vs. a format the parser
+ * misses. Fully fail-safe → [] on any error.
  */
-export async function extractScheduleArea(
-  base64: string,
-): Promise<(ScheduleAreaHit & { page: number }) | null> {
-  try {
-    if (!base64) return null;
-    const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
-    const pdf = await getDocumentProxy(bytes);
-    const total = pdf.numPages;
-    if (!total) return null;
-    const maxPages = Math.min(total, 30);
-    for (let p = 1; p <= maxPages; p++) {
-      try {
-        const page = await pdf.getPage(p);
-        const content = await page.getTextContent();
-        const text = (content.items as Array<{ str?: string }>)
-          .map((i) => i.str ?? "")
-          .join(" ");
-        const hit = parseScheduleAreaFt2(text);
-        if (hit) return { ...hit, page: p };
-      } catch {
-        // Skip an unreadable page; keep scanning the rest.
-      }
-    }
-    return null;
-  } catch (e) {
-    console.warn(
-      "[pdf-vectors] schedule-area extraction failed (falling back to width×depth):",
-      e instanceof Error ? e.message : e,
-    );
-    return null;
-  }
-}
-
-/**
- * Scan every page for per-mass ROOF AREAS (the roof-vent schedule: "UPPER ROOF
- * … Roof Area 2902", "PATIO ROOF … 228", "PORCH ROOF … 180"). These give a
- * projecting gable its DEPTH (area ÷ span) — the value a face elevation can't
- * provide. De-duped by label (largest area kept). Fully fail-safe → [] on any
- * error, and depth falls back to a schematic default.
- */
-export async function extractRoofMasses(base64: string): Promise<RoofMassArea[]> {
+export async function extractScheduleText(base64: string): Promise<{ page: number; text: string }[]> {
   try {
     if (!base64) return [];
     const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
     const pdf = await getDocumentProxy(bytes);
     const total = pdf.numPages;
     if (!total) return [];
-    const byLabel = new Map<string, number>();
     const maxPages = Math.min(total, 30);
+    const out: { page: number; text: string }[] = [];
+    let withText = 0;
+    let withRoofArea = 0;
     for (let p = 1; p <= maxPages; p++) {
       try {
         const page = await pdf.getPage(p);
         const content = await page.getTextContent();
         const text = (content.items as Array<{ str?: string }>).map((i) => i.str ?? "").join(" ");
-        for (const m of parseRoofMasses(text)) {
-          if (m.areaFt2 > (byLabel.get(m.label) ?? 0)) byLabel.set(m.label, m.areaFt2);
-        }
-      } catch {
-        // Skip an unreadable page; keep scanning the rest.
+        out.push({ page: p, text });
+        if (text.trim().length > 0) withText++;
+        const ra = text.search(/roof\s*area/i);
+        const hasRoofArea = ra >= 0;
+        if (hasRoofArea) withRoofArea++;
+        const hasSF = /\bs\.?\s?f\.?\b|sq\.?\s?ft|square\s+feet/i.test(text);
+        const snippet = hasRoofArea
+          ? ` snippet="${text.slice(Math.max(0, ra - 20), ra + 70).replace(/\s+/g, " ")}"`
+          : "";
+        console.log(
+          `[pdf-vectors] page ${p}: textLen=${text.length} hasRoofArea=${hasRoofArea} hasSF=${hasSF}${snippet}`,
+        );
+      } catch (e) {
+        console.warn(`[pdf-vectors] page ${p} text extraction failed:`, e instanceof Error ? e.message : e);
       }
     }
-    return [...byLabel.entries()].map(([label, areaFt2]) => ({ label, areaFt2 }));
-  } catch (e) {
-    console.warn(
-      "[pdf-vectors] roof-mass extraction failed (depth falls back to schematic):",
-      e instanceof Error ? e.message : e,
+    console.log(
+      `[pdf-vectors] schedule scan: ${maxPages} page(s), ${withText} with text, ${withRoofArea} with "ROOF AREA".` +
+        (withText === 0 ? " NO TEXT LAYER — likely a scanned/image PDF; unpdf can't read it (that's why the roof schedule is missing)." : ""),
     );
+    return out;
+  } catch (e) {
+    console.warn("[pdf-vectors] schedule text extraction failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }
