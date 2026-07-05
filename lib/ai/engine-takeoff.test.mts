@@ -80,17 +80,29 @@ test("buildEngineTakeoff: all-guttered footprint → LF = real perimeter (180 ft
   assert.equal(eaves.length, 4);
 });
 
-test("buildEngineTakeoff: a non-guttered (rake) side is excluded from LF", () => {
+test("buildEngineTakeoff: a side EXPLICITLY marked a rake is excluded from LF", () => {
   const b = buildEngineTakeoff(
     analysis({
-      // Drop the left run → that edge isn't guttered.
-      gutter_runs: [run([0, 0], [100, 0]), run([100, 0], [100, 80]), run([100, 80], [0, 80])],
+      // The left edge (x=0, 80px) is an excluded rake → not guttered. (Merely
+      // lacking a gutter_run no longer excludes an edge — see the dropped-eave
+      // test below.)
+      excluded_edges: [{ kind: "rake", start: { x: 0, y: 80 }, end: { x: 0, y: 0 }, reason: "gable end" }],
     }),
   );
   assert.ok(b);
   // 3 sides: 100+80+100 px = 280 px = 140 ft.
   assert.equal(b!.eaveLfFt, 140);
   assert.equal(b!.takeoff.masses[0].edges.filter((e) => e.gutter).length, 3);
+});
+
+test("buildEngineTakeoff: a DROPPED eave (no gutter run, not a rake) is STILL counted", () => {
+  // Only one gutter run (for scale); the AI dropped the other three eaves and
+  // marked no rakes. All four perimeter edges still price as guttered eaves —
+  // this is the ~13% under-count fix (default eave unless explicitly a rake).
+  const b = buildEngineTakeoff(analysis({ gutter_runs: [run([0, 0], [100, 0])] }));
+  assert.ok(b);
+  assert.equal(b!.takeoff.masses[0].edges.filter((e) => e.gutter).length, 4);
+  assert.equal(b!.eaveLfFt, 180);
 });
 
 test("buildEngineTakeoff: px/ft comes from the runs, so a null declared scale still works", () => {
@@ -119,12 +131,14 @@ test("buildEngineTakeoff: null on a degenerate footprint; never throws", () => {
   assert.equal(buildEngineTakeoff(analysis({ building_footprint: [{ x: 0, y: 0 }] })), null);
 });
 
-test("buildEngineTakeoff: null when no footprint edge aligns with a gutter run (flag no-ops, no 0 LF)", () => {
-  // Gutter runs far from the footprint → zero coverage.
-  const b = buildEngineTakeoff(
-    analysis({
-      gutter_runs: [run([1000, 1000], [1100, 1000])],
-    }),
-  );
-  assert.equal(b, null);
+test("buildEngineTakeoff: null when EVERY edge is marked a rake (nothing to price)", () => {
+  const allRakes = analysis({
+    excluded_edges: [
+      { kind: "rake", start: { x: 0, y: 0 }, end: { x: 100, y: 0 }, reason: "" },
+      { kind: "rake", start: { x: 100, y: 0 }, end: { x: 100, y: 80 }, reason: "" },
+      { kind: "rake", start: { x: 100, y: 80 }, end: { x: 0, y: 80 }, reason: "" },
+      { kind: "rake", start: { x: 0, y: 80 }, end: { x: 0, y: 0 }, reason: "" },
+    ],
+  });
+  assert.equal(buildEngineTakeoff(allRakes), null);
 });

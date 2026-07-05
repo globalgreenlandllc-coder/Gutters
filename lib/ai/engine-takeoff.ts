@@ -121,20 +121,26 @@ export function buildEngineTakeoff(
     const outline = cleanRing(rawFp, tol);
     if (outline.length < 4) return null;
 
-    // Classify each footprint edge as a guttered eave via gutter_run coverage.
-    const gutterSegs = (analysis.gutter_runs ?? [])
-      .map((r) => ({ a: r.start as Pt, b: r.end as Pt }))
+    // Eave-vs-rake classification. DEFAULT every perimeter edge to a guttered
+    // EAVE, and exclude it only when it's explicitly a RAKE / no-gutter edge
+    // (an excluded_edge of kind rake / dormer_rake / eave_no_gutter). A
+    // hip-dominant roof gutters its whole perimeter, and the AI's gutter_runs
+    // routinely DROP eaves (and never mark the eave that continues BENEATH a
+    // cross-gable) — keying off gutter_run coverage under-counted the LF. This
+    // matches the spec's "default to including every eave; flag the exceptions".
+    const rakeSegs = (analysis.excluded_edges ?? [])
+      .filter((e) => e.kind === "rake" || e.kind === "dormer_rake" || e.kind === "eave_no_gutter")
+      .map((e) => ({ a: e.start as Pt, b: e.end as Pt }))
       .filter((s) => isFinitePt(s.a) && isFinitePt(s.b));
     const eaveTol = Math.max(2, span * 0.02);
     const eaveEdges: number[] = [];
     for (let i = 0; i < outline.length; i++) {
       const a = outline[i];
       const b = outline[(i + 1) % outline.length];
-      const covered = gutterSegs.reduce((m, s) => Math.max(m, edgeCoverage(a, b, s, eaveTol)), 0) > 0.5;
-      if (covered) eaveEdges.push(i);
+      const isRake = rakeSegs.reduce((m, s) => Math.max(m, edgeCoverage(a, b, s, eaveTol)), 0) > 0.5;
+      if (!isRake) eaveEdges.push(i);
     }
-    // No footprint edge aligns with a gutter run — the engine can't price this
-    // trace. Return null so the flag no-ops rather than showing 0 LF.
+    // Every edge classified as a rake (degenerate) — nothing to price.
     if (eaveEdges.length === 0) return null;
 
     // Place the per-face gables on the outline (posts/beam ⇒ projecting pop-outs
