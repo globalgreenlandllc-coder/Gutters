@@ -175,8 +175,10 @@ test("flush front gable does NOT break the front eave (keeps a single perimeter 
   // Only the 4 perimeter eaves — the flush gable adds NO gutter.
   assert.equal(eaveEdges.length, 4);
   // It draws a ridge (so it shows in plan) but no valleys and no side eaves.
-  assert.equal(mass.interior.filter((e) => e.type === "ridge").length, 1);
+  assert.equal(mass.interior.filter((e) => e.type === "ridge" && e.source?.startsWith("gable:")).length, 1);
   assert.equal(mass.interior.filter((e) => e.type === "valley").length, 0);
+  // The clean main-roof skeleton is drawn too (decorative), but adds no eaves.
+  assert.ok(mass.interior.some((e) => e.type === "hip" && e.source === "skeleton"));
   assert.ok(res.reviewFlags.some((f) => f.code === "gable_flush"));
 });
 
@@ -263,10 +265,12 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   assert.equal(res.totalEaveLf, 394);
 
   // Interior lines: every gable → 1 ridge-back; each PROJECTING gable → 2 valleys.
-  const ridges = res.masses.flatMap((m) => m.interior).filter((e) => e.type === "ridge").length;
-  const valleys = res.masses.flatMap((m) => m.interior).filter((e) => e.type === "valley").length;
-  assert.equal(ridges, 6); // 4 main + 1 garage + 1 flush patio gable
-  assert.equal(valleys, 10); // 8 main + 2 garage (projecting only)
+  const all = res.masses.flatMap((m) => m.interior);
+  const gableLines = (t: string) => all.filter((e) => e.type === t && e.source?.startsWith("gable:")).length;
+  assert.equal(gableLines("ridge"), 6); // 4 main + 1 garage + 1 flush patio gable
+  assert.equal(gableLines("valley"), 10); // 8 main + 2 garage (projecting only)
+  // Clean main-roof skeleton present too (decorative, source "skeleton").
+  assert.ok(all.some((e) => e.type === "hip" && e.source === "skeleton"));
 
   // Downspouts: 1 per run + 1 per 40 ft, runs < 10 ft share drainage.
   assert.equal(res.downspouts.length, 11); // main 6 + garage 3 + patio 2
@@ -277,6 +281,20 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   assert.equal(res.reviewFlags.filter((f) => f.code === "no_schedule").length, 1);
   assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 1);
   assert.equal(res.reviewFlags.filter((f) => f.severity === "error").length, 0);
+});
+
+test("main-roof skeleton is DECORATIVE — clean hip drawn, priced eave LF untouched", () => {
+  const res = runRoofEngine([
+    { name: "m", outline: box(64, 44), statedArea: null, eaveEdges: [0, 1, 2, 3], gables: [] },
+  ]);
+  const skel = res.masses[0].interior.filter((e) => e.source === "skeleton");
+  // A rectangle with eaves all round → a clean hip: a ridge + hips, no valleys.
+  assert.ok(skel.some((e) => e.type === "ridge"), "skeleton ridge drawn");
+  assert.ok(skel.filter((e) => e.type === "hip").length >= 2, "converging hips drawn");
+  // SAFETY: every skeleton line is non-gutter interior, so the eave LF is exactly
+  // the perimeter (64+44+64+44 = 216) — the skeleton adds ZERO priced length.
+  assert.ok(skel.every((e) => !e.gutter));
+  assert.equal(res.eaveLfByMass.m, 216);
 });
 
 // ── the REAL Woodinville roof, from the plan (ground-truth fixture) ─────────
@@ -309,10 +327,9 @@ test("Woodinville ground truth: engine draws the real asymmetric roof (front 2 g
 
   // Every gable draws a ridge (so flush gable-ends show in plan); only the
   // projecting porch + patio add valleys.
-  const ridges = res.masses[0].interior.filter((e) => e.type === "ridge").length;
-  const valleys = res.masses[0].interior.filter((e) => e.type === "valley").length;
-  assert.equal(ridges, 5); // 3 flush gable-ends + porch + patio
-  assert.equal(valleys, 4); // porch + patio only
+  const gbl = (t: string) => res.masses[0].interior.filter((e) => e.type === t && e.source?.startsWith("gable:")).length;
+  assert.equal(gbl("ridge"), 5); // 3 flush gable-ends + porch + patio
+  assert.equal(gbl("valley"), 4); // porch + patio only
 
   // The front≠rear asymmetry is PRESERVED, not mirrored: 2 flush ends on the
   // front, 1 on the rear.

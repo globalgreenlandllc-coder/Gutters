@@ -27,6 +27,7 @@
  */
 
 import type { Pt } from "./roof-skeleton";
+import { deriveRoofSkeletonStraight } from "./roof-skeleton-straight";
 
 // ── Domain model (canonical, spec-aligned) ─────────────────────────────────
 
@@ -473,6 +474,25 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
         });
       }
     }
+  }
+
+  // Main-roof skeleton — the exact straight-skeleton of the outline (equal-slope
+  // inward offset): converging hips, ridges, and valleys at reentrant corners,
+  // gable ends held stationary. DECORATIVE ONLY — pushed to `interior`, never to
+  // `edges`, so the priced eave LF is provably unchanged. Returns EMPTY (nothing
+  // added) on a non-rectilinear/degenerate footprint, so the caller degrades to
+  // its own skeleton rather than drawing junk.
+  {
+    const eaveSegments: [Pt, Pt][] = [];
+    const rakeSegments: [Pt, Pt][] = [];
+    for (let i = 0; i < n; i++) {
+      const seg: [Pt, Pt] = [outline[i], outline[(i + 1) % n]];
+      (eaveSet.has(i) ? eaveSegments : rakeSegments).push(seg);
+    }
+    const skel = deriveRoofSkeletonStraight(outline, { eaveSegments, rakeSegments });
+    for (const l of skel.hips) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "hip", gutter: false, source: "skeleton" });
+    for (const l of skel.ridges) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "ridge", gutter: false, source: "skeleton" });
+    for (const l of skel.valleys) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "valley", gutter: false, source: "skeleton" });
   }
 
   // Reentrant-corner gate: every inside corner needs a valley within tolerance.

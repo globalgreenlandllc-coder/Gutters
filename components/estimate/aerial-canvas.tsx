@@ -46,6 +46,17 @@ import {
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
 
+/** True when the roof engine (flag on) supplied the interior skeleton — its
+ *  lines carry "engine-…" ids. In that case the overlay should render the
+ *  engine's clean straight-skeleton VERBATIM (derive off), not re-derive the
+ *  grid skeleton (which fans/tangles on complex footprints). */
+function hasEngineSkeleton(s?: RoofStructure | null): boolean {
+  if (!s) return false;
+  return [...(s.ridges ?? []), ...(s.hips ?? []), ...(s.valleys ?? [])].some(
+    (l) => typeof l.id === "string" && l.id.startsWith("engine-"),
+  );
+}
+
 export { lineLengthFt };
 
 export function AerialCanvas({
@@ -976,7 +987,9 @@ export function AerialCanvas({
             structure={roofStructure}
             tone={theme === "tactical" ? "onDark" : "onLight"}
             scale={renderScale}
-            derive={!!planSource}
+            // Engine skeleton present → render it verbatim (clean straight-
+            // skeleton); otherwise derive from the footprint (freehand path).
+            derive={!!planSource && !hasEngineSkeleton(roofStructure)}
             eaves={eaves}
             rakes={rakes}
           />

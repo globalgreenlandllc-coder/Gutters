@@ -664,18 +664,22 @@ export function blueprintToEstimateResult(
   let roofRidges = structLines("ridge");
   let roofValleys = structLines("valley");
 
-  // Engine mode: ridge-backs + valleys the engine generated per gable (so the
-  // pop-outs' roof lines connect), projected with the same transform.
+  let roofHips = structLines("hip");
+
+  // Engine mode: the engine owns the WHOLE interior skeleton — the clean
+  // straight-skeleton (main hips/ridges/valleys) + each gable's ridge-back and
+  // valleys — so the roof draws connected instead of the grid fallback's fan.
+  // Projected with the same transform; decorative (never priced).
   if (engineBundle) {
     const interior = engineBundle.takeoff.masses.flatMap((m) => m.interior);
-    roofRidges = interior
-      .filter((e) => e.type === "ridge")
-      .map((e, i) => ({ id: `engine-ridge-${i}`, kind: "ridge" as const, points: [project(e.p1), project(e.p2)] }));
-    roofValleys = interior
-      .filter((e) => e.type === "valley")
-      .map((e, i) => ({ id: `engine-valley-${i}`, kind: "valley" as const, points: [project(e.p1), project(e.p2)] }));
+    const lines = (kind: "ridge" | "valley" | "hip") =>
+      interior
+        .filter((e) => e.type === kind)
+        .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
+    roofRidges = lines("ridge");
+    roofValleys = lines("valley");
+    roofHips = lines("hip");
   }
-  let roofHips = structLines("hip");
 
   // Synthesis fallback. Triggers in two cases:
   //   1. ALL eaves were dropped because every gutter_run had bad
