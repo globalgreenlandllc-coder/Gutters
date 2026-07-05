@@ -24,6 +24,10 @@ export type FaceGableRead = {
   id: string;
   span_ft: number | null;
   pitch: number | null;
+  /** Horizontal position of the gable's CENTER along this face as you look at
+   *  the elevation: 0 = far left, 0.5 = center, 1 = far right. Lets the engine
+   *  place the gable on the roof-plan outline. Null when not localized. */
+  position_frac: number | null;
   /** The model's best guess; DEFAULTS to flush — a single elevation can't prove
    *  a projection (Correction 2). */
   eave_condition_guess: "projecting" | "roof_mounted" | "flush" | "unknown";

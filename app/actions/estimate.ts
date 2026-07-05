@@ -484,6 +484,12 @@ export async function runEstimateFromPlan(
     row.pageCount ??
     (sheets.length ? Math.max(...sheets.map((s) => s.pageIndex)) : undefined);
 
+  // Per-face elevation reads (stored by the analysis pipeline) let the engine
+  // draw each face's gables + pop-outs by rule when the engine flag is on.
+  const perFace =
+    (row.analysisJson as { _perFace?: { per_face?: Record<string, unknown> } } | null)?._perFace?.per_face ??
+    null;
+
   const result = blueprintToEstimateResult(
     analysis,
     {
@@ -493,7 +499,10 @@ export async function runEstimateFromPlan(
       pageCount,
       sheets,
     },
-    { useEngineTakeoff: engineTakeoffEnabled() },
+    {
+      useEngineTakeoff: engineTakeoffEnabled(),
+      perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
+    },
   );
 
   return {

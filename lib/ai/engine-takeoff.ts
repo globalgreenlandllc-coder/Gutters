@@ -23,10 +23,12 @@
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import { runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
+import { placeGablesFromFaces } from "./place-gables";
+import type { FaceReadingRaw } from "./face-merge";
 
 export type EngineTakeoffBundle = {
   takeoff: RoofTakeoff;
-  /** feet per PDF-pixel (independent scale from the roof-plan reading). */
+  /** feet per PDF-pixel used for LF conversion. */
   ftPerPx: number;
   /** total guttered eave length in REAL feet. */
   eaveLfFt: number;
@@ -34,6 +36,8 @@ export type EngineTakeoffBundle = {
    *  it projects with the estimate canvas's transform). */
   outlinePx: Pt[];
   massInputs: MassInput[];
+  /** Notes from placing per-face gables (schematic-depth warnings, etc.). */
+  placementNotes: string[];
 };
 
 /** Flag: the engine drives pricing only when BLUEPRINT_ENGINE_TAKEOFF=1 (or an
@@ -43,12 +47,26 @@ export function engineTakeoffEnabled(override?: boolean): boolean {
   return process.env.BLUEPRINT_ENGINE_TAKEOFF === "1";
 }
 
-/** Independent feet-per-pixel from the roof-plan scale (NOT derived from the
- *  footprint, which would be circular). */
+/**
+ * feet-per-pixel for the CURRENT coordinate space. Derived from the runs' own
+ * `length_px / length_ft` (each run carries both, and after any re-spacing the
+ * ratio still matches the outline) — self-consistent and immune to the stale/
+ * unreliable declared `scale.feet_per_unit`. Falls back to the declared scale,
+ * then null.
+ */
 function ftPerPxOf(analysis: BlueprintAnalysis): number | null {
+  const ratios: number[] = [];
+  for (const r of analysis?.gutter_runs ?? []) {
+    const lf = r.length_ft;
+    const lp = r.length_px;
+    if (typeof lf === "number" && lf > 0 && typeof lp === "number" && lp > 0) ratios.push(lf / lp);
+  }
+  if (ratios.length > 0) {
+    ratios.sort((a, b) => a - b);
+    return ratios[Math.floor(ratios.length / 2)]; // median ft/px
+  }
   const s = analysis?.scale;
-  if (!s) return null;
-  if (s.unit === "pixels" && typeof s.feet_per_unit === "number" && s.feet_per_unit > 0 && Number.isFinite(s.feet_per_unit))
+  if (s && s.unit === "pixels" && typeof s.feet_per_unit === "number" && s.feet_per_unit > 0 && Number.isFinite(s.feet_per_unit))
     return s.feet_per_unit;
   return null;
 }
@@ -77,7 +95,10 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
  * no-ops, current pricing stands) when there is no footprint or no independent
  * scale — the engine can't produce real-feet LF without one. Never throws.
  */
-export function buildEngineTakeoff(analysis: BlueprintAnalysis): EngineTakeoffBundle | null {
+export function buildEngineTakeoff(
+  analysis: BlueprintAnalysis,
+  perFace?: Record<string, FaceReadingRaw> | null,
+): EngineTakeoffBundle | null {
   try {
     const ftPerPx = ftPerPxOf(analysis);
     if (!ftPerPx) return null;
@@ -114,16 +135,25 @@ export function buildEngineTakeoff(analysis: BlueprintAnalysis): EngineTakeoffBu
     // trace. Return null so the flag no-ops rather than showing 0 LF.
     if (eaveEdges.length === 0) return null;
 
-    // Gables are omitted until a CONFIRMED projection can be supplied (Correction
-    // 2) — the roof plan alone can't prove one, and a flush gable adds nothing.
-    // The gable-by-rule machinery engages the moment a projecting gable is fed.
+    // Place the per-face gables on the outline (posts/beam ⇒ projecting pop-outs
+    // with guttered side eaves + ridges/valleys; the rest flush). Without a
+    // per-face read this is empty and the engine draws the perimeter only.
+    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx);
+
     const massInputs: MassInput[] = [
-      { name: "main", outline, statedArea: null, eaveEdges, gables: [] },
+      { name: "main", outline, statedArea: null, eaveEdges, gables: placed.gables },
     ];
     const takeoff = runRoofEngine(massInputs);
     const eaveLfFt = round1(takeoff.totalEaveLf * ftPerPx);
 
-    return { takeoff, ftPerPx, eaveLfFt, outlinePx: outline, massInputs };
+    return {
+      takeoff,
+      ftPerPx,
+      eaveLfFt,
+      outlinePx: outline,
+      massInputs,
+      placementNotes: placed.notes,
+    };
   } catch {
     return null;
   }

@@ -93,8 +93,26 @@ test("buildEngineTakeoff: a non-guttered (rake) side is excluded from LF", () =>
   assert.equal(b!.takeoff.masses[0].edges.filter((e) => e.gutter).length, 3);
 });
 
-test("buildEngineTakeoff: null without an independent scale (can't produce real feet)", () => {
-  assert.equal(buildEngineTakeoff(analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "t" } })), null);
+test("buildEngineTakeoff: px/ft comes from the runs, so a null declared scale still works", () => {
+  // Runs carry length_ft/length_px, so real feet are derivable even with no
+  // declared scale — more robust than trusting scale.feet_per_unit.
+  const b = buildEngineTakeoff(analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "t" } }));
+  assert.ok(b, "run-derived px/ft should still produce a takeoff");
+  assert.equal(b!.ftPerPx, 0.5);
+  assert.equal(b!.eaveLfFt, 180);
+});
+
+test("buildEngineTakeoff: null when NEITHER the runs nor the scale give real feet", () => {
+  const noFeet = analysis({
+    scale: { feet_per_unit: null, unit: "unknown", source: "t" },
+    gutter_runs: [
+      run([0, 0], [100, 0]),
+      run([100, 0], [100, 80]),
+      run([100, 80], [0, 80]),
+      run([0, 80], [0, 0]),
+    ].map((r) => ({ ...r, length_ft: null })),
+  });
+  assert.equal(buildEngineTakeoff(noFeet), null);
 });
 
 test("buildEngineTakeoff: null on a degenerate footprint; never throws", () => {

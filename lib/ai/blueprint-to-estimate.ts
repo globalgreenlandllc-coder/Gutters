@@ -22,6 +22,7 @@ import type {
 // and the synthesized layout (blank canvas, "Eaves NaN LF").
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
+import type { FaceReadingRaw } from "./face-merge";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -438,9 +439,12 @@ export function blueprintToEstimateResult(
   meta: BlueprintToEstimateMeta,
   opts?: {
     /** When true, the deterministic roof engine drives the priced eave LF,
-     *  downspouts, and eave lines instead of the raw gutter_runs sum. Gated by
-     *  the BLUEPRINT_ENGINE_TAKEOFF flag at the caller; default off. */
+     *  downspouts, eave/rake lines, and ridge/valley overlay instead of the raw
+     *  gutter_runs sum. Gated by the BLUEPRINT_ENGINE_TAKEOFF flag; default off. */
     useEngineTakeoff?: boolean;
+    /** Per-face elevation reads (analysisJson._perFace.per_face) so the engine
+     *  can draw each face's gables + pop-outs (porch/patio) by rule. */
+    perFace?: Record<string, FaceReadingRaw> | null;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -510,7 +514,7 @@ export function blueprintToEstimateResult(
   // Engine-takeoff mode (flag): the deterministic roof engine becomes the
   // pricing + eave-line authority. Null when there's no footprint / no scale,
   // in which case the flag no-ops and the gutter_runs path below stands.
-  const engineBundle = opts?.useEngineTakeoff ? buildEngineTakeoff(analysis) : null;
+  const engineBundle = opts?.useEngineTakeoff ? buildEngineTakeoff(analysis, opts?.perFace) : null;
 
   // A point is "bad" when the stored analysis has null/undefined/NaN
   // coords — projection would collapse it to viewBox center and the
@@ -593,6 +597,15 @@ export function blueprintToEstimateResult(
     })
     .filter((l): l is EditableLine => l !== null);
 
+  // Engine mode: rakes are the gable faces the engine drew by rule (projecting
+  // and flush gables both), so they render as clean "no gutter" edges.
+  if (engineBundle) {
+    rakes = engineBundle.takeoff.masses
+      .flatMap((m) => m.edges)
+      .filter((e) => e.type === "rake")
+      .map((e, i): EditableLine => ({ id: `engine-rake-${i}`, kind: "rake", points: [project(e.p1), project(e.p2)] }));
+  }
+
   // Downspouts. Each one carries its source-run tier height when the
   // AI was able to derive tiers from the elevations (e.g. porch
   // downspouts at 10 ft, 2-story body downspouts at 20-26 ft).
@@ -644,6 +657,18 @@ export function blueprintToEstimateResult(
   let roofPerimeter = projPts(analysis.building_footprint ?? []);
   let roofRidges = structLines("ridge");
   let roofValleys = structLines("valley");
+
+  // Engine mode: ridge-backs + valleys the engine generated per gable (so the
+  // pop-outs' roof lines connect), projected with the same transform.
+  if (engineBundle) {
+    const interior = engineBundle.takeoff.masses.flatMap((m) => m.interior);
+    roofRidges = interior
+      .filter((e) => e.type === "ridge")
+      .map((e, i) => ({ id: `engine-ridge-${i}`, kind: "ridge" as const, points: [project(e.p1), project(e.p2)] }));
+    roofValleys = interior
+      .filter((e) => e.type === "valley")
+      .map((e, i) => ({ id: `engine-valley-${i}`, kind: "valley" as const, points: [project(e.p1), project(e.p2)] }));
+  }
   let roofHips = structLines("hip");
 
   // Synthesis fallback. Triggers in two cases:
@@ -845,6 +870,7 @@ export function blueprintToEstimateResult(
     );
     const mark = { error: "⛔", warn: "⚠", info: "🔎" } as const;
     for (const f of engineBundle.takeoff.reviewFlags) notes.push(`${mark[f.severity]} ${f.message}`);
+    for (const n of engineBundle.placementNotes) notes.push(`🏠 ${n}`);
   }
 
   // Tell the contractor when the stored analysis had malformed

@@ -1,0 +1,106 @@
+/**
+ * Pure node tests for placeGablesFromFaces. Run:
+ *   npx tsx --test lib/ai/place-gables.test.mts
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { placeGablesFromFaces } from "./place-gables.ts";
+import type { FaceReadingRaw, FaceGableRead } from "./face-merge.ts";
+import { runRoofEngine } from "../roof-engine.ts";
+
+// 640×510 px outline; at 10 px/ft that's 64×51 ft (the Woodinville overall).
+const OUTLINE = [
+  { x: 0, y: 0 },
+  { x: 640, y: 0 },
+  { x: 640, y: 510 },
+  { x: 0, y: 510 },
+];
+const PX_PER_FT = 10;
+
+function g(over: Partial<FaceGableRead>): FaceGableRead {
+  return {
+    id: "g",
+    span_ft: 12,
+    pitch: 6,
+    position_frac: 0.5,
+    eave_condition_guess: "flush",
+    supported_on: "wall",
+    shows_projection_cue: false,
+    notes: "",
+    ...over,
+  };
+}
+function face(over: Partial<FaceReadingRaw>): FaceReadingRaw {
+  return {
+    face: "north",
+    readable: true,
+    unreadable_reason: null,
+    gable_count: null,
+    continuous_eave: true,
+    gables: [],
+    projection_cues: [],
+    confidence: "high",
+    ...over,
+  };
+}
+
+test("places a gable at its position along the correct outline edge, facing outward", () => {
+  // South face (y = 510 in this y-down frame), one gable at 25% from the left.
+  const perFace = {
+    south: face({ face: "south", gables: [g({ id: "s1", position_frac: 0.25, span_ft: 16 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  const gb = gables[0];
+  assert.equal(gb.facing, "S");
+  // On the south edge → y = 510. Flush (wall) → projection 0.
+  assert.equal(gb.baseCenter.y, 510);
+  assert.equal(gb.projection, 0);
+  // span 16 ft × 10 px/ft = 160 px.
+  assert.equal(gb.span, 160);
+});
+
+test("posts/beam gable is promoted to PROJECTING with a schematic depth + flag", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", supported_on: "posts", span_ft: 10 })] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables[0].facing, "N");
+  assert.equal(gables[0].eaveCondition, "projecting");
+  assert.ok(gables[0].projection > 0, "posts ⇒ projecting depth > 0");
+  assert.ok(notes.some((n) => /porch/.test(n) && /verify/.test(n)));
+});
+
+test("unread / empty faces contribute nothing; no scale ⇒ nothing", () => {
+  assert.equal(
+    placeGablesFromFaces({ east: face({ face: "east", readable: false }) }, OUTLINE, PX_PER_FT).gables.length,
+    0,
+  );
+  assert.equal(placeGablesFromFaces({}, OUTLINE, PX_PER_FT).gables.length, 0);
+  assert.equal(placeGablesFromFaces({ north: face({ gables: [g({})] }) }, OUTLINE, 0).gables.length, 0);
+});
+
+test("end-to-end: placed gables drive the engine → front porch adds guttered side eaves + a valley", () => {
+  const perFace = {
+    north: face({
+      face: "north",
+      gable_count: 2,
+      gables: [
+        g({ id: "front_gable", position_frac: 0.3, span_ft: 14 }), // flush
+        g({ id: "front_porch", position_frac: 0.5, span_ft: 10, supported_on: "posts" }), // projecting
+      ],
+    }),
+    south: face({ face: "south", gable_count: 1, gables: [g({ id: "rear_gable", position_frac: 0.5, span_ft: 16 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 3);
+
+  const res = runRoofEngine([
+    { name: "main", outline: OUTLINE, statedArea: null, eaveEdges: [0, 1, 2, 3], gables },
+  ]);
+  // The projecting porch contributes two guttered side eaves + a ridge-back +
+  // two valleys; the two flush gable-ends add none.
+  assert.equal(res.masses[0].edges.filter((e) => e.gutter && e.source === "gable:front_porch").length, 2);
+  assert.equal(res.masses[0].interior.filter((e) => e.type === "valley").length, 2);
+  assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 2);
+});
