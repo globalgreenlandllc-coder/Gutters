@@ -758,7 +758,21 @@ export function RoofStructureOverlay({
       structure.perimeter,
       [], // no eave veto — the contractor placed these on purpose
     );
-    return { ...base, dormers: [...aiDormers, ...userDormers] };
+    // Engine-authored interior lines (pop-out ridge-backs + valleys, ids
+    // "engine-…") are trustworthy and describe projections the footprint
+    // skeleton can't know about — overlay them on top of the derived main-roof
+    // skeleton so the pop-outs' roof lines connect. Freehand "plan-…" lines are
+    // NOT overlaid (they're the sparse/floating AI trace derivation replaces).
+    const engineLines = (ls: { id?: string; points: Pt[] }[]) =>
+      ls
+        .filter((l) => typeof l.id === "string" && l.id.startsWith("engine-"))
+        .map((l) => ({ points: l.points }));
+    return {
+      ...base,
+      ridges: [...base.ridges, ...engineLines(structure.ridges)],
+      valleys: [...base.valleys, ...engineLines(structure.valleys)],
+      dormers: [...aiDormers, ...userDormers],
+    };
   }, [
     derive,
     eaves,
