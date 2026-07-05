@@ -19,7 +19,7 @@
  */
 
 import type { Facing, Gable } from "../roof-engine";
-import type { FaceReadingRaw, FaceGableRead } from "./face-merge";
+import type { FaceReadingRaw, FaceGableRead, FaceProjection } from "./face-merge";
 import type { RoofMassArea } from "./to-masses";
 import type { Pt } from "../roof-skeleton";
 
@@ -37,28 +37,62 @@ function normalizeKind(kind: FaceGableRead["kind"]): string {
   return kind === "entry" ? "porch" : kind;
 }
 
+const plausibleDepth = (d: number): boolean => d >= 2 && d <= 40;
+
 /**
- * Resolve a projecting gable's DEPTH in feet. Primary source: the plan's stated
- * roof area ÷ span (a real, plan-sourced depth). Fallback: a schematic default,
- * flagged for the contractor to verify.
+ * Resolve a projecting gable's DEPTH in feet by the two-angle rule:
+ *  1. PRIMARY — the PERPENDICULAR side elevation, which sees this pop-out in
+ *     profile and can measure how far it projects (matched to it by kind).
+ *  2. CROSS-CHECK / fallback — the plan's stated roof area ÷ span.
+ *  3. Last resort — a schematic default.
+ * When the two independent sources disagree materially, it returns a note.
  */
 function resolveDepthFt(
   g: FaceGableRead,
   spanFt: number,
-  roofMasses?: RoofMassArea[] | null,
-): { depthFt: number; source: string } {
+  roofMasses: RoofMassArea[] | null | undefined,
+  perpProjections: FaceProjection[],
+): { depthFt: number; source: string; note?: string } {
   const kind = normalizeKind(g.kind);
+
+  // 1. Depth from the perpendicular elevation (panel 2), matched by kind.
+  const perp = perpProjections.find(
+    (p) => normalizeKind(p.kind) === kind && typeof p.depth_ft === "number" && plausibleDepth(p.depth_ft),
+  );
+  const perpDepth = perp ? (perp.depth_ft as number) : null;
+
+  // 2. Depth from the stated roof area ÷ span.
+  let areaDepth: number | null = null;
+  let areaMass: RoofMassArea | undefined;
   if (roofMasses && roofMasses.length && spanFt > 0 && kind !== "main" && kind !== "other") {
-    const mass = roofMasses.find((m) => m.label === kind);
-    if (mass) {
-      const d = mass.areaFt2 / spanFt;
-      if (d >= 2 && d <= 40) {
-        return { depthFt: d, source: `${kind} roof area ${mass.areaFt2} sf ÷ ${spanFt.toFixed(0)} ft span` };
-      }
+    areaMass = roofMasses.find((m) => m.label === kind);
+    if (areaMass) {
+      const d = areaMass.areaFt2 / spanFt;
+      if (plausibleDepth(d)) areaDepth = d;
     }
+  }
+
+  if (perpDepth != null) {
+    const note =
+      areaDepth != null && Math.abs(perpDepth - areaDepth) / perpDepth > 0.35
+        ? `depth ${perpDepth.toFixed(0)} ft from the side elevation vs ${areaDepth.toFixed(0)} ft from roof-area÷span — verify`
+        : undefined;
+    return { depthFt: perpDepth, source: "side (perpendicular) elevation", note };
+  }
+  if (areaDepth != null && areaMass) {
+    return { depthFt: areaDepth, source: `${kind} roof area ${areaMass.areaFt2} sf ÷ ${spanFt.toFixed(0)} ft span` };
   }
   return { depthFt: Math.max(3, Math.min(spanFt * 0.6, 8)), source: "schematic default" };
 }
+
+/** The two faces perpendicular to a given face (where its pop-outs' depth is
+ *  visible in profile). */
+const PERP: Record<string, string[]> = {
+  north: ["east", "west"],
+  south: ["east", "west"],
+  east: ["north", "south"],
+  west: ["north", "south"],
+};
 
 const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
 
@@ -134,6 +168,11 @@ export function placeGablesFromFaces(
     if (!edge) continue;
     const [L, R] = orientEdge(edge.a, edge.b, face);
 
+    // Depth of a pop-out on THIS face is measured on the PERPENDICULAR faces.
+    const perpProjections: FaceProjection[] = (PERP[face] ?? []).flatMap((pf) =>
+      perFace[pf]?.readable !== false ? perFace[pf]?.projections ?? [] : [],
+    );
+
     read.forEach((g, i) => {
       const t = clamp01(g.position_frac ?? (read.length === 1 ? 0.5 : (i + 0.5) / read.length));
       const base = { x: L.x + (R.x - L.x) * t, y: L.y + (R.y - L.y) * t };
@@ -143,10 +182,11 @@ export function placeGablesFromFaces(
         g.supported_on === "beam" ||
         g.eave_condition_guess === "projecting" ||
         g.shows_projection_cue === true;
-      // Depth from the PLAN (roof area ÷ span) when available, else schematic.
-      const { depthFt, source } = projecting
-        ? resolveDepthFt(g, spanFt, options?.roofMasses)
-        : { depthFt: 0, source: "" };
+      // Depth by the two-angle rule: perpendicular elevation, then roof area ÷
+      // span, then schematic.
+      const { depthFt, source, note } = projecting
+        ? resolveDepthFt(g, spanFt, options?.roofMasses, perpProjections)
+        : { depthFt: 0, source: "", note: undefined };
       const name = g.id || `${face}_gable_${i + 1}`;
       gables.push({
         baseCenter: base,
@@ -165,6 +205,7 @@ export function placeGablesFromFaces(
             g.supported_on === "posts" || g.supported_on === "beam" ? ` (on ${g.supported_on})` : ""
           } at ~${depthFt.toFixed(0)} ft depth from ${source}${verify}.`,
         );
+        if (note) notes.push(`⚠ ${name}: ${note}`);
       }
     });
   }

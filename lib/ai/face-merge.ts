@@ -42,6 +42,16 @@ export type FaceGableRead = {
   notes: string;
 };
 
+/** A mass this elevation sees IN PROFILE (sticking out across the view) with its
+ *  measurable DEPTH — the perpendicular view's job (LAW 2). A side elevation
+ *  reports front/rear pop-outs here; a front/rear elevation reports side ones.
+ *  Matched to a gable on the perpendicular face by `kind`. */
+export type FaceProjection = {
+  kind: FaceGableRead["kind"];
+  depth_ft: number | null;
+  notes: string;
+};
+
 export type FaceReadingRaw = {
   face: ElevationFaceName;
   readable: boolean;
@@ -49,6 +59,8 @@ export type FaceReadingRaw = {
   gable_count: number | null;
   continuous_eave: boolean;
   gables: FaceGableRead[];
+  /** Pop-outs seen IN PROFILE from this view, with depth (see FaceProjection). */
+  projections: FaceProjection[];
   projection_cues: string[];
   confidence: "high" | "medium" | "low";
 };

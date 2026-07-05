@@ -18,6 +18,7 @@ function face(over: Partial<FaceReadingRaw>): FaceReadingRaw {
     gable_count: 0,
     continuous_eave: true,
     gables: [],
+    projections: [],
     projection_cues: [],
     confidence: "high",
     ...over,

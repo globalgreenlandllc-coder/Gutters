@@ -39,6 +39,7 @@ function face(over: Partial<FaceReadingRaw>): FaceReadingRaw {
     gable_count: null,
     continuous_eave: true,
     gables: [],
+    projections: [],
     projection_cues: [],
     confidence: "high",
     ...over,
@@ -93,6 +94,35 @@ test("depth comes from the PLAN (roof area ÷ span) when a matching roof mass is
     { roofMasses: [{ label: "porch", areaFt2: 180 }] },
   );
   assert.equal(entry.gables[0].projection, 15 * PX_PER_FT);
+});
+
+test("two-angle rule: a FRONT porch's depth comes from the PERPENDICULAR (side) elevation", () => {
+  // Front (north) porch on posts; the WEST side elevation sees it in profile and
+  // measures its depth = 8 ft. That side-elevation depth wins over roof-area.
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    west: face({ face: "west", projections: [{ kind: "porch", depth_ft: 8, notes: "porch in profile" }] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }], // ÷12 = 15 ft (the cross-check)
+  });
+  // Side-elevation depth (8 ft) wins, not the 15 ft from roof-area÷span.
+  assert.equal(gables[0].projection, 8 * PX_PER_FT);
+  assert.ok(notes.some((n) => /side \(perpendicular\) elevation/.test(n)));
+  // The two sources disagree by >35% (8 vs 15) → a verify note.
+  assert.ok(notes.some((n) => /8 ft from the side elevation vs 15 ft/.test(n)));
+});
+
+test("roof-area÷span is used when NO perpendicular projection is available", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    // no readable side elevation reporting the porch in profile
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }],
+  });
+  assert.equal(gables[0].projection, 15 * PX_PER_FT); // 180 ÷ 12
+  assert.ok(notes.some((n) => /roof area 180 sf ÷ 12 ft span/.test(n)));
 });
 
 test("unread / empty faces contribute nothing; no scale ⇒ nothing", () => {

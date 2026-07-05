@@ -86,6 +86,16 @@ projecting — flag the cue, but still leave the confirmation to the side view.
 Never invent a projection to add gutter.
 </projection_default>
 
+<profile_depth>
+This elevation CAN measure the DEPTH of pop-outs on the PERPENDICULAR faces —
+masses that stick out sideways ACROSS your view (a front porch or rear patio
+seen from a side elevation; a garage wing or bay seen from the front/rear). Seen
+in profile, how far they project is measurable. For each such mass, add a
+projections entry with its kind (porch/patio/bay/wing…) and depth_ft in feet. You
+CANNOT measure the depth of a pop-out you're looking at head-on — that's the
+perpendicular view's job, i.e. some OTHER elevation reports this one's gables.
+</profile_depth>
+
 <edges>
 Classify each roof-bottom edge: a HORIZONTAL bottom edge is an EAVE (gutter); a
 SLOPED bottom edge rising to a peak is a RAKE (no gutter). Report continuous_eave
@@ -141,6 +151,20 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
           required: ["id", "kind", "position_frac", "eave_condition_guess", "supported_on", "shows_projection_cue"],
         },
       },
+      projections: {
+        type: "array",
+        description:
+          "Masses this elevation shows IN PROFILE (sticking out across your view — a porch/patio/bay/wing on a PERPENDICULAR face). Here you CAN measure how far it projects: its depth in feet.",
+        items: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["porch", "patio", "entry", "garage", "dormer", "main", "other"] },
+            depth_ft: { type: ["number", "null"], description: "how far it projects (measured in profile)." },
+            notes: { type: "string" },
+          },
+          required: ["kind", "depth_ft"],
+        },
+      },
       projection_cues: { type: "array", items: { type: "string" } },
       confidence: { type: "string", enum: ["high", "medium", "low"] },
     },
@@ -169,6 +193,7 @@ function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
     gable_count: null,
     continuous_eave: false,
     gables: [],
+    projections: [],
     projection_cues: [],
     confidence: "low",
   };
@@ -227,6 +252,7 @@ export async function readElevationFace(
       gable_count: typeof raw.gable_count === "number" ? raw.gable_count : null,
       continuous_eave: raw.continuous_eave !== false,
       gables: Array.isArray(raw.gables) ? raw.gables : [],
+      projections: Array.isArray(raw.projections) ? raw.projections : [],
       projection_cues: Array.isArray(raw.projection_cues) ? raw.projection_cues : [],
       confidence: raw.confidence ?? "low",
     };
