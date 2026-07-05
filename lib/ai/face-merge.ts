@@ -22,6 +22,10 @@ export type ElevationFaceName =
 
 export type FaceGableRead = {
   id: string;
+  /** What this gable roofs, from any label on the elevation ("COV'D PORCH",
+   *  "PATIO", entry). Used to match the gable to its stated roof-area (so its
+   *  projection DEPTH = roof area ÷ span). "other" when unlabelled. */
+  kind: "porch" | "patio" | "entry" | "garage" | "dormer" | "main" | "other";
   span_ft: number | null;
   pitch: number | null;
   /** Horizontal position of the gable's CENTER along this face as you look at

@@ -19,10 +19,46 @@
  */
 
 import type { Facing, Gable } from "../roof-engine";
-import type { FaceReadingRaw } from "./face-merge";
+import type { FaceReadingRaw, FaceGableRead } from "./face-merge";
+import type { RoofMassArea } from "./to-masses";
 import type { Pt } from "../roof-skeleton";
 
 export type PlaceResult = { gables: Gable[]; notes: string[] };
+
+export type PlaceOptions = {
+  /** Per-mass roof areas from the plan's roof schedule. When a projecting
+   *  gable matches one by kind, its DEPTH = area ÷ span (LAW 2 — depth from the
+   *  plan, not the face view). */
+  roofMasses?: RoofMassArea[] | null;
+};
+
+/** entry porches roof-share the "porch" schedule label. */
+function normalizeKind(kind: FaceGableRead["kind"]): string {
+  return kind === "entry" ? "porch" : kind;
+}
+
+/**
+ * Resolve a projecting gable's DEPTH in feet. Primary source: the plan's stated
+ * roof area ÷ span (a real, plan-sourced depth). Fallback: a schematic default,
+ * flagged for the contractor to verify.
+ */
+function resolveDepthFt(
+  g: FaceGableRead,
+  spanFt: number,
+  roofMasses?: RoofMassArea[] | null,
+): { depthFt: number; source: string } {
+  const kind = normalizeKind(g.kind);
+  if (roofMasses && roofMasses.length && spanFt > 0 && kind !== "main" && kind !== "other") {
+    const mass = roofMasses.find((m) => m.label === kind);
+    if (mass) {
+      const d = mass.areaFt2 / spanFt;
+      if (d >= 2 && d <= 40) {
+        return { depthFt: d, source: `${kind} roof area ${mass.areaFt2} sf ÷ ${spanFt.toFixed(0)} ft span` };
+      }
+    }
+  }
+  return { depthFt: Math.max(3, Math.min(spanFt * 0.6, 8)), source: "schematic default" };
+}
 
 const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
 
@@ -81,6 +117,7 @@ export function placeGablesFromFaces(
   perFace: Record<string, FaceReadingRaw> | null | undefined,
   outlinePx: Pt[],
   pxPerFt: number,
+  options?: PlaceOptions,
 ): PlaceResult {
   const gables: Gable[] = [];
   const notes: string[] = [];
@@ -106,24 +143,27 @@ export function placeGablesFromFaces(
         g.supported_on === "beam" ||
         g.eave_condition_guess === "projecting" ||
         g.shows_projection_cue === true;
-      // Face views can't give depth; use a schematic default (flagged).
-      const projFt = projecting ? Math.max(3, Math.min(spanFt * 0.6, 8)) : 0;
+      // Depth from the PLAN (roof area ÷ span) when available, else schematic.
+      const { depthFt, source } = projecting
+        ? resolveDepthFt(g, spanFt, options?.roofMasses)
+        : { depthFt: 0, source: "" };
       const name = g.id || `${face}_gable_${i + 1}`;
       gables.push({
         baseCenter: base,
         span: spanFt * pxPerFt,
         pitch: g.pitch && g.pitch > 0 ? g.pitch : 6,
-        projection: projFt * pxPerFt,
+        projection: depthFt * pxPerFt,
         facing: letter,
         name,
         eaveCondition: projecting ? "projecting" : "flush",
         supportedOn: g.supported_on === "unknown" ? undefined : g.supported_on,
       });
       if (projecting) {
+        const verify = source === "schematic default" ? " (schematic) — verify depth & position" : " — verify position";
         notes.push(
           `Placed a projecting ${face} gable '${name}'${
             g.supported_on === "posts" || g.supported_on === "beam" ? ` (on ${g.supported_on})` : ""
-          } at ~${(projFt).toFixed(0)} ft depth (schematic) — verify depth & position on the canvas.`,
+          } at ~${depthFt.toFixed(0)} ft depth from ${source}${verify}.`,
         );
       }
     });

@@ -484,11 +484,14 @@ export async function runEstimateFromPlan(
     row.pageCount ??
     (sheets.length ? Math.max(...sheets.map((s) => s.pageIndex)) : undefined);
 
-  // Per-face elevation reads (stored by the analysis pipeline) let the engine
-  // draw each face's gables + pop-outs by rule when the engine flag is on.
-  const perFace =
-    (row.analysisJson as { _perFace?: { per_face?: Record<string, unknown> } } | null)?._perFace?.per_face ??
-    null;
+  // Per-face elevation reads + per-mass roof areas (stored by the analysis
+  // pipeline) let the engine draw each face's gables + pop-outs by rule (with
+  // real projection depth = roof area ÷ span) when the engine flag is on.
+  const engineStash = row.analysisJson as
+    | { _perFace?: { per_face?: Record<string, unknown> }; _engine?: { roofMasses?: unknown } }
+    | null;
+  const perFace = engineStash?._perFace?.per_face ?? null;
+  const roofMasses = engineStash?._engine?.roofMasses ?? null;
 
   const result = blueprintToEstimateResult(
     analysis,
@@ -502,6 +505,7 @@ export async function runEstimateFromPlan(
     {
       useEngineTakeoff: engineTakeoffEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
+      roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
     },
   );
 

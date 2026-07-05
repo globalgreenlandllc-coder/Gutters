@@ -64,10 +64,12 @@ as a cue or leave it unknown.
 <gable_enumeration>
 Scan the FULL width of this elevation and count EVERY triangular roof face that
 points at the viewer — including small, high dormer gables. Report the count and,
-for each gable: its span (width), pitch tag (e.g. 6:12) when legible, and its
+for each gable: its span (width), pitch tag (e.g. 6:12) when legible, its
 horizontal POSITION along the face (position_frac: 0 = far left edge of the
-building, 0.5 = center, 1 = far right edge, as you look at this elevation). The
-two SLOPED edges of a gable are RAKES → they carry NO gutter.
+building, 0.5 = center, 1 = far right edge, as you look at this elevation), and
+what it ROOFS (kind: porch / patio / entry / garage / dormer / main) from any
+label near it — "other" if unlabelled. The two SLOPED edges of a gable are
+RAKES → they carry NO gutter.
 </gable_enumeration>
 
 <projection_default>
@@ -119,6 +121,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
           type: "object",
           properties: {
             id: { type: "string" },
+            kind: {
+              type: "string",
+              enum: ["porch", "patio", "entry", "garage", "dormer", "main", "other"],
+              description: "What this gable roofs, from any label near it (COV'D PORCH, PATIO, entry). 'other' if unlabelled.",
+            },
             span_ft: { type: ["number", "null"] },
             pitch: { type: ["number", "null"], description: "rise per 12 (e.g. 6 for 6:12)." },
             position_frac: {
@@ -131,7 +138,7 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
             shows_projection_cue: { type: "boolean" },
             notes: { type: "string" },
           },
-          required: ["id", "position_frac", "eave_condition_guess", "supported_on", "shows_projection_cue"],
+          required: ["id", "kind", "position_frac", "eave_condition_guess", "supported_on", "shows_projection_cue"],
         },
       },
       projection_cues: { type: "array", items: { type: "string" } },

@@ -1,7 +1,7 @@
 import "server-only";
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
 import { segmentsFromOps, selectSegments } from "./pdf-segments";
-import { parseScheduleAreaFt2, type ScheduleAreaHit } from "./to-masses";
+import { parseScheduleAreaFt2, parseRoofMasses, type ScheduleAreaHit, type RoofMassArea } from "./to-masses";
 
 /**
  * "Read the blueprint better": pull the PDF's REAL vector layer — printed
@@ -302,5 +302,43 @@ export async function extractScheduleArea(
       e instanceof Error ? e.message : e,
     );
     return null;
+  }
+}
+
+/**
+ * Scan every page for per-mass ROOF AREAS (the roof-vent schedule: "UPPER ROOF
+ * … Roof Area 2902", "PATIO ROOF … 228", "PORCH ROOF … 180"). These give a
+ * projecting gable its DEPTH (area ÷ span) — the value a face elevation can't
+ * provide. De-duped by label (largest area kept). Fully fail-safe → [] on any
+ * error, and depth falls back to a schematic default.
+ */
+export async function extractRoofMasses(base64: string): Promise<RoofMassArea[]> {
+  try {
+    if (!base64) return [];
+    const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
+    const pdf = await getDocumentProxy(bytes);
+    const total = pdf.numPages;
+    if (!total) return [];
+    const byLabel = new Map<string, number>();
+    const maxPages = Math.min(total, 30);
+    for (let p = 1; p <= maxPages; p++) {
+      try {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const text = (content.items as Array<{ str?: string }>).map((i) => i.str ?? "").join(" ");
+        for (const m of parseRoofMasses(text)) {
+          if (m.areaFt2 > (byLabel.get(m.label) ?? 0)) byLabel.set(m.label, m.areaFt2);
+        }
+      } catch {
+        // Skip an unreadable page; keep scanning the rest.
+      }
+    }
+    return [...byLabel.entries()].map(([label, areaFt2]) => ({ label, areaFt2 }));
+  } catch (e) {
+    console.warn(
+      "[pdf-vectors] roof-mass extraction failed (depth falls back to schematic):",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
   }
 }

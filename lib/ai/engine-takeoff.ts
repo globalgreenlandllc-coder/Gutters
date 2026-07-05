@@ -25,6 +25,7 @@ import { runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine"
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { placeGablesFromFaces } from "./place-gables";
 import type { FaceReadingRaw } from "./face-merge";
+import type { RoofMassArea } from "./to-masses";
 
 export type EngineTakeoffBundle = {
   takeoff: RoofTakeoff;
@@ -98,6 +99,7 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
 export function buildEngineTakeoff(
   analysis: BlueprintAnalysis,
   perFace?: Record<string, FaceReadingRaw> | null,
+  roofMasses?: RoofMassArea[] | null,
 ): EngineTakeoffBundle | null {
   try {
     const ftPerPx = ftPerPxOf(analysis);
@@ -138,7 +140,7 @@ export function buildEngineTakeoff(
     // Place the per-face gables on the outline (posts/beam ⇒ projecting pop-outs
     // with guttered side eaves + ridges/valleys; the rest flush). Without a
     // per-face read this is empty and the engine draws the perimeter only.
-    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx);
+    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses });
 
     const massInputs: MassInput[] = [
       { name: "main", outline, statedArea: null, eaveEdges, gables: placed.gables },

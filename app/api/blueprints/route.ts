@@ -500,6 +500,7 @@ export async function POST(request: Request) {
         reviewFlags: gates.reviewFlags,
         scaleFtPerPx: gates.scaleFtPerPx,
         scheduleArea: gates.scheduleArea,
+        roofMasses: gates.roofMasses,
       };
       if (elevations) {
         analysisJson._perFace = {

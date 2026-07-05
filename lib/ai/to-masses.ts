@@ -106,6 +106,44 @@ export function parseScheduleAreaFt2(text: string): ScheduleAreaHit | null {
   return { areaFt2: hits[0].value, label: hits[0].label };
 }
 
+/** A per-mass roof area stated in a roof schedule (roof-vent / roofing table).
+ *  `label` is normalized (upper/main/patio/porch/garage/lower). Used to resolve
+ *  a projecting gable's DEPTH = area ÷ span (LAW 2 — depth from the plan, not the
+ *  face view). */
+export type RoofMassArea = { label: string; areaFt2: number };
+
+/**
+ * Parse per-mass ROOF areas out of a roof schedule, e.g. the roof-VENTILATION
+ * table which lists "UPPER ROOF … Roof Area 2902 s.f.", "PATIO ROOF … Roof Area
+ * 228 s.f.", "PORCH ROOF … Roof Area 180 s.f.". Deterministic + pure.
+ *
+ * These are plan-projected roof areas, so for a gable roof over a rectangular
+ * mass, area ≈ span × depth — which lets us recover a projection DEPTH that a
+ * face elevation can't give. Returns one entry per (label, area) found.
+ */
+export function parseRoofMasses(text: string): RoofMassArea[] {
+  if (!text || typeof text !== "string") return [];
+  const T = text.replace(/\s+/g, " ");
+  const out: RoofMassArea[] = [];
+  const seen = new Set<string>();
+  // "<LABEL> ROOF …(<=60 chars)… ROOF AREA <n> s.f."
+  const re =
+    /\b(UPPER|MAIN|LOWER|PATIO|PORCH|GARAGE|DECK)\s+ROOF\b[\s\S]{0,60}?ROOF\s*AREA\s*[:=]?\s*([0-9][0-9,]{1,6}(?:\.[0-9]+)?)\s*(?:s\.?\s?f\.?|sq\.?\s?ft\.?|square\s+feet)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(T)) !== null) {
+    const numStr = m[2];
+    if (numStr.includes(",") && !/^\d{1,3}(?:,\d{3})+$/.test(numStr)) continue;
+    const areaFt2 = Number(numStr.replace(/,/g, ""));
+    if (!Number.isFinite(areaFt2) || areaFt2 < 50 || areaFt2 > 50000) continue;
+    const label = m[1].toLowerCase();
+    const key = `${label}:${areaFt2}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label, areaFt2 });
+  }
+  return out;
+}
+
 export type ValidateOptions = {
   /** Authoritative stated area (ft²) from the title-block/schedule, when found.
    *  Takes priority over the classifier's width × depth. */

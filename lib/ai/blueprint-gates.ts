@@ -17,14 +17,16 @@ import "server-only";
 
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import type { PlanClassification } from "./classify-plans";
-import { extractScheduleArea } from "./pdf-vectors";
-import { validateBlueprintGeometry } from "./to-masses";
+import { extractScheduleArea, extractRoofMasses } from "./pdf-vectors";
+import { validateBlueprintGeometry, type RoofMassArea } from "./to-masses";
 import type { ReviewFlag } from "../roof-engine";
 
 export type BlueprintGateResult = {
   reviewFlags: ReviewFlag[];
   scaleFtPerPx: number | null;
   scheduleArea: { areaFt2: number; label: string; page: number } | null;
+  /** Per-mass roof areas from the roof schedule (for projecting-gable depth). */
+  roofMasses: RoofMassArea[];
   /** Human-readable lines to fold into `analysis.notes`. */
   notes: string[];
 };
@@ -41,7 +43,9 @@ export async function runBlueprintGates(args: {
   /** Raw PDF bytes (base64) when the source is a PDF, else null. */
   pdfBase64: string | null;
 }): Promise<BlueprintGateResult> {
-  const schedule = args.pdfBase64 ? await extractScheduleArea(args.pdfBase64) : null;
+  const [schedule, roofMasses] = args.pdfBase64
+    ? await Promise.all([extractScheduleArea(args.pdfBase64), extractRoofMasses(args.pdfBase64)])
+    : [null, []];
 
   const v = validateBlueprintGeometry(args.analysis, args.classification, {
     statedScheduleAreaFt2: schedule?.areaFt2 ?? null,
@@ -49,11 +53,17 @@ export async function runBlueprintGates(args: {
   });
 
   const notes = v.reviewFlags.map((f) => `${MARK[f.severity]} ${f.message}`);
+  if (roofMasses.length) {
+    notes.push(
+      `🏠 Roof-area schedule: ${roofMasses.map((m) => `${m.label} ${m.areaFt2} sf`).join(", ")} — used for projecting-gable depth (area ÷ span).`,
+    );
+  }
 
   return {
     reviewFlags: v.reviewFlags,
     scaleFtPerPx: v.scaleFtPerPx,
     scheduleArea: schedule,
+    roofMasses,
     notes,
   };
 }

@@ -20,6 +20,7 @@ const PX_PER_FT = 10;
 function g(over: Partial<FaceGableRead>): FaceGableRead {
   return {
     id: "g",
+    kind: "other",
     span_ft: 12,
     pitch: 6,
     position_frac: 0.5,
@@ -69,6 +70,29 @@ test("posts/beam gable is promoted to PROJECTING with a schematic depth + flag",
   assert.equal(gables[0].eaveCondition, "projecting");
   assert.ok(gables[0].projection > 0, "posts ⇒ projecting depth > 0");
   assert.ok(notes.some((n) => /porch/.test(n) && /verify/.test(n)));
+});
+
+test("depth comes from the PLAN (roof area ÷ span) when a matching roof mass is stated", () => {
+  const perFace = {
+    north: face({
+      face: "north",
+      gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })],
+    }),
+  };
+  // PORCH ROOF = 180 sf, span 12 ft ⇒ depth 15 ft (= 150 px at 10 px/ft).
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }, { label: "patio", areaFt2: 228 }],
+  });
+  assert.equal(gables[0].projection, 15 * PX_PER_FT);
+  assert.ok(notes.some((n) => /porch roof area 180 sf ÷ 12 ft span/.test(n)));
+  // An entry porch shares the "porch" roof-area label.
+  const entry = placeGablesFromFaces(
+    { north: face({ face: "north", gables: [g({ id: "e", kind: "entry", supported_on: "posts", span_ft: 12 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+    { roofMasses: [{ label: "porch", areaFt2: 180 }] },
+  );
+  assert.equal(entry.gables[0].projection, 15 * PX_PER_FT);
 });
 
 test("unread / empty faces contribute nothing; no scale ⇒ nothing", () => {

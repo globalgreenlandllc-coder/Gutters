@@ -23,6 +23,7 @@ import type {
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
 import type { FaceReadingRaw } from "./face-merge";
+import type { RoofMassArea } from "./to-masses";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -445,6 +446,9 @@ export function blueprintToEstimateResult(
     /** Per-face elevation reads (analysisJson._perFace.per_face) so the engine
      *  can draw each face's gables + pop-outs (porch/patio) by rule. */
     perFace?: Record<string, FaceReadingRaw> | null;
+    /** Per-mass roof areas (analysisJson._engine.roofMasses) so a projecting
+     *  gable's depth = roof area ÷ span (LAW 2), not a schematic guess. */
+    roofMasses?: RoofMassArea[] | null;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -514,7 +518,9 @@ export function blueprintToEstimateResult(
   // Engine-takeoff mode (flag): the deterministic roof engine becomes the
   // pricing + eave-line authority. Null when there's no footprint / no scale,
   // in which case the flag no-ops and the gutter_runs path below stands.
-  const engineBundle = opts?.useEngineTakeoff ? buildEngineTakeoff(analysis, opts?.perFace) : null;
+  const engineBundle = opts?.useEngineTakeoff
+    ? buildEngineTakeoff(analysis, opts?.perFace, opts?.roofMasses)
+    : null;
 
   // A point is "bad" when the stored analysis has null/undefined/NaN
   // coords — projection would collapse it to viewBox center and the

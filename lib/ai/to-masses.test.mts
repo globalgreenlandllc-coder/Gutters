@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateBlueprintGeometry, parseScheduleAreaFt2 } from "./to-masses.ts";
+import { validateBlueprintGeometry, parseScheduleAreaFt2, parseRoofMasses } from "./to-masses.ts";
 import type { BlueprintAnalysis, BlueprintRun } from "./blueprint-from-plans.ts";
 import type { PlanClassification } from "./classify-plans.ts";
 
@@ -172,6 +172,23 @@ test("parseScheduleAreaFt2: real Woodinville callouts — rejects site/coverage/
   assert.ok(hit);
   assert.equal(hit!.label, "roof area");
   assert.equal(hit!.areaFt2, 4018);
+});
+
+test("parseRoofMasses: pulls per-mass roof areas from the roof-vent schedule (real Woodinville)", () => {
+  const text =
+    "ROOF VENTILATION Standard Truss / Scissor Truss Roof Framing Assembly: UPPER ROOF " +
+    "Roof Area 2902 s.f. Ventilation Required 2902 s.f. x 144 / 300 = 1392.96 s.i. " +
+    "ROOF VENTILATION PATIO ROOF Roof Area 228 s.f. Ventilation Required 228 s.f. " +
+    "ROOF VENTILATION PORCH ROOF Roof Area 180 s.f. Ventilation Required 180 s.f.";
+  const masses = parseRoofMasses(text);
+  const byLabel = Object.fromEntries(masses.map((m) => [m.label, m.areaFt2]));
+  assert.equal(byLabel.upper, 2902);
+  assert.equal(byLabel.patio, 228);
+  assert.equal(byLabel.porch, 180);
+  // depth = area ÷ span (LAW 2): a 180 sf porch roof over a 12 ft span ⇒ 15 ft.
+  assert.equal(180 / 12, 15);
+  // The "ROOF & GUTTERS AREA" aggregate is NOT a labelled roof mass.
+  assert.equal(parseRoofMasses("IMPERVIOUS AREA ROOF & GUTTERS AREA: 4018 SF").length, 0);
 });
 
 test("title-block schedule area is preferred over classifier width×depth", () => {
