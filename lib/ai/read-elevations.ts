@@ -164,7 +164,7 @@ function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
  *  returns an unreadable face. */
 export async function readElevationFace(
   source: PlanSource,
-  spec: { page: number; face: ElevationFaceName },
+  spec: { face: ElevationFaceName; pages: number[] },
 ): Promise<{ reading: FaceReadingRaw; usage: { input_tokens: number; output_tokens: number } }> {
   const zero = { input_tokens: 0, output_tokens: 0 };
   try {
@@ -185,8 +185,12 @@ export async function readElevationFace(
             {
               type: "text",
               text:
-                `Read ONLY page ${spec.page} — the ${spec.face.toUpperCase()} elevation — in isolation. ` +
-                `Ignore every other page and every other face. Do not assume any other face looks like this one. ` +
+                `Find and read the ${spec.face.toUpperCase()} exterior elevation — in isolation. ` +
+                (spec.pages.length
+                  ? `The elevation sheets in this set are page(s) ${spec.pages.join(", ")}, and a single sheet often holds TWO elevations side by side, so look at ALL of them and pick the ${spec.face.toUpperCase()} one (it may be titled "${spec.face.toUpperCase()}" or e.g. "FRONT/${spec.face.toUpperCase()}", "LEFT/${spec.face.toUpperCase()}"). `
+                  : `Locate the ${spec.face.toUpperCase()} elevation anywhere in the set. `) +
+                `Read ONLY the ${spec.face.toUpperCase()} elevation; ignore every other elevation and face, and do NOT assume any other face looks like this one. ` +
+                `If there is no ${spec.face.toUpperCase()} elevation in the set, set readable:false. ` +
                 `Enumerate its gables, classify its eave/rake edges, note any projection cues, and call record_face_reading with face:"${spec.face}".`,
             },
             sourceBlock(source),
@@ -240,28 +244,24 @@ export async function readAllElevations(
 
   try {
     const sheets = classification?.sheets ?? [];
-    // One read per cardinal side (first sheet per side), capped for safety.
-    const bySide = new Map<string, number>();
-    for (const s of sheets) {
-      if (s.sheet_type !== "elevation") continue;
-      if (!s.elevation_side || s.elevation_side === "unknown") continue;
-      if (!bySide.has(s.elevation_side)) bySide.set(s.elevation_side, s.page_index);
-    }
-    const specs = [...bySide.entries()]
-      .slice(0, 6)
-      .map(([face, page]) => ({ face: face as ElevationFaceName, page }));
+    // Collect the elevation SHEETS (a sheet often holds two elevations side by
+    // side, so we don't map one face per sheet — we read each face directly).
+    const elevationPages = Array.from(
+      new Set(
+        sheets
+          .filter((s) => s.sheet_type === "elevation" && typeof s.page_index === "number")
+          .map((s) => s.page_index),
+      ),
+    );
 
-    if (specs.length === 0) {
-      return empty(["Face-by-face read skipped: the classifier identified no elevation sheets with a known side."]);
-    }
+    // Always read ALL FOUR cardinal faces, each locating its own elevation among
+    // the elevation pages — so two-elevations-per-sheet no longer skips a side.
+    const CARDINAL_FACES: ElevationFaceName[] = ["north", "south", "east", "west"];
+    const specs = CARDINAL_FACES.map((face) => ({ face, pages: elevationPages }));
 
     const results = await Promise.all(specs.map((spec) => readElevationFace(source, spec)));
     const reads = results.map((r) => r.reading);
-    // Expect ALL FOUR cardinal faces so any side we didn't read (e.g. a second
-    // elevation sharing a sheet) is surfaced, not silently skipped.
-    const CARDINAL_FACES = ["north", "south", "east", "west"];
-    const expected = Array.from(new Set([...CARDINAL_FACES, ...specs.map((s) => s.face as string)]));
-    const merged = mergeFaceReadings(reads, expected);
+    const merged = mergeFaceReadings(reads, CARDINAL_FACES);
     const usage = results.reduce(
       (acc, r) => ({
         input_tokens: acc.input_tokens + r.usage.input_tokens,
