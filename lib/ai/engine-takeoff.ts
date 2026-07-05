@@ -91,6 +91,36 @@ function edgeCoverage(a: Pt, b: Pt, s: { a: Pt; b: Pt }, tol: number): number {
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
+/** Outward normals for the four cardinal faces (PDF-pixel space, y down). */
+const FACE_NORMALS: { face: string; n: Pt }[] = [
+  { face: "north", n: { x: 0, y: -1 } },
+  { face: "south", n: { x: 0, y: 1 } },
+  { face: "east", n: { x: 1, y: 0 } },
+  { face: "west", n: { x: -1, y: 0 } },
+];
+
+/** Index of the outline's principal edge on the side facing `n` (roughly
+ *  perpendicular to n, furthest out that way), or -1. */
+function principalEdgeIndex(poly: Pt[], n: Pt): number {
+  let best = -1;
+  let bestScore = -Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len <= 0) continue;
+    if (Math.abs((dx / len) * n.x + (dy / len) * n.y) > 0.5) continue;
+    const score = ((a.x + b.x) / 2) * n.x + ((a.y + b.y) / 2) * n.y;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  }
+  return best;
+}
+
 /**
  * Build the engine takeoff for a stored analysis. Returns null (⇒ the flag
  * no-ops, current pricing stands) when there is no footprint or no independent
@@ -140,6 +170,23 @@ export function buildEngineTakeoff(
       const isRake = rakeSegs.reduce((m, s) => Math.max(m, edgeCoverage(a, b, s, eaveTol)), 0) > 0.5;
       if (!isRake) eaveEdges.push(i);
     }
+
+    // A face read as a FULL GABLE END (continuous_eave === false) has NO gutter
+    // across it — the roof slopes to the two perpendicular sides, so its
+    // footprint edge is a rake. The AI marks the diagonal gable rakes, which
+    // don't cover that horizontal edge, so default-eave would wrongly count it;
+    // the per-face read is the reliable signal. Drop that edge from the eaves.
+    if (perFace) {
+      for (const { face, n } of FACE_NORMALS) {
+        const r = perFace[face];
+        if (r && r.readable !== false && r.continuous_eave === false) {
+          const idx = principalEdgeIndex(outline, n);
+          const pos = idx >= 0 ? eaveEdges.indexOf(idx) : -1;
+          if (pos >= 0) eaveEdges.splice(pos, 1);
+        }
+      }
+    }
+
     // Every edge classified as a rake (degenerate) — nothing to price.
     if (eaveEdges.length === 0) return null;
 

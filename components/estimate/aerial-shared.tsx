@@ -758,19 +758,24 @@ export function RoofStructureOverlay({
       structure.perimeter,
       [], // no eave veto — the contractor placed these on purpose
     );
-    // Engine-authored interior lines (pop-out ridge-backs + valleys, ids
-    // "engine-…") are trustworthy and describe projections the footprint
-    // skeleton can't know about — overlay them on top of the derived main-roof
-    // skeleton so the pop-outs' roof lines connect. Freehand "plan-…" lines are
-    // NOT overlaid (they're the sparse/floating AI trace derivation replaces).
+    // Engine-authored interior lines (ids "engine-…") are the exact straight-
+    // skeleton — clean converging hips/ridges/valleys. When present, REPLACE the
+    // grid skeleton's roof lines with them (so we don't draw the grid fan
+    // underneath), while KEEPING the grid's gable wings + faces so the gables
+    // still render. Freehand "plan-…" lines are left to the grid derivation.
     const engineLines = (ls: { id?: string; points: Pt[] }[]) =>
       ls
         .filter((l) => typeof l.id === "string" && l.id.startsWith("engine-"))
         .map((l) => ({ points: l.points }));
+    const eHips = engineLines(structure.hips ?? []);
+    const eRidges = engineLines(structure.ridges);
+    const eValleys = engineLines(structure.valleys);
+    const hasEngine = eHips.length + eRidges.length + eValleys.length > 0;
     return {
       ...base,
-      ridges: [...base.ridges, ...engineLines(structure.ridges)],
-      valleys: [...base.valleys, ...engineLines(structure.valleys)],
+      hips: hasEngine ? eHips : base.hips,
+      ridges: hasEngine ? eRidges : base.ridges,
+      valleys: hasEngine ? eValleys : base.valleys,
       dormers: [...aiDormers, ...userDormers],
     };
   }, [

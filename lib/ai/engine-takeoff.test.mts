@@ -105,6 +105,28 @@ test("buildEngineTakeoff: a DROPPED eave (no gutter run, not a rake) is STILL co
   assert.equal(b!.eaveLfFt, 180);
 });
 
+test("buildEngineTakeoff: a face read as a FULL GABLE END (continuous_eave false) drops that edge", () => {
+  const perFace = {
+    east: {
+      face: "east",
+      readable: true,
+      unreadable_reason: null,
+      gable_count: 1,
+      continuous_eave: false, // full gable end — no gutter across this face
+      gables: [],
+      projections: [],
+      projection_cues: [],
+      confidence: "high",
+    },
+  } as Record<string, import("./face-merge.ts").FaceReadingRaw>;
+  const b = buildEngineTakeoff(analysis(), perFace);
+  assert.ok(b);
+  // Footprint 100×80: the east edge (x=100, 80px) is the gable end → excluded.
+  // eaves = top(100) + bottom(100) + left(80) = 280 px × 0.5 = 140 ft.
+  assert.equal(b!.eaveLfFt, 140);
+  assert.equal(b!.takeoff.masses[0].edges.filter((e) => e.gutter).length, 3);
+});
+
 test("buildEngineTakeoff: px/ft comes from the runs, so a null declared scale still works", () => {
   // Runs carry length_ft/length_px, so real feet are derivable even with no
   // declared scale — more robust than trusting scale.feet_per_unit.
