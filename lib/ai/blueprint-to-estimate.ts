@@ -874,6 +874,20 @@ export function blueprintToEstimateResult(
     notes.push(
       `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
     );
+    // Surface the engine (footprint-perimeter) LF next to the AI's measured-run
+    // LF so a big gap — the UNDER-billing risk — is visible, not silent. The
+    // engine prices guttered PERIMETER edges; the runs sum the AI's measured
+    // lengths. A hip-dominant roof should gutter most of its perimeter.
+    const freehandLf = Math.round(analysis.gutter_runs.reduce((s, r) => s + (r.length_ft ?? 0), 0));
+    if (freehandLf > 0) {
+      const gapPct = Math.abs(engineBundle.eaveLfFt - freehandLf) / freehandLf;
+      notes.push(
+        `⚖ Engine LF ${engineBundle.eaveLfFt} vs AI-measured-run LF ${freehandLf}` +
+          (gapPct > 0.15
+            ? ` — a ${(gapPct * 100).toFixed(0)}% gap. VERIFY against the real roof: the engine may be under-counting eaves (edges classed as gable rakes, or runs not on the perimeter) on a hip-dominant roof.`
+            : " — within 15%, consistent."),
+      );
+    }
     notes.push(
       "⚠ Engine-drawn geometry is for VERIFICATION — eyeball it against the real roof before quoting. It won't over-bill (flush ≤ projecting by construction) but pop-out depths/positions are schematic until confirmed.",
     );
