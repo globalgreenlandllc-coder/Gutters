@@ -363,6 +363,12 @@ export function buildGableByRule(g: Gable): GableLines {
       [left, peak],
       [peak, right],
     ];
+    // A flush / roof-mounted gable still has a RIDGE — the gable peak line runs
+    // from the gable-end eave back into the roof. Emit it so the gable DRAWS in
+    // plan view (a proper gable ridge) instead of being an invisible flat edge.
+    const into = g.intoDepth ?? half;
+    const ridgeEnd = { x: g.baseCenter.x - out.x * into, y: g.baseCenter.y - out.y * into };
+    lines.ridgeBack = [[peak, ridgeEnd]];
     return lines;
   }
 

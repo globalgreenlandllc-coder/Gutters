@@ -97,14 +97,14 @@ test("buildGableByRule: projecting gable yields 2 rakes, 2 side eaves, 1 ridge-b
   }
 });
 
-test("buildGableByRule: flush gable (projection 0) is rakes-only, contributes no gutter", () => {
+test("buildGableByRule: flush gable (projection 0) contributes no gutter but DRAWS a ridge", () => {
   const g: Gable = { baseCenter: { x: 30, y: 44 }, span: 12, pitch: 4, projection: 0, facing: "S" };
   assert.equal(isProjecting(g), false);
   const L = buildGableByRule(g);
   assert.equal(L.projecting, false);
   assert.equal(L.rakes.length, 2);
-  assert.equal(L.sideEaves.length, 0);
-  assert.equal(L.ridgeBack.length, 0);
+  assert.equal(L.sideEaves.length, 0); // no gutter
+  assert.equal(L.ridgeBack.length, 1); // a flush gable-end still has a ridge (draws in plan)
   assert.equal(L.valleys.length, 0);
 });
 
@@ -172,9 +172,11 @@ test("flush front gable does NOT break the front eave (keeps a single perimeter 
   ]);
   const mass = res.masses[0];
   const eaveEdges = mass.edges.filter((e) => e.gutter);
-  // Only the 4 perimeter eaves — the flush gable adds none.
+  // Only the 4 perimeter eaves — the flush gable adds NO gutter.
   assert.equal(eaveEdges.length, 4);
-  assert.equal(mass.interior.length, 0);
+  // It draws a ridge (so it shows in plan) but no valleys and no side eaves.
+  assert.equal(mass.interior.filter((e) => e.type === "ridge").length, 1);
+  assert.equal(mass.interior.filter((e) => e.type === "valley").length, 0);
   assert.ok(res.reviewFlags.some((f) => f.code === "gable_flush"));
 });
 
@@ -260,11 +262,11 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   assert.equal(res.eaveLfByMass.patio, 32); // 32 perimeter, flush gable adds 0
   assert.equal(res.totalEaveLf, 394);
 
-  // Interior lines: each projecting gable → 1 ridge-back + 2 valleys.
+  // Interior lines: every gable → 1 ridge-back; each PROJECTING gable → 2 valleys.
   const ridges = res.masses.flatMap((m) => m.interior).filter((e) => e.type === "ridge").length;
   const valleys = res.masses.flatMap((m) => m.interior).filter((e) => e.type === "valley").length;
-  assert.equal(ridges, 5); // 4 main + 1 garage
-  assert.equal(valleys, 10); // 8 main + 2 garage
+  assert.equal(ridges, 6); // 4 main + 1 garage + 1 flush patio gable
+  assert.equal(valleys, 10); // 8 main + 2 garage (projecting only)
 
   // Downspouts: 1 per run + 1 per 40 ft, runs < 10 ft share drainage.
   assert.equal(res.downspouts.length, 11); // main 6 + garage 3 + patio 2
@@ -305,11 +307,12 @@ test("Woodinville ground truth: engine draws the real asymmetric roof (front 2 g
   // Eave LF = 230 perimeter + porch (2×6) + patio (2×5); flush ends add ZERO.
   assert.equal(res.eaveLfByMass.main, 252);
 
-  // Only the projecting porch + patio generate ridge-backs + valleys.
+  // Every gable draws a ridge (so flush gable-ends show in plan); only the
+  // projecting porch + patio add valleys.
   const ridges = res.masses[0].interior.filter((e) => e.type === "ridge").length;
   const valleys = res.masses[0].interior.filter((e) => e.type === "valley").length;
-  assert.equal(ridges, 2);
-  assert.equal(valleys, 4);
+  assert.equal(ridges, 5); // 3 flush gable-ends + porch + patio
+  assert.equal(valleys, 4); // porch + patio only
 
   // The front≠rear asymmetry is PRESERVED, not mirrored: 2 flush ends on the
   // front, 1 on the rear.
