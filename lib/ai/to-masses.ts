@@ -165,7 +165,7 @@ function independentScaleFtPerPx(analysis: BlueprintAnalysis): number | null {
   return null;
 }
 
-function scheduleAreaFt2(classification?: PlanClassification | null): number | null {
+export function scheduleAreaFt2(classification?: PlanClassification | null): number | null {
   const d = classification?.building_dimensions;
   if (!d) return null;
   const w = d.width_ft;
@@ -217,7 +217,7 @@ function shapeCheck(
  * own shape; comparing it to the stated schedule area then validates depth / fill
  * (a missing wing) rather than the meaningless absolute scale.
  */
-function selfConsistentAreaFt2(ringPx: Pt[], classification?: PlanClassification | null): number | null {
+export function selfConsistentAreaFt2(ringPx: Pt[], classification?: PlanClassification | null): number | null {
   const d = classification?.building_dimensions;
   const w = typeof d?.width_ft === "number" && d.width_ft > 0 ? d.width_ft : 0;
   const h = typeof d?.depth_ft === "number" && d.depth_ft > 0 ? d.depth_ft : 0;

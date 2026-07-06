@@ -96,12 +96,46 @@ const PERP: Record<string, string[]> = {
 
 const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
 
-/** The outline edge on a given side: roughly perpendicular to the outward
- *  normal `n` and furthest out in that direction. (PDF-pixel space, y down;
- *  north = min y, south = max y, east = max x, west = min x.) */
-function principalEdge(poly: Pt[], n: Pt): { a: Pt; b: Pt } | null {
-  let best: { a: Pt; b: Pt } | null = null;
-  let bestScore = -Infinity;
+/** Along-face scalar that increases to the viewer's RIGHT (matches orientEdge:
+ *  north→+x, south→−x, east→+y, west→−y). Lets multiple sub-edges of one face be
+ *  ordered and addressed on a common axis. */
+function faceU(p: Pt, face: string): number {
+  switch (face) {
+    case "north":
+      return p.x;
+    case "south":
+      return -p.x;
+    case "east":
+      return p.y;
+    default: // west
+      return -p.y;
+  }
+}
+
+type FaceEdge = { L: Pt; R: Pt; uL: number; uR: number; out: number };
+
+/**
+ * EVERY outline edge on a given side — not just the furthest-out one. An edge
+ * qualifies when it runs roughly ALONG the face (perpendicular to the outward
+ * normal `n`) AND sits in the outward half of the footprint — so a recessed /
+ * projecting JOG sub-edge still counts, but the opposite back edge doesn't.
+ * Returned oriented [L,R] in the viewer's left→right order, tagged with each
+ * edge's along-face u-range and how far out it sits. This is what lets a gable
+ * read at a `position_frac` land on the correct jog instead of being squeezed
+ * onto one principal edge (the cause of missing gables on articulated fronts).
+ * A face with a single straight edge yields one FaceEdge → identical to before.
+ */
+function faceEdges(poly: Pt[], n: Pt, face: string): FaceEdge[] {
+  let cx = 0;
+  let cy = 0;
+  for (const p of poly) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= poly.length;
+  cy /= poly.length;
+  const centroidProj = cx * n.x + cy * n.y;
+  const edges: FaceEdge[] = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];
     const b = poly[(i + 1) % poly.length];
@@ -109,16 +143,38 @@ function principalEdge(poly: Pt[], n: Pt): { a: Pt; b: Pt } | null {
     const dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
     if (len <= 0) continue;
-    // Skip edges parallel to the normal (they belong to the perpendicular sides).
+    // Skip edges running ALONG the normal (they belong to the perpendicular sides).
     if (Math.abs((dx / len) * n.x + (dy / len) * n.y) > 0.5) continue;
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const score = mid.x * n.x + mid.y * n.y; // how far out in the normal dir
-    if (score > bestScore) {
-      bestScore = score;
-      best = { a, b };
+    const out = ((a.x + b.x) / 2) * n.x + ((a.y + b.y) / 2) * n.y;
+    if (out < centroidProj) continue; // an edge on the opposite (back) half
+    const [L, R] = orientEdge(a, b, face);
+    edges.push({ L, R, uL: faceU(L, face), uR: faceU(R, face), out });
+  }
+  edges.sort((e1, e2) => e1.uL - e2.uL);
+  return edges;
+}
+
+/** The outline point at along-face position `u`, on the OUTERMOST sub-edge that
+ *  spans it (so a gable over a projecting jog sits on the jog, not the wall
+ *  behind it). Falls back to the nearest sub-edge when `u` lands in a gap. */
+function pointAtU(edges: FaceEdge[], u: number, eps = 1e-6): Pt {
+  const covers = edges.filter(
+    (e) => u >= Math.min(e.uL, e.uR) - eps && u <= Math.max(e.uL, e.uR) + eps,
+  );
+  const pool = covers.length ? covers : edges;
+  let pick = pool[0];
+  for (const e of pool) {
+    if (covers.length) {
+      if (e.out > pick.out) pick = e; // outermost among covering sub-edges
+    } else {
+      const d = Math.min(Math.abs(u - e.uL), Math.abs(u - e.uR));
+      const dp = Math.min(Math.abs(u - pick.uL), Math.abs(u - pick.uR));
+      if (d < dp) pick = e; // nearest sub-edge when u sits in a gap
     }
   }
-  return best;
+  const denom = pick.uR - pick.uL;
+  const s = denom !== 0 ? clamp01((u - pick.uL) / denom) : 0;
+  return { x: pick.L.x + (pick.R.x - pick.L.x) * s, y: pick.L.y + (pick.R.y - pick.L.y) * s };
 }
 
 /** Order an edge's endpoints [left, right] as seen looking at that elevation. */
@@ -164,9 +220,13 @@ export function placeGablesFromFaces(
     if (!reading || reading.readable === false) continue;
     const read = (reading.gables ?? []).filter((g) => g && (g.span_ft ?? 0) >= 0);
     if (read.length === 0) continue;
-    const edge = principalEdge(outlinePx, n);
-    if (!edge) continue;
-    const [L, R] = orientEdge(edge.a, edge.b, face);
+    // ALL sub-edges on this side (incl. jogs), left→right — so each gable lands
+    // on the sub-edge its position_frac maps to across the full face width.
+    const edges = faceEdges(outlinePx, n, face);
+    if (edges.length === 0) continue;
+    const uMin = Math.min(...edges.map((e) => e.uL));
+    const uMax = Math.max(...edges.map((e) => e.uR));
+    const uSpan = uMax - uMin;
 
     // Depth of a pop-out on THIS face is measured on the PERPENDICULAR faces.
     const perpProjections: FaceProjection[] = (PERP[face] ?? []).flatMap((pf) =>
@@ -175,7 +235,7 @@ export function placeGablesFromFaces(
 
     read.forEach((g, i) => {
       const t = clamp01(g.position_frac ?? (read.length === 1 ? 0.5 : (i + 0.5) / read.length));
-      const base = { x: L.x + (R.x - L.x) * t, y: L.y + (R.y - L.y) * t };
+      const base = pointAtU(edges, uMin + t * uSpan);
       const spanFt = g.span_ft && g.span_ft > 0 ? g.span_ft : 12;
       const projecting =
         g.supported_on === "posts" ||

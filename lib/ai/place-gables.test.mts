@@ -134,6 +134,41 @@ test("unread / empty faces contribute nothing; no scale ⇒ nothing", () => {
   assert.equal(placeGablesFromFaces({ north: face({ gables: [g({})] }) }, OUTLINE, 0).gables.length, 0);
 });
 
+test("jogged front: gables route to the correct sub-edge (bay vs wall), not one principal edge", () => {
+  // South (front) face has 3 sub-edges: left wall (y=510), a projecting bay
+  // (y=560) in the middle, right wall (y=510). The old single-principal-edge
+  // logic squeezed EVERY front gable onto the furthest-out bay; now each gable
+  // lands on the sub-edge its position_frac maps to across the full face width.
+  const OUTLINE_JOG = [
+    { x: 0, y: 0 },
+    { x: 640, y: 0 },
+    { x: 640, y: 510 },
+    { x: 440, y: 510 },
+    { x: 440, y: 560 },
+    { x: 200, y: 560 },
+    { x: 200, y: 510 },
+    { x: 0, y: 510 },
+  ];
+  const perFace = {
+    south: face({
+      face: "south",
+      gables: [
+        g({ id: "mid", position_frac: 0.5, span_ft: 12 }), // over the bay
+        g({ id: "left", position_frac: 0.05, span_ft: 12 }), // over a wall segment
+      ],
+    }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE_JOG, PX_PER_FT);
+  assert.equal(gables.length, 2);
+  const mid = gables.find((gg) => gg.name === "mid")!;
+  const left = gables.find((gg) => gg.name === "left")!;
+  // Middle gable sits on the projecting bay edge (y=560); the near-end gable on a
+  // flush wall segment (y=510) — proof each routed to its own sub-edge instead of
+  // all landing on the single furthest-out edge.
+  assert.equal(mid.baseCenter.y, 560);
+  assert.equal(left.baseCenter.y, 510);
+});
+
 test("end-to-end: placed gables drive the engine → front porch adds guttered side eaves + a valley", () => {
   const perFace = {
     north: face({

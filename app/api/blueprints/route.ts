@@ -414,7 +414,11 @@ export async function POST(request: Request) {
         : [];
       const result = await blueprintFromPlanSourcesBestOf(
         [source],
-        { constraints, vectorGeometry },
+        {
+          constraints,
+          vectorGeometry,
+          classification: stage1 && stage1.ok ? stage1.classification : null,
+        },
         3,
         geminiReaders,
       );

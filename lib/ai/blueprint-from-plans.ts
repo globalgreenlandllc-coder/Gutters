@@ -3,7 +3,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
 import { getPrompt } from "./prompts";
 import { buildVectorBlock, type PlanVectors } from "./pdf-vectors";
-import type { GeometryConstraints } from "./classify-plans";
+import type { GeometryConstraints, PlanClassification } from "./classify-plans";
+import { polygonCloses, polyArea } from "../roof-engine";
+import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
+import { scheduleAreaFt2, selfConsistentAreaFt2 } from "./to-masses";
 
 export type BlueprintPoint = { x: number; y: number };
 
@@ -1260,6 +1263,12 @@ export type BlueprintRunOptions = {
    *  geometry instead of eyeballing pixels. null/absent → unchanged
    *  vision-only behavior. */
   vectorGeometry?: PlanVectors | null;
+  /** Stage-1 classification (schedule area, width×depth, roof shape). When
+   *  present, the best-of scorer additionally rewards the trace whose footprint
+   *  agrees with the stated roof area — so a candidate missing a wing/mass loses.
+   *  Scale-free, so a mere px→ft scale mislabel (which leaves the measured LF
+   *  intact) is NOT penalized. */
+  classification?: PlanClassification | null;
 };
 
 /**
@@ -1268,9 +1277,33 @@ export type BlueprintRunOptions = {
  * in-envelope geometry; punishes degenerate coords, collapsed footprints, and
  * over-cap LF.
  */
+/**
+ * The footprint outline as a cleaned polygon ring in pixel space (duplicate /
+ * near-collinear vertices removed), or [] if it can't form a polygon. Same
+ * cleaning the engine's area gate uses, so the integrity verdict here matches
+ * what the downstream skeleton actually sees.
+ */
+function footprintRingPx(a: BlueprintAnalysis): Pt[] {
+  const raw = (a.building_footprint ?? []).filter(isFinitePt);
+  if (raw.length < 4) return [];
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of raw) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+  const span = Math.max(maxX - minX, maxY - minY);
+  return cleanRing(raw, Math.max(2, span * 0.012));
+}
+
 export function scoreBlueprintAnalysis(
   a: BlueprintAnalysis,
   c?: GeometryConstraints,
+  classification?: PlanClassification | null,
 ): number {
   const fin = (p?: { x: number; y: number } | null) =>
     !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -1288,15 +1321,30 @@ export function scoreBlueprintAnalysis(
   if (c?.max_total_eave_lf && totalLF > c.max_total_eave_lf)
     s -= (totalLF - c.max_total_eave_lf) * 0.1 + 8;
   s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
-  // A real footprint encloses area; a collapsed / single-dot trace doesn't.
-  if (fp.length >= 3) {
-    let area = 0;
-    for (let i = 0; i < fp.length; i++) {
-      const p = fp[i];
-      const q = fp[(i + 1) % fp.length];
-      area += p.x * q.y - q.x * p.y;
+
+  // ── Footprint INTEGRITY gate ──────────────────────────────────────────────
+  // A trace whose outline self-intersects or collapses is the root cause of the
+  // tangled centroid-fan skeleton, mis-placed jog gables, and disconnected roof
+  // lines downstream (the straight skeleton rejects a non-simple polygon and the
+  // grid fallback fans from the centroid). Demote it HARD so a clean simple-
+  // polygon trace wins even when it has fewer vertices — the +articulation term
+  // above over-rewarded jittery high-vertex traces, which is how a degenerate
+  // read could win once a second vision model entered the pool.
+  const ringPx = footprintRingPx(a);
+  if (ringPx.length < 4 || !polygonCloses(ringPx) || Math.abs(polyArea(ringPx)) < 1) {
+    s -= 40; // degenerate / self-intersecting outline — unusable geometry
+  } else if (classification) {
+    // ── Stated-area agreement (scale-free) ──────────────────────────────────
+    // A trace missing a wing / mass reads far under the plan's stated roof area.
+    // Uses the footprint's OWN geometry (independent of the declared px→ft
+    // scale), so a mere scale mislabel — which leaves the measured LF intact —
+    // is NOT penalized. Only a genuine shape shortfall costs points.
+    const stated = scheduleAreaFt2(classification);
+    const selfArea = selfConsistentAreaFt2(ringPx, classification);
+    if (stated && stated > 0 && selfArea && selfArea > 0) {
+      const dev = Math.abs(selfArea - stated) / stated;
+      if (dev > 0.15) s -= Math.min(20, (dev - 0.15) * 40); // up to −20 for a big miss
     }
-    if (Math.abs(area) < 1) s -= 15;
   }
   return s;
 }
@@ -1346,14 +1394,14 @@ export async function blueprintFromPlanSourcesBestOf(
   if (ok.length === 0) return results[0]; // all failed — surface the reason
   ok.sort(
     (a, b) =>
-      scoreBlueprintAnalysis(b.analysis, opts.constraints) -
-      scoreBlueprintAnalysis(a.analysis, opts.constraints),
+      scoreBlueprintAnalysis(b.analysis, opts.constraints, opts.classification) -
+      scoreBlueprintAnalysis(a.analysis, opts.constraints, opts.classification),
   );
   const best = ok[0];
   const models = ok.map((r) => r.usage.model);
   best.analysis.notes = [
     ...(best.analysis.notes ?? []),
-    `Best of ${ok.length} reads (${[...new Set(models)].join(", ")}) — kept the most complete, in-envelope trace from ${best.usage.model}.`,
+    `Best of ${ok.length} reads (${[...new Set(models)].join(", ")}) — kept the highest-scoring valid trace (simple, in-envelope footprint) from ${best.usage.model}.`,
   ];
   return best;
 }
