@@ -489,7 +489,6 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
   // `edges`, so the priced eave LF is provably unchanged. Returns EMPTY (nothing
   // added) on a non-rectilinear/degenerate footprint, so the caller degrades to
   // its own skeleton rather than drawing junk.
-  let skeletonDrawn = false;
   {
     const eaveSegments: [Pt, Pt][] = [];
     const rakeSegments: [Pt, Pt][] = [];
@@ -498,45 +497,35 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
       (eaveSet.has(i) ? eaveSegments : rakeSegments).push(seg);
     }
     const skel = deriveRoofSkeletonStraight(outline, { eaveSegments, rakeSegments });
-    // Gate BEFORE drawing: deriveRoofSkeletonStraight can degenerate into a
-    // centroid-FAN (every hip/ridge/valley converging on one central apex) on a
-    // near-square outline — a pyramid, not a real hip topology. validateSkeleton
-    // (hub-degree / ridge-length checks) is built to catch exactly that; run it
-    // so a rejected fan never renders. On rejection: draw NO main skeleton (bare
-    // gable ridge-backs remain) + a flag — never a line that goes nowhere. The
-    // true topology (e.g. A9's central valley) needs tier decomposition, a later
-    // stage; until then an honest gap beats a wrong star.
-    if (validateSkeleton(skel, outline)) {
+    // Gate BEFORE drawing. deriveRoofSkeletonStraight can degenerate into a
+    // centroid-FAN — every hip/ridge/valley converging on one apex, a pyramid
+    // not a real hip topology. TWO rejects:
+    //   1. validateSkeleton — hub-degree / ridge-length heuristics.
+    //   2. A straight skeleton MUST valley at every REENTRANT (inside) corner of
+    //      the outline. If a real jog is left without a valley, the skeleton is
+    //      geometrically inconsistent with its own footprint — this is the
+    //      Woodinville garage-jog fan that validateSkeleton alone misses (its
+    //      ridge-spokes fool the ridge-length check). Reliable now that the gate
+    //      compares in FEET (pxPerFt), not pixels.
+    // On reject: draw NO main skeleton + a flag, and the consumer falls back to
+    // the grid skeleton (a clean hip) — never a line that goes nowhere.
+    const skelValleyPts = skel.valleys.flatMap((l) => [l.points[0], l.points[1]]);
+    const reentrantsCovered = reentrantCorners(outline).every((c) =>
+      skelValleyPts.some((vp) => dist(c, vp) / opts.pxPerFt <= opts.anchorTolFt),
+    );
+    if (validateSkeleton(skel, outline) && reentrantsCovered) {
       for (const l of skel.hips) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "hip", gutter: false, source: "skeleton" });
       for (const l of skel.ridges) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "ridge", gutter: false, source: "skeleton" });
       for (const l of skel.valleys) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "valley", gutter: false, source: "skeleton" });
-      skeletonDrawn = true;
     } else {
       flags.push({
         code: "skeleton_rejected",
         severity: "warn",
         mass: name,
-        message: `[${name}] main-roof skeleton rejected as degenerate (centroid-fan, not a real hip topology) — interior hip/ridge/valley lines omitted rather than drawn wrong. Reproducing the real topology needs tier decomposition into separate hip masses.`,
+        message: `[${name}] main-roof skeleton rejected — ${
+          reentrantsCovered ? "degenerate centroid-fan" : "leaves a reentrant (jog) corner with no valley"
+        }, not a real hip topology. Interior lines omitted (the consumer falls back to the grid skeleton); the true topology needs tier decomposition.`,
       });
-    }
-  }
-
-  // Reentrant-corner gate: every inside corner needs a valley within tolerance.
-  // Only meaningful when a skeleton was actually drawn — a rejected skeleton has
-  // already flagged itself and deliberately drew no valleys.
-  if (skeletonDrawn) {
-    const valleyPts = mass.interior.filter((e) => e.type === "valley").flatMap((e) => [e.p1, e.p2]);
-    for (const c of reentrantCorners(outline)) {
-      const covered = valleyPts.some((vp) => dist(c, vp) / opts.pxPerFt <= opts.anchorTolFt);
-      if (!covered) {
-        flags.push({
-          code: "reentrant_no_valley",
-          severity: "warn",
-          mass: name,
-          at: c,
-          message: `[${name}] reentrant corner at (${c.x.toFixed(1)}, ${c.y.toFixed(1)}) has no valley within ${opts.anchorTolFt} ft.`,
-        });
-      }
     }
   }
 

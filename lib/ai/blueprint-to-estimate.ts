@@ -678,19 +678,26 @@ export function blueprintToEstimateResult(
 
   let roofHips = structLines("hip");
 
-  // Engine mode: the engine owns the WHOLE interior skeleton — the clean
-  // straight-skeleton (main hips/ridges/valleys) + each gable's ridge-back and
-  // valleys — so the roof draws connected instead of the grid fallback's fan.
-  // Projected with the same transform; decorative (never priced).
+  // Engine mode: the engine owns the interior skeleton — the clean straight-
+  // skeleton (main hips/ridges/valleys) + each gable's ridge-back — so the roof
+  // draws connected. Projected with the same transform; decorative (never
+  // priced). BUT only override when the engine actually drew a REAL main skeleton
+  // (a source==="skeleton" line survived the fan/reentrant reject in
+  // assembleMass). When the engine rejected its own fan, leave the roof lines to
+  // the client's grid derivation (a clean hip) rather than forcing just the
+  // gable ridge-stubs — the engine's GABLE RAKES still draw separately.
   if (engineBundle) {
     const interior = engineBundle.takeoff.masses.flatMap((m) => m.interior);
-    const lines = (kind: "ridge" | "valley" | "hip") =>
-      interior
-        .filter((e) => e.type === kind)
-        .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
-    roofRidges = lines("ridge");
-    roofValleys = lines("valley");
-    roofHips = lines("hip");
+    const engineDrewSkeleton = interior.some((e) => e.source === "skeleton");
+    if (engineDrewSkeleton) {
+      const lines = (kind: "ridge" | "valley" | "hip") =>
+        interior
+          .filter((e) => e.type === kind)
+          .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
+      roofRidges = lines("ridge");
+      roofValleys = lines("valley");
+      roofHips = lines("hip");
+    }
   }
 
   // Synthesis fallback. Triggers in two cases:

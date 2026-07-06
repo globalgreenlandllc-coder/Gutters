@@ -50,12 +50,14 @@ export function engineTakeoffEnabled(override?: boolean): boolean {
 
 /** Flag: DRAW the engine's roof geometry (gables + pop-outs from the 4-face
  *  reads, and the clean straight-skeleton) on the canvas WITHOUT letting it
- *  drive pricing — the "clean diagram, not priced yet" mode. On when
- *  BLUEPRINT_ENGINE_DRAW=1, and implied whenever full engine takeoff is on
- *  (pricing mode always draws too). Pricing stays on the measured-run path. */
+ *  drive pricing — the "clean diagram, not priced yet" mode. DEFAULT ON: the
+ *  engine draw is the standard plan render now; disable only with an explicit
+ *  BLUEPRINT_ENGINE_DRAW=0. Pricing always stays on the measured-run path
+ *  (buildEngineTakeoff returns null with no footprint/scale → falls back to the
+ *  AI trace, so this is safe by construction). */
 export function engineDrawEnabled(override?: boolean): boolean {
   if (typeof override === "boolean") return override;
-  return process.env.BLUEPRINT_ENGINE_DRAW === "1" || engineTakeoffEnabled();
+  return process.env.BLUEPRINT_ENGINE_DRAW !== "0";
 }
 
 /**
