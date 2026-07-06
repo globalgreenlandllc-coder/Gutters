@@ -443,6 +443,11 @@ export function blueprintToEstimateResult(
      *  downspouts, eave/rake lines, and ridge/valley overlay instead of the raw
      *  gutter_runs sum. Gated by the BLUEPRINT_ENGINE_TAKEOFF flag; default off. */
     useEngineTakeoff?: boolean;
+    /** DISPLAY-ONLY engine geometry: draw the engine's gables/pop-outs + clean
+     *  skeleton on the canvas, but keep pricing (eave LF, downspouts) on the
+     *  measured-run path. Gated by BLUEPRINT_ENGINE_DRAW; implied by
+     *  useEngineTakeoff. Pricing is byte-identical to the flag-off path. */
+    useEngineDraw?: boolean;
     /** Per-face elevation reads (analysisJson._perFace.per_face) so the engine
      *  can draw each face's gables + pop-outs (porch/patio) by rule. */
     perFace?: Record<string, FaceReadingRaw> | null;
@@ -515,12 +520,17 @@ export function blueprintToEstimateResult(
     analysis.gutter_runs,
   );
 
-  // Engine-takeoff mode (flag): the deterministic roof engine becomes the
-  // pricing + eave-line authority. Null when there's no footprint / no scale,
-  // in which case the flag no-ops and the gutter_runs path below stands.
-  const engineBundle = opts?.useEngineTakeoff
-    ? buildEngineTakeoff(analysis, opts?.perFace, opts?.roofMasses)
-    : null;
+  // Engine geometry. Built whenever EITHER the full takeoff (pricing) OR the
+  // display-only draw mode is on, so the engine's gables/pop-outs + clean
+  // skeleton can render. `enginePrices` gates the PRICING coupling (eave LF,
+  // rule-placed downspouts) to the full-takeoff flag ONLY — in display-only
+  // mode the engine draws but pricing stays on the measured-run path. Null when
+  // there's no footprint / no scale, in which case both modes no-op.
+  const engineBundle =
+    opts?.useEngineTakeoff || opts?.useEngineDraw
+      ? buildEngineTakeoff(analysis, opts?.perFace, opts?.roofMasses)
+      : null;
+  const enginePrices = !!opts?.useEngineTakeoff && !!engineBundle;
 
   // A point is "bad" when the stored analysis has null/undefined/NaN
   // coords — projection would collapse it to viewBox center and the
@@ -631,8 +641,10 @@ export function blueprintToEstimateResult(
     })
     .filter((d): d is Downspout => d !== null);
 
-  // Engine mode: rule-based downspouts (1 per continuous run + 1 per 40 ft).
-  if (engineBundle) {
+  // Engine PRICING mode only: rule-based downspouts (1 per continuous run + 1
+  // per 40 ft). Display-only mode keeps the AI downspouts (they're what the
+  // priced downspout count reflects), so pricing stays untouched.
+  if (engineBundle && enginePrices) {
     downspouts = engineBundle.takeoff.downspouts.map((d, i): Downspout => {
       const p = project(d.at);
       return { id: `engine-ds-${i}`, x: p.x, y: p.y, heightFt: 20 };
@@ -730,9 +742,10 @@ export function blueprintToEstimateResult(
   // Engine mode prices from the engine's real-feet LF; otherwise the clamped,
   // envelope-capped length_ft sum (scaled to the viewBox). Either way the
   // length-correction below scales the drawn eaves so header = canvas = price.
-  const targetEaveLF = engineBundle
-    ? engineBundle.eaveLfFt * ftScale
-    : analysis.gutter_runs.reduce((sum, r) => sum + (r.length_ft ?? 0) * ftScale, 0);
+  const targetEaveLF =
+    enginePrices && engineBundle
+      ? engineBundle.eaveLfFt * ftScale
+      : analysis.gutter_runs.reduce((sum, r) => sum + (r.length_ft ?? 0) * ftScale, 0);
 
   let eaveLF: number;
   if (eaves.length > 0 && targetEaveLF > 0) {
@@ -875,9 +888,18 @@ export function blueprintToEstimateResult(
 
   if (engineBundle) {
     const eaveCount = engineBundle.takeoff.masses.flatMap((m) => m.edges).filter((e) => e.gutter).length;
-    notes.push(
-      `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
-    );
+    if (enginePrices) {
+      notes.push(
+        `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
+      );
+    } else {
+      const rakeCount = engineBundle.takeoff.masses
+        .flatMap((m) => m.edges)
+        .filter((e) => e.type === "rake").length;
+      notes.push(
+        `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s) + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
+      );
+    }
     // Surface the engine (footprint-perimeter) LF next to the AI's measured-run
     // LF so a big gap — the UNDER-billing risk — is visible, not silent. The
     // engine prices guttered PERIMETER edges; the runs sum the AI's measured

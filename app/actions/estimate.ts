@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
 import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
-import { engineTakeoffEnabled } from "@/lib/ai/engine-takeoff";
+import { engineDrawEnabled, engineTakeoffEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
@@ -504,6 +504,7 @@ export async function runEstimateFromPlan(
     },
     {
       useEngineTakeoff: engineTakeoffEnabled(),
+      useEngineDraw: engineDrawEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
     },

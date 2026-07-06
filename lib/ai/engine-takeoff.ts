@@ -48,6 +48,16 @@ export function engineTakeoffEnabled(override?: boolean): boolean {
   return process.env.BLUEPRINT_ENGINE_TAKEOFF === "1";
 }
 
+/** Flag: DRAW the engine's roof geometry (gables + pop-outs from the 4-face
+ *  reads, and the clean straight-skeleton) on the canvas WITHOUT letting it
+ *  drive pricing — the "clean diagram, not priced yet" mode. On when
+ *  BLUEPRINT_ENGINE_DRAW=1, and implied whenever full engine takeoff is on
+ *  (pricing mode always draws too). Pricing stays on the measured-run path. */
+export function engineDrawEnabled(override?: boolean): boolean {
+  if (typeof override === "boolean") return override;
+  return process.env.BLUEPRINT_ENGINE_DRAW === "1" || engineTakeoffEnabled();
+}
+
 /**
  * feet-per-pixel for the CURRENT coordinate space. Derived from the runs' own
  * `length_px / length_ft` (each run carries both, and after any re-spacing the
