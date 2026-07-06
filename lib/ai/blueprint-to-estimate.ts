@@ -960,6 +960,15 @@ export function blueprintToEstimateResult(
           ridges: roofRidges,
           valleys: roofValleys,
           hips: roofHips,
+          // True gable-structure count from the engine (per-face placement), so
+          // the legend reports "6 gables" not the rake-edge count. Absent when
+          // the engine isn't drawing (AI-only path).
+          gableCount: engineBundle
+            ? engineBundle.massInputs.reduce(
+                (s, m) => s + (m.gables?.length ?? 0),
+                0,
+              )
+            : undefined,
           confidence: roofConfidence,
         }
       : undefined;

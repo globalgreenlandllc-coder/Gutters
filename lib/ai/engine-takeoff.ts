@@ -208,7 +208,11 @@ export function buildEngineTakeoff(
     const massInputs: MassInput[] = [
       { name: "main", outline, statedArea: null, eaveEdges, gables: placed.gables },
     ];
-    const takeoff = runRoofEngine(massInputs);
+    // The engine runs on the PIXEL outline (so its geometry registers with the
+    // canvas). pxPerFt lets its ft-based gates (long-run, reentrant valley, area,
+    // downspout spacing) convert pixel lengths → feet, instead of comparing
+    // pixels to feet thresholds (the 450 ft edges / 74 downspouts bug).
+    const takeoff = runRoofEngine(massInputs, { pxPerFt: 1 / ftPerPx });
     const eaveLfFt = round1(takeoff.totalEaveLf * ftPerPx);
 
     return {

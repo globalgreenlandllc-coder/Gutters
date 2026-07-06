@@ -27,7 +27,7 @@
  */
 
 import type { Pt } from "./roof-skeleton";
-import { deriveRoofSkeletonStraight } from "./roof-skeleton-straight";
+import { deriveRoofSkeletonStraight, validateSkeleton } from "./roof-skeleton-straight";
 
 // ── Domain model (canonical, spec-aligned) ─────────────────────────────────
 
@@ -132,7 +132,8 @@ export type FlagCode =
   | "reentrant_no_valley"
   | "area_gate"
   | "no_schedule"
-  | "long_run";
+  | "long_run"
+  | "skeleton_rejected";
 
 /** Structured review flag. Replaces the spec's bare strings so the UI can group
  *  by mass, filter by severity, and place `at` markers on the canvas. */
@@ -179,6 +180,11 @@ export type EngineOptions = {
   minDownspoutRunFt?: number;
   /** A single straight guttered edge longer than this is flagged implausible. */
   maxSingleEdgeFt?: number;
+  /** Pixels per foot of the input geometry. The engine's lengths/areas are in
+   *  the OUTLINE's native units (pixels for a plan trace); the gates/spacing are
+   *  in FEET. This converts native length → feet at every comparison. Default 1
+   *  (geometry already in feet — e.g. hand-authored test masses). */
+  pxPerFt?: number;
 };
 
 const DEFAULTS: Required<EngineOptions> = {
@@ -187,6 +193,7 @@ const DEFAULTS: Required<EngineOptions> = {
   downspoutSpacingFt: 40.0,
   minDownspoutRunFt: 10.0,
   maxSingleEdgeFt: 80.0,
+  pxPerFt: 1.0,
 };
 
 // ── Vector / polygon helpers ───────────────────────────────────────────────
@@ -431,7 +438,7 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
   for (const g of input.gables ?? []) {
     const gname = g.name ?? "gable";
     const d = distPointToBoundary(g.baseCenter, outline);
-    if (d > opts.anchorTolFt) {
+    if (d / opts.pxPerFt > opts.anchorTolFt) {
       flags.push({
         code: "gable_unanchored",
         severity: "error",
@@ -482,6 +489,7 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
   // `edges`, so the priced eave LF is provably unchanged. Returns EMPTY (nothing
   // added) on a non-rectilinear/degenerate footprint, so the caller degrades to
   // its own skeleton rather than drawing junk.
+  let skeletonDrawn = false;
   {
     const eaveSegments: [Pt, Pt][] = [];
     const rakeSegments: [Pt, Pt][] = [];
@@ -490,35 +498,57 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
       (eaveSet.has(i) ? eaveSegments : rakeSegments).push(seg);
     }
     const skel = deriveRoofSkeletonStraight(outline, { eaveSegments, rakeSegments });
-    for (const l of skel.hips) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "hip", gutter: false, source: "skeleton" });
-    for (const l of skel.ridges) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "ridge", gutter: false, source: "skeleton" });
-    for (const l of skel.valleys) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "valley", gutter: false, source: "skeleton" });
+    // Gate BEFORE drawing: deriveRoofSkeletonStraight can degenerate into a
+    // centroid-FAN (every hip/ridge/valley converging on one central apex) on a
+    // near-square outline — a pyramid, not a real hip topology. validateSkeleton
+    // (hub-degree / ridge-length checks) is built to catch exactly that; run it
+    // so a rejected fan never renders. On rejection: draw NO main skeleton (bare
+    // gable ridge-backs remain) + a flag — never a line that goes nowhere. The
+    // true topology (e.g. A9's central valley) needs tier decomposition, a later
+    // stage; until then an honest gap beats a wrong star.
+    if (validateSkeleton(skel, outline)) {
+      for (const l of skel.hips) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "hip", gutter: false, source: "skeleton" });
+      for (const l of skel.ridges) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "ridge", gutter: false, source: "skeleton" });
+      for (const l of skel.valleys) mass.interior.push({ p1: l.points[0], p2: l.points[1], type: "valley", gutter: false, source: "skeleton" });
+      skeletonDrawn = true;
+    } else {
+      flags.push({
+        code: "skeleton_rejected",
+        severity: "warn",
+        mass: name,
+        message: `[${name}] main-roof skeleton rejected as degenerate (centroid-fan, not a real hip topology) — interior hip/ridge/valley lines omitted rather than drawn wrong. Reproducing the real topology needs tier decomposition into separate hip masses.`,
+      });
+    }
   }
 
   // Reentrant-corner gate: every inside corner needs a valley within tolerance.
-  const valleyPts = mass.interior.filter((e) => e.type === "valley").flatMap((e) => [e.p1, e.p2]);
-  for (const c of reentrantCorners(outline)) {
-    const covered = valleyPts.some((vp) => dist(c, vp) <= opts.anchorTolFt);
-    if (!covered) {
-      flags.push({
-        code: "reentrant_no_valley",
-        severity: "warn",
-        mass: name,
-        at: c,
-        message: `[${name}] reentrant corner at (${c.x.toFixed(1)}, ${c.y.toFixed(1)}) has no valley within ${opts.anchorTolFt} ft.`,
-      });
+  // Only meaningful when a skeleton was actually drawn — a rejected skeleton has
+  // already flagged itself and deliberately drew no valleys.
+  if (skeletonDrawn) {
+    const valleyPts = mass.interior.filter((e) => e.type === "valley").flatMap((e) => [e.p1, e.p2]);
+    for (const c of reentrantCorners(outline)) {
+      const covered = valleyPts.some((vp) => dist(c, vp) / opts.pxPerFt <= opts.anchorTolFt);
+      if (!covered) {
+        flags.push({
+          code: "reentrant_no_valley",
+          severity: "warn",
+          mass: name,
+          at: c,
+          message: `[${name}] reentrant corner at (${c.x.toFixed(1)}, ${c.y.toFixed(1)}) has no valley within ${opts.anchorTolFt} ft.`,
+        });
+      }
     }
   }
 
   // Long-run gate: an implausibly long single guttered edge is usually a scale
   // misread (spec §2 gates).
   for (const e of mass.edges) {
-    if (e.gutter && edgeLen(e) > opts.maxSingleEdgeFt) {
+    if (e.gutter && edgeLen(e) / opts.pxPerFt > opts.maxSingleEdgeFt) {
       flags.push({
         code: "long_run",
         severity: "warn",
         mass: name,
-        message: `[${name}] a single guttered edge is ${edgeLen(e).toFixed(0)} ft (> ${opts.maxSingleEdgeFt} ft) — verify the scale / a missed corner.`,
+        message: `[${name}] a single guttered edge is ${(edgeLen(e) / opts.pxPerFt).toFixed(0)} ft (> ${opts.maxSingleEdgeFt} ft) — verify the scale / a missed corner.`,
       });
     }
   }
@@ -539,11 +569,11 @@ export function areaGate(mass: Mass, flags: ReviewFlag[], opts: Required<EngineO
       code: "no_schedule",
       severity: "info",
       mass: mass.name,
-      message: `[${mass.name}] no stated schedule area to cross-check — computed ${polyArea(mass.outline).toFixed(0)} sf stands unverified.`,
+      message: `[${mass.name}] no stated schedule area to cross-check — computed ${(polyArea(mass.outline) / (opts.pxPerFt * opts.pxPerFt)).toFixed(0)} sf stands unverified.`,
     });
     return;
   }
-  const computed = polyArea(mass.outline);
+  const computed = polyArea(mass.outline) / (opts.pxPerFt * opts.pxPerFt);
   const diff = Math.abs(computed - mass.statedArea) / mass.statedArea;
   const over = diff > opts.areaTolFrac;
   flags.push({
@@ -593,8 +623,11 @@ export function continuousEaveRuns(mass: Mass, tol = 0.5): EaveRun[] {
 /** Downspouts on one run: one per run + one per spacing interval; runs shorter
  *  than `minDownspoutRunFt` share drainage and get none. */
 function downspoutsForRun(run: EaveRun, opts: Required<EngineOptions>): EngineDownspout[] {
-  if (run.lengthFt < opts.minDownspoutRunFt) return [];
-  const k = Math.max(1, Math.ceil(run.lengthFt / opts.downspoutSpacingFt));
+  // run.lengthFt is in the geometry's NATIVE units (pixels for a plan trace);
+  // convert to real feet before applying the ft-based spacing / minimum.
+  const runFt = run.lengthFt / opts.pxPerFt;
+  if (runFt < opts.minDownspoutRunFt) return [];
+  const k = Math.max(1, Math.ceil(runFt / opts.downspoutSpacingFt));
   // Place each downspout at the midpoint of one of the run's longest edges,
   // cycling — deterministic, and near where a real drop would land.
   const byLen = [...run.edges].sort((a, b) => edgeLen(b) - edgeLen(a));

@@ -66,6 +66,10 @@ export type RoofStructure = {
   /** Hip lines (sloped ridges at outside corners). Optional for
    *  back-compat with the satellite flow, which doesn't detect them. */
   hips?: RoofStructureLine[];
+  /** Count of gable STRUCTURES (from the engine's per-face placement) so the
+   *  legend reports "6 gables" instead of the rake-EDGE count. Absent on the
+   *  satellite/AI-only path, where no structure count is available. */
+  gableCount?: number;
   /** 0–1, surfaces an "approximation only" warning when low. */
   confidence: number;
 };

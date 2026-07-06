@@ -704,6 +704,7 @@ export function AerialCanvas({
       />
       <Legend
         rakeCount={rakes.length}
+        gableCount={roofStructure?.gableCount}
         totalEaveLF={totalEaveLF}
         downspoutCount={downspouts.length}
         hasLowerTier={hasLowerTier}
@@ -1971,12 +1972,16 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
 function Legend({
   totalEaveLF,
   rakeCount,
+  gableCount,
   downspoutCount,
   hasLowerTier,
   theme,
 }: {
   totalEaveLF: number;
   rakeCount: number;
+  /** True gable-structure count (engine). When present it's shown instead of
+   *  the rake-edge count, which over-counts (2+ rake edges per gable). */
+  gableCount?: number;
   downspoutCount: number;
   hasLowerTier: boolean;
   theme: CanvasTheme;
@@ -2063,7 +2068,7 @@ function Legend({
                 tactical ? "text-slate-200" : "text-slate-700",
               )}
             >
-              {rakeCount}
+              {gableCount ?? rakeCount}
             </span>
           </div>
         </>
