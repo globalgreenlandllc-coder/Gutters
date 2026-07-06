@@ -4,9 +4,7 @@ import { getActiveApiKey } from "@/lib/api-keys";
 import { getPrompt } from "./prompts";
 import { buildVectorBlock, type PlanVectors } from "./pdf-vectors";
 import type { GeometryConstraints, PlanClassification } from "./classify-plans";
-import { polygonCloses, polyArea } from "../roof-engine";
-import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
-import { scheduleAreaFt2, selfConsistentAreaFt2 } from "./to-masses";
+import { geometryQualityPenalty } from "./blueprint-trace-quality";
 
 export type BlueprintPoint = { x: number; y: number };
 
@@ -1277,29 +1275,6 @@ export type BlueprintRunOptions = {
  * in-envelope geometry; punishes degenerate coords, collapsed footprints, and
  * over-cap LF.
  */
-/**
- * The footprint outline as a cleaned polygon ring in pixel space (duplicate /
- * near-collinear vertices removed), or [] if it can't form a polygon. Same
- * cleaning the engine's area gate uses, so the integrity verdict here matches
- * what the downstream skeleton actually sees.
- */
-function footprintRingPx(a: BlueprintAnalysis): Pt[] {
-  const raw = (a.building_footprint ?? []).filter(isFinitePt);
-  if (raw.length < 4) return [];
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const p of raw) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y);
-    maxY = Math.max(maxY, p.y);
-  }
-  const span = Math.max(maxX - minX, maxY - minY);
-  return cleanRing(raw, Math.max(2, span * 0.012));
-}
-
 export function scoreBlueprintAnalysis(
   a: BlueprintAnalysis,
   c?: GeometryConstraints,
@@ -1322,30 +1297,13 @@ export function scoreBlueprintAnalysis(
     s -= (totalLF - c.max_total_eave_lf) * 0.1 + 8;
   s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
 
-  // ── Footprint INTEGRITY gate ──────────────────────────────────────────────
-  // A trace whose outline self-intersects or collapses is the root cause of the
-  // tangled centroid-fan skeleton, mis-placed jog gables, and disconnected roof
-  // lines downstream (the straight skeleton rejects a non-simple polygon and the
-  // grid fallback fans from the centroid). Demote it HARD so a clean simple-
-  // polygon trace wins even when it has fewer vertices — the +articulation term
-  // above over-rewarded jittery high-vertex traces, which is how a degenerate
-  // read could win once a second vision model entered the pool.
-  const ringPx = footprintRingPx(a);
-  if (ringPx.length < 4 || !polygonCloses(ringPx) || Math.abs(polyArea(ringPx)) < 1) {
-    s -= 40; // degenerate / self-intersecting outline — unusable geometry
-  } else if (classification) {
-    // ── Stated-area agreement (scale-free) ──────────────────────────────────
-    // A trace missing a wing / mass reads far under the plan's stated roof area.
-    // Uses the footprint's OWN geometry (independent of the declared px→ft
-    // scale), so a mere scale mislabel — which leaves the measured LF intact —
-    // is NOT penalized. Only a genuine shape shortfall costs points.
-    const stated = scheduleAreaFt2(classification);
-    const selfArea = selfConsistentAreaFt2(ringPx, classification);
-    if (stated && stated > 0 && selfArea && selfArea > 0) {
-      const dev = Math.abs(selfArea - stated) / stated;
-      if (dev > 0.15) s -= Math.min(20, (dev - 0.15) * 40); // up to −20 for a big miss
-    }
-  }
+  // Geometry-quality gate (pure, unit-tested in blueprint-trace-quality.ts):
+  // demote a self-intersecting/collapsed footprint (the centroid-fan cause), a
+  // trace whose scale-free area falls short of the stated schedule (missing
+  // wing), and a trace whose eave LF is an implausibly small fraction of the
+  // footprint perimeter (an under-trace, e.g. 120 LF on a 326 ft perimeter).
+  // Reject-implausible only — never fabricates or prices geometry.
+  s -= geometryQualityPenalty(a, classification);
   return s;
 }
 
