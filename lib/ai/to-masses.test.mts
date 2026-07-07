@@ -79,6 +79,21 @@ test("scaled area far off → area_gate warn", () => {
   assert.ok(ag && ag.severity === "warn", "area gate should flag a >15% miss");
 });
 
+test("an ARTICULATED footprint vs width×depth (bounding box) does NOT false-flag a missing plane", () => {
+  // An L-shape fills only ~60% of its 64×44 ft bounding box. Comparing the
+  // POLYGON area to width×depth would flag a phantom ~40% "missing plane" — but
+  // the trace spans the full extent, so the gate reads OK (articulation, not loss).
+  const L = [
+    { x: 0, y: 0 }, { x: 128, y: 0 }, { x: 128, y: 30 },
+    { x: 50, y: 30 }, { x: 50, y: 88 }, { x: 0, y: 88 },
+  ];
+  const v = validateBlueprintGeometry(analysis({ building_footprint: L }), classification(64, 44));
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag, "area gate runs");
+  assert.equal(ag!.severity, "info", "articulation vs a bounding box is not a missing plane");
+  assert.ok(!/may be missing/.test(ag!.message), "must not blame a missing plane");
+});
+
 test("no independent scale → no_schedule, plus scale-free shape flag when elongation is wrong", () => {
   const noScale = analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "test" } });
   // footprint elongation = 100/80 = 1.25; stated 100×25 → elongation 4.0 (off).

@@ -338,7 +338,18 @@ export function validateBlueprintGeometry(
     const shape = shapeCheck(ringPx, classification);
     if (ftPerPx && stated != null) {
       const computed = polyArea(ring);
-      const diff = Math.abs(computed - stated) / stated;
+      // width × depth is a BOUNDING BOX, not a real roof/footprint area. An
+      // articulated (L/T/U) house fills only PART of its box, so comparing the
+      // POLYGON area to it false-flags "a plane may be missing" on a perfectly
+      // good trace (a Woodinville L fills ~57% of its box → a phantom 43% miss).
+      // Against a bounding box, GAUGE the trace's own bounding box — does it span
+      // the stated extent? — and treat the polygon-vs-box shortfall as expected
+      // articulation. Against a real schedule/roof area, compare the polygon area.
+      const vsBox = statedSource === "width × depth";
+      const bb = bbox(ringPx);
+      const traceBoxFt = bb.w * ftPerPx * (bb.h * ftPerPx);
+      const gauge = vsBox ? traceBoxFt : computed;
+      const diff = Math.abs(gauge - stated) / stated;
       if (diff > 0.5) {
         // A >50% miss at a DECLARED scale is almost never one missing plane — it
         // means the declared px→ft scale doesn't match the footprint's own
@@ -366,7 +377,7 @@ export function validateBlueprintGeometry(
           severity: "warn",
           mass: mass.name,
           message:
-            `[main] area gate: declared scale gives ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
+            `[main] area gate: declared scale gives ${gauge.toFixed(0)} sf${vsBox ? " (trace extent)" : ""} vs stated ${stated.toFixed(0)} sf ` +
             `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (AI footprint-px vs declared plan scale), not a missing plane; ${verdict}.`,
         });
       } else {
@@ -375,9 +386,10 @@ export function validateBlueprintGeometry(
           code: "area_gate",
           severity: over ? "warn" : "info",
           mass: mass.name,
-          message:
-            `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
-            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (a plane, wing, or gable may be missing)" : "OK"}.`,
+          message: vsBox
+            ? `[main] area gate: the trace spans a ${traceBoxFt.toFixed(0)} sf envelope (footprint ${computed.toFixed(0)} sf; the rest is normal articulation) vs the stated ${stated.toFixed(0)} sf width×depth box — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (the trace may not cover the full building)" : "OK"}.`
+            : `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
+              `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (a plane, wing, or gable may be missing)" : "OK"}.`,
         });
       }
     } else {
