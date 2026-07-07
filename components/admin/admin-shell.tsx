@@ -55,14 +55,14 @@ export function AdminShell({
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-white">
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 w-64 border-r border-zinc-200 bg-white transition-transform lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-zinc-200 bg-white transition-transform lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-16 items-center justify-between border-b border-zinc-200 px-5">
+        <div className="flex h-16 shrink-0 items-center justify-between px-5">
           <Link href="/admin" className="ring-focus rounded-md">
             <Logo showSubtitle={false} />
           </Link>
@@ -75,7 +75,7 @@ export function AdminShell({
           </button>
         </div>
 
-        <div className="px-5 py-4">
+        <div className="px-5 pb-4">
           <Badge tone="rose" className="gap-1.5">
             <ShieldAlert className="h-3 w-3" />
             Super admin
@@ -85,52 +85,55 @@ export function AdminShell({
           </div>
         </div>
 
-        <nav className="px-3 pb-4">
-          <ul className="space-y-1">
-            {NAV.map((n) => {
-              const active =
-                n.href === "/admin"
-                  ? pathname === "/admin"
-                  : pathname?.startsWith(n.href);
-              return (
-                <li key={n.href}>
-                  <Link
-                    href={n.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
-                      active
-                        ? "bg-zinc-900 text-white"
-                        : "text-zinc-700 hover:bg-zinc-100",
-                    )}
-                  >
-                    <n.icon
-                      className={cn(
-                        "h-4 w-4",
-                        active ? "text-white" : "text-zinc-500",
-                      )}
-                    />
-                    {n.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pt-1">
+          {NAV.map((n) => {
+            const active =
+              n.href === "/admin"
+                ? pathname === "/admin"
+                : pathname?.startsWith(n.href);
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  "group relative flex h-9 items-center gap-3 rounded-md px-3 text-sm transition",
+                  active
+                    ? "bg-zinc-100 font-medium text-zinc-900"
+                    : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
+                )}
+              >
+                {active && (
+                  <span className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-orange-400 to-rose-500" />
+                )}
+                <n.icon
+                  className={cn(
+                    "h-4 w-4 transition",
+                    active
+                      ? "text-zinc-900"
+                      : "text-zinc-400 group-hover:text-zinc-600",
+                  )}
+                />
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-          <div className="my-4 h-px bg-zinc-200" />
-
+        <div className="space-y-0.5 border-t border-zinc-100 px-3 py-3">
           <Link
             href="/dashboard"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900"
+            onClick={() => setMobileOpen(false)}
+            className="group flex h-9 items-center gap-3 rounded-md px-3 text-sm text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
           >
-            <Database className="h-4 w-4 text-zinc-500" />
+            <Database className="h-4 w-4 text-zinc-400 transition group-hover:text-zinc-600" />
             Switch to contractor view
           </Link>
-        </nav>
+        </div>
       </aside>
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
+      <div className="flex min-h-screen flex-col lg:pl-60">
+        <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white">
           <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
             <button
               onClick={() => setMobileOpen(true)}
@@ -140,7 +143,7 @@ export function AdminShell({
               <Menu className="h-4 w-4" />
             </button>
 
-            <h1 className="text-sm font-medium text-zinc-700">
+            <h1 className="truncate text-[22px] font-semibold tracking-tight text-zinc-900">
               Admin console · Gutters AI
             </h1>
 

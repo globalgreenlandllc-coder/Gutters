@@ -66,7 +66,7 @@ export function PricingPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-zinc-200 px-4 pt-4">
-        <h2 className="font-display text-base font-semibold tracking-tight text-zinc-900">
+        <h2 className="text-base font-semibold tracking-tight text-zinc-900">
           Estimate builder
         </h2>
         <p className="text-xs text-zinc-500">

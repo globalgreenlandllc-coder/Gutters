@@ -70,21 +70,21 @@ export function PackagesSection({
               onClick={interactive ? () => onSelectPackage(p.id) : undefined}
             >
               {p.recommended && (
-                <div className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent-700">
+                <div className="font-label absolute right-4 top-4 inline-flex items-center gap-1 rounded-md border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] text-accent-700">
                   <Star className="h-2.5 w-2.5" />
                   Most popular
                 </div>
               )}
 
               {readOnly ? (
-                <h3 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+                <h3 className="text-xl font-semibold tracking-tight text-zinc-900">
                   {p.name}
                 </h3>
               ) : (
                 <input
                   value={p.name}
                   onChange={(e) => update(p.id, { name: e.target.value })}
-                  className="font-display w-full bg-transparent text-xl font-semibold tracking-tight text-zinc-900 outline-none"
+                  className="w-full bg-transparent text-xl font-semibold tracking-tight text-zinc-900 outline-none"
                 />
               )}
 
@@ -104,7 +104,7 @@ export function PackagesSection({
                     key={Math.round(totals.total)}
                     initial={{ opacity: 0.5, y: -2 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                    className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
                   >
                     {formatCurrency(totals.total)}
                   </motion.span>
@@ -120,7 +120,7 @@ export function PackagesSection({
                         ),
                       })
                     }
-                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                    className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
                   />
                 )}
                 <span className="text-xs text-zinc-500">total</span>
@@ -147,7 +147,7 @@ export function PackagesSection({
 
               {p.addOns.length > 0 && (
                 <div className="mt-5 border-t border-zinc-100 pt-4">
-                  <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                  <div className="font-label text-[10px] text-zinc-500">
                     Add-ons
                   </div>
                   <ul className="mt-2 space-y-1.5">
@@ -192,9 +192,9 @@ export function PackagesSection({
                 <button
                   type="button"
                   className={cn(
-                    "mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl text-sm font-medium transition",
+                    "mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition",
                     selected
-                      ? "bg-accent-600 text-white shadow-glow"
+                      ? "bg-accent-600 text-white shadow-card"
                       : "border border-zinc-200 text-zinc-700 hover:border-accent-400 hover:text-accent-700",
                   )}
                   onClick={(e) => {
@@ -220,7 +220,7 @@ export function PackagesSection({
                 <button
                   type="button"
                   onClick={() => onEditMaterials(p.id)}
-                  className="mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+                  className="mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
                 >
                   <Layers className="h-4 w-4" />
                   Edit materials & spec
@@ -275,7 +275,7 @@ export function SectionHeader({
   return (
     <div className="flex items-end justify-between gap-3">
       <div>
-        <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
           {title}
         </h2>
         {sub && <p className="mt-1 text-sm text-zinc-600">{sub}</p>}

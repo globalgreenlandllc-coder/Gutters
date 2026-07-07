@@ -51,37 +51,38 @@ const ROWS: Row[] = [
 
 export function OldVsAi() {
   return (
-    <section className="relative overflow-hidden bg-zinc-50 py-24 sm:py-32">
-      <div className="mx-auto max-w-7xl px-4">
+    <section className="relative overflow-hidden bg-paper py-24 sm:py-32">
+      <div aria-hidden className="hl-grid absolute inset-0" />
+      <div className="relative mx-auto max-w-7xl px-4">
         <div className="mx-auto max-w-3xl text-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700">
+          <span className="font-label inline-flex items-center gap-1.5 rounded-md border border-ink/20 px-2.5 py-1 text-ink">
             Why contractors switch
           </span>
-          <h2 className="font-display mt-5 text-balance text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
+          <h2 className="display-hero mt-6 text-balance text-4xl text-ink sm:text-5xl md:text-6xl">
             The old way is{" "}
-            <span className="text-rose-600">losing you jobs</span>.
+            <span className="text-stripe-coral">losing you jobs</span>.
           </h2>
-          <p className="mt-4 text-balance text-base leading-relaxed text-zinc-600">
+          <p className="mt-5 text-balance text-base leading-relaxed text-zinc-600">
             Every step from measurement to deposit, side by side. The math is
             simple — the homeowner who gets a same-day proposal signs first.
           </p>
         </div>
 
         {/* Desktop table */}
-        <div className="mt-14 hidden overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-card lg:block">
+        <div className="surface mt-14 hidden overflow-hidden shadow-card lg:block">
           <div className="grid grid-cols-[200px_minmax(0,1fr)_60px_minmax(0,1fr)] border-b border-zinc-200 bg-zinc-50/60">
-            <div className="px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+            <div className="font-label px-5 py-4 text-[11px] text-zinc-400">
               Stage
             </div>
             <div className="px-5 py-4">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
                 <X className="h-3 w-3" />
                 Old way
               </div>
             </div>
             <div />
             <div className="px-5 py-4">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-accent-200 bg-accent-50 px-2.5 py-0.5 text-xs font-semibold text-accent-700">
                 <Check className="h-3 w-3" />
                 The AI way
               </div>
@@ -113,7 +114,7 @@ export function OldVsAi() {
               </div>
               <div className="px-5 py-5">
                 <div className="flex items-start gap-2">
-                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700">
                     <Check className="h-2.5 w-2.5" />
                   </span>
                   <div>
@@ -139,16 +140,16 @@ export function OldVsAi() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-80px" }}
               transition={{ duration: 0.45, delay: i * 0.05 }}
-              className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card"
+              className="surface overflow-hidden shadow-card"
             >
               <div className="border-b border-zinc-100 bg-zinc-50/60 px-4 py-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                <div className="font-label text-[10px] text-zinc-500">
                   {r.area}
                 </div>
               </div>
               <div className="grid grid-cols-1 divide-y divide-zinc-100 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
                 <div className="p-4">
-                  <div className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                  <div className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
                     <X className="h-2.5 w-2.5" />
                     Old way
                   </div>
@@ -160,7 +161,7 @@ export function OldVsAi() {
                   </div>
                 </div>
                 <div className="p-4">
-                  <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                  <div className="inline-flex items-center gap-1 rounded-md border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] font-semibold text-accent-700">
                     <Check className="h-2.5 w-2.5" />
                     AI way
                   </div>
@@ -178,8 +179,8 @@ export function OldVsAi() {
 
         {/* Bottom impact stat */}
         <div className="mx-auto mt-14 max-w-3xl">
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6 text-center shadow-card sm:p-8">
-            <div className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <div className="surface p-6 text-center shadow-card sm:p-8">
+            <div className="display-hero text-3xl text-ink sm:text-4xl">
               <span className="text-gradient">8 hours</span> per week back in
               your truck.
             </div>

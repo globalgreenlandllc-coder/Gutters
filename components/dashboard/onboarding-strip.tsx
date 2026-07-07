@@ -39,9 +39,9 @@ export function OnboardingStrip() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white p-4"
     >
       <div className="flex items-center gap-3">
         <div className="relative flex h-10 w-10 items-center justify-center">
@@ -58,8 +58,8 @@ export function OnboardingStrip() {
               cx="18"
               cy="18"
               r="15"
-              fill="none"
-              stroke="#059669"
+              fill="rgba(46,64,232,0.10)"
+              stroke="#2e40e8"
               strokeWidth="3"
               strokeDasharray={`${(done / total) * 94.2} 94.2`}
               strokeLinecap="round"

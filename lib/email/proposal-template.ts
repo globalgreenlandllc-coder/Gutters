@@ -59,7 +59,7 @@ export function renderProposalEmail(v: ProposalEmailVars): {
 
             <tr>
               <td align="center" style="padding:24px 28px;">
-                <a href="${escapeAttr(v.portalUrl)}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">
+                <a href="${escapeAttr(v.portalUrl)}" style="display:inline-block;background:#2e40e8;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">
                   Review &amp; accept
                 </a>
                 <div style="margin-top:10px;font-size:12px;color:#71717a;">
@@ -75,7 +75,7 @@ export function renderProposalEmail(v: ProposalEmailVars): {
                   <a href="tel:${escapeAttr(v.contractorPhone)}" style="color:#3f3f46;text-decoration:none;font-weight:500;">${escapeHtml(v.contractorPhone)}</a>.
                   <br />
                   If the button doesn't work, paste this link into your browser:<br />
-                  <a href="${escapeAttr(v.portalUrl)}" style="color:#0e7490;word-break:break-all;">${escapeHtml(v.portalUrl)}</a>
+                  <a href="${escapeAttr(v.portalUrl)}" style="color:#2e40e8;word-break:break-all;">${escapeHtml(v.portalUrl)}</a>
                 </div>
               </td>
             </tr>

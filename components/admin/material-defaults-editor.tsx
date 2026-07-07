@@ -158,7 +158,7 @@ export function MaterialDefaultsEditor({
 
   return (
     <>
-      <div className="sticky top-16 z-10 -mx-4 mb-6 border-b border-zinc-200 bg-zinc-50/85 px-4 py-3 backdrop-blur-xl sm:-mx-6 sm:px-6">
+      <div className="sticky top-16 z-10 -mx-4 mb-6 border-b border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-3">
           <div className="flex-1">
             {dirtyRows.length > 0 ? (
@@ -171,7 +171,7 @@ export function MaterialDefaultsEditor({
                 <span className="text-zinc-500">unsaved</span>
               </div>
             ) : savedAt ? (
-              <div className="flex items-center gap-2 text-sm text-accent-700">
+              <div className="flex items-center gap-2 text-sm text-emerald-600">
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Saved at {savedAt.toLocaleTimeString()}</span>
               </div>
@@ -216,7 +216,7 @@ export function MaterialDefaultsEditor({
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+                    <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
                       {meta.label}
                     </h2>
                     <Badge tone={meta.tone}>{items.length}</Badge>
@@ -233,8 +233,8 @@ export function MaterialDefaultsEditor({
                 </Button>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
-                <div className="hidden grid-cols-[minmax(0,1fr)_88px_140px_minmax(0,1fr)_44px] gap-3 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 sm:grid">
+              <div className="surface overflow-hidden shadow-card">
+                <div className="font-label hidden grid-cols-[minmax(0,1fr)_88px_140px_minmax(0,1fr)_44px] gap-3 border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-400 sm:grid">
                   <div>Label</div>
                   <div>Unit</div>
                   <div className="text-right">Price</div>
@@ -259,9 +259,10 @@ export function MaterialDefaultsEditor({
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, height: 0 }}
                           className={cn(
-                            "border-b border-zinc-100 last:border-0",
+                            "border-b border-zinc-100 transition last:border-0",
                             row._dirty && "bg-amber-50/40",
                             row._new && "bg-accent-50/30",
+                            !row._dirty && !row._new && "hover:bg-zinc-50/60",
                           )}
                         >
                           <div className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_88px_140px_minmax(0,1fr)_44px] sm:items-center sm:gap-3">
@@ -323,7 +324,7 @@ export function MaterialDefaultsEditor({
           );
         })}
 
-        <div className="rounded-2xl border border-zinc-200 bg-zinc-50/50 p-4 text-xs text-zinc-500">
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 text-xs text-zinc-500">
           New contractors get a copy of these defaults at signup. Existing
           contractors keep their own overrides — changes here only flow to
           accounts created after you save.
@@ -398,7 +399,7 @@ function DeleteDialog({
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-elevated"
+            className="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-elevated"
           >
             <button
               onClick={onClose}
@@ -406,7 +407,7 @@ function DeleteDialog({
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               Remove {row.label}?
             </h2>
             <p className="mt-2 text-sm text-zinc-600">

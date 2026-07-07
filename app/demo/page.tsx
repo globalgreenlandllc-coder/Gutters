@@ -30,24 +30,33 @@ const METHODS = [
 
 export default function DemoIndexPage() {
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-5xl px-6 py-16">
+    <main className="relative min-h-screen overflow-hidden bg-ink text-white">
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 right-0 hidden w-12 opacity-80 lg:block"
+      />
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 left-0 hidden w-3 opacity-50 lg:block"
+      />
+      <div className="relative mx-auto max-w-5xl px-6 py-16">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
+          className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" /> Back home
         </Link>
 
         <header className="mt-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-400">
+          <p className="font-label inline-flex items-center rounded-md border border-white/25 px-2.5 py-1 text-white">
             Interactive Takeoff
           </p>
-          <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">
-            Two ways to measure a roof.
+          <h1 className="display-hero mt-5 text-4xl sm:text-5xl">
+            <span className="text-stripe-blue">Two ways</span>{" "}
+            <span className="text-white">to measure a roof.</span>
           </h1>
-          <p className="mt-4 max-w-2xl text-lg text-slate-400">
-            Both flows render the same blueprint-style canvas — glowing cyan
+          <p className="mt-4 max-w-2xl text-lg text-white/70">
+            Both flows render the same blueprint-style canvas — glowing blue
             eaves, draggable vertices, live linear footage — over two different
             data sources. Pick one to try.
           </p>
@@ -60,31 +69,31 @@ export default function DemoIndexPage() {
               <Link
                 key={m.href}
                 href={m.href}
-                className="group relative flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-7 transition hover:border-cyan-500/50 hover:bg-slate-900"
+                className="group relative flex flex-col rounded-xl border border-white/10 bg-white/5 p-7 transition hover:border-stripe-blue/60 hover:bg-white/[0.08]"
               >
                 <div className="flex items-center justify-between">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-400 ring-1 ring-cyan-500/20">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-stripe-blue/15 text-stripe-blue ring-1 ring-stripe-blue/25">
                     <Icon className="h-5 w-5" />
                   </span>
-                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                  <span className="font-label text-[11px] text-white/40">
                     {m.tag}
                   </span>
                 </div>
-                <h2 className="mt-5 text-xl font-semibold text-slate-50">
+                <h2 className="mt-5 text-xl font-semibold tracking-tight text-white">
                   {m.title}
                 </h2>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                <p className="mt-2 text-sm leading-relaxed text-white/60">
                   {m.blurb}
                 </p>
-                <ul className="mt-5 space-y-2 text-sm text-slate-300">
+                <ul className="mt-5 space-y-2 text-sm text-white/80">
                   {m.points.map((p) => (
                     <li key={p} className="flex items-center gap-2">
-                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-stripe-coral" />
                       {p}
                     </li>
                   ))}
                 </ul>
-                <span className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-cyan-400">
+                <span className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-stripe-blue">
                   Open demo
                   <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
                 </span>

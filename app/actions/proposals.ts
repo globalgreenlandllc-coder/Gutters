@@ -584,14 +584,14 @@ export async function acceptProposalByToken(args: {
         const totalDollars = (totalCents / 100).toFixed(2);
         const html =
           `<div style="font-family:system-ui,sans-serif;color:#0f172a;line-height:1.5;max-width:560px">` +
-          `<h2 style="margin:0 0 8px;color:#059669">Proposal accepted ✓</h2>` +
+          `<h2 style="margin:0 0 8px;color:#2e40e8">Proposal accepted ✓</h2>` +
           `<p>${escapeHtml(args.signerName || row.clientName || "Your client")} just accepted the proposal for <strong>${escapeHtml(row.address)}</strong>.</p>` +
           (totalCents > 0
             ? `<p>Total: <strong>$${totalDollars}</strong></p>`
             : "") +
           `<p>Payment choice: <strong>${args.paymentChoice === "deposit" ? "Deposit only" : "Full upfront"}</strong></p>` +
-          `<p style="margin-top:20px"><a href="${dashUrl}" style="background:#059669;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Open dashboard</a>` +
-          ` &nbsp; <a href="${portalUrl}" style="color:#059669">View signed proposal</a></p>` +
+          `<p style="margin-top:20px"><a href="${dashUrl}" style="background:#2e40e8;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Open dashboard</a>` +
+          ` &nbsp; <a href="${portalUrl}" style="color:#2e40e8">View signed proposal</a></p>` +
           `<p style="color:#64748b;font-size:13px;margin-top:24px">Accepted at ${now.toISOString()}.</p>` +
           `</div>`;
         const text =

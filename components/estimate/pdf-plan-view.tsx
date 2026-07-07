@@ -303,7 +303,7 @@ export function PdfPlanView({
   const toolBtn = (active: boolean) =>
     "inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium transition " +
     (active
-      ? "border-emerald-600 bg-emerald-600 text-white"
+      ? "border-accent-600 bg-accent-600 text-white"
       : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800");
   const plainBtn =
     "inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800";
@@ -441,7 +441,7 @@ export function PdfPlanView({
         )}
         <button
           type="button"
-          className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-md bg-accent-600 px-2.5 py-1 font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!scalePxPerFt || runs.length === 0}
           title={
             !scalePxPerFt || runs.length === 0
@@ -456,9 +456,9 @@ export function PdfPlanView({
 
       {/* Outline status + apply (shown while tracing the building outline) */}
       {(tool === "outline" || outline.length > 0 || draftOutline.length > 0) && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-xs dark:border-sky-800 dark:bg-sky-950/40">
-          <Hexagon size={13} className="text-sky-600 dark:text-sky-300" />
-          <span className="font-medium text-sky-800 dark:text-sky-200">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent-300 bg-accent-50 px-3 py-2 text-xs dark:border-accent-800 dark:bg-accent-900/40">
+          <Hexagon size={13} className="text-accent-600 dark:text-accent-300" />
+          <span className="font-medium text-accent-800 dark:text-accent-200">
             {draftOutline.length > 0
               ? `Outline: ${draftOutline.length} corner${draftOutline.length === 1 ? "" : "s"} — click the first dot (or Enter) to close`
               : outline.length > 0
@@ -468,7 +468,7 @@ export function PdfPlanView({
           {draftOutline.length >= 3 && (
             <button
               type="button"
-              className="rounded-md bg-sky-600 px-2.5 py-1 font-semibold text-white hover:bg-sky-700"
+              className="rounded-md bg-accent-600 px-2.5 py-1 font-semibold text-white hover:bg-accent-700"
               onClick={() => {
                 onOutlineChange(draftOutline);
                 setDraftOutline([]);
@@ -491,7 +491,7 @@ export function PdfPlanView({
             <>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 rounded-md bg-sky-600 px-2.5 py-1 font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-md bg-accent-600 px-2.5 py-1 font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-40"
                 disabled={!scalePxPerFt}
                 onClick={onApplyOutline}
                 title={
@@ -516,8 +516,8 @@ export function PdfPlanView({
 
       {/* Calibration feet input */}
       {tool === "scale" && scalePts.length === 2 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs dark:border-emerald-800 dark:bg-emerald-950/40">
-          <span className="font-medium text-emerald-800 dark:text-emerald-200">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent-300 bg-accent-50 px-3 py-2 text-xs dark:border-accent-800 dark:bg-accent-900/40">
+          <span className="font-medium text-accent-800 dark:text-accent-200">
             That line is how many feet?
           </span>
           <input
@@ -528,19 +528,19 @@ export function PdfPlanView({
             onChange={(e) => setFeetInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && commitScale()}
             placeholder="e.g. 64"
-            className="w-24 rounded-md border border-emerald-300 bg-white px-2 py-1 text-zinc-800 dark:border-emerald-700 dark:bg-zinc-900 dark:text-zinc-100"
+            className="w-24 rounded-md border border-accent-300 bg-white px-2 py-1 text-zinc-800 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15 dark:border-accent-700 dark:bg-zinc-900 dark:text-zinc-100"
           />
-          <span className="text-emerald-700 dark:text-emerald-300">ft</span>
+          <span className="text-accent-700 dark:text-accent-300">ft</span>
           <button
             type="button"
-            className="rounded-md bg-emerald-600 px-2.5 py-1 font-semibold text-white hover:bg-emerald-700"
+            className="rounded-md bg-accent-600 px-2.5 py-1 font-semibold text-white hover:bg-accent-700"
             onClick={commitScale}
           >
             Set scale
           </button>
           <button
             type="button"
-            className="rounded-md px-2 py-1 font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+            className="rounded-md px-2 py-1 font-medium text-accent-700 hover:underline dark:text-accent-300"
             onClick={() => {
               setScalePts([]);
               setFeetInput("");
@@ -585,7 +585,7 @@ export function PdfPlanView({
             <g>
               <polygon
                 points={outline.map((p) => `${p.x},${p.y}`).join(" ")}
-                fill="rgba(56,189,248,0.08)"
+                fill="rgba(67,83,255,0.08)"
                 stroke="none"
               />
               {outline.map((p, i) => {
@@ -598,7 +598,7 @@ export function PdfPlanView({
                     y1={p.y}
                     x2={q.x}
                     y2={q.y}
-                    stroke={isGable ? "#f59e0b" : "#0284c7"}
+                    stroke={isGable ? "#f59e0b" : "#4353ff"}
                     strokeWidth={sw * 1.5}
                     strokeDasharray={isGable ? `${sw * 2.5} ${sw * 2}` : undefined}
                     strokeLinecap="round"
@@ -606,7 +606,7 @@ export function PdfPlanView({
                 );
               })}
               {outline.map((p, i) => (
-                <circle key={`ov-${i}`} cx={p.x} cy={p.y} r={dot * 0.55} fill="#0284c7" />
+                <circle key={`ov-${i}`} cx={p.x} cy={p.y} r={dot * 0.55} fill="#4353ff" />
               ))}
             </g>
           )}
@@ -619,7 +619,7 @@ export function PdfPlanView({
                   .map((p) => `${p.x},${p.y}`)
                   .join(" ")}
                 fill="none"
-                stroke="#0284c7"
+                stroke="#4353ff"
                 strokeWidth={sw * 1.3}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -631,7 +631,7 @@ export function PdfPlanView({
                   y1={cursor.y}
                   x2={draftOutline[0].x}
                   y2={draftOutline[0].y}
-                  stroke="#0284c7"
+                  stroke="#4353ff"
                   strokeWidth={sw}
                   strokeDasharray={`${sw * 2} ${sw * 2}`}
                   opacity={0.5}
@@ -643,7 +643,7 @@ export function PdfPlanView({
                   cx={p.x}
                   cy={p.y}
                   r={dot * (i === 0 ? 0.85 : 0.55)}
-                  fill={i === 0 ? "#0ea5e9" : "#0284c7"}
+                  fill={i === 0 ? "#7d8bfc" : "#4353ff"}
                   stroke={i === 0 ? "#ffffff" : undefined}
                   strokeWidth={i === 0 ? dot * 0.2 : 0}
                 />
@@ -659,7 +659,7 @@ export function PdfPlanView({
                 y1={r[0].y}
                 x2={r[1].x}
                 y2={r[1].y}
-                stroke={i === selected ? "#f43f5e" : "#06b6d4"}
+                stroke={i === selected ? "#f43f5e" : "#4353ff"}
                 strokeWidth={sw * (i === selected ? 1.6 : 1.2)}
                 strokeLinecap="round"
               />
@@ -669,7 +669,7 @@ export function PdfPlanView({
                   y={mid(r[0], r[1]).y - dot * 0.8}
                   fontSize={dot * 1.5}
                   textAnchor="middle"
-                  fill="#0e7490"
+                  fill="#2e40e8"
                   stroke="#ffffff"
                   strokeWidth={dot * 0.18}
                   paintOrder="stroke"
@@ -689,18 +689,18 @@ export function PdfPlanView({
                 y1={pendingStart.y}
                 x2={cursor.x}
                 y2={cursor.y}
-                stroke="#06b6d4"
+                stroke="#4353ff"
                 strokeWidth={sw * 1.2}
                 strokeDasharray={`${sw * 2} ${sw * 2}`}
                 strokeLinecap="round"
               />
-              <circle cx={pendingStart.x} cy={pendingStart.y} r={dot * 0.6} fill="#06b6d4" />
+              <circle cx={pendingStart.x} cy={pendingStart.y} r={dot * 0.6} fill="#4353ff" />
               {scalePxPerFt && (
                 <text
                   x={cursor.x + dot}
                   y={cursor.y - dot}
                   fontSize={dot * 1.6}
-                  fill="#0e7490"
+                  fill="#2e40e8"
                   stroke="#ffffff"
                   strokeWidth={dot * 0.18}
                   paintOrder="stroke"

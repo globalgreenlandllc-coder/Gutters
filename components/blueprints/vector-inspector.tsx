@@ -37,9 +37,9 @@ function PagePanel({
   const dot = Math.max(W, H) / 220;
 
   return (
-    <section className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300">
-        <span className="font-semibold text-white">{title}</span>
+    <section className="rounded-xl border border-white/10 bg-zinc-950 p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
+        <span className="font-semibold tracking-tight text-white">{title}</span>
         <span>
           {v.sheet ? `${v.sheet} · ` : ""}page {v.page}
         </span>
@@ -57,9 +57,9 @@ function PagePanel({
         </span>
       </div>
 
-      <p className="text-xs text-slate-400">{subtitle}</p>
+      <p className="text-xs text-zinc-400">{subtitle}</p>
 
-      <div className="overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
+      <div className="overflow-hidden rounded-lg border border-white/10 bg-ink">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="h-auto w-full"
@@ -93,17 +93,17 @@ function PagePanel({
       </div>
 
       {v.dimensions.length > 0 && (
-        <div className="text-xs text-slate-300">
-          <div className="font-medium text-slate-200">Dimensions</div>
-          <div className="mt-1 font-mono leading-relaxed text-slate-400">
+        <div className="text-xs text-zinc-300">
+          <div className="font-label text-[10px] text-zinc-300">Dimensions</div>
+          <div className="mt-1 font-mono leading-relaxed text-zinc-400">
             {v.dimensions.map((d) => d.s).join("   ")}
           </div>
         </div>
       )}
       {v.labels.length > 0 && (
-        <div className="text-xs text-slate-300">
-          <div className="font-medium text-slate-200">Labels</div>
-          <div className="mt-1 font-mono leading-relaxed text-slate-400">
+        <div className="text-xs text-zinc-300">
+          <div className="font-label text-[10px] text-zinc-300">Labels</div>
+          <div className="mt-1 font-mono leading-relaxed text-zinc-400">
             {v.labels.map((d) => d.s).join("   ")}
           </div>
         </div>
@@ -130,7 +130,7 @@ export function VectorInspector({ vg }: { vg: ExtractedVectors }) {
           v={vg.footprint}
         />
       ) : (
-        <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-sm text-slate-300">
+        <div className="rounded-xl border border-white/10 bg-zinc-950 p-4 text-sm text-zinc-300">
           No building-outline vectors were extracted (no readable foundation /
           floor-plan vector layer). Stage 2 ran without a footprint outline.
         </div>

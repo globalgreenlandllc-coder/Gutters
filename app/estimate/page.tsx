@@ -158,19 +158,19 @@ function ErrorScreen({
   onRetry: () => void;
 }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
+    <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
+      <div className="pointer-events-none absolute inset-0 hl-grid" />
       <div className="relative w-full max-w-lg">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-elevated">
+        <div className="rounded-xl border border-zinc-200 bg-white p-8 shadow-card">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+              <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
                 We couldn't run that estimate
               </h1>
               <p className="mt-1 truncate text-sm text-zinc-500">{address}</p>

@@ -1116,8 +1116,8 @@ export function AerialCanvas({
                     ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
                     : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
                   : isSelected
-                    ? "drop-shadow(0 1px 6px rgba(14,116,144,0.55))"
-                    : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))";
+                    ? "drop-shadow(0 1px 6px rgba(46,64,232,0.55))"
+                    : "drop-shadow(0 1px 4px rgba(67,83,255,0.45))";
           return (
             <g key={line.id}>
               {/* Plain <path> (not motion.path) — framer-motion's path
@@ -1351,7 +1351,7 @@ export function AerialCanvas({
                       r={schematicR}
                       fill="white"
                       stroke={
-                        isSelected ? t.downspout : "rgba(14,116,144,0.85)"
+                        isSelected ? t.downspout : "rgba(248,113,126,0.85)"
                       }
                       strokeWidth={schematicStroke}
                     />
@@ -1426,7 +1426,7 @@ export function AerialCanvas({
                 x={lx}
                 y={ly + 4 * renderScale}
                 textAnchor="middle"
-                fill={theme === "tactical" ? "#5eead4" : "#0e7490"}
+                fill={theme === "tactical" ? "#5eead4" : "#2e40e8"}
                 fontSize={10 * renderScale}
                 fontWeight={700}
                 fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -1484,7 +1484,7 @@ export function AerialCanvas({
                       : "bg-zinc-100 text-zinc-600"
                     : theme === "tactical"
                       ? "bg-cyan-500/15 text-cyan-200"
-                      : "bg-cyan-50 text-cyan-700",
+                      : "bg-accent-50 text-accent-700",
                 )}
               >
                 {selectedIsRake ? "Gable · no gutter" : "Eave · gutter"}
@@ -1520,7 +1520,7 @@ export function AerialCanvas({
                     "rounded-full border px-2 py-0.5 font-medium transition",
                     theme === "tactical"
                       ? "border-cyan-500/40 text-cyan-200 hover:border-cyan-300 hover:text-white"
-                      : "border-cyan-300 text-cyan-700 hover:border-cyan-500 hover:text-cyan-800",
+                      : "border-accent-300 text-accent-700 hover:border-accent-500 hover:text-accent-800",
                   )}
                 >
                   Add gutter (eave)
@@ -1624,7 +1624,7 @@ function DownspoutPopover({
                   active
                     ? theme === "tactical"
                       ? "bg-fuchsia-500/90 text-white shadow-[0_0_8px_rgba(255,43,214,0.6)]"
-                      : "bg-cyan-600 text-white"
+                      : "bg-accent-600 text-white"
                     : theme === "tactical"
                       ? "text-fuchsia-200/70 hover:text-fuchsia-100"
                       : "text-zinc-600 hover:text-zinc-900",
@@ -2002,7 +2002,7 @@ function Legend({
             "h-2 w-4 rounded-full",
             tactical
               ? "bg-cyan-400 shadow-[0_0_8px_rgba(0,229,255,0.95)]"
-              : "bg-accent-500 shadow-[0_1px_3px_rgba(5,150,105,0.5)]",
+              : "bg-accent-500 shadow-[0_1px_3px_rgba(46,64,232,0.5)]",
           )}
         />
         Eaves
@@ -2080,7 +2080,7 @@ function Legend({
             "h-2.5 w-2.5 rounded-full",
             tactical
               ? "bg-fuchsia-400 shadow-[0_0_8px_rgba(255,43,214,0.95)]"
-              : "bg-cyan-600",
+              : "bg-[#f8717e]",
           )}
         />
         Downspouts
@@ -2243,7 +2243,7 @@ function LineLabel({
               ? emphasized
                 ? "#67e8f9"
                 : "rgba(103,232,249,0.6)"
-              : "#0e7490"
+              : "#2e40e8"
         }
         strokeWidth={1}
         style={{
@@ -2256,7 +2256,7 @@ function LineLabel({
         x={labelCx}
         y={labelCy + (tierLabel ? -2 : emphasized ? 4 : 3.5) * renderScale}
         textAnchor="middle"
-        fill={tactical ? "#a5f3fc" : "#0e7490"}
+        fill={tactical ? "#a5f3fc" : "#2e40e8"}
         fontSize={fontSize}
         fontWeight={600}
         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -2268,7 +2268,7 @@ function LineLabel({
           x={labelCx}
           y={labelCy + 8 * renderScale}
           textAnchor="middle"
-          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#0e7490"}
+          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#2e40e8"}
           fontSize={fontSize * 0.72}
           fontWeight={700}
           letterSpacing={0.5 * renderScale}

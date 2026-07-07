@@ -287,7 +287,7 @@ export function ResultsView({
                       className={
                         "rounded-full px-3 py-1 font-medium transition " +
                         (active
-                          ? "bg-emerald-600 text-white"
+                          ? "bg-accent-600 text-white"
                           : disabled
                             ? "cursor-not-allowed text-zinc-400"
                             : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
@@ -391,7 +391,7 @@ function PropertyHeader({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-zinc-400" />
-            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h1 className="truncate text-lg font-semibold tracking-tight text-zinc-900">
               {address}
             </h1>
           </div>
@@ -512,7 +512,7 @@ function SiteContext() {
     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
       <div className="flex items-center gap-2">
         <Camera className="h-4 w-4 text-zinc-400" />
-        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+        <span className="font-label text-[11px] text-zinc-500">
           Site context
         </span>
       </div>

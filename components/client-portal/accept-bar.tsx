@@ -33,14 +33,14 @@ export function AcceptBar({
       initial={{ y: 60, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ type: "spring", damping: 22, stiffness: 240 }}
-      className="sticky bottom-0 z-30 border-t border-zinc-200 bg-white/95 backdrop-blur-xl print:hidden"
+      className="sticky bottom-0 z-30 border-t border-zinc-200 bg-white print:hidden"
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center">
         <div className="flex-1">
-          <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+          <div className="font-label text-[11px] text-zinc-500">
             Selected · {packageName}
           </div>
-          <div className="font-display flex items-baseline gap-2 text-2xl font-semibold tracking-tight text-zinc-900">
+          <div className="flex items-baseline gap-2 text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
             {formatCurrency(due)}
             <span className="text-xs font-normal text-zinc-500">
               {paymentChoice === "deposit"

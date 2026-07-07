@@ -200,24 +200,24 @@ export default function Page() {
   const blueprint = useMemo(() => <BlueprintSheet />, []);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-ink text-white">
       {/* Top bar */}
-      <div className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur">
+      <div className="border-b border-white/10 bg-ink">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
           <Link
             href="/demo"
-            className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
+            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" /> Takeoff demos
           </Link>
           <div className="flex items-center gap-3 text-right">
             {fileName && (
-              <span className="hidden max-w-[220px] truncate text-xs text-slate-500 sm:inline">
+              <span className="hidden max-w-[220px] truncate text-xs text-white/50 sm:inline">
                 <FileText className="mr-1 inline h-3.5 w-3.5" />
                 {fileName}
               </span>
             )}
-            <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-400 ring-1 ring-cyan-500/20">
+            <span className="font-label rounded-md border border-white/25 px-2.5 py-1 text-white">
               Method B · Blueprint
             </span>
           </div>
@@ -226,10 +226,10 @@ export default function Page() {
 
       <div className="mx-auto max-w-7xl px-6 py-8">
         <header className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="display-hero text-3xl text-white sm:text-4xl">
             Blueprint Upload Takeoff
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-400">
+          <p className="mt-2 max-w-2xl text-sm text-white/60">
             Upload a plan sheet, calibrate the scale against a known dimension,
             then trace the roof edges for exact, plan-accurate linear footage.
           </p>
@@ -258,7 +258,7 @@ export default function Page() {
             <div className="lg:col-span-2">
               {/* Instruction / mode banner sits above the canvas. */}
               {!calibrated ? (
-                <div className="mb-3 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                <div className="mb-3 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                   <Ruler className="h-4 w-4 shrink-0" />
                   <span>
                     <strong className="font-semibold">Calibrate:</strong> click
@@ -300,7 +300,7 @@ export default function Page() {
               )}
 
               {calibrated && (
-                <p className="mt-3 text-xs text-slate-500">
+                <p className="mt-3 text-xs text-white/50">
                   Tip: try a wrong number in “Recalibrate” — every measurement
                   rescales, because all footage is derived from this one scale.
                 </p>
@@ -310,22 +310,22 @@ export default function Page() {
             {/* Sidebar */}
             <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
               {/* Scale status */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-200">
+                  <h2 className="text-sm font-semibold text-white">
                     Scale
                   </h2>
                   <span
                     className={cn(
                       "inline-flex h-2 w-2 rounded-full",
-                      calibrated ? "bg-cyan-400" : "bg-amber-400",
+                      calibrated ? "bg-stripe-blue" : "bg-amber-400",
                     )}
                   />
                 </div>
                 <p
                   className={cn(
                     "mt-2 text-sm",
-                    calibrated ? "text-slate-300" : "text-amber-300/90",
+                    calibrated ? "text-white/80" : "text-amber-300/90",
                   )}
                 >
                   {calibrated
@@ -335,15 +335,15 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={recalibrate}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-cyan-500/50 hover:text-cyan-300"
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/70 transition hover:border-stripe-blue/60 hover:text-white"
                 >
                   <RotateCcw className="h-3.5 w-3.5" /> Recalibrate
                 </button>
               </div>
 
               {/* Live readout */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <h2 className="text-sm font-semibold text-slate-200">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">
                   Measurements
                 </h2>
                 <dl className="mt-3 space-y-2.5 text-sm">
@@ -360,7 +360,7 @@ export default function Page() {
                     label="Total traced run"
                     value={calibrated ? `${totalLF.toFixed(1)} LF` : "—"}
                   />
-                  <div className="my-2 h-px bg-slate-800" />
+                  <div className="my-2 h-px bg-white/10" />
                   <Readout label="Segments" value={String(segments.length)} />
                   <Readout
                     label="Downspouts"
@@ -371,19 +371,19 @@ export default function Page() {
 
               {/* Estimated cost — only once calibrated */}
               {calibrated && (
-                <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/[0.06] p-5">
+                <div className="rounded-xl border border-stripe-blue/40 bg-stripe-blue/10 p-5">
                   <div className="flex items-baseline justify-between">
-                    <h2 className="text-sm font-semibold text-cyan-200">
+                    <h2 className="text-sm font-semibold text-white">
                       Estimated cost
                     </h2>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-cyan-400/70">
+                    <span className="font-label text-[10px] text-white/50">
                       Estimate
                     </span>
                   </div>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-cyan-300">
+                  <p className="mt-1 text-3xl font-bold tracking-tight tabular-nums text-white">
                     {formatCurrency(estCost)}
                   </p>
-                  <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                  <p className="mt-2 text-xs leading-relaxed text-white/60">
                     {eaveLF.toFixed(1)} LF gutter ×{" "}
                     {formatCurrency(GUTTER_PRICE)} +{" "}
                     {downspouts.length} downspout
@@ -395,44 +395,44 @@ export default function Page() {
               )}
 
               {/* Legend */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <h2 className="text-sm font-semibold text-slate-200">Legend</h2>
-                <ul className="mt-3 space-y-2.5 text-sm text-slate-300">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">Legend</h2>
+                <ul className="mt-3 space-y-2.5 text-sm text-white/80">
                   <li className="flex items-center gap-3">
-                    <span className="h-1 w-6 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.7)]" />
+                    <span className="h-1 w-6 rounded-full bg-stripe-blue shadow-[0_0_8px_rgba(67,83,255,0.7)]" />
                     Eave — guttered run
                   </li>
                   <li className="flex items-center gap-3">
-                    <span className="h-0.5 w-6 rounded-full border-t-2 border-dashed border-slate-500" />
+                    <span className="h-0.5 w-6 rounded-full border-t-2 border-dashed border-white/40" />
                     Rake — not guttered
                   </li>
                   <li className="flex items-center gap-3">
-                    <span className="h-3 w-3 rounded-full bg-cyan-400 ring-2 ring-cyan-400/25" />
+                    <span className="h-3 w-3 rounded-full bg-stripe-blue ring-2 ring-stripe-blue/30" />
                     Downspout
                   </li>
                 </ul>
               </div>
 
               {/* Trace actions */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <h2 className="text-sm font-semibold text-slate-200">Trace</h2>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <h2 className="text-sm font-semibold text-white">Trace</h2>
                 <div className="mt-3 flex flex-col gap-2">
                   <button
                     type="button"
                     onClick={loadSampleOutline}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-accent-500"
                   >
                     <Layers className="h-4 w-4" /> Load sample outline
                   </button>
                   <button
                     type="button"
                     onClick={clearTrace}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-rose-500/50 hover:text-rose-300"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition hover:border-stripe-coral/60 hover:text-stripe-coral"
                   >
                     <Eraser className="h-4 w-4" /> Clear trace
                   </button>
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                <p className="mt-3 text-xs leading-relaxed text-white/50">
                   Trace: click to drop points, double-click or Esc to end a run.
                   Adjust: drag corners. Downspout: click a run to place, click a
                   dot to remove.
@@ -474,10 +474,10 @@ function UploadZone({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       className={cn(
-        "flex min-h-[420px] flex-col items-center justify-center rounded-2xl border-2 border-dashed p-10 text-center transition",
+        "flex min-h-[420px] flex-col items-center justify-center rounded-xl border-2 border-dashed p-10 text-center transition",
         dragOver
-          ? "border-cyan-400 bg-cyan-500/[0.06]"
-          : "border-slate-700 bg-slate-900/40",
+          ? "border-stripe-blue bg-stripe-blue/10"
+          : "border-white/15 bg-white/5",
       )}
     >
       <input
@@ -489,18 +489,18 @@ function UploadZone({
       />
       <span
         className={cn(
-          "inline-flex h-16 w-16 items-center justify-center rounded-2xl ring-1 transition",
+          "inline-flex h-16 w-16 items-center justify-center rounded-xl ring-1 transition",
           dragOver
-            ? "bg-cyan-500/20 text-cyan-300 ring-cyan-500/40"
-            : "bg-slate-800/70 text-cyan-400 ring-slate-700",
+            ? "bg-stripe-blue/20 text-white ring-stripe-blue/50"
+            : "bg-white/10 text-stripe-blue ring-white/15",
         )}
       >
         <UploadCloud className="h-8 w-8" />
       </span>
-      <h2 className="mt-5 text-lg font-semibold text-slate-100">
+      <h2 className="mt-5 text-lg font-semibold tracking-tight text-white">
         {loading ? "Rendering sheet…" : "Drop an architectural plan (PDF/PNG)"}
       </h2>
-      <p className="mt-1.5 max-w-sm text-sm text-slate-400">
+      <p className="mt-1.5 max-w-sm text-sm text-white/60">
         {loading
           ? "Parsing the plan and preparing the calibration canvas."
           : "Drag a file here, or use the sample plan to try the flow instantly."}
@@ -511,7 +511,7 @@ function UploadZone({
           type="button"
           onClick={onBrowse}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-cyan-500/50 hover:text-cyan-300 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:border-stripe-blue/60 hover:text-white disabled:opacity-50"
         >
           <FileText className="h-4 w-4" /> Choose file
         </button>
@@ -519,12 +519,12 @@ function UploadZone({
           type="button"
           onClick={onSample}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:opacity-50"
         >
           <Layers className="h-4 w-4" /> Use sample plan
         </button>
       </div>
-      <p className="mt-4 text-xs text-slate-600">
+      <p className="mt-4 text-xs text-white/40">
         Demo only — any file reveals the same procedural sample sheet. No upload
         leaves your browser.
       </p>
@@ -551,7 +551,7 @@ function ModeToolbar({
   ];
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">
+      <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
         {tools.map((t) => {
           const Icon = t.icon;
           const active = mode === t.id;
@@ -561,10 +561,10 @@ function ModeToolbar({
               type="button"
               onClick={() => setMode(t.id)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
                 active
-                  ? "bg-cyan-500 text-slate-950"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-slate-100",
+                  ? "bg-accent-600 text-white"
+                  : "text-white/70 hover:bg-white/10 hover:text-white",
               )}
             >
               <Icon className="h-4 w-4" />
@@ -576,19 +576,19 @@ function ModeToolbar({
 
       {/* Eave / rake toggle — what gets drawn in trace mode. */}
       {mode === "trace" && (
-        <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1">
+        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
           {(["eave", "rake"] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setTraceKind(k)}
               className={cn(
-                "rounded-lg px-3 py-1.5 text-xs font-semibold capitalize transition",
+                "rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition",
                 traceKind === k
                   ? k === "eave"
-                    ? "bg-cyan-500 text-slate-950"
-                    : "bg-slate-600 text-slate-100"
-                  : "text-slate-400 hover:text-slate-200",
+                    ? "bg-accent-600 text-white"
+                    : "bg-white/20 text-white"
+                  : "text-white/50 hover:text-white",
               )}
             >
               {k}
@@ -620,10 +620,10 @@ function CalibrateForm({
         e.preventDefault();
         onSet();
       }}
-      className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/[0.06] px-4 py-3"
+      className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-stripe-blue/40 bg-stripe-blue/10 px-4 py-3"
     >
       <div>
-        <label className="block text-xs font-medium text-slate-400">
+        <label className="block text-xs font-medium text-white/60">
           Known length of that dimension line
         </label>
         <div className="mt-1 flex items-center gap-1.5">
@@ -633,22 +633,22 @@ function CalibrateForm({
             step="any"
             value={knownFeet}
             onChange={(e) => setKnownFeet(e.target.value)}
-            className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500"
+            className="w-24 rounded-lg border border-white/15 bg-ink px-3 py-1.5 text-sm text-white outline-none focus:border-stripe-blue"
           />
-          <span className="text-sm text-slate-400">feet</span>
+          <span className="text-sm text-white/60">feet</span>
         </div>
       </div>
       <button
         type="submit"
         disabled={!valid}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Ruler className="h-4 w-4" /> Set scale
       </button>
       <button
         type="button"
         onClick={onReset}
-        className="rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm font-medium text-slate-300 transition hover:text-slate-100"
+        className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition hover:text-white"
       >
         Re-pick points
       </button>
@@ -668,11 +668,11 @@ function Readout({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <dt className="text-slate-400">{label}</dt>
+      <dt className="text-white/60">{label}</dt>
       <dd
         className={cn(
           "font-mono font-semibold tabular-nums",
-          accent ? "text-cyan-300" : "text-slate-200",
+          accent ? "text-stripe-blue" : "text-white/90",
         )}
       >
         {value}
@@ -687,14 +687,14 @@ function Readout({
 // lines, a title block, and a 16'-0" horizontal DIMENSION LINE at y=500 whose
 // ticks sit at x=250 and x=650 (== DIM_A / DIM_B, a 400px == 16 ft span).
 function BlueprintSheet() {
-  const LINE = "#7dd3fc"; // light blue line-art
-  const LINE_BRIGHT = "#38bdf8";
+  const LINE = "#7d8bfc"; // light blue line-art
+  const LINE_BRIGHT = "#a3b1ff";
   return (
     <g pointerEvents="none">
       <defs>
         <linearGradient id="bp-paper" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#0b1220" />
-          <stop offset="1" stopColor="#0a1a2e" />
+          <stop offset="0" stopColor="#0d0d18" />
+          <stop offset="1" stopColor="#12142e" />
         </linearGradient>
         <pattern
           id="bp-grid"
@@ -705,7 +705,7 @@ function BlueprintSheet() {
           <path
             d="M 30 0 L 0 0 0 30"
             fill="none"
-            stroke="rgba(125,211,252,0.06)"
+            stroke="rgba(125,139,252,0.07)"
             strokeWidth="1"
           />
         </pattern>
@@ -730,7 +730,7 @@ function BlueprintSheet() {
       {/* ── Roof-plan outline (the thing the user will trace over) ── */}
       <polygon
         points="260,120 640,120 640,300 800,300 800,440 260,440"
-        fill="rgba(125,211,252,0.05)"
+        fill="rgba(125,139,252,0.06)"
         stroke={LINE}
         strokeWidth={2}
       />
@@ -765,7 +765,7 @@ function BlueprintSheet() {
 
       {/* ── Title block (bottom-right corner) ── */}
       <g>
-        <rect x={690} y={470} width={170} height={80} fill="rgba(10,26,46,0.85)" stroke={LINE} strokeWidth={1} />
+        <rect x={690} y={470} width={170} height={80} fill="rgba(13,13,18,0.85)" stroke={LINE} strokeWidth={1} />
         <line x1={690} y1={498} x2={860} y2={498} stroke={LINE} strokeWidth={0.75} opacity={0.6} />
         <line x1={690} y1={524} x2={860} y2={524} stroke={LINE} strokeWidth={0.75} opacity={0.6} />
         <text x={700} y={489} fontSize={12} fontWeight={700} fill={LINE} fontFamily="ui-monospace, monospace">

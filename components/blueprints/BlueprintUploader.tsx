@@ -256,10 +256,10 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 sm:p-12 transition-colors ${
+        className={`relative cursor-pointer rounded-xl border-2 border-dashed bg-white p-8 transition-all sm:p-12 ${
           dragOver
-            ? "border-emerald-500/70 bg-emerald-500/5"
-            : "border-slate-700 bg-slate-900/40 hover:border-slate-600 hover:bg-slate-900/60"
+            ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/30"
+            : "border-zinc-300 hover:border-accent-400 hover:ring-2 hover:ring-accent-500/15"
         }`}
       >
         <input
@@ -273,24 +273,24 @@ export default function BlueprintUploader() {
           className="hidden"
         />
         <div className="flex flex-col items-center text-center">
-          <div className="rounded-full bg-emerald-500/10 p-3 ring-1 ring-emerald-500/30 text-emerald-300 mb-3">
+          <div className="mb-3 rounded-full bg-accent-50 p-3 text-accent-600 ring-1 ring-accent-200">
             <Upload size={24} />
           </div>
-          <div className="text-white font-semibold text-lg mb-1">
+          <div className="mb-1 text-lg font-semibold tracking-tight text-zinc-900">
             Drop construction plans here
           </div>
-          <div className="text-slate-400 text-sm max-w-md">
+          <div className="max-w-md text-sm text-zinc-500">
             PDF (multi-page OK) or a single image of the roof plan. Claude
             reads the plan, identifies eaves vs rakes, and returns a gutter
             layout you can drop into a proposal.
           </div>
-          <div className="text-slate-500 text-xs mt-2">
+          <div className="mt-2 text-xs text-zinc-400">
             Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
           </div>
           {/* Build marker — if you don't see "v2" on Vercel prod, the
               new code hasn't deployed yet. Bump this string whenever
               there's a stale-build question to verify. */}
-          <div className="text-[10px] text-slate-600 mt-1 opacity-60">
+          <div className="mt-1 text-[10px] text-zinc-400 opacity-70">
             uploader v3 · presigned-URL · 15-min token
           </div>
         </div>
@@ -300,20 +300,20 @@ export default function BlueprintUploader() {
         <motion.div
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3"
+          className="surface flex items-center gap-3 px-4 py-3 shadow-card"
         >
-          <FileText size={20} className="text-slate-300" />
+          <FileText size={20} className="text-zinc-500" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm text-white font-medium truncate">
+            <div className="truncate text-sm font-medium text-zinc-900">
               {file.name}
             </div>
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-zinc-500">
               {(file.size / 1024).toFixed(0)} KB
             </div>
           </div>
           <button
             onClick={() => setFile(null)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900"
             aria-label="Remove file"
             disabled={uploading}
           >
@@ -322,7 +322,7 @@ export default function BlueprintUploader() {
           <button
             onClick={onAnalyze}
             disabled={uploading}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 transition"
+            className="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {uploading ? (
               <>
@@ -337,14 +337,14 @@ export default function BlueprintUploader() {
       )}
 
       {uploading && (
-        <div className="text-xs text-slate-500 italic">
+        <div className="text-xs italic text-zinc-500">
           This usually takes 30–60 seconds. Claude needs to find the roof plan,
           classify every edge, and produce the JSON layout.
         </div>
       )}
 
       {error && (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
           {error}
         </div>
       )}

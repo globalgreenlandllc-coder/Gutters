@@ -202,7 +202,7 @@ export function ApiKeysPage({
       <div className="mx-auto max-w-[1400px] space-y-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
               API key vault
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-zinc-500">
@@ -211,7 +211,7 @@ export function ApiKeysPage({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge tone={configuredCount === ALL_PROVIDERS.length ? "accent" : "amber"}>
+            <Badge tone={configuredCount === ALL_PROVIDERS.length ? "emerald" : "amber"}>
               <Lock className="h-3 w-3" />
               {configuredCount} of {ALL_PROVIDERS.length} configured
             </Badge>
@@ -253,9 +253,9 @@ export function ApiKeysPage({
           })}
         </div>
 
-        <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+        <section className="surface p-5 shadow-card">
           <div className="flex items-center justify-between">
-            <h2 className="font-display text-base font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900">
               Vault audit log
             </h2>
             <span className="text-xs text-zinc-500">
@@ -364,7 +364,7 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        "flex flex-col rounded-2xl border bg-white p-5 shadow-card transition",
+        "flex flex-col rounded-xl border bg-white p-5 shadow-card transition",
         active ? "border-zinc-200" : "border-dashed border-zinc-300",
       )}
     >
@@ -379,7 +379,7 @@ function ProviderCard({
           <p className="mt-1 text-xs text-zinc-500">{sub}</p>
         </div>
         {active ? (
-          <Badge tone="accent">
+          <Badge tone="emerald">
             <Check className="h-3 w-3" />
             Active
           </Badge>
@@ -390,8 +390,8 @@ function ProviderCard({
 
       <div className="mt-4 flex-1">
         {active ? (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3">
-            <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+            <div className="font-label text-[10px] text-zinc-400">
               Fingerprint
             </div>
             <div className="mt-0.5 font-mono text-sm text-zinc-900">
@@ -422,7 +422,7 @@ function ProviderCard({
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-zinc-200 p-3 text-xs text-zinc-500">
+          <div className="rounded-lg border border-dashed border-zinc-200 p-3 text-xs text-zinc-500">
             Not configured. The provider call will fail until a key is added.
           </div>
         )}
@@ -657,7 +657,7 @@ function ActionBadge({ action }: { action: string }) {
     string,
     { label: string; tone: Parameters<typeof Badge>[0]["tone"] }
   > = {
-    API_KEY_CREATED: { label: "Created", tone: "accent" },
+    API_KEY_CREATED: { label: "Created", tone: "emerald" },
     API_KEY_ROTATED: { label: "Rotated", tone: "sky" },
     API_KEY_REVOKED: { label: "Revoked", tone: "rose" },
     API_KEY_VIEWED: { label: "Viewed", tone: "violet" },
@@ -811,7 +811,7 @@ function RotateDialog({
     >
       {row && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 text-xs text-zinc-600">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
             Current: <span className="font-mono">···{row.fingerprint.slice(-8)}</span>
             <span className="ml-2 text-zinc-400">
               · added {new Date(row.createdAt).toLocaleDateString()}
@@ -903,7 +903,7 @@ function RevealDialog({
                 <span className="font-medium">VIEWED</span> event with your
                 identity, the timestamp, and the fingerprint.
               </p>
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 text-xs text-zinc-600">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                 Fingerprint:{" "}
                 <span className="font-mono">···{row.fingerprint.slice(-8)}</span>
               </div>
@@ -922,8 +922,8 @@ function RevealDialog({
                 Don't share this value. The reveal was logged at{" "}
                 {new Date().toLocaleTimeString()}.
               </p>
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3">
-                <div className="text-xs uppercase tracking-wider text-zinc-500">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <div className="font-label text-[10px] text-zinc-400">
                   Plaintext value
                 </div>
                 <pre className="mt-1 break-all font-mono text-sm text-zinc-900">
@@ -979,7 +979,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label mb-1.5 block text-[11px] text-zinc-500">
         {label}
       </span>
       <input
@@ -988,10 +988,7 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className={cn(
-          "h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15",
-          mono && "font-mono",
-        )}
+        className={cn("input h-11", mono && "font-mono")}
       />
     </label>
   );
@@ -1025,7 +1022,7 @@ function Dialog({
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-elevated"
+            className="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-elevated"
           >
             <button
               onClick={onClose}
@@ -1033,7 +1030,7 @@ function Dialog({
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               {title}
             </h2>
             <div className="mt-4">{children}</div>

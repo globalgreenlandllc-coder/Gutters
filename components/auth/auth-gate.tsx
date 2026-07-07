@@ -20,7 +20,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!isLoaded || !isSignedIn) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-zinc-400">
+      <div className="flex min-h-screen items-center justify-center bg-white text-zinc-400">
         <Loader2 className="h-5 w-5 animate-spin" />
       </div>
     );

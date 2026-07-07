@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
 import {
   ArrowRight,
   CheckCircle2,
@@ -12,12 +11,13 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { StatTile } from "@/components/dashboard/stat-tile";
 import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { QuickStart } from "@/components/dashboard/quick-start";
 import { OnboardingStrip } from "@/components/dashboard/onboarding-strip";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   listMyActivity,
@@ -74,45 +74,21 @@ function Inner() {
   const isEmpty = !loading && proposals.length === 0;
 
   return (
-    <main className="min-h-screen">
-      <DashboardNav />
-
-      <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        <motion.header
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-wrap items-end justify-between gap-3"
-        >
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-              {greetingTime()}
-            </div>
-            <h1 className="font-display mt-0.5 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-              Welcome back,{" "}
-              <span className="bg-gradient-to-r from-accent-600 to-emerald-500 bg-clip-text text-transparent">
-                {session?.user.name.split(" ")[0]}
-              </span>
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              {isEmpty
-                ? "Your dashboard is ready. Run your first estimate to start filling it in."
-                : "Here's what's happening across your proposals today."}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/60 px-2.5 py-1 text-emerald-700">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              </span>
-              All systems healthy
-            </span>
-          </div>
-        </motion.header>
+    <DashboardShell
+      title="Overview"
+      actions={<Badge tone="emerald">All systems healthy</Badge>}
+    >
+      <div className="space-y-6">
+        <p className="text-sm text-zinc-500">
+          {greetingTime()}, {session?.user.name.split(" ")[0]} —{" "}
+          {isEmpty
+            ? "your dashboard is ready. Run your first estimate to start filling it in."
+            : "here's what's happening across your proposals today."}
+        </p>
 
         <OnboardingStrip />
 
-        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <section className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 shadow-card sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
             index={0}
             label="Sent this month"
@@ -156,7 +132,7 @@ function Inner() {
             <QuickStart />
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+                <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                   Recent proposals
                 </h2>
               </div>
@@ -178,17 +154,17 @@ function Inner() {
           </div>
         </section>
       </div>
-    </main>
+    </DashboardShell>
   );
 }
 
 function EmptyProposals() {
   return (
-    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center shadow-sm">
-      <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-50 text-accent-700">
+    <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-10 text-center">
+      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
         <Sparkles className="h-5 w-5" />
       </div>
-      <h3 className="font-display mt-4 text-lg font-semibold tracking-tight text-zinc-900">
+      <h3 className="mt-4 text-lg font-semibold tracking-tight text-zinc-900">
         No proposals yet
       </h3>
       <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500">
@@ -209,15 +185,15 @@ function EmptyProposals() {
 function ConversionCard({ kpis }: { kpis: MyKpis }) {
   const conv = Math.round(kpis.conversion * 100);
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+    <div className="surface p-5 shadow-card">
       <div className="flex items-center justify-between">
-        <h3 className="font-display text-base font-semibold tracking-tight text-zinc-900">
+        <h3 className="text-base font-semibold tracking-tight text-zinc-900">
           Win rate
         </h3>
-        <span className="text-xs text-zinc-500">All time</span>
+        <span className="text-xs text-zinc-400">All time</span>
       </div>
       <div className="mt-4 flex items-end gap-4">
-        <div className="font-display text-4xl font-semibold tracking-tight tabular-nums text-zinc-900">
+        <div className="text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
           {conv}%
         </div>
         <div className="pb-1.5 text-xs text-zinc-500">
@@ -228,7 +204,7 @@ function ConversionCard({ kpis }: { kpis: MyKpis }) {
       </div>
       <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-accent-500 to-accent-700"
+          className="h-full rounded-full bg-accent-600"
           style={{ width: `${conv}%` }}
         />
       </div>

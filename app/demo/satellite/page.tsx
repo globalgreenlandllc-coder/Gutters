@@ -276,14 +276,14 @@ function EmptyBackground() {
   return (
     <g>
       <SatelliteBackground />
-      <rect x={0} y={0} width={CANVAS_W} height={CANVAS_H} fill="rgba(2,6,23,0.55)" />
+      <rect x={0} y={0} width={CANVAS_W} height={CANVAS_H} fill="rgba(13,13,18,0.6)" />
       <text
         x={CANVAS_W / 2}
         y={CANVAS_H / 2 - 6}
         textAnchor="middle"
         fontSize={22}
         fontWeight={600}
-        fill="#94a3b8"
+        fill="rgba(255,255,255,0.75)"
         fontFamily="ui-sans-serif, system-ui, sans-serif"
       >
         Enter an address to begin
@@ -293,7 +293,7 @@ function EmptyBackground() {
         y={CANVAS_H / 2 + 22}
         textAnchor="middle"
         fontSize={14}
-        fill="#64748b"
+        fill="rgba(255,255,255,0.5)"
         fontFamily="ui-sans-serif, system-ui, sans-serif"
       >
         We&apos;ll pull the aerial and trace the roof automatically.
@@ -389,17 +389,17 @@ export default function Page() {
   const activeMode = MODES.find((m) => m.id === mode) ?? MODES[0];
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-ink text-white">
       {/* ── Top bar ── */}
-      <div className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+      <div className="border-b border-white/10 bg-ink">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <Link
             href="/demo"
-            className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
+            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" /> Takeoff demos
           </Link>
-          <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-400">
+          <div className="font-label inline-flex items-center gap-2 rounded-md border border-white/25 px-2.5 py-1 text-white">
             <Satellite className="h-4 w-4" />
             Method A · Satellite
           </div>
@@ -408,10 +408,10 @@ export default function Page() {
 
       <div className="mx-auto max-w-7xl px-6 py-6">
         <header className="mb-5">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="display-hero text-3xl text-white sm:text-4xl">
             Satellite Map Takeoff
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-400">
+          <p className="mt-2 max-w-2xl text-sm text-white/60">
             Type an address, pull the aerial, and get an auto-traced roof
             outline. Drag the eaves, drop downspouts, and read live footage and
             cost — all at a known satellite scale.
@@ -422,10 +422,10 @@ export default function Page() {
           {/* ── Main column: address bar + canvas ── */}
           <div className="lg:col-span-2">
             {/* Address bar */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 sm:flex-row">
                 <div className="relative flex-1">
-                  <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                  <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
                   <input
                     type="text"
                     value={address}
@@ -434,7 +434,7 @@ export default function Page() {
                       if (e.key === "Enter") handleAnalyze();
                     }}
                     placeholder="Enter a property address…"
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-3 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                    className="w-full rounded-lg border border-white/15 bg-ink py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-stripe-blue focus:ring-1 focus:ring-stripe-blue"
                   />
                 </div>
                 <button
@@ -442,10 +442,10 @@ export default function Page() {
                   onClick={handleAnalyze}
                   disabled={analyzing || !address.trim()}
                   className={cn(
-                    "inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition",
+                    "inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition",
                     analyzing || !address.trim()
-                      ? "cursor-not-allowed bg-slate-800 text-slate-500"
-                      : "bg-cyan-500 text-slate-950 hover:bg-cyan-400",
+                      ? "cursor-not-allowed bg-white/10 text-white/40"
+                      : "bg-accent-600 text-white hover:bg-accent-500",
                   )}
                 >
                   {analyzing ? (
@@ -462,17 +462,17 @@ export default function Page() {
 
               {/* Sample-address chips */}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-slate-500">Try:</span>
+                <span className="text-xs text-white/50">Try:</span>
                 {SAMPLE_ADDRESSES.map((addr) => (
                   <button
                     key={addr}
                     type="button"
                     onClick={() => setAddress(addr)}
                     className={cn(
-                      "rounded-full border px-3 py-1 text-xs transition",
+                      "rounded-md border px-3 py-1 text-xs transition",
                       address === addr
-                        ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-300"
-                        : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200",
+                        ? "border-stripe-blue/60 bg-stripe-blue/15 text-white"
+                        : "border-white/15 bg-ink text-white/60 hover:border-white/30 hover:text-white",
                     )}
                   >
                     {addr}
@@ -499,12 +499,12 @@ export default function Page() {
 
               {/* Analyzing overlay */}
               {analyzing && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-2xl bg-slate-950/75 backdrop-blur-sm">
-                  <Loader2 className="h-9 w-9 animate-spin text-cyan-400" />
-                  <p className="text-sm font-medium text-slate-200">
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-2xl bg-ink/80">
+                  <Loader2 className="h-9 w-9 animate-spin text-stripe-blue" />
+                  <p className="text-sm font-medium text-white/90">
                     Pulling high-res aerial + tracing roof…
                   </p>
-                  <p className="max-w-xs text-center text-xs text-slate-500">
+                  <p className="max-w-xs text-center text-xs text-white/50">
                     {address.trim()}
                   </p>
                 </div>
@@ -522,10 +522,10 @@ export default function Page() {
                         type="button"
                         onClick={() => setMode(m.id)}
                         className={cn(
-                          "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-medium transition",
+                          "inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition",
                           active
-                            ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-300"
-                            : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600 hover:text-slate-100",
+                            ? "border-stripe-blue/60 bg-stripe-blue/15 text-white"
+                            : "border-white/15 bg-white/5 text-white/70 hover:border-white/30 hover:text-white",
                         )}
                       >
                         <Icon className="h-4 w-4" />
@@ -536,7 +536,7 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={resetOutline}
-                    className="ml-auto inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3.5 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
+                    className="ml-auto inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-sm font-medium text-white/70 transition hover:border-white/30 hover:text-white"
                   >
                     <RotateCcw className="h-4 w-4" /> Reset outline
                   </button>
@@ -545,8 +545,8 @@ export default function Page() {
 
               {/* Active-mode hint */}
               {analyzed && (
-                <p className="mt-2 text-xs text-slate-500">
-                  <span className="font-semibold text-slate-400">
+                <p className="mt-2 text-xs text-white/50">
+                  <span className="font-semibold text-white/70">
                     {activeMode.label}:
                   </span>{" "}
                   {activeMode.hint}
@@ -559,29 +559,29 @@ export default function Page() {
           <aside className="lg:col-span-1">
             <div className="space-y-4 lg:sticky lg:top-6">
               {/* Detected property */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <div className="font-label flex items-center gap-2 text-[11px] text-white/40">
                   <Home className="h-4 w-4" /> Detected property
                 </div>
-                <p className="mt-2 text-sm font-medium text-slate-100">
+                <p className="mt-2 text-sm font-medium text-white">
                   {analyzedAddress ?? "— no address analyzed yet —"}
                 </p>
                 <div className="mt-4 space-y-2 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400">Aerial scale</span>
-                    <span className="font-mono text-slate-200">
+                    <span className="text-white/60">Aerial scale</span>
+                    <span className="font-mono text-white/80">
                       ~{PX_PER_FT} px/ft
                     </span>
                   </div>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-white/50">
                     Fixed ground-sample distance — no calibration needed.
                   </p>
                   <div className="flex items-center justify-between pt-1">
-                    <span className="text-slate-400">Roof pitch</span>
+                    <span className="text-white/60">Roof pitch</span>
                     <select
                       value={pitch}
                       onChange={(e) => setPitch(e.target.value)}
-                      className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                      className="rounded-md border border-white/15 bg-ink px-2 py-1 text-xs text-white/80 outline-none focus:border-stripe-blue"
                     >
                       {["4", "6", "8", "10", "12"].map((p) => (
                         <option key={p} value={p}>
@@ -594,38 +594,38 @@ export default function Page() {
               </div>
 
               {/* Live measurements */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <div className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <div className="font-label text-[11px] text-white/40">
                   Live measurement
                 </div>
 
                 <div className="mt-3 flex items-baseline justify-between">
-                  <span className="text-sm text-slate-400">Total gutter run</span>
-                  <span className="font-mono text-2xl font-bold text-cyan-400">
+                  <span className="text-sm text-white/60">Total gutter run</span>
+                  <span className="font-mono text-2xl font-bold tabular-nums text-stripe-blue">
                     {analyzed ? gutterLF.toFixed(1) : "—"}
-                    <span className="ml-1 text-sm font-medium text-slate-500">LF</span>
+                    <span className="ml-1 text-sm font-medium text-white/50">LF</span>
                   </span>
                 </div>
 
                 <div className="mt-2 flex items-baseline justify-between">
-                  <span className="text-sm text-slate-400">Downspouts</span>
-                  <span className="font-mono text-lg font-semibold text-slate-100">
+                  <span className="text-sm text-white/60">Downspouts</span>
+                  <span className="font-mono text-lg font-semibold tabular-nums text-white">
                     {analyzed ? downspoutCount : "—"}
                   </span>
                 </div>
 
-                <hr className="my-4 border-slate-800" />
+                <hr className="my-4 border-white/10" />
 
-                <div className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                <div className="font-label text-[11px] text-white/40">
                   Estimated materials
                 </div>
                 <div className="mt-2 flex items-baseline justify-between">
-                  <span className="text-sm text-slate-400">Rough estimate</span>
-                  <span className="font-mono text-2xl font-bold text-slate-50">
+                  <span className="text-sm text-white/60">Rough estimate</span>
+                  <span className="font-mono text-2xl font-bold tabular-nums text-white">
                     {analyzed ? formatCurrency(estimate) : "—"}
                   </span>
                 </div>
-                <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                <p className="mt-2 text-xs leading-relaxed text-white/50">
                   {analyzed ? (
                     <>
                       {gutterLF.toFixed(1)} LF × {formatCurrency(GUTTER_UNIT)}/LF
@@ -640,13 +640,13 @@ export default function Page() {
               </div>
 
               {/* Legend */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-                <div className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+                <div className="font-label text-[11px] text-white/40">
                   Legend
                 </div>
-                <ul className="mt-3 space-y-2.5 text-sm text-slate-300">
+                <ul className="mt-3 space-y-2.5 text-sm text-white/80">
                   <li className="flex items-center gap-3">
-                    <span className="h-1 w-8 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.7)]" />
+                    <span className="h-1 w-8 rounded-full bg-stripe-blue shadow-[0_0_8px_rgba(67,83,255,0.7)]" />
                     Eave — guttered run
                   </li>
                   <li className="flex items-center gap-3">
@@ -656,7 +656,7 @@ export default function Page() {
                         y1="3"
                         x2="32"
                         y2="3"
-                        stroke="#64748b"
+                        stroke="rgba(255,255,255,0.45)"
                         strokeWidth="2"
                         strokeDasharray="6 4"
                       />
@@ -665,7 +665,7 @@ export default function Page() {
                   </li>
                   <li className="flex items-center gap-3">
                     <span className="flex h-4 w-8 items-center justify-center">
-                      <span className="h-3 w-3 rounded-full border border-cyan-100 bg-cyan-400" />
+                      <span className="h-3 w-3 rounded-full border border-white bg-stripe-blue" />
                     </span>
                     Downspout drop
                   </li>

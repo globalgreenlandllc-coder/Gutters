@@ -19,7 +19,7 @@ import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
  * Proposal-quality canvas. Same data shape as AerialCanvas but stripped
  * of the editor chrome:
  *   - No toolbar, no theme toggle, no layers panel.
- *   - Eaves render as a thin, even cyan stroke with a soft glow (no
+ *   - Eaves render as a thin, even royal-blue stroke with a soft glow (no
  *     animated draw-in — clients see a finished drawing).
  *   - Rakes render as gray-dashed "no gutter" lines, also non-glowing.
  *   - Downspouts are small pinned dots — no pulsing halo. The pulse
@@ -202,17 +202,17 @@ export function PresentationCanvas({
       {/* Floating total — replaces the editor's busy Legend strip */}
       <div
         className={
-          "pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-card backdrop-blur " +
+          "pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-card " +
           (planMode
-            ? "border-cyan-700/30 bg-[#f7f4ee]/85 text-cyan-900"
-            : "border-cyan-500/30 bg-slate-950/80 text-cyan-100")
+            ? "border-accent-700/30 bg-[#f7f4ee]/95 text-accent-900"
+            : "border-accent-500/30 bg-slate-950/90 text-accent-300")
         }
       >
         <span
           className={
             planMode
-              ? "inline-block h-1.5 w-3 rounded-full bg-cyan-700"
-              : "inline-block h-1.5 w-3 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.9)]"
+              ? "inline-block h-1.5 w-3 rounded-full bg-accent-700"
+              : "inline-block h-1.5 w-3 rounded-full bg-stripe-blue shadow-[0_0_6px_rgba(67,83,255,0.9)]"
           }
         />
         <span className="tabular-nums">
@@ -225,14 +225,14 @@ export function PresentationCanvas({
         </span>
         <span
           className={
-            planMode ? "h-3 w-px bg-cyan-800/30" : "h-3 w-px bg-cyan-500/30"
+            planMode ? "h-3 w-px bg-accent-800/30" : "h-3 w-px bg-accent-500/30"
           }
         />
         <span
           className={
             planMode
               ? "inline-block h-1.5 w-1.5 rounded-full bg-slate-900"
-              : "inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(255,43,214,0.9)]"
+              : "inline-block h-1.5 w-1.5 rounded-full bg-stripe-coral shadow-[0_0_6px_rgba(248,113,126,0.9)]"
           }
         />
         <span className="tabular-nums">
@@ -263,7 +263,7 @@ export function PresentationCanvas({
         ) : (
           <AerialBackground />
         )}
-        {/* Subtle scrim so cyan + pink pop against bright satellite
+        {/* Subtle scrim so blue + coral pop against bright satellite
             imagery. Skipped in plan mode — the drafting-paper
             background is already light and a dark scrim on top would
             wash out the architectural feel. */}
@@ -343,14 +343,14 @@ export function PresentationCanvas({
                 stroke={
                   planMode
                     ? // Plan mode: architectural-ink palette. Saturated
-                      // cyan/sky still reads as "gutter" but no glow —
+                      // blue still reads as "gutter" but no glow —
                       // glows clip on print and look fake on paper.
                       active
-                      ? "#0891b2"
-                      : "#0e7490"
+                      ? "#2e40e8"
+                      : "#2434c6"
                     : active
-                      ? "#a3f7ff"
-                      : "#00e5ff"
+                      ? "#a3b1ff"
+                      : "#4353ff"
                 }
                 strokeWidth={(active ? 3.5 : 2.5) * vs}
                 strokeLinecap="round"
@@ -363,8 +363,8 @@ export function PresentationCanvas({
                   filter: planMode
                     ? undefined
                     : active
-                      ? "drop-shadow(0 0 6px rgba(0,229,255,0.85))"
-                      : "drop-shadow(0 0 3px rgba(0,229,255,0.55))",
+                      ? "drop-shadow(0 0 6px rgba(67,83,255,0.85))"
+                      : "drop-shadow(0 0 3px rgba(67,83,255,0.55))",
                 }}
               />
 
@@ -378,7 +378,7 @@ export function PresentationCanvas({
                     cy={pt.y}
                     r={5 * vs}
                     fill="#0b1220"
-                    stroke="#a3f7ff"
+                    stroke="#a3b1ff"
                     strokeWidth={2 * vs}
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -423,7 +423,7 @@ export function PresentationCanvas({
                 cx={d.x}
                 cy={d.y}
                 r={(isSelected ? 7 : 5.5) * vs}
-                fill={planMode ? "#0f172a" : "#ff2bd6"}
+                fill={planMode ? "#0f172a" : "#f8717e"}
                 stroke={planMode ? "#f7f4ee" : "white"}
                 strokeWidth={(planMode ? 2 : 1.8) * vs}
                 initial={{ opacity: 0, scale: 0.6 }}
@@ -432,14 +432,14 @@ export function PresentationCanvas({
                 style={{
                   filter: planMode
                     ? undefined
-                    : "drop-shadow(0 0 4px rgba(255,43,214,0.7))",
+                    : "drop-shadow(0 0 4px rgba(248,113,126,0.7))",
                 }}
               />
               <circle
                 cx={d.x}
                 cy={d.y}
                 r={1.8 * vs}
-                fill={planMode ? "#f7f4ee" : "#fff0fb"}
+                fill={planMode ? "#f7f4ee" : "#fff1f2"}
               />
               {/* Plan-mode height pill — surfaces per-downspout drop
                   height so the contractor can spot a porch downspout
@@ -455,7 +455,7 @@ export function PresentationCanvas({
                     height={14 * vs}
                     rx={3 * vs}
                     fill="#f7f4ee"
-                    stroke="#0e7490"
+                    stroke="#2434c6"
                     strokeWidth={0.6 * vs}
                   />
                   <text
@@ -463,7 +463,7 @@ export function PresentationCanvas({
                     y={d.y + 2 * vs}
                     fontSize={9 * vs}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                    fill="#0e7490"
+                    fill="#2434c6"
                     textAnchor="middle"
                   >
                     {Math.round(d.heightFt)}′
@@ -546,11 +546,11 @@ function SegmentLabel({
         stroke={
           planMode
             ? emphasized
-              ? "#0e7490"
-              : "rgba(14, 116, 144, 0.55)"
+              ? "#2434c6"
+              : "rgba(36, 52, 198, 0.55)"
             : emphasized
-              ? "#67e8f9"
-              : "rgba(103,232,249,0.45)"
+              ? "#a3b1ff"
+              : "rgba(163,177,255,0.45)"
         }
         strokeWidth={(emphasized ? 1.2 : 0.8) * scale}
       />
@@ -561,11 +561,11 @@ function SegmentLabel({
         fill={
           planMode
             ? emphasized
-              ? "#155e75"
-              : "#0e7490"
+              ? "#202da0"
+              : "#2434c6"
             : emphasized
-              ? "#a5f3fc"
-              : "#67e8f9"
+              ? "#c7d0ff"
+              : "#a3b1ff"
         }
         fontSize={fontSize}
         fontWeight={600}

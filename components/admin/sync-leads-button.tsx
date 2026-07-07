@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Loader2, Database, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 type SyncResult = {
   success: true;
@@ -42,9 +43,9 @@ export function SyncLeadsButton() {
   };
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
+    <div className="surface p-4">
       <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-700">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-violet-50 text-violet-700">
           <Database className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
@@ -53,16 +54,16 @@ export function SyncLeadsButton() {
               Lead sync
             </span>
             {state.kind === "done" && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700">
+              <Badge tone="emerald" className="gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 Synced
-              </span>
+              </Badge>
             )}
             {state.kind === "error" && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-rose-700">
+              <Badge tone="rose" className="gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 Failed
-              </span>
+              </Badge>
             )}
           </div>
           <p className="mt-1 text-xs text-zinc-500">

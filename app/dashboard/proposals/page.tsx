@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { NewEstimateDialog } from "@/components/dashboard/new-estimate-dialog";
 import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { Button } from "@/components/ui/button";
@@ -40,32 +40,26 @@ function Inner() {
   }, []);
 
   return (
-    <main className="min-h-screen">
-      <DashboardNav />
-
-      <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        <header className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-              Proposals
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              Every estimate and proposal you've drafted, sent, or closed.
-            </p>
-          </div>
-          <Button onClick={() => setDialogOpen(true)}>
-            <Sparkles className="h-4 w-4" />
-            New estimate
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        </header>
+    <DashboardShell
+      title="Proposals"
+      actions={
+        <Button size="sm" onClick={() => setDialogOpen(true)}>
+          <Plus className="h-4 w-4" />
+          New estimate
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Every estimate and proposal you've drafted, sent, or closed.
+        </p>
 
         {!loading && rows.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center shadow-sm">
-            <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-50 text-accent-700">
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-12 text-center">
+            <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
               <Sparkles className="h-5 w-5" />
             </div>
-            <h2 className="font-display mt-4 text-xl font-semibold tracking-tight text-zinc-900">
+            <h2 className="mt-4 text-xl font-semibold tracking-tight text-zinc-900">
               No proposals yet
             </h2>
             <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500">
@@ -79,7 +73,6 @@ function Inner() {
             >
               <Sparkles className="h-4 w-4" />
               Start your first estimate
-              <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
         ) : (
@@ -91,6 +84,6 @@ function Inner() {
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
       />
-    </main>
+    </DashboardShell>
   );
 }

@@ -23,55 +23,51 @@ export default async function AdminOverviewPage() {
     <div className="mx-auto max-w-[1400px] space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Platform overview
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Live counts and money flowing through Gutters AI right now.
           </p>
         </div>
-        <Badge tone="accent">
+        <Badge tone="emerald">
           <ShieldCheck className="h-3 w-3" />
           All checks healthy
         </Badge>
       </header>
 
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile
+      <section className="surface grid grid-cols-1 divide-y divide-zinc-100 shadow-card sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4">
+        <Kpi
           icon={UsersIcon}
           label="Active contractors"
           value={String(kpis.contractorsActive)}
           sub={`${kpis.contractorsSuspended} suspended`}
-          accent="emerald"
         />
-        <Tile
+        <Kpi
           icon={Sparkles}
           label="Estimates this month"
           value={String(kpis.estimatesThisMonth)}
           sub={`${kpis.estimatesAllTime} all time`}
-          accent="violet"
         />
-        <Tile
+        <Kpi
           icon={TrendingUp}
           label="MRR"
           value={formatCurrency(kpis.mrrCents / 100)}
           sub="Active SaaS subs × $50"
-          accent="sky"
         />
-        <Tile
+        <Kpi
           icon={Receipt}
           label="Platform fees collected"
           value={formatCurrency(kpis.platformFeesCents / 100)}
           sub={`${formatCurrency(kpis.revenueProcessedCents / 100)} processed`}
-          accent="amber"
         />
       </section>
 
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+          <div className="surface p-6 shadow-card">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+              <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                 Quick actions
               </h2>
               <span className="text-xs text-zinc-500">
@@ -105,8 +101,8 @@ export default async function AdminOverviewPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+          <div className="surface p-6 shadow-card">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               Conversion this month
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
@@ -114,7 +110,7 @@ export default async function AdminOverviewPage() {
             </p>
             <div className="mt-4 flex items-end justify-between">
               <div>
-                <div className="font-display text-4xl font-semibold tabular-nums text-zinc-900">
+                <div className="text-4xl font-semibold tracking-tight tabular-nums text-zinc-900">
                   {kpis.estimatesThisMonth === 0
                     ? "0%"
                     : Math.round(
@@ -136,9 +132,9 @@ export default async function AdminOverviewPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+        <div className="surface p-6 shadow-card">
           <div className="flex items-center justify-between">
-            <h2 className="font-display text-base font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900">
               Recent activity
             </h2>
             <span className="text-xs text-zinc-500">Across all contractors</span>
@@ -169,41 +165,27 @@ export default async function AdminOverviewPage() {
   );
 }
 
-function Tile({
+function Kpi({
   icon: Icon,
   label,
   value,
   sub,
-  accent,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
   sub: string;
-  accent: "emerald" | "violet" | "sky" | "amber";
 }) {
-  const bg = {
-    emerald: "bg-accent-50 text-accent-700",
-    violet: "bg-violet-50 text-violet-700",
-    sky: "bg-sky-50 text-sky-700",
-    amber: "bg-amber-50 text-amber-700",
-  }[accent];
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-      <div className="flex items-center gap-2">
-        <span
-          className={`flex h-8 w-8 items-center justify-center rounded-lg ${bg}`}
-        >
-          <Icon className="h-4 w-4" />
-        </span>
-        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-          {label}
-        </span>
+    <div className="px-5 py-4">
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
+        <Icon className="h-4 w-4 text-zinc-400" />
+        {label}
       </div>
-      <div className="mt-3 font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900">
+      <div className="mt-2 text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
         {value}
       </div>
-      <div className="mt-1 text-xs text-zinc-500">{sub}</div>
+      <div className="mt-0.5 text-xs text-zinc-500">{sub}</div>
     </div>
   );
 }
@@ -220,7 +202,7 @@ function ActionLink({
   return (
     <Link
       href={href}
-      className="group flex flex-col gap-1 rounded-xl border border-zinc-200 bg-zinc-50/40 p-4 transition hover:border-accent-300 hover:bg-white"
+      className="group flex flex-col gap-1 rounded-lg border border-zinc-200 bg-white p-4 transition hover:border-accent-300 hover:bg-zinc-50/60"
     >
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-zinc-900">{title}</span>

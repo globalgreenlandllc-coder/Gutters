@@ -45,7 +45,7 @@ export function CreditsChip() {
               : "text-accent-600",
           )}
         />
-        <span className="tabular-nums">
+        <span className="font-label text-[11px] tabular-nums">
           {isAdmin ? "∞" : `${remaining} / ${total}`}
         </span>
         <span className="hidden sm:inline text-zinc-400">
@@ -68,7 +68,7 @@ export function CreditsChip() {
               className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-4 shadow-elevated"
             >
               <div className="flex items-baseline justify-between">
-                <span className="font-display text-2xl font-semibold tabular-nums text-zinc-900">
+                <span className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
                   {isAdmin ? "Unlimited" : remaining}
                 </span>
                 <span className="text-xs text-zinc-500">
@@ -83,7 +83,7 @@ export function CreditsChip() {
                       ? "bg-rose-500"
                       : low
                       ? "bg-amber-500"
-                      : "bg-gradient-to-r from-accent-500 to-accent-700",
+                      : "bg-accent-600",
                   )}
                   style={{ width: `${pct}%` }}
                 />
@@ -105,7 +105,7 @@ export function CreditsChip() {
                 <Link
                   href="/dashboard/settings"
                   onClick={() => setOpen(false)}
-                  className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-glow transition hover:bg-accent-700"
+                  className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-700"
                 >
                   <Zap className="h-3.5 w-3.5" />
                   Manage plan

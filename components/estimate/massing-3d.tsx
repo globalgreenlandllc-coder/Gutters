@@ -106,7 +106,7 @@ export function Massing3D({
 
   if (!model) {
     return (
-      <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-cyan-900/40 bg-slate-950 text-sm text-slate-400">
+      <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-slate-950 text-sm text-slate-400">
         3D view needs a roof outline — run a plan takeoff first.
       </div>
     );
@@ -185,7 +185,7 @@ export function Massing3D({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-cyan-900/40 bg-slate-950">
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950">
       <svg
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
         preserveAspectRatio="xMidYMid meet"
@@ -273,7 +273,7 @@ export function Massing3D({
 
       {/* Rotation controls */}
       <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex items-center gap-3 bg-gradient-to-t from-slate-950/90 to-transparent px-4 py-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-cyan-300">
+        <span className="font-label text-[11px] text-accent-300">
           Rotate
         </span>
         <input
@@ -282,7 +282,7 @@ export function Massing3D({
           max={360}
           value={yawDeg}
           onChange={(ev) => setYawDeg(Number(ev.target.value))}
-          className="h-1 flex-1 cursor-pointer accent-cyan-400"
+          className="h-1 flex-1 cursor-pointer accent-accent-400"
           aria-label="Rotate building"
         />
         <div className="flex gap-1">
@@ -299,7 +299,7 @@ export function Massing3D({
               className={
                 "rounded-md px-2 py-1 text-[11px] font-medium transition " +
                 (Math.abs(((yawDeg - deg) % 360 + 360) % 360) < 8
-                  ? "bg-cyan-500 text-slate-950"
+                  ? "bg-accent-500 text-white"
                   : "bg-slate-800 text-slate-300 hover:bg-slate-700")
               }
             >

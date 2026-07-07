@@ -1,16 +1,15 @@
 "use client";
 
 import { AuthGate } from "@/components/auth/auth-gate";
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { CalendarBoard } from "@/components/calendar/calendar-board";
 
 export default function CalendarPage() {
   return (
     <AuthGate>
-      <DashboardNav />
-      <main className="mx-auto w-full max-w-[1600px] px-4 pb-12 pt-6 sm:px-6">
+      <DashboardShell title="Calendar" contentClassName="max-w-[1600px]">
         <CalendarBoard />
-      </main>
+      </DashboardShell>
     </AuthGate>
   );
 }

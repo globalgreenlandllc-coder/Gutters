@@ -29,7 +29,7 @@ export function SignaturePad({
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.scale(dpr, dpr);
-    ctx.strokeStyle = "#0e7490";
+    ctx.strokeStyle = "#2e40e8";
     ctx.lineWidth = 2.4;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -87,7 +87,7 @@ export function SignaturePad({
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+        <label className="font-label text-[11px] text-zinc-500">
           Signature
         </label>
         <button
@@ -122,7 +122,7 @@ export function SignaturePad({
         <div className="pointer-events-none absolute bottom-2 left-3 right-3 border-t border-dashed border-zinc-300" />
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+        <label className="font-label text-[11px] text-zinc-500">
           Print name
         </label>
         <input

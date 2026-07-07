@@ -129,10 +129,10 @@ export function ElevationsView({
       {/* How-to + per-side gutter breakdown */}
       <div className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900">
         <div className="flex items-start gap-2">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent-500" />
           <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
             Read the gutters straight off each side: a{" "}
-            <span className="font-semibold text-cyan-600 dark:text-cyan-300">
+            <span className="font-semibold text-accent-600 dark:text-accent-300">
               flat (horizontal) roof edge
             </span>{" "}
             carries a gutter; a{" "}
@@ -161,7 +161,7 @@ export function ElevationsView({
                     (conflicted
                       ? "border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/30"
                       : p.hasGutter
-                        ? "border-cyan-200 bg-cyan-50/60 dark:border-cyan-800/50 dark:bg-cyan-950/20"
+                        ? "border-accent-200 bg-accent-50/60 dark:border-accent-800/50 dark:bg-accent-900/20"
                         : "border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40")
                   }
                 >
@@ -169,7 +169,7 @@ export function ElevationsView({
                     {p.label}
                   </div>
                   {p.hasGutter ? (
-                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-cyan-700 dark:text-cyan-300">
+                    <div className="mt-0.5 text-sm font-semibold tabular-nums text-accent-700 dark:text-accent-300">
                       {p.lf} LF
                       <span className="ml-1 text-[10px] font-normal text-zinc-500">
                         {p.runs} run{p.runs === 1 ? "" : "s"}
@@ -223,7 +223,7 @@ export function ElevationsView({
                   <button
                     type="button"
                     onClick={() => onTraceSheet(s.pageIndex)}
-                    className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    className="inline-flex items-center gap-1 rounded-md border border-accent-300 bg-accent-50 px-2 py-1 text-[11px] font-semibold text-accent-700 transition hover:bg-accent-100 dark:border-accent-800 dark:bg-accent-900/40 dark:text-accent-300"
                     title="Open this elevation in the trace tool — set scale, then draw the gutter eaves on the real drawing"
                   >
                     <PencilRuler className="h-3 w-3" />

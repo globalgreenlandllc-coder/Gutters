@@ -7,7 +7,7 @@ export default async function AdminPromptsPage() {
   return (
     <div className="mx-auto max-w-[1100px]">
       <header className="mb-2">
-        <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
           AI prompts
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-zinc-500">

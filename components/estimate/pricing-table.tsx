@@ -32,10 +32,10 @@ function decorate(item: LineItem): {
   const id = item.id;
   const name = item.name.toLowerCase();
   const t = {
-    emerald: {
-      ring: "ring-emerald-200",
-      bg: "bg-emerald-50",
-      text: "text-emerald-700",
+    accent: {
+      ring: "ring-accent-200",
+      bg: "bg-accent-50",
+      text: "text-accent-700",
     },
     sky: { ring: "ring-sky-200", bg: "bg-sky-50", text: "text-sky-700" },
     violet: {
@@ -52,9 +52,9 @@ function decorate(item: LineItem): {
     rose: { ring: "ring-rose-200", bg: "bg-rose-50", text: "text-rose-700" },
   };
   if (id === "gutter" || /gutter/.test(name))
-    return { Icon: Waves, tone: t.emerald };
+    return { Icon: Waves, tone: t.accent };
   if (id === "downspouts" || /downspout/.test(name))
-    return { Icon: ArrowDownToLine, tone: t.sky };
+    return { Icon: ArrowDownToLine, tone: t.rose };
   if (id === "outside-corners" || /outside.*corner/.test(name))
     return { Icon: CornerUpRight, tone: t.violet };
   if (id === "inside-corners" || /inside.*corner/.test(name))
@@ -67,7 +67,7 @@ function decorate(item: LineItem): {
     return { Icon: Zap, tone: t.sky };
   if (id === "labor" || /labor|install/.test(name))
     return { Icon: HardHat, tone: t.amber };
-  if (/guard|leaf|mesh/.test(name)) return { Icon: Shield, tone: t.emerald };
+  if (/guard|leaf|mesh/.test(name)) return { Icon: Shield, tone: t.sky };
   if (/repair|fascia|paint/.test(name))
     return { Icon: Hammer, tone: t.rose };
   return { Icon: Pencil, tone: t.zinc };
@@ -107,7 +107,7 @@ export function PricingTable({
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2 font-label text-[11px] text-zinc-500">
         <span>
           {items.length} line {items.length === 1 ? "item" : "items"}
         </span>
@@ -182,10 +182,10 @@ export function PricingTable({
                         widthClass="w-20"
                       />
                       <span className="ml-auto inline-flex items-center gap-1.5">
-                        <span className="text-[10px] uppercase tracking-wider text-zinc-400">
+                        <span className="font-label text-[10px] text-zinc-400">
                           Total
                         </span>
-                        <span className="text-sm font-bold tabular-nums text-zinc-900">
+                        <span className="text-sm font-semibold tabular-nums text-zinc-900">
                           {formatCurrency(total)}
                         </span>
                       </span>

@@ -69,18 +69,18 @@ export function NewEstimateDialog({
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           onClick={onClose}
         >
-          <div className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-zinc-900/40" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.97, opacity: 0 }}
-            transition={{ type: "spring", damping: 22, stiffness: 280 }}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated"
+            className="relative w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-elevated"
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -88,11 +88,11 @@ export function NewEstimateDialog({
 
             <div className="p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+                  <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                     New estimate
                   </h2>
                   <p className="text-xs text-zinc-500">
@@ -104,10 +104,10 @@ export function NewEstimateDialog({
 
               {/* Job-type toggle — affects scope-of-work language downstream */}
               <div className="mt-5 flex items-center gap-2 text-xs">
-                <span className="font-medium uppercase tracking-wider text-zinc-500">
+                <span className="font-label text-[10px] text-zinc-400">
                   Job
                 </span>
-                <div className="inline-flex rounded-full border border-zinc-200 bg-white/80 p-0.5 shadow-sm">
+                <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                   {(
                     [
                       { value: "replacement", label: "Replacement", Icon: Hammer },
@@ -121,10 +121,10 @@ export function NewEstimateDialog({
                         type="button"
                         onClick={() => setJobType(opt.value)}
                         className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium transition",
+                          "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition",
                           active
-                            ? "bg-accent-600 text-white shadow-sm"
-                            : "text-zinc-600 hover:text-zinc-900",
+                            ? "bg-zinc-100 text-zinc-900"
+                            : "text-zinc-500 hover:text-zinc-900",
                         )}
                       >
                         <opt.Icon className="h-3.5 w-3.5" />
@@ -143,23 +143,23 @@ export function NewEstimateDialog({
                 }}
                 className="mt-5"
               >
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                <label className="font-label text-[10px] text-zinc-400">
                   Property address
                 </label>
-                <div className="mt-1.5 flex h-14 items-center gap-2 rounded-2xl border border-zinc-200 bg-white pl-4 pr-2 shadow-sm focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
-                  <MapPin className="h-5 w-5 shrink-0 text-zinc-400" />
+                <div className="mt-1.5 flex h-12 items-center gap-2 rounded-lg border border-zinc-200 bg-white pl-3.5 pr-1.5 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+                  <MapPin className="h-4 w-4 shrink-0 text-zinc-400" />
                   <input
                     autoFocus
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
                     autoComplete="off"
-                    className="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
+                    className="w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
                   />
                   <button
                     type="submit"
                     disabled={!address.trim() || submitting !== null}
-                    className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-accent-600 px-4 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 active:translate-y-px"
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50 active:translate-y-px"
                   >
                     <Sparkles className="h-4 w-4" />
                     {submitting === "ai" ? "Starting…" : "AI estimate"}
@@ -169,7 +169,7 @@ export function NewEstimateDialog({
               </form>
 
               {/* Divider */}
-              <div className="my-5 flex items-center gap-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+              <div className="font-label my-5 flex items-center gap-3 text-[10px] text-zinc-400">
                 <span className="h-px flex-1 bg-zinc-200" />
                 or
                 <span className="h-px flex-1 bg-zinc-200" />
@@ -180,9 +180,9 @@ export function NewEstimateDialog({
                 type="button"
                 onClick={runManual}
                 disabled={submitting !== null}
-                className="group flex w-full items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-accent-400 hover:bg-accent-50/30 disabled:cursor-not-allowed disabled:opacity-60"
+                className="group flex w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-accent-400 hover:bg-accent-50/30 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-700 transition group-hover:bg-accent-100 group-hover:text-accent-700">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-600 transition group-hover:bg-accent-50 group-hover:text-accent-700">
                   <Pencil className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">

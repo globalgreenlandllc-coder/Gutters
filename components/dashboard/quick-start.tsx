@@ -367,29 +367,22 @@ export function QuickStart() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-2xl border border-accent-200/60 bg-gradient-to-br from-accent-50 via-white to-sky-50 p-6 shadow-elevated"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+      className="surface relative p-6 shadow-card"
     >
-      <div className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-accent-300/40 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-10 left-1/3 h-32 w-32 rounded-full bg-sky-300/30 blur-3xl" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent-400/50 to-transparent" />
-
       <div className="relative">
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-accent-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-accent-700 shadow-sm backdrop-blur">
+        <div className="font-label inline-flex items-center gap-1.5 text-[11px] text-accent-600">
           <Sparkles className="h-3 w-3" />
           New estimate
-          <span className="ml-1 inline-flex items-center rounded-md bg-accent-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-accent-800">
-            AI
-          </span>
         </div>
-        <h2 className="font-display mt-4 text-balance text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">
+        <h2 className="mt-2 text-balance text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">
           {source === "address"
             ? "Type one address. Get an AI takeoff."
             : "Upload construction plans. Get a gutter layout."}
         </h2>
-        <p className="mt-1 max-w-xl text-sm text-zinc-600">
+        <p className="mt-1 max-w-xl text-sm text-zinc-500">
           {source === "address"
             ? "Eaves, downspouts, corners, waste — all auto-measured from aerial imagery in under a minute."
             : "Drop a roof plan PDF or image. Claude reads it, classifies every eave vs rake, and builds the layout you can edit and send."}
@@ -432,15 +425,15 @@ export function QuickStart() {
                 }
               }}
               className={cn(
-                "mt-4 flex h-14 items-center gap-2 rounded-2xl border bg-white pl-4 pr-2 transition",
+                "mt-4 flex h-12 items-center gap-2 rounded-lg border bg-white pl-3.5 pr-1.5 transition",
                 focused
                   ? "border-accent-500 ring-2 ring-accent-500/15"
-                  : "border-zinc-200 shadow-sm",
+                  : "border-zinc-200",
               )}
             >
               <MapPin
                 className={cn(
-                  "h-5 w-5 shrink-0 transition",
+                  "h-4 w-4 shrink-0 transition",
                   focused ? "text-accent-600" : "text-zinc-400",
                 )}
               />
@@ -488,11 +481,11 @@ export function QuickStart() {
                 role="combobox"
                 aria-expanded={showDropdown}
                 aria-autocomplete="list"
-                className="w-full bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400"
+                className="w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
               />
               <button
                 type="submit"
-                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-accent-600 px-4 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 active:translate-y-px"
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 active:translate-y-px"
               >
                 <Sparkles className="h-4 w-4" />
                 Estimate
@@ -503,9 +496,9 @@ export function QuickStart() {
             {showDropdown && (
               <ul
                 role="listbox"
-                className="absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-2xl border border-zinc-200 bg-white py-1.5 shadow-elevated"
+                className="absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-xl border border-zinc-200 bg-white py-1.5 shadow-elevated"
               >
-                <li className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                <li className="font-label px-3 pb-1 pt-0.5 text-[10px] text-zinc-400">
                   Recent addresses
                 </li>
                 {suggestions.map((s, i) => (
@@ -540,9 +533,9 @@ export function QuickStart() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-accent-300 bg-white/60 px-6 py-7 text-sm text-zinc-600 transition hover:border-accent-500 hover:bg-white"
+                className="flex w-full items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-7 text-sm text-zinc-600 transition hover:border-accent-500 hover:bg-accent-50/30"
               >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-100 text-accent-700">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
                   <Upload className="h-5 w-5" />
                 </div>
                 <div className="text-left">
@@ -555,8 +548,8 @@ export function QuickStart() {
                 </div>
               </button>
             ) : (
-              <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-100 text-accent-700">
+              <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
                   <FileUp className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -571,7 +564,7 @@ export function QuickStart() {
                   type="button"
                   onClick={() => setFile(null)}
                   disabled={uploading}
-                  className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                  className="rounded-md p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                   aria-label="Remove file"
                 >
                   <X className="h-4 w-4" />
@@ -580,7 +573,7 @@ export function QuickStart() {
                   type="button"
                   onClick={onUpload}
                   disabled={uploading}
-                  className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-accent-600 px-4 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60 active:translate-y-px"
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60 active:translate-y-px"
                 >
                   {uploading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -628,7 +621,7 @@ export function QuickStart() {
                 key={s}
                 type="button"
                 onClick={() => goAddress(s)}
-                className="rounded-full border border-zinc-200 bg-white/70 px-2.5 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
+                className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
               >
                 {s}
               </button>
@@ -664,10 +657,10 @@ function SegmentedToggle<T extends string>({
 }) {
   return (
     <div className="inline-flex items-center gap-2 text-xs">
-      <span className="font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label text-[10px] text-zinc-400">
         {label}
       </span>
-      <div className="inline-flex rounded-full border border-zinc-200 bg-white/80 p-0.5 shadow-sm">
+      <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
         {options.map((opt) => {
           const active = opt.value === value;
           return (
@@ -676,10 +669,10 @@ function SegmentedToggle<T extends string>({
               type="button"
               onClick={() => onChange(opt.value)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium transition",
+                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition",
                 active
-                  ? "bg-accent-600 text-white shadow-sm"
-                  : "text-zinc-600 hover:text-zinc-900",
+                  ? "bg-zinc-100 text-zinc-900"
+                  : "text-zinc-500 hover:text-zinc-900",
               )}
             >
               <opt.Icon className="h-3.5 w-3.5" />

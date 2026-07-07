@@ -10,7 +10,7 @@ import { Footer } from "@/components/landing/footer";
 
 export default function HomePage() {
   return (
-    <main className="relative">
+    <main className="relative bg-paper">
       <Nav />
       <Hero />
       <DashboardCascade />

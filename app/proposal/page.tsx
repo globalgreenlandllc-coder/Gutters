@@ -264,7 +264,7 @@ function Inner() {
             <button
               type="button"
               onClick={() => setEditDrawerOpen(true)}
-              className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-xl ring-1 ring-black/10 transition hover:bg-zinc-800 print:hidden"
+              className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-sm font-semibold text-white shadow-elevated ring-1 ring-black/10 transition hover:bg-zinc-800 print:hidden"
             >
               <Pencil className="h-4 w-4" />
               Edit price & details
@@ -280,12 +280,12 @@ function Inner() {
                 type="button"
                 aria-label="Close editor"
                 onClick={() => setEditDrawerOpen(false)}
-                className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
+                className="absolute inset-0 bg-ink/40"
               />
-              <aside className="absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col gap-3 overflow-y-auto bg-zinc-50 p-4 shadow-2xl">
+              <aside className="absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-zinc-200 bg-zinc-50 p-4 shadow-elevated">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                    <div className="font-label text-[10px] text-zinc-500">
                       Live edit
                     </div>
                     <div className="text-sm font-medium text-zinc-900">

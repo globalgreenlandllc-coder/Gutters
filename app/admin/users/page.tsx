@@ -8,7 +8,7 @@ export default async function AdminUsersPage() {
     <div className="mx-auto max-w-[1400px] space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Contractors
           </h1>
           <p className="mt-1 text-sm text-zinc-500">

@@ -260,7 +260,7 @@ function Group({
 }) {
   return (
     <div>
-      <div className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="mb-2 font-label text-[11px] text-zinc-500">
         {label}
       </div>
       {children}

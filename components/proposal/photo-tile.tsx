@@ -86,7 +86,7 @@ export function PhotoTile({
         />
       </svg>
       <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-transparent" />
-      <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full border border-white/60 bg-white/80 px-2 py-0.5 text-[10px] font-medium text-zinc-700 backdrop-blur">
+      <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full border border-white/60 bg-white/90 px-2 py-0.5 text-[10px] font-medium text-zinc-700">
         <ImageIcon className="h-2.5 w-2.5" />
         Photo
       </div>

@@ -116,7 +116,7 @@ export function ClientPortalView({
           />
 
           <section className="space-y-4">
-            <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
               Sign & accept
             </h2>
             <SignaturePad
@@ -191,7 +191,7 @@ export function ClientPortalView({
 function PortalNav({ proposal }: { proposal: Proposal }) {
   const profile = useProfile();
   return (
-    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
+    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white print:hidden">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
         <div className="flex items-center gap-2.5">
           <BrandMark
@@ -204,7 +204,7 @@ function PortalNav({ proposal }: { proposal: Proposal }) {
             <div className="text-sm font-semibold text-zinc-900">
               {proposal.contractor.company}
             </div>
-            <div className="mt-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <div className="font-label mt-0.5 text-[10px] text-zinc-500">
               Proposal
             </div>
           </div>
@@ -235,7 +235,7 @@ function Header({ proposal }: { proposal: Proposal }) {
         />
         <div className="min-w-0 flex-1">
           <Badge>For {proposal.client.name}</Badge>
-          <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <h1 className="display-hero mt-3 text-balance text-3xl text-zinc-900 sm:text-4xl">
             Your gutter quote from{" "}
             <span className="text-gradient">
               {proposal.contractor.company}
@@ -264,7 +264,7 @@ function ContactCard({
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-      <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="font-label text-[11px] text-zinc-500">
         Questions? Talk to your contractor
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">

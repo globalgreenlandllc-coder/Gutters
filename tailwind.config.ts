@@ -7,39 +7,47 @@ const config: Config = {
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
         display: ["var(--font-display)", "system-ui", "sans-serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
         accent: {
-          50: "#ecfdf5",
-          100: "#d1fae5",
-          200: "#a7f3d0",
-          300: "#6ee7b7",
-          400: "#34d399",
-          500: "#10b981",
-          600: "#059669",
-          700: "#047857",
-          800: "#065f46",
-          900: "#064e3b",
+          50: "#eef1ff",
+          100: "#e0e6ff",
+          200: "#c7d0ff",
+          300: "#a3b1ff",
+          400: "#7d8bfc",
+          500: "#5563f6",
+          600: "#2e40e8",
+          700: "#2434c6",
+          800: "#202da0",
+          900: "#1f2a7e",
+        },
+        ink: "#0d0d12",
+        paper: "#edf0f6",
+        stripe: {
+          violet: "#9d5cf6",
+          blue: "#4353ff",
+          coral: "#f8717e",
+          salmon: "#fda374",
         },
       },
       backgroundImage: {
         "grid-light":
-          "linear-gradient(rgba(24,24,27,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(24,24,27,0.05) 1px, transparent 1px)",
-        "mesh-soft":
-          "radial-gradient(at 18% 12%, rgba(167,243,208,0.45) 0px, transparent 45%), radial-gradient(at 85% 8%, rgba(186,230,253,0.45) 0px, transparent 45%), radial-gradient(at 75% 92%, rgba(254,215,170,0.35) 0px, transparent 45%), radial-gradient(at 12% 88%, rgba(196,181,253,0.30) 0px, transparent 45%)",
+          "linear-gradient(rgba(13,13,18,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(13,13,18,0.05) 1px, transparent 1px)",
+        "cta-gradient":
+          "linear-gradient(100deg, #3d4eff 0%, #8a53f9 48%, #f9655b 100%)",
       },
       backgroundSize: {
         grid: "44px 44px",
       },
       boxShadow: {
-        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -2px rgba(15, 23, 42, 0.05)",
+        card: "0 1px 2px rgba(13, 13, 18, 0.05)",
         elevated:
-          "0 2px 8px rgba(15,23,42,0.06), 0 16px 40px -12px rgba(15,23,42,0.10)",
-        glow: "0 0 0 1px rgba(5,150,105,0.18), 0 8px 24px -4px rgba(5,150,105,0.28)",
+          "0 2px 8px rgba(13,13,18,0.06), 0 16px 40px -12px rgba(13,13,18,0.10)",
+        glow: "0 0 0 1px rgba(46,64,232,0.16), 0 8px 24px -4px rgba(46,64,232,0.28)",
         "glow-lg":
-          "0 0 0 1px rgba(5,150,105,0.22), 0 14px 40px -6px rgba(5,150,105,0.32)",
-        "ring-soft":
-          "0 0 0 4px rgba(5,150,105,0.10)",
+          "0 0 0 1px rgba(46,64,232,0.20), 0 14px 40px -6px rgba(46,64,232,0.32)",
+        "ring-soft": "0 0 0 4px rgba(46,64,232,0.10)",
       },
       animation: {
         "fade-in": "fade-in 0.6s ease-out both",

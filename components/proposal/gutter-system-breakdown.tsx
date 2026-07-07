@@ -229,9 +229,9 @@ export function GutterSystemBreakdown({
       </div>
 
       {runs.length > 0 && (
-        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
           <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-600">
+            <div className="font-label flex items-center gap-2 text-[11px] text-zinc-500">
               <Layers className="h-3.5 w-3.5 text-zinc-400" />
               Gutter runs
             </div>
@@ -258,7 +258,7 @@ export function GutterSystemBreakdown({
                     </div>
                     <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-500"
+                        className="h-full rounded-full bg-accent-500"
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -328,11 +328,11 @@ function Stat({
 }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-3 transition hover:border-accent-300 hover:shadow-sm">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+      <div className="font-label flex items-center gap-1.5 text-[10px] text-zinc-500">
         <Icon className="h-3 w-3" />
         {label}
       </div>
-      <div className="mt-1 font-display text-xl font-semibold tabular-nums text-zinc-900">
+      <div className="mt-1 text-xl font-semibold tracking-tight tabular-nums text-zinc-900">
         {value}
       </div>
       {sub && <div className="text-[11px] text-zinc-500">{sub}</div>}

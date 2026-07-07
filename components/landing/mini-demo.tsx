@@ -75,22 +75,19 @@ export function MiniDemo({ onOpenFullDemo }: { onOpenFullDemo: () => void }) {
       transition={{ duration: 0.7, ease: [0.2, 0.8, 0.2, 1], delay: 0.2 }}
       className="relative"
     >
-      {/* Soft glow under the card */}
-      <div className="absolute inset-x-6 top-6 -z-10 h-full rounded-3xl bg-gradient-to-br from-accent-300/35 to-cyan-300/35 blur-2xl" />
-
       <button
         type="button"
         onClick={onOpenFullDemo}
         aria-label="Open full demo"
-        className="group relative block w-full overflow-hidden rounded-3xl bg-zinc-950 text-left shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45)] ring-1 ring-black/10 transition hover:ring-accent-500/40"
+        className="group relative block w-full overflow-hidden rounded-xl bg-ink text-left ring-1 ring-black/10 transition hover:ring-accent-500/40"
       >
         {/* Chrome bar — feels like a real app window */}
-        <div className="flex items-center justify-between gap-3 border-b border-white/5 bg-zinc-900/80 px-4 py-2 backdrop-blur">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-ink px-4 py-2">
           <div className="flex items-center gap-2.5">
             <span className="flex h-5 w-5 items-center justify-center rounded-md bg-accent-600 text-white">
               <Sparkles className="h-3 w-3" />
             </span>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-white/80">
+            <span className="font-label text-[11px] text-white/80">
               Live AI takeoff
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-rose-300 ring-1 ring-inset ring-rose-500/30">
@@ -124,7 +121,7 @@ export function MiniDemo({ onOpenFullDemo }: { onOpenFullDemo: () => void }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.25 }}
-                className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-300 ring-1 ring-inset ring-emerald-500/30 backdrop-blur"
+                className="inline-flex items-center gap-1.5 rounded-full bg-ink/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent-200 ring-1 ring-inset ring-accent-500/40 backdrop-blur"
               >
                 {phase === "load" && (
                   <>
@@ -140,13 +137,13 @@ export function MiniDemo({ onOpenFullDemo }: { onOpenFullDemo: () => void }) {
                 )}
                 {phase === "detect" && (
                   <>
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-stripe-blue" />
                     Detecting roof · 98%
                   </>
                 )}
                 {phase === "ds" && (
                   <>
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-stripe-coral" />
                     Placing downspouts
                   </>
                 )}
@@ -181,16 +178,16 @@ export function MiniDemo({ onOpenFullDemo }: { onOpenFullDemo: () => void }) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 14, scale: 0.95 }}
                 transition={{ duration: 0.4, ease: [0.2, 0.8, 0.2, 1] }}
-                className="absolute bottom-3 right-3 w-[220px] rounded-2xl bg-white/95 p-3 shadow-xl ring-1 ring-black/10 backdrop-blur"
+                className="absolute bottom-3 right-3 w-[220px] rounded-xl border border-zinc-200 bg-white/95 p-3 shadow-elevated backdrop-blur"
               >
                 <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider">
                   <span className="text-zinc-500">Estimate</span>
-                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                  <span className="inline-flex items-center gap-1 text-accent-700">
                     <TrendingUp className="h-3 w-3" />
                     Pro Shield
                   </span>
                 </div>
-                <div className="font-display mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900">
+                <div className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900">
                   $4,280
                 </div>
                 <dl className="mt-1.5 grid grid-cols-3 gap-1 text-[10px]">
@@ -215,7 +212,7 @@ export function MiniDemo({ onOpenFullDemo }: { onOpenFullDemo: () => void }) {
         </div>
 
         {/* Footer caption */}
-        <div className="flex items-center justify-between gap-3 border-t border-white/5 bg-zinc-900/80 px-4 py-2 text-[11px] text-white/60 backdrop-blur">
+        <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-ink px-4 py-2 text-[11px] text-white/60">
           <span>
             Sample property ·{" "}
             <span className="text-white/85">1247 Maple Ridge Dr</span>
@@ -303,8 +300,8 @@ function AerialSvg({
           <stop offset="100%" stopColor="#14532d" />
         </radialGradient>
         <linearGradient id="md-scan" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(34,197,94,0)" />
-          <stop offset="100%" stopColor="rgba(34,197,94,0.45)" />
+          <stop offset="0%" stopColor="rgba(67,83,255,0)" />
+          <stop offset="100%" stopColor="rgba(67,83,255,0.45)" />
         </linearGradient>
         <filter id="md-shadow">
           <feGaussianBlur in="SourceAlpha" stdDeviation="3" />
@@ -332,7 +329,7 @@ function AerialSvg({
                 y1={0}
                 x2={i * 50}
                 y2={VH}
-                stroke="rgba(34,197,94,0.2)"
+                stroke="rgba(67,83,255,0.25)"
                 strokeWidth="0.5"
               />
             ))}
@@ -343,7 +340,7 @@ function AerialSvg({
                 y1={i * 50}
                 x2={VW}
                 y2={i * 50}
-                stroke="rgba(34,197,94,0.2)"
+                stroke="rgba(67,83,255,0.25)"
                 strokeWidth="0.5"
               />
             ))}
@@ -362,10 +359,10 @@ function AerialSvg({
               cy={VH / 2}
               r="40"
               fill="none"
-              stroke="rgba(34,197,94,0.5)"
+              stroke="rgba(67,83,255,0.55)"
               strokeWidth="1.5"
             />
-            <circle cx={VW / 2} cy={VH / 2} r="5" fill="#22c55e" />
+            <circle cx={VW / 2} cy={VH / 2} r="5" fill="#4353ff" />
           </motion.g>
         </>
       )}
@@ -485,7 +482,7 @@ function AerialSvg({
             width="524"
             height="204"
             fill="none"
-            stroke="rgba(34,197,94,0.75)"
+            stroke="rgba(67,83,255,0.8)"
             strokeWidth="1.5"
             strokeDasharray="6 6"
             rx="4"
@@ -500,7 +497,7 @@ function AerialSvg({
             x="0"
             width={VW}
             height="3"
-            fill="rgba(34,197,94,0.9)"
+            fill="rgba(67,83,255,0.9)"
             y={100 + (VH - 200) * detectT}
           />
           <rect
@@ -532,7 +529,7 @@ function AerialSvg({
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                stroke="#22c55e"
+                stroke="#4353ff"
                 strokeWidth="9"
                 strokeLinecap="round"
                 opacity="0.25"
@@ -545,7 +542,7 @@ function AerialSvg({
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                stroke="#22c55e"
+                stroke="#4353ff"
                 strokeWidth="3.5"
                 strokeLinecap="round"
                 initial={{ pathLength: 0, opacity: 0 }}
@@ -567,7 +564,7 @@ function AerialSvg({
                   height="18"
                   rx="9"
                   fill="rgba(15,23,42,0.94)"
-                  stroke="#22c55e"
+                  stroke="#4353ff"
                   strokeWidth="1"
                 />
                 <text
@@ -576,7 +573,7 @@ function AerialSvg({
                   textAnchor="middle"
                   fontSize="10"
                   fontWeight="700"
-                  fill="#bbf7d0"
+                  fill="#c7d0ff"
                   fontFamily="ui-sans-serif, system-ui"
                 >
                   {lengthFt} LF
@@ -601,12 +598,12 @@ function AerialSvg({
               damping: 17,
             }}
           >
-            <circle cx={ds.x} cy={ds.y} r="16" fill="rgba(14,165,233,0.3)" />
+            <circle cx={ds.x} cy={ds.y} r="16" fill="rgba(248,113,126,0.3)" />
             <circle
               cx={ds.x}
               cy={ds.y}
               r="10"
-              fill="#0ea5e9"
+              fill="#f8717e"
               stroke="white"
               strokeWidth="2.5"
             />

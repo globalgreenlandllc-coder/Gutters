@@ -413,7 +413,7 @@ function Header({
           <CalendarDays className="h-4 w-4" />
         </div>
         <div>
-          <h1 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
             Schedule
           </h1>
           <p className="text-xs text-zinc-500">
@@ -513,7 +513,7 @@ function CalendarGrid({
       : null;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
+    <div className="surface overflow-hidden shadow-card">
       {/* Day header row */}
       <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-zinc-200 bg-zinc-50/60">
         <div />
@@ -528,7 +528,7 @@ function CalendarGrid({
                 isToday && "bg-accent-50",
               )}
             >
-              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+              <div className="font-label text-[10px] text-zinc-500">
                 {f.weekday}
               </div>
               <div
@@ -563,7 +563,7 @@ function CalendarGrid({
             {Array.from({ length: HOURS_PER_DAY }, (_, i) => (
               <div
                 key={i}
-                className="border-t border-zinc-100 pl-2 text-[10px] uppercase tracking-wider text-zinc-400"
+                className="font-label border-t border-zinc-100 pl-2 text-[10px] text-zinc-400"
                 style={{ height: HOUR_PX }}
               >
                 {((DAY_START_HOUR + i) % 12 || 12) +
@@ -673,7 +673,7 @@ function EventTile({
       onDragStart={onDragStart}
       onClick={onClick}
       className={cn(
-        "group absolute inset-x-1 cursor-grab overflow-hidden rounded-lg ring-1 active:cursor-grabbing",
+        "group absolute inset-x-1 cursor-grab overflow-hidden rounded-md ring-1 active:cursor-grabbing",
         meta.bg,
         meta.ring,
         appt.status === "CANCELLED" && "opacity-40 line-through",
@@ -684,8 +684,12 @@ function EventTile({
         backgroundColor: appt.colorHex ?? undefined,
       }}
     >
-      <div className="flex items-center gap-1 px-2 pt-1">
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", meta.chip)} />
+      {/* Left type-color bar */}
+      <span
+        className={cn("absolute inset-y-0 left-0 w-[3px]", meta.chip)}
+        aria-hidden
+      />
+      <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
         <span
           className={cn(
             "truncate text-[11px] font-semibold",
@@ -696,7 +700,7 @@ function EventTile({
         </span>
       </div>
       <div
-        className={cn("truncate px-2 pb-1 text-[10px] opacity-80", meta.text)}
+        className={cn("truncate pl-3 pr-2 pb-1 text-[10px] opacity-80", meta.text)}
       >
         {fmtTime(start)} – {fmtTime(end)}
         {appt.address ? ` · ${appt.address.split(",")[0]}` : ""}
@@ -734,7 +738,7 @@ function Sidebar({
   const proposals = items.filter((i) => i.kind === "proposal");
 
   return (
-    <aside className="space-y-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+    <aside className="surface space-y-3 p-3 shadow-card">
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-accent-600" />
         <h2 className="text-sm font-semibold text-zinc-900">Drag onto week</h2>
@@ -745,7 +749,7 @@ function Sidebar({
           value={filter}
           onChange={(e) => onFilter(e.target.value)}
           placeholder="Filter…"
-          className="h-8 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+          className="input h-8 pl-8 pr-2 text-xs"
         />
       </div>
       {items.length === 0 ? (
@@ -786,7 +790,7 @@ function Group({
 }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+      <div className="font-label mb-1.5 flex items-center justify-between px-1 text-[10px] text-zinc-500">
         <span>{title}</span>
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-zinc-600">
           {count}
@@ -1069,9 +1073,9 @@ function ModalShell({
         className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-lg space-y-3 rounded-2xl border border-zinc-200 bg-white p-5 shadow-elevated">
+      <div className="surface relative z-10 w-full max-w-lg space-y-3 p-5 shadow-elevated">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
             {title}
           </h2>
           <button
@@ -1222,14 +1226,13 @@ function Form(props: {
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+    <div className="font-label mb-1 text-[10px] text-zinc-500">
       {children}
     </div>
   );
 }
 
-const inputCls =
-  "block w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15";
+const inputCls = "input";
 
 /* ------------------------------------------------------------------ */
 /*  datetime-local <-> ISO helpers                                    */

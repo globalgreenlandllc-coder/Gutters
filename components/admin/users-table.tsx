@@ -61,7 +61,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
 
   return (
     <>
-      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
+      <div className="surface overflow-hidden shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
           <div className="flex flex-wrap gap-1">
             {(
@@ -91,10 +91,10 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition",
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition",
                     active
                       ? "bg-zinc-900 text-white"
-                      : "text-zinc-600 hover:bg-zinc-100",
+                      : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
                   )}
                 >
                   {f.label}
@@ -123,7 +123,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           </div>
         </div>
 
-        <div className="hidden grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 lg:grid">
+        <div className="font-label hidden grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-400 lg:grid">
           <div>Contractor · Email</div>
           <div>Plan</div>
           <div className="text-right">Credits</div>
@@ -144,14 +144,14 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           <ul>
             {filtered.map((u) => (
               <li key={u.id} className="border-b border-zinc-100 last:border-0">
-                <div className="grid grid-cols-1 gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
+                <div className="grid grid-cols-1 gap-2 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-zinc-900">
                         {u.company || u.contractorName || u.email}
                       </span>
                       {u.role === "SUPER_ADMIN" && (
-                        <Badge tone="rose">Admin</Badge>
+                        <Badge tone="violet">Admin</Badge>
                       )}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-zinc-500">
@@ -247,7 +247,7 @@ function StatusBadge({ status }: { status: AdminUserRow["status"] }) {
     );
   }
   return (
-    <Badge tone="accent">
+    <Badge tone="emerald">
       <CheckCircle2 className="h-3 w-3" />
       Active
     </Badge>
@@ -268,7 +268,7 @@ function PaymentsBadge({ payments }: { payments: AdminUserRow["payments"] }) {
     .filter(Boolean)
     .join(" + ");
   return (
-    <Badge tone="accent" className="gap-1">
+    <Badge tone="emerald" className="gap-1">
       <CreditCard className="h-3 w-3" />
       {labels}
     </Badge>
@@ -395,7 +395,7 @@ function CreditsDialog({
     <Dialog open={!!user} onClose={onClose} title="Adjust credits">
       {user && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {user.company || user.contractorName || user.email}
             </div>
@@ -408,19 +408,19 @@ function CreditsDialog({
           </div>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Adjustment (positive = add bonus credits, negative = mark used)
             </span>
             <input
               type="number"
               value={delta}
               onChange={(e) => setDelta(parseInt(e.target.value, 10) || 0)}
-              className="num-input mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-base font-medium text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input num-input mt-1.5 h-11 text-base font-medium"
             />
           </label>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -428,7 +428,7 @@ function CreditsDialog({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Comp for failed AI run on 1247 Maple Ridge"
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
@@ -478,7 +478,7 @@ function StatusConfirm({
     >
       {confirm && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {confirm.user.company || confirm.user.email}
             </div>
@@ -492,7 +492,7 @@ function StatusConfirm({
           </p>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -504,7 +504,7 @@ function StatusConfirm({
                   ? "e.g. Repeated chargebacks"
                   : "e.g. Resolved billing issue"
               }
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
@@ -557,7 +557,7 @@ function ImpersonateDialog({
     <Dialog open={!!user} onClose={onClose} title="Impersonate contractor">
       {user && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm">
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm">
             <div className="flex items-start gap-2">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
               <div className="text-amber-900">
@@ -574,7 +574,7 @@ function ImpersonateDialog({
             </div>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {user.company || user.contractorName || user.email}
             </div>
@@ -582,7 +582,7 @@ function ImpersonateDialog({
           </div>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -590,7 +590,7 @@ function ImpersonateDialog({
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Debugging Stripe Connect on their account"
               autoFocus
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
@@ -643,7 +643,7 @@ function Dialog({
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-elevated"
+            className="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-elevated"
           >
             <button
               onClick={onClose}
@@ -651,7 +651,7 @@ function Dialog({
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               {title}
             </h2>
             <div className="mt-4">{children}</div>

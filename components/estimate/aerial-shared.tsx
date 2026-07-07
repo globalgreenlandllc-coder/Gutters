@@ -64,16 +64,16 @@ export const THEMES: Record<
     label: "#5eead4",
   },
   schematic: {
-    eave: "#059669",
-    eaveSelected: "#0e7490",
+    eave: "#4353ff",
+    eaveSelected: "#2e40e8",
     eaveGlowFilter: null,
-    downspout: "#0e7490",
-    downspoutCore: "#0e7490",
+    downspout: "#f8717e",
+    downspoutCore: "#f8717e",
     downspoutGlowFilter: null,
     overlay: null,
-    handleStroke: "#0e7490",
+    handleStroke: "#2e40e8",
     handleFill: "white",
-    label: "#0e7490",
+    label: "#2e40e8",
   },
 };
 
@@ -473,7 +473,7 @@ export function AerialReadonly({
               filter:
                 theme === "tactical"
                   ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                  : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))",
+                  : "drop-shadow(0 1px 4px rgba(67,83,255,0.45))",
             }}
           />
         ))}

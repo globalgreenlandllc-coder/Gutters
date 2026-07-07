@@ -195,7 +195,7 @@ export function GutterPreview({ config }: { config: EstimateConfig }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-2 border-b border-zinc-100 bg-white/70 px-3 py-2 backdrop-blur">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+        <div className="font-label text-[10px] text-zinc-500">
           Live preview
         </div>
         <div className="flex items-center gap-2">

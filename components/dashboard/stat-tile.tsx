@@ -6,6 +6,11 @@ import { cn } from "@/lib/utils";
 
 type IconCmp = React.ComponentType<{ className?: string }>;
 
+/**
+ * Hyperline KPI cell. Renders borderless — pages compose 2–4 of these
+ * inside a single bordered row (see the Overview page: a grid with
+ * `gap-px bg-zinc-100` produces the divide-x hairlines at every breakpoint).
+ */
 export function StatTile({
   label,
   value,
@@ -23,60 +28,38 @@ export function StatTile({
   spark?: number[];
   index?: number;
   Icon?: IconCmp;
-  /** Visual tone of the icon chip + accent line. */
+  /** Visual tone of the icon chip. */
   tone?: "emerald" | "violet" | "sky" | "amber";
 }) {
-  const toneClasses = {
-    emerald: {
-      chipBg: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-      accent: "from-emerald-400 to-emerald-600",
-    },
-    violet: {
-      chipBg: "bg-violet-50 text-violet-700 ring-violet-200",
-      accent: "from-violet-400 to-violet-600",
-    },
-    sky: {
-      chipBg: "bg-sky-50 text-sky-700 ring-sky-200",
-      accent: "from-sky-400 to-sky-600",
-    },
-    amber: {
-      chipBg: "bg-amber-50 text-amber-700 ring-amber-200",
-      accent: "from-amber-400 to-amber-600",
-    },
+  const chip = {
+    emerald: "bg-emerald-50 text-emerald-600",
+    violet: "bg-violet-50 text-violet-600",
+    sky: "bg-sky-50 text-sky-600",
+    amber: "bg-amber-50 text-amber-600",
   }[tone];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: index * 0.05 }}
-      whileHover={{ y: -2 }}
-      className="group relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5 shadow-card transition hover:border-zinc-300 hover:shadow-elevated"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, delay: index * 0.04 }}
+      className="bg-white p-5"
     >
-      {/* Top-edge accent line, brighter on hover. */}
-      <div
-        className={cn(
-          "absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r opacity-60 transition group-hover:opacity-100",
-          toneClasses.accent,
-        )}
-      />
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-          {label}
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm text-zinc-500">{label}</div>
         {Icon && (
           <div
             className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset",
-              toneClasses.chipBg,
+              "flex h-7 w-7 items-center justify-center rounded-md",
+              chip,
             )}
           >
             <Icon className="h-3.5 w-3.5" />
           </div>
         )}
       </div>
-      <div className="mt-3 flex items-end justify-between gap-3">
-        <div className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+      <div className="mt-2 flex items-end justify-between gap-3">
+        <div className="text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
           {value}
         </div>
         {spark && <Sparkline data={spark} positive={positive} />}
@@ -85,10 +68,10 @@ export function StatTile({
         <div className="mt-1.5 flex items-center gap-1.5 text-xs">
           <span
             className={cn(
-              "inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium",
+              "inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-medium",
               positive
-                ? "bg-accent-50 text-accent-700"
-                : "bg-rose-50 text-rose-700",
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-rose-50 text-rose-600",
             )}
           >
             {positive ? (
@@ -98,7 +81,6 @@ export function StatTile({
             )}
             {delta}
           </span>
-          <span className="text-zinc-400">vs. last month</span>
         </div>
       )}
     </motion.div>
@@ -119,8 +101,8 @@ function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
-  const stroke = positive ? "#059669" : "#e11d48";
-  const fill = positive ? "rgba(5,150,105,0.10)" : "rgba(225,29,72,0.10)";
+  const stroke = positive ? "#4353ff" : "#f8717e";
+  const fill = positive ? "rgba(67,83,255,0.16)" : "rgba(248,113,126,0.14)";
 
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>

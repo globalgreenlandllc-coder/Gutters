@@ -47,7 +47,7 @@ export function ProposalTopBar({
   deleting?: boolean;
 }) {
   return (
-    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
+    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white print:hidden">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-3 px-4">
         <Link
           href="/dashboard"
@@ -214,7 +214,7 @@ function OverflowMenu({
         <MoreHorizontal className="h-4 w-4" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+        <div className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
           {!confirming ? (
             <button
               type="button"

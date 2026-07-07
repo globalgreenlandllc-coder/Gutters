@@ -121,14 +121,14 @@ export function SendModal({
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           onClick={handleClose}
         >
-          <div className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-ink/40" />
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated"
+            className="relative w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-elevated"
           >
             <button
               onClick={handleClose}
@@ -144,7 +144,7 @@ export function SendModal({
                     <Mail className="h-5 w-5" />
                   </div>
                   <div>
-                    <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+                    <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                       Send proposal
                     </h2>
                     <p className="text-xs text-zinc-500">
@@ -261,7 +261,7 @@ export function SendModal({
                 >
                   <Check className="h-6 w-6" />
                 </motion.div>
-                <h2 className="font-display mt-4 text-xl font-semibold tracking-tight text-zinc-900">
+                <h2 className="mt-4 text-xl font-semibold tracking-tight text-zinc-900">
                   Proposal sent
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
@@ -302,7 +302,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2">
-      <span className="w-20 shrink-0 text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label w-20 shrink-0 text-[10px] text-zinc-500">
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>

@@ -1,8 +1,8 @@
 "use client";
 
-import { CheckCircle2, Palette, Sparkles } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { BrandProfileSection } from "@/components/dashboard/brand-profile-section";
 import { PaymentsSection } from "@/components/dashboard/payments-section";
 import { Button } from "@/components/ui/button";
@@ -12,17 +12,11 @@ import { useSession } from "@/lib/auth-mock";
 export default function SettingsPage() {
   return (
     <AuthGate>
-      <main className="min-h-screen">
-        <DashboardNav />
-        <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-          <header>
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900">
-              Settings
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              Configure your brand, payments, and pricing baselines.
-            </p>
-          </header>
+      <DashboardShell title="Settings" contentClassName="max-w-4xl">
+        <div className="space-y-6">
+          <p className="text-sm text-zinc-500">
+            Configure your brand, payments, and pricing baselines.
+          </p>
 
           <BrandProfileSection />
 
@@ -31,10 +25,10 @@ export default function SettingsPage() {
           <BillingSection />
 
           <Section
-            icon={Palette}
+            eyebrow="Pricing"
             title="Baseline pricing"
             sub="Per-LF prices, labor minimums, and tax rates flow into every estimate."
-            badge={{ label: "Configured", tone: "accent" }}
+            badge={{ label: "Configured", tone: "emerald" }}
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={'6" K-style aluminum'} value="$12.00 / LF" />
@@ -46,7 +40,7 @@ export default function SettingsPage() {
             </div>
           </Section>
         </div>
-      </main>
+      </DashboardShell>
     </AuthGate>
   );
 }
@@ -62,15 +56,15 @@ function BillingSection() {
 
   return (
     <Section
-      icon={Sparkles}
+      eyebrow="Billing"
       title="Plan & credits"
       sub="$50/month · 12 estimates included · $5 each additional address."
-      badge={{ label: "Pro plan · Active", tone: "accent" }}
+      badge={{ label: "Pro plan · Active", tone: "emerald" }}
     >
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
-        <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50/40 p-4">
           <div className="flex items-baseline justify-between">
-            <span className="font-display text-3xl font-semibold tabular-nums text-zinc-900">
+            <span className="text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
               {isAdmin ? "Unlimited" : remaining}
             </span>
             <span className="text-xs text-zinc-500">
@@ -79,7 +73,7 @@ function BillingSection() {
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-accent-500 to-accent-700"
+              className="h-full rounded-full bg-accent-600"
               style={{ width: `${isAdmin ? 100 : 100 - pct}%` }}
             />
           </div>
@@ -100,7 +94,7 @@ function BillingSection() {
             <Stat label="Add-on rate" value="$5 / address" />
           </div>
         </div>
-        <div className="flex flex-col justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-4">
+        <div className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4">
           <div>
             <div className="text-sm font-semibold text-zinc-900">Pro plan</div>
             <div className="mt-1 text-xs text-zinc-500">
@@ -131,35 +125,31 @@ function BillingSection() {
 }
 
 function Section({
-  icon: Icon,
+  eyebrow,
   title,
   sub,
   badge,
   children,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
+  eyebrow: string;
   title: string;
   sub: string;
-  badge?: { label: string; tone: "accent" | "amber" };
+  badge?: { label: string; tone: "accent" | "amber" | "emerald" };
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+    <section className="surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700">
-            <Icon className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
-              {title}
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">{sub}</p>
-          </div>
+        <div>
+          <div className="font-label text-[11px] text-zinc-400">{eyebrow}</div>
+          <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
+            {title}
+          </h2>
+          <p className="mt-0.5 text-sm text-zinc-500">{sub}</p>
         </div>
         {badge && (
           <Badge tone={badge.tone}>
-            {badge.tone === "accent" && <CheckCircle2 className="h-3 w-3" />}
+            {badge.tone !== "amber" && <CheckCircle2 className="h-3 w-3" />}
             {badge.label}
           </Badge>
         )}
@@ -171,10 +161,8 @@ function Section({
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 px-3 py-2.5">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-        {label}
-      </div>
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 px-3 py-2.5">
+      <div className="font-label text-[10px] text-zinc-400">{label}</div>
       <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
     </div>
   );
@@ -183,9 +171,7 @@ function Field({ label, value }: { label: string; value: string }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">
-        {label}
-      </div>
+      <div className="font-label text-[10px] text-zinc-400">{label}</div>
       <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
     </div>
   );

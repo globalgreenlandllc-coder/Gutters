@@ -54,23 +54,22 @@ export function PaymentsSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+    <section className="surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700">
-            <CreditCard className="h-5 w-5" />
+        <div>
+          <div className="font-label flex items-center gap-1.5 text-[11px] text-zinc-400">
+            <CreditCard className="h-3.5 w-3.5" />
+            Payments
           </div>
-          <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
-              Get paid — Stripe or Square
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              Paste a payment link from Stripe or Square. Homeowners see it on
-              accepted proposals and pay you directly.
-            </p>
-          </div>
+          <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
+            Get paid — Stripe or Square
+          </h2>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Paste a payment link from Stripe or Square. Homeowners see it on
+            accepted proposals and pay you directly.
+          </p>
         </div>
-        <Badge tone={connectedCount > 0 ? "accent" : "amber"}>
+        <Badge tone={connectedCount > 0 ? "emerald" : "amber"}>
           {connectedCount > 0 ? (
             <>
               <Check className="h-3 w-3" />
@@ -164,7 +163,7 @@ function UrlField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label mb-1.5 block text-[10px] text-zinc-400">
         {label}
       </span>
       <input
@@ -173,7 +172,7 @@ function UrlField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+        className="input"
       />
       <span className="mt-1.5 block text-[11px] leading-relaxed text-zinc-500">
         {help}

@@ -62,10 +62,10 @@ const interactionMeta: Record<
 > = {
   UNREAD: {
     label: "Unread",
-    text: "text-red-300",
-    bg: "bg-red-500/10",
-    ring: "ring-red-500/40",
-    dot: "bg-red-400",
+    text: "text-stripe-coral",
+    bg: "bg-stripe-coral/10",
+    ring: "ring-stripe-coral/40",
+    dot: "bg-stripe-coral",
   },
   CONTACTED: {
     label: "Contacted",
@@ -76,10 +76,10 @@ const interactionMeta: Record<
   },
   VISITED: {
     label: "Visited",
-    text: "text-blue-300",
-    bg: "bg-blue-500/10",
-    ring: "ring-blue-500/40",
-    dot: "bg-blue-400",
+    text: "text-sky-300",
+    bg: "bg-sky-500/10",
+    ring: "ring-sky-500/40",
+    dot: "bg-sky-400",
   },
   BIDDING: {
     label: "Bidding",
@@ -90,26 +90,26 @@ const interactionMeta: Record<
   },
   NOT_INTERESTED: {
     label: "Not interested",
-    text: "text-slate-300",
-    bg: "bg-slate-500/10",
-    ring: "ring-slate-500/40",
-    dot: "bg-slate-400",
+    text: "text-zinc-300",
+    bg: "bg-white/5",
+    ring: "ring-white/15",
+    dot: "bg-zinc-400",
   },
 };
 
 const leadStatusMeta: Record<LeadStatus, { label: string; classes: string }> = {
-  APPLIED: { label: "Applied", classes: "text-indigo-300 bg-indigo-500/10 ring-indigo-500/30" },
+  APPLIED: { label: "Applied", classes: "text-accent-300 bg-accent-500/10 ring-accent-500/30" },
   UNDER_REVIEW: { label: "Under Review", classes: "text-amber-300 bg-amber-500/10 ring-amber-500/30" },
   ISSUED: { label: "Issued", classes: "text-emerald-300 bg-emerald-500/10 ring-emerald-500/30" },
-  INSPECTION: { label: "Inspection", classes: "text-blue-300 bg-blue-500/10 ring-blue-500/30" },
-  FINALED: { label: "Finaled", classes: "text-slate-300 bg-slate-500/10 ring-slate-500/30" },
-  UNKNOWN: { label: "Unknown", classes: "text-slate-400 bg-slate-500/10 ring-slate-500/30" },
+  INSPECTION: { label: "Inspection", classes: "text-sky-300 bg-sky-500/10 ring-sky-500/30" },
+  FINALED: { label: "Finaled", classes: "text-zinc-300 bg-white/5 ring-white/15" },
+  UNKNOWN: { label: "Unknown", classes: "text-zinc-400 bg-white/5 ring-white/15" },
 };
 
 const relevanceMeta: Record<string, { label: string; classes: string; flames: number }> = {
-  high: { label: "Hot lead", classes: "text-orange-300 bg-orange-500/10 ring-orange-500/40", flames: 3 },
+  high: { label: "Hot lead", classes: "text-stripe-coral bg-stripe-coral/10 ring-stripe-coral/40", flames: 3 },
   medium: { label: "Warm lead", classes: "text-amber-300 bg-amber-500/10 ring-amber-500/30", flames: 2 },
-  low: { label: "Cold lead", classes: "text-slate-400 bg-slate-500/10 ring-slate-500/30", flames: 1 },
+  low: { label: "Cold lead", classes: "text-zinc-400 bg-white/5 ring-white/15", flames: 1 },
 };
 
 // Build a per-city owner-lookup deep link. Most counties expose a free parcel
@@ -210,14 +210,14 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 220 }}
-        className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-slate-950 border-l border-slate-800/80 shadow-2xl flex flex-col z-50 text-slate-200"
+        className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-ink border-l border-white/10 shadow-2xl flex flex-col z-50 text-zinc-200"
       >
         {/* Hero header */}
-        <div className="relative px-5 pt-5 pb-6 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-b border-slate-800/80">
+        <div className="relative px-5 pt-5 pb-6 bg-zinc-950 border-b border-white/10">
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="absolute top-3 right-3 p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition"
+            className="absolute top-3 right-3 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition"
           >
             <X size={18} />
           </button>
@@ -247,7 +247,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
               </span>
             )}
             {lead.categorizedTrade && lead.categorizedTrade !== "Other" && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 text-xs font-medium ring-1 ring-emerald-500/30">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent-500/10 text-accent-300 text-xs font-medium ring-1 ring-accent-500/30">
                 <Sparkles size={12} />
                 {lead.categorizedTrade}
               </span>
@@ -271,13 +271,13 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           <h3 className="text-xl font-semibold text-white leading-tight tracking-tight">
             {lead.address}
           </h3>
-          <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+          <div className="mt-2 flex items-center gap-2 text-sm text-zinc-400">
             <MapPin size={14} />
             <span>{lead.sourceCity}</span>
             {issuedInfo && (
               <>
-                <span className="text-slate-700">•</span>
-                <Calendar size={12} className="text-slate-500" />
+                <span className="text-zinc-700">•</span>
+                <Calendar size={12} className="text-zinc-500" />
                 <span title={issuedInfo.isPermitIssueDate ? `Permit issued ${issuedInfo.dateStr}` : `Indexed ${issuedInfo.dateStr}`}>
                   {issuedInfo.isPermitIssueDate ? "Issued" : "Indexed"} {issuedInfo.ago}
                 </span>
@@ -297,24 +297,24 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* Stat cards */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+            <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">
+              <div className="font-label text-[10px] text-zinc-500 flex items-center gap-1 mb-1">
                 <DollarSign size={11} /> Est. Value
               </div>
               <div className="font-semibold text-white text-base">
                 {lead.projectValue ? `$${lead.projectValue.toLocaleString()}` : "—"}
               </div>
             </div>
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+            <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">
+              <div className="font-label text-[10px] text-zinc-500 flex items-center gap-1 mb-1">
                 <Calendar size={11} /> Issued
               </div>
               <div className="font-semibold text-white text-base truncate" title={issuedInfo?.dateStr}>
                 {lead.issuedDate ? issuedInfo?.dateStr : "—"}
               </div>
             </div>
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+            <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">
+              <div className="font-label text-[10px] text-zinc-500 flex items-center gap-1 mb-1">
                 <Home size={11} /> Units planned
               </div>
               <div className="font-semibold text-white text-base">
@@ -323,8 +323,8 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                   : "—"}
               </div>
             </div>
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-              <div className="text-slate-500 text-[11px] uppercase tracking-wider flex items-center gap-1 mb-1">
+            <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">
+              <div className="font-label text-[10px] text-zinc-500 flex items-center gap-1 mb-1">
                 <Wrench size={11} /> Work
               </div>
               <div className="font-semibold text-white text-base truncate" title={lead.workClass ?? undefined}>
@@ -336,7 +336,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           {/* Parsed fixtures / items involved */}
           {lead.fixtures && (
             <div>
-              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2 flex items-center gap-1.5">
+              <h4 className="font-label text-[10px] text-zinc-500 mb-2 flex items-center gap-1.5">
                 <Wrench size={11} /> Items in this permit
               </h4>
               <div className="flex flex-wrap gap-1.5">
@@ -347,7 +347,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                   .map((f, i) => (
                     <span
                       key={i}
-                      className="text-[11px] px-2 py-1 rounded-md bg-slate-900/80 border border-slate-800 text-slate-300"
+                      className="text-[11px] px-2 py-1 rounded-md bg-zinc-900/80 border border-white/10 text-zinc-300"
                     >
                       {f.trim()}
                     </span>
@@ -362,14 +362,14 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
               href={directionsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 px-3 py-2.5 rounded-xl transition"
+              className="flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition"
             >
               <Navigation size={14} />
               Directions
             </a>
             <button
               onClick={handleCopyAddress}
-              className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-sm text-slate-200 px-3 py-2.5 rounded-xl transition"
+              className="flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition"
             >
               {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy address"}
@@ -378,20 +378,20 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
 
           {/* AI summary callout */}
           {lead.aiSummary && (
-            <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/30 p-3 rounded-xl">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-300 font-semibold mb-1">
+            <div className="bg-accent-500/10 border border-accent-500/30 p-3 rounded-xl">
+              <div className="flex items-center gap-1.5 font-label text-[10px] text-accent-300 mb-1">
                 <Sparkles size={11} /> AI Summary
               </div>
-              <p className="text-sm text-slate-200 leading-relaxed">{lead.aiSummary}</p>
+              <p className="text-sm text-zinc-200 leading-relaxed">{lead.aiSummary}</p>
             </div>
           )}
 
           {/* Permit description */}
           <div>
-            <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+            <h4 className="font-label text-[10px] text-zinc-500 mb-2">
               Original Permit Description
             </h4>
-            <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl text-sm text-slate-300 leading-relaxed">
+            <div className="bg-zinc-900/60 border border-white/10 p-3 rounded-xl text-sm text-zinc-300 leading-relaxed">
               {lead.originalDescription}
             </div>
           </div>
@@ -399,7 +399,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           {/* Contact paths — owner, contractor, parcel viewer */}
           {(lead.ownerName || lead.contractorName || ownerUrl) && (
             <div>
-              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              <h4 className="font-label text-[10px] text-zinc-500 mb-2">
                 Contact Paths
               </h4>
               <div className="space-y-2">
@@ -408,16 +408,16 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                     href={ownerSearchUrl ?? "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
-                      <User size={14} className="text-emerald-300 shrink-0" />
+                      <User size={14} className="text-accent-300 shrink-0" />
                       <span className="flex flex-col min-w-0">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Property owner</span>
+                        <span className="font-label text-[9px] text-zinc-500">Property owner</span>
                         <span className="truncate">{lead.ownerName}</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
                   </a>
                 )}
                 {lead.contractorName && (
@@ -425,16 +425,16 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                     href={contractorSearchUrl ?? "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <HardHat size={14} className="text-amber-300 shrink-0" />
                       <span className="flex flex-col min-w-0">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Contractor</span>
+                        <span className="font-label text-[9px] text-zinc-500">Contractor</span>
                         <span className="truncate">{lead.contractorName}</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
                   </a>
                 )}
                 {ownerUrl && (
@@ -442,16 +442,16 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                     href={ownerUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 px-3 py-2.5 rounded-xl text-sm text-slate-200 transition group"
+                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <Building2 size={14} className="text-sky-300 shrink-0" />
                       <span className="flex flex-col min-w-0">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-500">Parcel records</span>
+                        <span className="font-label text-[9px] text-zinc-500">Parcel records</span>
                         <span className="truncate">County parcel viewer</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-slate-500 group-hover:text-slate-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
                   </a>
                 )}
               </div>
@@ -460,7 +460,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
 
           {/* CRM status segmented control */}
           <div>
-            <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+            <h4 className="font-label text-[10px] text-zinc-500 mb-2">
               Your Status
             </h4>
             <div className="grid grid-cols-2 gap-2">
@@ -474,10 +474,10 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ring-1 ${
                       active
                         ? `${m.bg} ${m.text} ${m.ring}`
-                        : "bg-slate-900 text-slate-400 ring-slate-800 hover:bg-slate-800 hover:text-slate-200"
+                        : "bg-zinc-900 text-zinc-400 ring-white/10 hover:bg-zinc-800 hover:text-zinc-200"
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${active ? m.dot : "bg-slate-600"}`} />
+                    <span className={`w-2 h-2 rounded-full ${active ? m.dot : "bg-zinc-600"}`} />
                     {m.label}
                   </button>
                 );
@@ -488,7 +488,7 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
           {/* Notes */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+              <h4 className="font-label text-[10px] text-zinc-500">
                 Private Notes
               </h4>
               {savedFlash && (
@@ -501,12 +501,12 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add notes about this lead..."
-              className="w-full bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-transparent transition resize-none"
+              className="w-full bg-zinc-900/60 border border-white/10 rounded-xl p-3 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-transparent transition resize-none"
               rows={4}
             />
             <button
               onClick={handleSaveNotes}
-              className="mt-2 w-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm font-medium py-2 rounded-lg ring-1 ring-emerald-500/30 transition"
+              className="mt-2 w-full bg-accent-600 hover:bg-accent-500 text-white text-sm font-medium py-2 rounded-lg transition"
             >
               Save Notes
             </button>

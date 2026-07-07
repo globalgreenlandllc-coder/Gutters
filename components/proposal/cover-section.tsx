@@ -25,13 +25,13 @@ export function CoverSection({
         <div className="min-w-0">
           <Badge>Proposal</Badge>
           {readOnly ? (
-            <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+            <h1 className="display-hero mt-3 text-balance text-3xl text-zinc-900 sm:text-4xl">
               Gutter replacement at <br className="hidden sm:block" />
               <span className="text-gradient">{proposal.address || "—"}</span>
             </h1>
           ) : (
             <div className="mt-3">
-              <div className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+              <div className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
                 Gutter replacement at
               </div>
               <div className="group relative mt-1">
@@ -42,7 +42,7 @@ export function CoverSection({
                   }
                   placeholder="123 Main St, City, ST 00000"
                   aria-label="Property address"
-                  className="font-display w-[26rem] max-w-full rounded-lg border border-zinc-200 bg-transparent px-2 py-1 text-2xl font-semibold tracking-tight text-accent-700 outline-none transition placeholder:text-zinc-300 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15 sm:text-3xl"
+                  className="w-[26rem] max-w-full rounded-lg border border-zinc-200 bg-transparent px-2 py-1 text-2xl font-semibold tracking-tight text-accent-700 outline-none transition placeholder:text-zinc-300 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15 sm:text-3xl"
                 />
                 <Pencil className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 opacity-0 transition group-hover:opacity-100" />
               </div>
@@ -57,7 +57,7 @@ export function CoverSection({
             size="lg"
           />
           <div className="text-right">
-            <div className="text-xs uppercase tracking-wider text-zinc-500">
+            <div className="font-label text-[10px] text-zinc-500">
               Prepared by
             </div>
             <div className="mt-0.5 font-semibold text-zinc-900">
@@ -96,10 +96,10 @@ export function CoverSection({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 px-3 py-2.5">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+      <div className="font-label text-[10px] text-zinc-500">
         {label}
       </div>
-      <div className="mt-0.5 truncate text-sm font-medium text-zinc-900">
+      <div className="mt-0.5 truncate text-sm font-medium tabular-nums text-zinc-900">
         {value}
       </div>
     </div>

@@ -44,8 +44,8 @@ export function BuilderSidebar({
 
   return (
     <aside className="space-y-4">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="font-label text-[11px] text-zinc-500">
           Most popular
         </div>
         <div className="mt-1 flex items-baseline gap-2">
@@ -69,10 +69,10 @@ export function BuilderSidebar({
                   ),
                 })
               }
-              className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums"
+              className="text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums"
             />
           ) : (
-            <span className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+            <span className="text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
               —
             </span>
           )}
@@ -129,7 +129,7 @@ export function BuilderSidebar({
           <button
             type="button"
             onClick={() => onEditMaterials(recommended.pkg.id)}
-            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
           >
             <Layers className="h-4 w-4" />
             Edit materials & spec
@@ -176,8 +176,8 @@ export function BuilderSidebar({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="font-label text-[11px] text-zinc-500">
           Recipient
         </div>
         <input

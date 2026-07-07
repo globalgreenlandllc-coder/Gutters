@@ -347,13 +347,13 @@ function MapControls({
   const activeCount = chips.length;
 
   const selectBase =
-    "bg-slate-800 text-sm text-white rounded-lg px-3 py-2 border border-slate-700 outline-none focus:border-emerald-500";
+    "bg-zinc-900 text-sm text-white rounded-lg px-3 py-2 border border-white/10 outline-none focus:border-accent-500";
 
   return (
-    <div className="absolute top-4 left-4 right-4 sm:right-auto z-10 bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-800 shadow-2xl overflow-hidden max-w-[min(900px,calc(100vw-2rem))]">
+    <div className="absolute top-4 left-4 right-4 sm:right-auto z-10 bg-ink/95 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden max-w-[min(900px,calc(100vw-2rem))]">
       {/* Row 1: Presets + Search button */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-b border-slate-800/60">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-1">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-b border-white/10">
+        <span className="font-label text-[10px] text-zinc-500 mr-1">
           Quick
         </span>
         {PRESETS.map((p) => {
@@ -364,8 +364,8 @@ function MapControls({
               onClick={() => (active ? clearAll() : applyPreset(p))}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition ring-1 ${
                 active
-                  ? "bg-emerald-500/15 text-emerald-200 ring-emerald-500/50"
-                  : "bg-slate-800/70 text-slate-300 ring-slate-700 hover:bg-slate-800 hover:text-white"
+                  ? "bg-accent-500/15 text-accent-200 ring-accent-500/50"
+                  : "bg-white/5 text-zinc-300 ring-white/10 hover:bg-white/10 hover:text-white"
               }`}
             >
               <p.Icon size={12} />
@@ -378,8 +378,8 @@ function MapControls({
           onClick={() => setAdvancedOpen((v) => !v)}
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition ring-1 ${
             advancedOpen
-              ? "bg-slate-800 text-white ring-slate-700"
-              : "bg-slate-900/70 text-slate-300 ring-slate-800 hover:text-white"
+              ? "bg-white/10 text-white ring-white/15"
+              : "bg-white/5 text-zinc-300 ring-white/10 hover:text-white"
           }`}
         >
           <SlidersHorizontal size={12} />
@@ -388,7 +388,7 @@ function MapControls({
         <button
           onClick={handleSearchClick}
           disabled={isLoading}
-          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"
+          className="bg-accent-600 hover:bg-accent-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"
         >
           {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
           Search this area
@@ -397,7 +397,7 @@ function MapControls({
 
       {/* Row 2: Advanced filters (collapsible) */}
       {advancedOpen && (
-        <div className="flex flex-wrap gap-2 px-3 py-2.5 border-b border-slate-800/60">
+        <div className="flex flex-wrap gap-2 px-3 py-2.5 border-b border-white/10">
           <select
             className={selectBase}
             value={filters.projectKind}
@@ -503,15 +503,15 @@ function MapControls({
 
       {/* Row 3: Active filter chips */}
       {activeCount > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 bg-slate-900/40">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-1">
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 bg-white/[0.03]">
+          <span className="font-label text-[10px] text-zinc-500 mr-1">
             Active
           </span>
           {chips.map((c) => (
             <button
               key={c.key}
               onClick={c.clear}
-              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-500/40 hover:bg-emerald-500/25 transition"
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-accent-500/15 text-accent-200 ring-1 ring-accent-500/40 hover:bg-accent-500/25 transition"
             >
               {c.label}
               <X size={10} />
@@ -519,7 +519,7 @@ function MapControls({
           ))}
           <button
             onClick={clearAll}
-            className="ml-1 text-[11px] text-slate-400 hover:text-white underline-offset-2 hover:underline"
+            className="ml-1 text-[11px] text-zinc-400 hover:text-white underline-offset-2 hover:underline"
           >
             Clear all
           </button>
@@ -774,7 +774,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full bg-slate-950">
+    // Desktop: shell header is h-16 (4rem). Mobile: sticky top bar (h-14 +
+    // nav-chip row ≈ 6rem) + page-title row (≈ 3.25rem) sit above the map,
+    // so subtract ~9.25rem there. min-h keeps the cockpit usable on short
+    // landscape viewports.
+    <div className="flex h-[calc(100dvh-9.25rem)] min-h-[420px] w-full bg-ink lg:h-[calc(100vh-4rem)]">
       <APIProvider apiKey={apiKey} libraries={["visualization"]}>
         <LeadsSidebar
           ref={sidebarRef}
@@ -837,14 +841,14 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
 
           {/* Result indicator + view-mode toggle (top-right of map) */}
           <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
-            <div className="pointer-events-auto inline-flex rounded-xl border border-slate-800 bg-slate-900/90 p-1 shadow-xl backdrop-blur-md">
+            <div className="pointer-events-auto inline-flex rounded-xl border border-white/10 bg-ink/90 p-1 shadow-xl backdrop-blur-md">
               <button
                 onClick={() => setViewMode("pins")}
                 title="Show individual leads"
                 className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
                   viewMode === "pins"
-                    ? "bg-emerald-500/15 text-emerald-200 ring-1 ring-inset ring-emerald-500/40"
-                    : "text-slate-400 hover:text-white"
+                    ? "bg-accent-500/15 text-accent-200 ring-1 ring-inset ring-accent-500/40"
+                    : "text-zinc-400 hover:text-white"
                 }`}
               >
                 <MapPin size={12} />
@@ -855,8 +859,8 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                 title="Show density heatmap (weighted by project value)"
                 className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
                   viewMode === "heatmap"
-                    ? "bg-orange-500/15 text-orange-200 ring-1 ring-inset ring-orange-500/40"
-                    : "text-slate-400 hover:text-white"
+                    ? "bg-stripe-coral/15 text-stripe-coral ring-1 ring-inset ring-stripe-coral/40"
+                    : "text-zinc-400 hover:text-white"
                 }`}
               >
                 <Activity size={12} />
@@ -864,7 +868,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               </button>
             </div>
             {resultCount !== null && isLoading && (
-              <div className="pointer-events-none rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-2 text-xs text-slate-300 shadow-xl backdrop-blur-md">
+              <div className="pointer-events-none rounded-lg border border-white/10 bg-ink/90 px-3 py-2 text-xs text-zinc-300 shadow-xl backdrop-blur-md">
                 <span className="flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" /> Searching…
                 </span>
@@ -890,12 +894,12 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             resultCount === 0 &&
             leads.length === 0 && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
-                <div className="pointer-events-auto max-w-sm rounded-2xl border border-slate-700 bg-slate-900/95 px-5 py-4 text-center shadow-2xl backdrop-blur">
-                  <Inbox className="mx-auto h-7 w-7 text-slate-500" />
+                <div className="pointer-events-auto max-w-sm rounded-xl border border-white/10 bg-ink/95 px-5 py-4 text-center shadow-2xl backdrop-blur">
+                  <Inbox className="mx-auto h-7 w-7 text-zinc-500" />
                   <div className="mt-2 text-sm font-medium text-white">
                     No leads in this view
                   </div>
-                  <p className="mt-1 text-xs leading-snug text-slate-400">
+                  <p className="mt-1 text-xs leading-snug text-zinc-400">
                     Pan or zoom to a different area, or clear active
                     filters (e.g. preset chips, date range) to widen the
                     search.
@@ -967,11 +971,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                     <div
                       className={`flex items-center justify-center rounded-full border-2 border-white shadow-lg transition-all ${
                         isSelected
-                          ? "ring-4 ring-emerald-400/70"
+                          ? "ring-4 ring-accent-400/70"
                           : isHovered
-                            ? "ring-4 ring-cyan-400/60"
+                            ? "ring-4 ring-stripe-violet/60"
                             : isHot
-                              ? "ring-2 ring-orange-400/70"
+                              ? "ring-2 ring-stripe-coral/70"
                               : ""
                       }`}
                       style={{
@@ -988,7 +992,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                     </div>
                     {isHot && !isSelected && (
                       <span
-                        className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-orange-500 ring-2 ring-white animate-pulse"
+                        className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-stripe-coral ring-2 ring-white animate-pulse"
                         aria-hidden
                       />
                     )}

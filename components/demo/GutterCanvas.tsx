@@ -54,9 +54,10 @@ export interface GutterCanvasProps {
   className?: string;
 }
 
-const EAVE = "#06b6d4"; // cyan — guttered runs
+const EAVE = "#4353ff"; // royal blue — guttered runs
 const RAKE = "#64748b"; // slate — rakes / ridges / valleys (context)
-const HANDLE = "#22d3ee";
+const HANDLE = "#7d8bfc";
+const DOWNSPOUT = "#f8717e"; // coral — downspout drops
 const CALIBRATE = "#f59e0b"; // amber — calibration line
 
 const HIT_RADIUS = 14; // px (world units) — click tolerance for handles/downspouts
@@ -331,7 +332,7 @@ export default function GutterCanvas({
                   textAnchor="middle"
                   fontSize={13}
                   fontWeight={600}
-                  fill={s.kind === "eave" ? "#a5f3fc" : "#cbd5e1"}
+                  fill={s.kind === "eave" ? "#c7d0ff" : "#cbd5e1"}
                   fontFamily="ui-monospace, SFMono-Regular, monospace"
                 >
                   {label}
@@ -416,13 +417,13 @@ export default function GutterCanvas({
         {/* 7 — downspouts */}
         {downspouts.map((d) => (
           <g key={d.id} className={mode === "downspout" ? "cursor-pointer" : ""}>
-            <circle cx={d.at.x} cy={d.at.y} r={9} fill={EAVE} opacity={0.25} />
+            <circle cx={d.at.x} cy={d.at.y} r={9} fill={DOWNSPOUT} opacity={0.25} />
             <circle
               cx={d.at.x}
               cy={d.at.y}
               r={5}
-              fill={EAVE}
-              stroke="#ecfeff"
+              fill={DOWNSPOUT}
+              stroke="#fff1f2"
               strokeWidth={1.5}
             />
           </g>

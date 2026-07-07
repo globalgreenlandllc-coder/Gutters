@@ -129,22 +129,21 @@ export function BrandProfileSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+    <section className="surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700">
-            <Building2 className="h-5 w-5" />
+        <div>
+          <div className="font-label flex items-center gap-1.5 text-[11px] text-zinc-400">
+            <Building2 className="h-3.5 w-3.5" />
+            Brand
           </div>
-          <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
-              Brand & company profile
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              Shown on every proposal cover and the homeowner portal.
-            </p>
-          </div>
+          <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
+            Brand & company profile
+          </h2>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Shown on every proposal cover and the homeowner portal.
+          </p>
         </div>
-        <Badge tone={dirty ? "amber" : "accent"}>
+        <Badge tone={dirty ? "amber" : "emerald"}>
           {dirty ? "Unsaved changes" : (
             <>
               <Check className="h-3 w-3" />
@@ -194,7 +193,7 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-1.5 block text-[10px] text-zinc-400">
               Tagline
             </label>
             <textarea
@@ -202,7 +201,7 @@ export function BrandProfileSection() {
               onChange={(e) => update("tagline", e.target.value)}
               rows={2}
               maxLength={120}
-              className="w-full resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
             />
             <div className="mt-1 text-right text-[11px] text-zinc-400">
               {draft.tagline.length}/120
@@ -210,10 +209,10 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-2 block text-[10px] text-zinc-400">
               Logo image
             </label>
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-3">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/40 p-3">
               <BrandMark
                 initials={draft.logo.initials || "GU"}
                 tone={draft.logo.tone}
@@ -269,7 +268,7 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-2 block text-[10px] text-zinc-400">
               Logo color (used when no image is set)
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -315,12 +314,12 @@ export function BrandProfileSection() {
 function ProposalPreview({ draft }: { draft: ContractorProfile }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-3 rounded-2xl border border-zinc-200 bg-zinc-50/40 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-4"
     >
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium uppercase tracking-wider text-zinc-500">
+        <span className="font-label text-[10px] text-zinc-400">
           Live preview
         </span>
         <span className="inline-flex items-center gap-1 text-zinc-500">
@@ -382,14 +381,14 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label mb-1.5 block text-[10px] text-zinc-400">
         {label}
       </span>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+        className="input"
       />
       {hint && (
         <span className="mt-1 block text-[11px] text-zinc-400">{hint}</span>

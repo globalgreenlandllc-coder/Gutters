@@ -76,7 +76,7 @@ export default function BlueprintCanvas({
     .join(" ");
 
   return (
-    <div className="relative w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+    <div className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-ink">
       <svg
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
         className="block w-full h-auto"
@@ -186,24 +186,24 @@ export default function BlueprintCanvas({
       </svg>
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center gap-3 rounded-lg bg-slate-900/85 px-3 py-2 text-[11px] backdrop-blur-md">
+      <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-zinc-950/85 px-3 py-2 backdrop-blur-md">
         <div className="flex items-center gap-1.5">
           <span className="inline-block w-5 h-1 rounded bg-cyan-500" />
-          <span className="text-slate-200">Gutter run</span>
+          <span className="font-label text-[10px] text-zinc-200">Gutter run</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full bg-cyan-700 ring-1 ring-white" />
-          <span className="text-slate-200">Downspout</span>
+          <span className="font-label text-[10px] text-zinc-200">Downspout</span>
         </div>
         <div className="flex items-center gap-1.5">
           <svg width={20} height={4} className="overflow-visible">
             <line x1={0} y1={2} x2={20} y2={2} stroke="#64748b" strokeWidth={2} strokeDasharray="4 3" />
           </svg>
-          <span className="text-slate-400">Excluded (rake / ridge / hip / valley)</span>
+          <span className="font-label text-[10px] text-zinc-400">Excluded (rake / ridge / hip / valley)</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="inline-block w-5 h-px bg-slate-400" />
-          <span className="text-slate-400">Footprint</span>
+          <span className="inline-block w-5 h-px bg-zinc-400" />
+          <span className="font-label text-[10px] text-zinc-400">Footprint</span>
         </div>
       </div>
     </div>

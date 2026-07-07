@@ -35,7 +35,6 @@ export function AcceptedScreen({
   return (
     <div className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[700px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
       <div className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4 py-16">
         <Logo />
@@ -43,7 +42,7 @@ export function AcceptedScreen({
           initial={{ scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", damping: 14, stiffness: 220 }}
-          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200 shadow-glow"
+          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200 shadow-card"
         >
           <Check className="h-10 w-10" />
         </motion.div>
@@ -52,7 +51,7 @@ export function AcceptedScreen({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="font-display mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
+          className="mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
         >
           You're all set,{" "}
           <span className="text-gradient">
@@ -145,7 +144,7 @@ function PayButton({
 }) {
   const cls =
     variant === "primary"
-      ? "bg-zinc-900 text-white hover:bg-zinc-800"
+      ? "bg-accent-600 text-white hover:bg-accent-500"
       : "border border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300";
   return (
     <a

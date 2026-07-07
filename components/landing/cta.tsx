@@ -2,30 +2,38 @@
 
 import { motion } from "framer-motion";
 import { AddressInput } from "./address-input";
-import { Badge } from "@/components/ui/badge";
 
 export function CTA() {
   return (
-    <section className="relative mx-auto max-w-7xl px-4 pb-24">
+    <section className="relative isolate overflow-hidden bg-ink py-24 sm:py-32">
+      {/* Hyperline stripe bands at the section edges */}
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 left-0 -z-10 hidden w-14 opacity-90 sm:block lg:w-24"
+      />
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 right-0 -z-10 hidden w-14 opacity-90 sm:block lg:w-24"
+      />
+
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
+        initial={{ opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
         transition={{ duration: 0.6 }}
-        className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-8 text-center shadow-card sm:p-14"
+        className="mx-auto max-w-3xl px-4 text-center"
       >
-        <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_70%)]" />
-        <div className="pointer-events-none absolute -top-20 left-1/2 h-[280px] w-[600px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
-
-        <div className="relative">
-          <Badge>Ready when you are</Badge>
-          <h2 className="font-display mt-5 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl md:text-5xl">
-            Type an address. Watch the estimate{" "}
-            <span className="text-gradient">build itself.</span>
-          </h2>
-          <div className="mt-8">
-            <AddressInput />
-          </div>
+        <span className="font-label inline-flex items-center rounded-md border border-white/25 px-2.5 py-1 text-white">
+          Ready when you are
+        </span>
+        <h2 className="display-hero mt-6 text-balance text-3xl text-white sm:text-4xl md:text-5xl">
+          Type an address. Watch the estimate{" "}
+          <span className="text-gradient">build itself.</span>
+        </h2>
+        <div className="mt-9">
+          {/* AddressInput manages its own DemoFlow fallback here — no
+              onOpenDemo prop, so the local modal wiring kicks in. */}
+          <AddressInput />
         </div>
       </motion.div>
     </section>

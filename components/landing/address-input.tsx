@@ -16,7 +16,7 @@ const SUGGESTIONS = [
 ];
 
 /**
- * Address-bar with green Estimate CTA.
+ * Address-bar with gradient Estimate CTA.
  *
  * Behavior:
  *   • Signed-in users   → router-push to /estimate?address=...
@@ -78,10 +78,10 @@ export function AddressInput({
       >
         <div
           className={cn(
-            "flex items-center gap-2 rounded-2xl border bg-white transition-all duration-300",
+            "flex items-center gap-2 rounded-xl border bg-white transition-all duration-300",
             focused
-              ? "border-accent-500 shadow-glow-lg"
-              : "border-zinc-200 shadow-sm",
+              ? "border-accent-500 ring-2 ring-accent-500/15 shadow-elevated"
+              : "border-zinc-200 shadow-card",
             size === "lg" ? "h-14 pl-4 pr-2 sm:h-16 sm:pl-5" : "h-14 pl-4 pr-2",
           )}
         >
@@ -109,10 +109,10 @@ export function AddressInput({
             type="submit"
             disabled={pending}
             className={cn(
-              "group inline-flex shrink-0 items-center gap-2 rounded-xl bg-accent-600 font-semibold text-white transition-all hover:bg-accent-700 active:translate-y-px disabled:opacity-60",
+              "btn-gradient group inline-flex shrink-0 items-center gap-2 rounded-lg font-mono font-bold uppercase tracking-[0.12em] text-white transition-all hover:opacity-95 active:translate-y-px disabled:opacity-60",
               size === "lg"
-                ? "h-11 px-4 text-sm sm:h-12 sm:px-5 sm:text-base"
-                : "h-10 px-4 text-sm",
+                ? "h-11 px-4 text-xs sm:h-12 sm:px-5 sm:text-sm"
+                : "h-10 px-4 text-xs",
             )}
           >
             {pending ? (
@@ -130,7 +130,7 @@ export function AddressInput({
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs text-zinc-500 lg:justify-start">
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs text-zinc-500">
           <span className="text-zinc-400">Try:</span>
           {SUGGESTIONS.map((s) => (
             <button
@@ -140,7 +140,7 @@ export function AddressInput({
                 setValue(s);
                 submit(s);
               }}
-              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
+              className="rounded-md border border-zinc-200 bg-white px-3 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
             >
               {s}
             </button>
@@ -148,11 +148,11 @@ export function AddressInput({
         </div>
 
         {!session && (
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-zinc-500 lg:justify-start">
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-zinc-500">
             <button
               type="button"
               onClick={() => openDemo(value)}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 font-medium text-zinc-700 shadow-sm transition hover:border-accent-400 hover:text-accent-700"
+              className="group inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 py-1 font-medium text-zinc-700 shadow-card transition hover:border-accent-400 hover:text-accent-700"
             >
               <Play className="h-3 w-3 fill-current" />
               Watch 12-sec demo

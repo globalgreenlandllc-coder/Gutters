@@ -137,23 +137,23 @@ export function MaterialsBuilder({
         type="button"
         aria-label="Close materials builder"
         onClick={onClose}
-        className="absolute inset-0 bg-zinc-900/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-ink/40"
       />
-      <aside className="absolute right-0 top-0 flex h-full w-[600px] max-w-[96vw] flex-col bg-zinc-50 shadow-2xl">
+      <aside className="absolute right-0 top-0 flex h-full w-[600px] max-w-[96vw] flex-col border-l border-zinc-200 bg-zinc-50 shadow-elevated">
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-white px-5 py-4">
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-accent-700">
+            <div className="font-label text-[10px] text-accent-700">
               Materials builder
             </div>
             <input
               value={pkg.name}
               onChange={(e) => set({ name: e.target.value })}
               aria-label="Package name"
-              className="font-display w-full bg-transparent text-lg font-semibold tracking-tight text-zinc-900 outline-none"
+              className="w-full bg-transparent text-lg font-semibold tracking-tight text-zinc-900 outline-none"
             />
           </div>
           <div className="text-right">
-            <div className="font-display text-xl font-semibold tabular-nums text-zinc-900">
+            <div className="text-xl font-semibold tracking-tight tabular-nums text-zinc-900">
               {formatCurrency(totals.total)}
             </div>
             <div className="text-[11px] text-zinc-500">
@@ -224,7 +224,7 @@ export function MaterialsBuilder({
             </button>
             {suggestions.length > 0 && (
               <div className="mt-3 rounded-xl border border-dashed border-zinc-200 bg-white/60 p-3">
-                <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                <div className="font-label text-[10px] text-zinc-500">
                   From your materials — tap to add
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -552,7 +552,7 @@ export function MaterialsBuilder({
                       ),
                     })
                   }
-                  className="font-display text-lg font-semibold tabular-nums text-zinc-900"
+                  className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900"
                 />
               </div>
             </div>
@@ -563,7 +563,7 @@ export function MaterialsBuilder({
           <button
             type="button"
             onClick={onClose}
-            className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
+            className="w-full rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white shadow-card transition hover:bg-accent-500"
           >
             Done
           </button>

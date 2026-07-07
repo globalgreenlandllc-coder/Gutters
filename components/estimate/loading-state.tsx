@@ -64,7 +64,6 @@ export function LoadingState({
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
       <div className="pointer-events-none absolute inset-0 bg-grid opacity-40 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[600px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -80,7 +79,7 @@ export function LoadingState({
           <div className="flex items-start gap-3">
             <MapPin className="mt-0.5 h-5 w-5 text-accent-600" />
             <div className="min-w-0 flex-1">
-              <div className="text-xs uppercase tracking-wider text-zinc-500">
+              <div className="font-label text-[11px] text-zinc-500">
                 Analyzing
               </div>
               <div className="mt-1 truncate font-medium text-zinc-900">
@@ -91,7 +90,7 @@ export function LoadingState({
 
           <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
             <motion.div
-              className="h-full bg-gradient-to-r from-accent-500 via-accent-600 to-cyan-500"
+              className="h-full bg-accent-600"
               initial={{ width: 0 }}
               animate={{ width: `${progress * 100}%` }}
               transition={{ duration: 0.5, ease: "easeOut" }}

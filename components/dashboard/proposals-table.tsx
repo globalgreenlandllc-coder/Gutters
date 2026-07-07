@@ -32,7 +32,7 @@ const STATUS_TONE: Record<
   draft: { tone: "neutral", label: "Draft" },
   sent: { tone: "sky", label: "Sent" },
   viewed: { tone: "violet", label: "Viewed" },
-  accepted: { tone: "accent", label: "Accepted" },
+  accepted: { tone: "emerald", label: "Accepted" },
   declined: { tone: "rose", label: "Declined" },
   expired: { tone: "amber", label: "Expired" },
 };
@@ -115,10 +115,10 @@ export function ProposalsTable({
   });
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-card">
       {showFilters && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {FILTERS.map((f) => {
               const count =
                 f.id === "all"
@@ -130,17 +130,19 @@ export function ProposalsTable({
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition",
+                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition",
                     active
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-600 hover:bg-zinc-100",
+                      ? "border-zinc-200 bg-zinc-100 font-medium text-zinc-900"
+                      : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
                   )}
                 >
                   {f.label}
                   <span
                     className={cn(
-                      "rounded-md px-1.5 py-0.5 text-[10px] tabular-nums",
-                      active ? "bg-white/15 text-white" : "bg-zinc-100 text-zinc-500",
+                      "rounded px-1.5 py-0.5 text-[10px] tabular-nums",
+                      active
+                        ? "bg-white text-zinc-600"
+                        : "bg-zinc-100 text-zinc-500",
                     )}
                   >
                     {count}
@@ -149,19 +151,19 @@ export function ProposalsTable({
               );
             })}
           </div>
-          <div className="relative flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
-            <Search className="mr-2 h-4 w-4 text-zinc-400" />
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search address or client…"
-              className="w-56 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-400"
+              className="input h-9 w-64 pl-9"
             />
           </div>
         </div>
       )}
 
-      <div className="hidden grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 lg:grid">
+      <div className="font-label hidden grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] gap-4 px-4 py-2.5 text-[11px] text-zinc-400 lg:grid">
         <div>Property · Client</div>
         <div>Status</div>
         <div className="text-right">Total</div>
@@ -202,9 +204,9 @@ export function ProposalsTable({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: Math.min(i, 8) * 0.02 }}
-              className="relative border-b border-zinc-100 last:border-0"
+              className="relative border-t border-zinc-100"
             >
-              <div className="group grid grid-cols-1 gap-1 px-4 py-3 transition hover:bg-zinc-50 lg:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] lg:items-center lg:gap-4">
+              <div className="group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] lg:items-center lg:gap-4">
                 <Link
                   href={`/proposal?id=${p.id}`}
                   className="min-w-0"
@@ -231,7 +233,7 @@ export function ProposalsTable({
                 >
                   <Badge tone={tone.tone}>{tone.label}</Badge>
                   {p.status === "accepted" && p.paid !== undefined && (
-                    <span className="text-[11px] text-accent-700">
+                    <span className="text-[11px] text-emerald-600">
                       paid {formatCurrency(p.paid)}
                     </span>
                   )}
@@ -392,7 +394,7 @@ function RowMenu({
       </button>
       {open && (
         <div
-          className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
+          className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated"
           onClick={(e) => e.stopPropagation()}
         >
           {!confirming ? (
