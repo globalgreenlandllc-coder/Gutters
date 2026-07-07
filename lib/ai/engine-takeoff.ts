@@ -22,6 +22,7 @@
 
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import { runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine";
+import { decomposeMasses } from "../roof-mass-decompose";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { placeGablesFromFaces } from "./place-gables";
 import type { FaceReadingRaw } from "./face-merge";
@@ -133,6 +134,24 @@ function principalEdgeIndex(poly: Pt[], n: Pt): number {
   return best;
 }
 
+/** Min distance from a point to a polygon's boundary — used to assign a placed
+ *  gable to the tier mass whose eave it sits on after decomposition. */
+function minDistToOutline(p: Pt, outline: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 /**
  * Build the engine takeoff for a stored analysis. Returns null (⇒ the flag
  * no-ops, current pricing stands) when there is no footprint or no independent
@@ -207,9 +226,28 @@ export function buildEngineTakeoff(
     // per-face read this is empty and the engine draws the perimeter only.
     const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses });
 
-    const massInputs: MassInput[] = [
-      { name: "main", outline, statedArea: null, eaveEdges, gables: placed.gables },
-    ];
+    // Decompose the footprint into its tier MASSES (main body + garage/porch/
+    // patio jogs) so each tier draws its own clean hip, instead of one whole-
+    // house straight-skeleton degenerating into a rejected centroid fan (the
+    // Woodinville garage-jog bug). decomposeMasses is AREA-preserving and gutter-
+    // LF-NEUTRAL, and returns a single "main" mass UNCHANGED whenever it can't
+    // split cleanly (noisy trace, non-rectilinear, any doubt) — so this only ever
+    // equals or improves the single-mass path, never inflates LF. Each placed
+    // gable then rides on whichever tier carries its base eave.
+    const massInputs: MassInput[] = decomposeMasses(outline, eaveEdges);
+    for (const m of massInputs) m.gables = [];
+    for (const g of placed.gables) {
+      let best = massInputs[0];
+      let bestD = Infinity;
+      for (const m of massInputs) {
+        const d = minDistToOutline(g.baseCenter, m.outline);
+        if (d < bestD) {
+          bestD = d;
+          best = m;
+        }
+      }
+      (best.gables ??= []).push(g);
+    }
     // The engine runs on the PIXEL outline (so its geometry registers with the
     // canvas). pxPerFt lets its ft-based gates (long-run, reentrant valley, area,
     // downspout spacing) convert pixel lengths → feet, instead of comparing

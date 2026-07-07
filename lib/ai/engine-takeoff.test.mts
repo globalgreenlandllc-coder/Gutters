@@ -153,6 +153,91 @@ test("buildEngineTakeoff: null on a degenerate footprint; never throws", () => {
   assert.equal(buildEngineTakeoff(analysis({ building_footprint: [{ x: 0, y: 0 }] })), null);
 });
 
+test("buildEngineTakeoff: a FLUSH cross-gable draws ridge-back + 2 valleys, zero gutter (Stage 1 end-to-end)", () => {
+  // A plain gable read on the north face (NOT on posts/beam, no projection cue)
+  // is placed FLUSH by place-gables. The engine must still draw it as a real
+  // cross-gable — a ridge-back + two valleys (source "gable:…") — while adding
+  // ZERO gutter. This is the AI-independent proof of Stage 1: the placement →
+  // engine interior geometry the canvas renders (as engine-gable-* lines) is
+  // present and pricing-neutral, without any model call.
+  const perFace = {
+    north: {
+      face: "north",
+      readable: true,
+      unreadable_reason: null,
+      gable_count: 1,
+      continuous_eave: true, // eave runs whole beneath the flush gable
+      gables: [
+        {
+          id: "front_gable",
+          kind: "main",
+          span_ft: 20,
+          pitch: 6,
+          position_frac: 0.5,
+          eave_condition_guess: "flush",
+          supported_on: "wall",
+          shows_projection_cue: false,
+          notes: "",
+        },
+      ],
+      projections: [],
+      projection_cues: [],
+      confidence: "high",
+    },
+  } as Record<string, import("./face-merge.ts").FaceReadingRaw>;
+
+  const b = buildEngineTakeoff(analysis(), perFace);
+  assert.ok(b, "bundle builds with a footprint + scale");
+  const interior = b!.takeoff.masses.flatMap((m) => m.interior);
+  const gableValleys = interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:"));
+  const gableRidges = interior.filter((e) => e.type === "ridge" && e.source?.startsWith("gable:"));
+  assert.equal(gableValleys.length, 2, "flush cross-gable draws two valleys (the Stage 1 fix)");
+  assert.equal(gableRidges.length, 1, "flush cross-gable draws one ridge-back");
+  // Pricing-safe: the flush gable adds NO guttered side eaves, so LF stays the
+  // clean perimeter (180 ft) — identical to the no-gable case.
+  assert.equal(b!.eaveLfFt, 180);
+  const gableEaves = b!.takeoff.masses
+    .flatMap((m) => m.edges)
+    .filter((e) => e.gutter && e.source?.startsWith("gable:"));
+  assert.equal(gableEaves.length, 0, "flush gable contributes zero gutter");
+});
+
+test("buildEngineTakeoff: a garage-jog footprint decomposes into main + garage (clean tiers), LF-neutral", () => {
+  // Main body 64×44 with a garage jog out the right side (24×30 at y∈[10,40]).
+  const GARAGE_FP = [
+    { x: 0, y: 0 },
+    { x: 64, y: 0 },
+    { x: 64, y: 10 },
+    { x: 88, y: 10 },
+    { x: 88, y: 40 },
+    { x: 64, y: 40 },
+    { x: 64, y: 44 },
+    { x: 0, y: 44 },
+  ];
+  const b = buildEngineTakeoff(
+    analysis({
+      building_footprint: GARAGE_FP,
+      gutter_runs: [run([0, 0], [64, 0])], // one run ⇒ ftPerPx = 0.5; every edge defaults to an eave
+    }),
+  );
+  assert.ok(b);
+  assert.equal(b!.ftPerPx, 0.5);
+  // Two tiers now, not one whole-house mass.
+  assert.equal(b!.takeoff.masses.length, 2, "main + garage");
+  // Each tier drew a CLEAN straight-skeleton — the whole-house fan reject is gone.
+  for (const m of b!.takeoff.masses) {
+    assert.ok(m.interior.some((e) => e.source === "skeleton"), `${m.name} has a clean skeleton`);
+  }
+  assert.equal(
+    b!.takeoff.reviewFlags.filter((f) => f.code === "skeleton_rejected").length,
+    0,
+    "no tier's skeleton is rejected",
+  );
+  // LF-neutral: full guttered perimeter 264 px × 0.5 = 132 ft — the shared
+  // main↔garage wall is an interior cut, guttered on NEITHER tier.
+  assert.equal(b!.eaveLfFt, 132);
+});
+
 test("buildEngineTakeoff: null when EVERY edge is marked a rake (nothing to price)", () => {
   const allRakes = analysis({
     excluded_edges: [
