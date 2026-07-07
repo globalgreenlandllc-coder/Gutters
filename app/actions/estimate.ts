@@ -258,6 +258,12 @@ export async function runEstimateFromPlan(
   // AI runs remap onto it, and each edge a GABLE label points at is demoted to a
   // rake (no gutter). Tried FIRST; ANY miss falls through to the A4 block below
   // (then to AI geometry) unchanged. Fully fail-safe — never blank, never worse.
+  // Diagnostic trace of the vector-footprint swap. Logged + surfaced as a note
+  // so a run that falls back to the AI trace shows EXACTLY why (segments absent,
+  // read rejected by a gate, outline too few corners). Without this the swap was
+  // a SILENT no-op and there was no way to tell why the flattened trace won.
+  const vecTrace: string[] = [];
+  let footprintSource = "AI trace (best-of read)";
   let roofApplied = false;
   try {
     const ajR = row.analysisJson as {
@@ -270,6 +276,7 @@ export async function runEstimateFromPlan(
     } | null;
     const rsegs = ajR?._vectorGeometry?.roof?.segments;
     const rlabels = ajR?._vectorGeometry?.roof?.labels ?? [];
+    vecTrace.push(Array.isArray(rsegs) && rsegs.length >= 4 ? `A9 roof: ${rsegs.length} vector segs` : "A9 roof: no vector segments");
     if (Array.isArray(rsegs) && rsegs.length >= 4) {
       // Reject an A9 read whose SHAPE is wildly unlike the AI footprint (a
       // truss-blob floodfill happened to enclose) — pass the footprint aspect.
@@ -289,6 +296,11 @@ export async function runEstimateFromPlan(
         rlabels,
         rsegs,
         expectedAspect ? { expectedAspect } : undefined,
+      );
+      vecTrace.push(
+        !roof
+          ? "A9 read REJECTED (aspect / fill-fraction / corner-count gate in readRoofFromVectors)"
+          : `A9 outline ${roof.perimeter.length} corners${roof.perimeter.length > 4 && roof.perimeter.length <= 60 ? "" : " — outside the 5–60 gate, skipped"}`,
       );
       if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
         const poly = roof.perimeter;
@@ -361,6 +373,8 @@ export async function runEstimateFromPlan(
             `Roof read from the A9 roof-framing sheet (single coordinate space, ${poly.length} corners)` +
               (gableMarks ? `; ${gableMarks} gable end(s) marked from GABLE labels.` : "."),
           ];
+          footprintSource = `A9 roof vector (${poly.length} corners)`;
+          vecTrace.push(`✓ USED A9 roof outline (${poly.length} corners)`);
           roofApplied = true;
         }
       }
@@ -382,8 +396,18 @@ export async function runEstimateFromPlan(
       _vectorGeometry?: { footprint?: { segments?: number[][] } };
     } | null;
     const segs = aj?._vectorGeometry?.footprint?.segments;
+    vecTrace.push(Array.isArray(segs) && segs.length >= 4 ? `A4 footprint: ${segs.length} vector segs` : "A4 footprint: no vector segments");
     if (Array.isArray(segs) && segs.length >= 4) {
       const outline = extractBuildingOutline(segs);
+      vecTrace.push(
+        !outline
+          ? "A4 extract → null (segments didn't enclose a building)"
+          : outline.polygon.length <= 4
+            ? `A4 outline ${outline.polygon.length} corners — a plain box, skipped (adds no articulation over the AI trace)`
+            : outline.polygon.length > 60
+              ? `A4 outline ${outline.polygon.length} corners — too noisy, skipped`
+              : `A4 outline ${outline.polygon.length} corners`,
+      );
       // Only copy the outline when it actually adds ARTICULATION (a real jog /
       // wing — more than a plain rectangle). A 4-corner box is no better than
       // the AI's footprint and copying it would only risk dropping the AI's
@@ -431,12 +455,25 @@ export async function runEstimateFromPlan(
             ...(analysis.notes ?? []),
             `Footprint shape copied from the plan's vector outline (${poly.length} corners); the AI's eave/gable/tier classification kept.`,
           ];
+          footprintSource = `A4 foundation vector (${poly.length} corners)`;
+          vecTrace.push(`✓ USED A4 footprint outline (${poly.length} corners)`);
+        } else {
+          vecTrace.push("A4 skipped — AI trace has <2 points to map the outline onto");
         }
       }
     }
-  } catch {
+  } catch (e) {
+    vecTrace.push(`vector swap threw: ${e instanceof Error ? e.message : String(e)}`);
     // keep the AI geometry on any failure
   }
+  // Surface the whole decision: console for logs + a note so the takeoff panel
+  // shows which footprint won and, when it's the AI trace, exactly why the
+  // vector outline didn't. This is what turns a silent no-op into a diagnosis.
+  console.log(`[vector-swap] footprint = ${footprintSource} | ${vecTrace.join(" | ")}`);
+  analysis.notes = [
+    ...(analysis.notes ?? []),
+    `🧭 Footprint source: ${footprintSource}. Vector-outline trace: ${vecTrace.join(" → ")}.`,
+  ];
 
   // Surface the classifier's sheet inventory so the takeoff canvas can let
   // the contractor flip the PDF underlay to the right drawing (roof plan

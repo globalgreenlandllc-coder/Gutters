@@ -191,6 +191,55 @@ function traceOutline(g: Grid, inside: Uint8Array): Pt[] | null {
   return corners.length >= 4 ? corners : loop;
 }
 
+/** Cluster near-equal coordinates to a shared representative (their mean) so a
+ *  grid-traced outline's single-cell stair-steps and door-gap dimples snap to
+ *  clean axis lines. Sorted-sweep grouping within `tol`. */
+function clusterReps(vals: number[], tol: number): number[] {
+  const sorted = [...vals].sort((a, b) => a - b);
+  const reps: number[] = [];
+  let group: number[] = [];
+  for (const v of sorted) {
+    if (group.length === 0 || v - group[group.length - 1] <= tol) group.push(v);
+    else {
+      reps.push(group.reduce((s, x) => s + x, 0) / group.length);
+      group = [v];
+    }
+  }
+  if (group.length) reps.push(group.reduce((s, x) => s + x, 0) / group.length);
+  return reps;
+}
+const nearestRep = (reps: number[], v: number): number =>
+  reps.reduce((best, r) => (Math.abs(r - v) < Math.abs(best - v) ? r : best), reps[0]);
+
+/**
+ * Clean a grid-traced rectilinear outline: snap x/y to clustered axis lines
+ * (kills sub-`tol` stair-steps and door-gap dimples that would otherwise inflate
+ * a real ~6-corner footprint to 30-40 staircase corners), drop consecutive
+ * duplicates, then collapse collinear runs. Real jogs (edges ≫ tol) survive
+ * because their coordinates cluster far apart.
+ */
+function snapAndClean(poly: Pt[], tol: number): Pt[] {
+  if (poly.length < 4) return poly;
+  const xs = clusterReps(poly.map((p) => p.x), tol);
+  const ys = clusterReps(poly.map((p) => p.y), tol);
+  let pts = poly.map((p) => ({ x: nearestRep(xs, p.x), y: nearestRep(ys, p.y) }));
+  // Drop consecutive duplicates (a snapped-away step collapses to a point).
+  pts = pts.filter((p, i) => {
+    const q = pts[(i - 1 + pts.length) % pts.length];
+    return Math.abs(p.x - q.x) > 1e-6 || Math.abs(p.y - q.y) > 1e-6;
+  });
+  // Collapse collinear runs → corners only.
+  const out: Pt[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[(i - 1 + pts.length) % pts.length];
+    const b = pts[i];
+    const c = pts[(i + 1) % pts.length];
+    const collinear = (b.x - a.x) * (c.y - b.y) === (b.y - a.y) * (c.x - b.x);
+    if (!collinear) out.push(b);
+  }
+  return out.length >= 4 ? out : pts;
+}
+
 function bboxOf(segments: number[][]) {
   let x0 = Infinity;
   let y0 = Infinity;
@@ -322,11 +371,15 @@ export function extractBuildingOutline(
     if (!gridPoly || gridPoly.length < 4) return null;
 
     // Grid corners → world space (undo the +2 pad and cell scale).
-    const polygon = gridPoly.map((p) => ({
+    const raw = gridPoly.map((p) => ({
       x: bbox.x0 + (p.x - 2) * cell,
       y: bbox.y0 + (p.y - 2) * cell,
     }));
-    // A believable footprint covers a real fraction of its own bbox.
+    // Snap out sub-cell stair-steps + door-gap dimples so a real footprint reads
+    // as a clean ~6-corner polygon, not a 30-40 corner staircase (which feeds
+    // noisy geometry and can false-trip the roof's ≤40-corner gate). Real jogs
+    // survive — their coordinates cluster far apart. tol ≈ 2.5 cells.
+    const polygon = snapAndClean(raw, cell * 2.5);
     return { polygon, bbox };
   } catch {
     return null;

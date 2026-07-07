@@ -57,6 +57,30 @@ test("L-shape → recovers the notch (more than 4 corners)", () => {
   assert.equal(inPoly, false, "the L's missing corner stays outside the outline");
 });
 
+test("garage-jog with a DOOR GAP + interior walls → clean articulated outline (not a 40-corner staircase)", () => {
+  // Main body 1152×792 + garage wing on the right; the long bottom wall has a
+  // ~54pt (3ft) DOOR GAP; interior partitions are noise — like a real floor plan.
+  const base: [number, number][] = [[0, 0], [1152, 0], [1152, 220], [1750, 220], [1750, 792], [0, 792]];
+  const segs: number[][] = [];
+  for (let i = 0; i < base.length; i++) {
+    const a = base[i];
+    const b = base[(i + 1) % base.length];
+    if (i === 4) {
+      const mx = (a[0] + b[0]) / 2;
+      segs.push([a[0], a[1], mx + 27, b[1]]);
+      segs.push([mx - 27, a[1], b[0], b[1]]);
+    } else segs.push([a[0], a[1], b[0], b[1]]);
+  }
+  segs.push([500, 30, 500, 760]);
+  segs.push([30, 400, 1100, 400]);
+  const out = extractBuildingOutline(segs);
+  assert.ok(out, "recovers an outline despite the door gap + interior walls");
+  // The garage jog survives (>4 corners), but the door dimple + grid stair-steps
+  // are snapped away → a clean handful of corners, not a 30-40 corner staircase.
+  assert.ok(out!.polygon.length >= 6 && out!.polygon.length <= 12, `clean articulated outline (${out!.polygon.length} corners)`);
+  assert.equal(pointInPoly({ x: 1450, y: 100 }, out!.polygon), false, "the notch above the garage stays outside");
+});
+
 test("interior walls are ignored — outer perimeter only", () => {
   const outer = ring([
     [0, 0],
