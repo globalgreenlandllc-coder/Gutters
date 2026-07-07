@@ -187,9 +187,10 @@ test("end-to-end: placed gables drive the engine → front porch adds guttered s
   const res = runRoofEngine([
     { name: "main", outline: OUTLINE, statedArea: null, eaveEdges: [0, 1, 2, 3], gables },
   ]);
-  // The projecting porch contributes two guttered side eaves + a ridge-back +
-  // two valleys; the two flush gable-ends add none.
+  // Only the projecting porch contributes guttered SIDE EAVES (the two flush
+  // gable-ends add zero gutter) — but every gable, flush or projecting, draws a
+  // ridge-back + two valleys, so all 3 placed gables contribute 6 gable valleys.
   assert.equal(res.masses[0].edges.filter((e) => e.gutter && e.source === "gable:front_porch").length, 2);
-  assert.equal(res.masses[0].interior.filter((e) => e.type === "valley").length, 2);
+  assert.equal(res.masses[0].interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:")).length, 6);
   assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 2);
 });

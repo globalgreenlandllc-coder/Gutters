@@ -689,14 +689,33 @@ export function blueprintToEstimateResult(
   if (engineBundle) {
     const interior = engineBundle.takeoff.masses.flatMap((m) => m.interior);
     const engineDrewSkeleton = interior.some((e) => e.source === "skeleton");
+    // Two channels of engine interior lines, drawn differently:
+    //  - SKELETON lines (source "skeleton") are the clean straight-skeleton of
+    //    the whole footprint. They only exist when the skeleton passed its
+    //    fan/reentrant gate (a rejected fan pushes NONE), and when present they
+    //    REPLACE the client's grid derivation (ids "engine-…").
+    //  - GABLE lines (source "gable:…") are each gable's ridge-back + two
+    //    valleys. These are valid geometry regardless of the main skeleton, so
+    //    they ALWAYS draw (ids "engine-gable-…"); the overlay AUGMENTS them onto
+    //    whatever main skeleton it uses. This is what makes a FLUSH cross-gable
+    //    actually show even when the main skeleton was rejected (Woodinville).
+    const skelLines = (kind: "ridge" | "valley" | "hip") =>
+      interior
+        .filter((e) => e.type === kind && e.source === "skeleton")
+        .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
+    const gableLines = (kind: "ridge" | "valley") =>
+      interior
+        .filter((e) => e.type === kind && e.source?.startsWith("gable:"))
+        .map((e, i) => ({ id: `engine-gable-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
     if (engineDrewSkeleton) {
-      const lines = (kind: "ridge" | "valley" | "hip") =>
-        interior
-          .filter((e) => e.type === kind)
-          .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
-      roofRidges = lines("ridge");
-      roofValleys = lines("valley");
-      roofHips = lines("hip");
+      roofRidges = [...skelLines("ridge"), ...gableLines("ridge")];
+      roofValleys = [...skelLines("valley"), ...gableLines("valley")];
+      roofHips = skelLines("hip");
+    } else {
+      // Skeleton rejected — leave the main hip to the client's grid derivation,
+      // but add the gable ridge-backs + valleys so flush cross-gables draw over it.
+      roofRidges = [...roofRidges, ...gableLines("ridge")];
+      roofValleys = [...roofValleys, ...gableLines("valley")];
     }
   }
 

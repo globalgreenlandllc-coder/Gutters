@@ -97,15 +97,15 @@ test("buildGableByRule: projecting gable yields 2 rakes, 2 side eaves, 1 ridge-b
   }
 });
 
-test("buildGableByRule: flush gable (projection 0) contributes no gutter but DRAWS a ridge", () => {
+test("buildGableByRule: flush gable (projection 0) contributes no gutter but DRAWS ridge + valleys", () => {
   const g: Gable = { baseCenter: { x: 30, y: 44 }, span: 12, pitch: 4, projection: 0, facing: "S" };
   assert.equal(isProjecting(g), false);
   const L = buildGableByRule(g);
   assert.equal(L.projecting, false);
   assert.equal(L.rakes.length, 2);
-  assert.equal(L.sideEaves.length, 0); // no gutter
-  assert.equal(L.ridgeBack.length, 1); // a flush gable-end still has a ridge (draws in plan)
-  assert.equal(L.valleys.length, 0);
+  assert.equal(L.sideEaves.length, 0); // no gutter — the pricing-safe invariant
+  assert.equal(L.ridgeBack.length, 1); // a flush cross-gable still has a ridge-back
+  assert.equal(L.valleys.length, 2); // ...and two valleys, so it draws as a real gable in plan
 });
 
 test("gablePeakHeightFt: (span/2) x (pitch/12)", () => {
@@ -174,9 +174,10 @@ test("flush front gable does NOT break the front eave (keeps a single perimeter 
   const eaveEdges = mass.edges.filter((e) => e.gutter);
   // Only the 4 perimeter eaves — the flush gable adds NO gutter.
   assert.equal(eaveEdges.length, 4);
-  // It draws a ridge (so it shows in plan) but no valleys and no side eaves.
+  // It draws a ridge-back + two valleys (so it shows as a real gable in plan),
+  // but still adds no side eaves — zero gutter.
   assert.equal(mass.interior.filter((e) => e.type === "ridge" && e.source?.startsWith("gable:")).length, 1);
-  assert.equal(mass.interior.filter((e) => e.type === "valley").length, 0);
+  assert.equal(mass.interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:")).length, 2);
   // The clean main-roof skeleton is drawn too (decorative), but adds no eaves.
   assert.ok(mass.interior.some((e) => e.type === "hip" && e.source === "skeleton"));
   assert.ok(res.reviewFlags.some((f) => f.code === "gable_flush"));
@@ -264,11 +265,12 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   assert.equal(res.eaveLfByMass.patio, 32); // 32 perimeter, flush gable adds 0
   assert.equal(res.totalEaveLf, 394);
 
-  // Interior lines: every gable → 1 ridge-back; each PROJECTING gable → 2 valleys.
+  // Interior lines: every gable → 1 ridge-back AND 2 valleys (flush + projecting
+  // alike now draw the full cross-gable signature; flush just omits side eaves).
   const all = res.masses.flatMap((m) => m.interior);
   const gableLines = (t: string) => all.filter((e) => e.type === t && e.source?.startsWith("gable:")).length;
   assert.equal(gableLines("ridge"), 6); // 4 main + 1 garage + 1 flush patio gable
-  assert.equal(gableLines("valley"), 10); // 8 main + 2 garage (projecting only)
+  assert.equal(gableLines("valley"), 12); // 8 main + 2 garage + 2 flush patio (all 6 gables draw valleys)
   // Clean main-roof skeleton present too (decorative, source "skeleton").
   assert.ok(all.some((e) => e.type === "hip" && e.source === "skeleton"));
 
@@ -325,11 +327,12 @@ test("Woodinville ground truth: engine draws the real asymmetric roof (front 2 g
   // Eave LF = 230 perimeter + porch (2×6) + patio (2×5); flush ends add ZERO.
   assert.equal(res.eaveLfByMass.main, 252);
 
-  // Every gable draws a ridge (so flush gable-ends show in plan); only the
-  // projecting porch + patio add valleys.
+  // Every gable draws a ridge AND two valleys (so flush gable-ends show as real
+  // gables in plan, not flat labels); the projecting porch + patio additionally
+  // add guttered side eaves.
   const gbl = (t: string) => res.masses[0].interior.filter((e) => e.type === t && e.source?.startsWith("gable:")).length;
   assert.equal(gbl("ridge"), 5); // 3 flush gable-ends + porch + patio
-  assert.equal(gbl("valley"), 4); // porch + patio only
+  assert.equal(gbl("valley"), 10); // all 5 gables now draw valleys (3 flush ends + porch + patio)
 
   // The front≠rear asymmetry is PRESERVED, not mirrored: 2 flush ends on the
   // front, 1 on the rear.

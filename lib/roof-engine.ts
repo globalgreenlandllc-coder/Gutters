@@ -66,9 +66,10 @@ export type ProjectionSource = "side_elevation" | "roof_plan" | "none";
  * width on the facing elevation; `pitch` is rise:12.
  *
  * `projection` is how far it juts out in plan. Per the correction addendum it
- * DEFAULTS TO 0 (flush: rakes only, no side eaves, no ridge-back/valleys, the
- * eave runs straight past beneath it unbroken) and is only made positive when a
- * side elevation or the roof-plan footprint confirms the projection — reading
+ * DEFAULTS TO 0 (flush: NO side eaves / zero gutter, the eave runs straight past
+ * beneath it unbroken — but the gable is still DRAWN by its ridge-back + two
+ * valleys) and is only made positive when a side elevation or the roof-plan
+ * footprint confirms the projection — reading
  * projection from the face view alone inflates the takeoff with side eaves that
  * often don't exist. `facing` is the outward direction (front gables face one
  * way, rear gables the other — never copy one face to the other). `intoDepth`
@@ -331,8 +332,9 @@ export type GableLines = {
   valleys: [Pt, Pt][];
   peak: Pt;
   eaveBreak: [Pt, Pt];
-  /** True when the gable juts out (has guttered side eaves + ridge-back +
-   *  valleys). False ⇒ flush/roof-mounted: rakes only. */
+  /** True when the gable juts out (has guttered side eaves). False ⇒ flush:
+   *  rakes on the eave + ridge-back + valleys are still drawn, but ZERO gutter
+   *  (no side eaves). Flush and projecting both DRAW; they differ in gutter. */
   projecting: boolean;
 };
 
@@ -343,10 +345,12 @@ export type GableLines = {
  *
  * PROJECTING gable ⇒ two rakes (no gutter), two side eaves (gutter, length =
  * projection), a ridge running back into the parent roof, and two valleys where
- * the gable planes meet it. FLUSH / ROOF-MOUNTED (projection 0) ⇒ rakes only,
- * zero gutter; the eave beneath is left whole by the caller. Per the correction
+ * the gable planes meet it. FLUSH (projection 0) ⇒ the same ridge-back + two
+ * valleys (so it DRAWS as a real cross-gable in plan) but NO side eaves and ZERO
+ * gutter; the eave beneath is left whole by the caller. Per the correction
  * addendum, flush is the DEFAULT — only pass a positive projection when a side
- * view or the roof plan confirmed it (spec §1.4).
+ * view or the roof plan confirmed it (spec §1.4). Flush vs projecting differ in
+ * gutter/eaves, NOT in whether the gable is drawn.
  */
 export function buildGableByRule(g: Gable): GableLines {
   const out = dirVector(g.facing);
@@ -367,16 +371,29 @@ export function buildGableByRule(g: Gable): GableLines {
   };
 
   if (!isProjecting(g)) {
+    // A flush cross-gable carries the FULL ridge+valley plan signature, not just
+    // the flat gable-end rakes. The gable-end sits on the eave (zero projection,
+    // so peak == baseCenter and the rakes collapse onto the eave line), but its
+    // ridge still runs back into the parent roof and its two roof planes meet the
+    // main roof in a pair of valleys. Emit ridge-back AND the two valleys so the
+    // gable DRAWS as a real gable in plan instead of an invisible flat edge —
+    // this is what makes flush front/side gable-ends actually show.
+    //
+    // Still ZERO gutter (no side eaves): these are decorative interior lines,
+    // priced eave LF is unchanged. With the default into = span/2, ridgeEnd is
+    // the point where the two valleys converge, so they read as the correct 45°
+    // valleys for equal main/cross pitches.
     lines.rakes = [
       [left, peak],
       [peak, right],
     ];
-    // A flush / roof-mounted gable still has a RIDGE — the gable peak line runs
-    // from the gable-end eave back into the roof. Emit it so the gable DRAWS in
-    // plan view (a proper gable ridge) instead of being an invisible flat edge.
     const into = g.intoDepth ?? half;
     const ridgeEnd = { x: g.baseCenter.x - out.x * into, y: g.baseCenter.y - out.y * into };
     lines.ridgeBack = [[peak, ridgeEnd]];
+    lines.valleys = [
+      [left, ridgeEnd],
+      [right, ridgeEnd],
+    ];
     return lines;
   }
 
@@ -477,7 +494,7 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
           severity: "info",
           mass: name,
           at: g.baseCenter,
-          message: `[${name}] gable '${gname}' read as flush (rakes only, no side eaves, contributes zero gutter); the eave runs straight past beneath it. If a side elevation or the roof plan shows it projecting, set projection = depth to add its side eaves.`,
+          message: `[${name}] gable '${gname}' read as flush (drawn with its ridge + valleys but NO side eaves — contributes zero gutter); the eave runs straight past beneath it. If a side elevation or the roof plan shows it projecting, set projection = depth to add its side eaves.`,
         });
       }
     }

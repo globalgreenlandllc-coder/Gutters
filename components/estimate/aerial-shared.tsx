@@ -758,24 +758,35 @@ export function RoofStructureOverlay({
       structure.perimeter,
       [], // no eave veto — the contractor placed these on purpose
     );
-    // Engine-authored interior lines (ids "engine-…") are the exact straight-
-    // skeleton — clean converging hips/ridges/valleys. When present, REPLACE the
-    // grid skeleton's roof lines with them (so we don't draw the grid fan
-    // underneath), while KEEPING the grid's gable wings + faces so the gables
-    // still render. Freehand "plan-…" lines are left to the grid derivation.
-    const engineLines = (ls: { id?: string; points: Pt[] }[]) =>
-      ls
-        .filter((l) => typeof l.id === "string" && l.id.startsWith("engine-"))
-        .map((l) => ({ points: l.points }));
-    const eHips = engineLines(structure.hips ?? []);
-    const eRidges = engineLines(structure.ridges);
-    const eValleys = engineLines(structure.valleys);
-    const hasEngine = eHips.length + eRidges.length + eValleys.length > 0;
+    // Engine interior lines come in two flavors, drawn differently:
+    //  - SKELETON (ids "engine-…", NOT "engine-gable-…") is the exact straight-
+    //    skeleton — clean converging hips/ridges/valleys. When present it
+    //    REPLACES the grid skeleton's roof lines (so we don't draw the grid fan
+    //    underneath), while KEEPING the grid's gable wings + faces.
+    //  - GABLE (ids "engine-gable-…") is each cross-gable's ridge-back + valleys.
+    //    Valid regardless of the main skeleton, so it's ALWAYS appended — this is
+    //    what draws a FLUSH cross-gable when the engine rejected its main
+    //    skeleton (only the grid hip is drawn then) and the on-eave gable rakes
+    //    got vetoed. Freehand "plan-…" lines are left to the grid derivation.
+    const isEngine = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("engine-");
+    const isGable = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("engine-gable-");
+    const skelEngine = (ls: { id?: string; points: Pt[] }[]) =>
+      ls.filter((l) => isEngine(l) && !isGable(l)).map((l) => ({ points: l.points }));
+    const gableEngine = (ls: { id?: string; points: Pt[] }[]) =>
+      ls.filter(isGable).map((l) => ({ points: l.points }));
+    const eHips = skelEngine(structure.hips ?? []);
+    const eRidges = skelEngine(structure.ridges);
+    const eValleys = skelEngine(structure.valleys);
+    const gRidges = gableEngine(structure.ridges);
+    const gValleys = gableEngine(structure.valleys);
+    const hasEngineSkeleton = eHips.length + eRidges.length + eValleys.length > 0;
     return {
       ...base,
-      hips: hasEngine ? eHips : base.hips,
-      ridges: hasEngine ? eRidges : base.ridges,
-      valleys: hasEngine ? eValleys : base.valleys,
+      hips: hasEngineSkeleton ? eHips : base.hips,
+      ridges: [...(hasEngineSkeleton ? eRidges : base.ridges), ...gRidges],
+      valleys: [...(hasEngineSkeleton ? eValleys : base.valleys), ...gValleys],
       dormers: [...aiDormers, ...userDormers],
     };
   }, [
