@@ -35,13 +35,20 @@ const outline: Pt[] = [
 // @ all eaves", elevation note 7).
 const eaveEdges = [0, 1, 2, 3, 4, 5, 6];
 
+// Every gable read off the A11 FRONT/NORTH + A12 REAR/SOUTH elevations (facing N
+// = front, S = rear). Front is articulated: a west/master gable, the vaulted
+// great-room gable (louvered vent), a projecting covered entry, and the garage's
+// own front gable. Rear has the projecting covered patio.
 const gables: Gable[] = [
-  // Covered REAR PATIO — projecting, on posts (A9 gable-end truss + 8x8 posts).
-  { baseCenter: { x: 32, y: 0 }, span: 22, pitch: 4, projection: 12, facing: "N", name: "cov. patio", eaveCondition: "projecting", supportedOn: "posts" },
-  // Covered ENTRY porch — projecting, on posts.
-  { baseCenter: { x: 14, y: 40 }, span: 12, pitch: 4, projection: 8, facing: "S", name: "cov. entry", eaveCondition: "projecting", supportedOn: "posts" },
-  // Front cross-gable — flush (Stage-1 ridge+valley).
-  { baseCenter: { x: 50, y: 0 }, span: 16, pitch: 6, projection: 0, facing: "N", name: "front gable (flush)" },
+  // FRONT (north), west→east:
+  { baseCenter: { x: 14, y: 0 }, span: 16, pitch: 4, projection: 0, facing: "N", name: "master gable" },
+  { baseCenter: { x: 28, y: 0 }, span: 10, pitch: 4, projection: 7, facing: "N", name: "cov. entry", eaveCondition: "projecting", supportedOn: "posts" },
+  { baseCenter: { x: 46, y: 0 }, span: 18, pitch: 6, projection: 0, facing: "N", name: "great room gable" },
+  // GARAGE front gable (rides the garage tier — base on its north eave):
+  { baseCenter: { x: 77, y: 12 }, span: 20, pitch: 4, projection: 0, facing: "N", name: "garage gable" },
+  // REAR (south) covered patio — projecting on posts (creates the A9 MAIN VALLEYs).
+  // Base sits on the MAIN tier's south eave (y=40; the garage runs deeper to 44).
+  { baseCenter: { x: 32, y: 40 }, span: 22, pitch: 4, projection: 12, facing: "S", name: "cov. patio", eaveCondition: "projecting", supportedOn: "posts" },
 ];
 
 // A2.1 roof-ventilation schedule (note: NO garage-roof entry, so the garage
