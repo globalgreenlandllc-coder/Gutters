@@ -122,18 +122,20 @@ function slabRects(poly: Pt[]): Rect[] {
 const transposePt = (p: Pt): Pt => ({ x: p.y, y: p.x });
 const transposeRect = (r: Rect): Rect => ({ x0: r.y0, x1: r.y1, y0: r.x0, y1: r.x1 });
 
-/** Score a tiling for cleanliness: fewer rectangles first, then a larger
- *  smallest rectangle (avoid sliver strips). The garage-jog footprint tiles
- *  into 2 clean tiers one way and 3 thin strips the other — this picks the 2. */
+/** Score a tiling for cleanliness: fewer rectangles first, then the SHORTER
+ *  total internal cut (∑ rect perimeter — the outer perimeter is fixed, so less
+ *  rect-perimeter ⇔ shorter shared walls ⇔ cuts run along the jog, not across
+ *  the house). This is what picks main|garage over a top-strip|bottom split when
+ *  both are valid 2-rect tilings. */
 function tilingScore(rects: Rect[]): [number, number] {
-  const minArea = Math.min(...rects.map((r) => (r.x1 - r.x0) * (r.y1 - r.y0)));
-  return [rects.length, -minArea];
+  const perim = rects.reduce((s, r) => s + 2 * ((r.x1 - r.x0) + (r.y1 - r.y0)), 0);
+  return [rects.length, perim];
 }
 function chooseBetterTiling(a: Rect[], b: Rect[]): Rect[] {
-  const [ac, aMin] = tilingScore(a);
-  const [bc, bMin] = tilingScore(b);
+  const [ac, ap] = tilingScore(a);
+  const [bc, bp] = tilingScore(b);
   if (ac !== bc) return ac < bc ? a : b;
-  return aMin <= bMin ? a : b; // -minArea, so smaller ⇒ larger min rectangle
+  return ap <= bp ? a : b; // shorter total internal cut = more natural tiers
 }
 
 const near = (a: number, b: number): boolean => Math.abs(a - b) < EPS;
