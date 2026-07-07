@@ -131,6 +131,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
     type: "object",
     properties: {
       face: { type: "string", enum: ["north", "south", "east", "west", "front", "rear", "left", "right"] },
+      sheet_title: {
+        type: ["string", "null"],
+        description:
+          'The elevation\'s printed title EXACTLY as it appears on the sheet, e.g. "FRONT/NORTH ELEVATION" or "REAR ELEVATION". This anchors the plan\'s compass orientation. Null if untitled.',
+      },
       readable: { type: "boolean", description: "false when the image is too low-res to classify edges/gables." },
       unreadable_reason: { type: ["string", "null"] },
       gable_count: { type: ["integer", "null"] },
@@ -203,6 +208,7 @@ function sourceBlock(source: PlanSource): Anthropic.ContentBlockParam {
 function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
   return {
     face,
+    sheet_title: null,
     readable: false,
     unreadable_reason: reason,
     gable_count: null,
@@ -245,6 +251,7 @@ export async function readElevationFace(
                   : `Locate the ${spec.face.toUpperCase()} elevation anywhere in the set. `) +
                 `Read ONLY the ${spec.face.toUpperCase()} elevation; ignore every other elevation and face, and do NOT assume any other face looks like this one. ` +
                 `If there is no ${spec.face.toUpperCase()} elevation in the set, set readable:false. ` +
+                `Report sheet_title with the elevation's printed title EXACTLY as it appears (e.g. "FRONT/${spec.face.toUpperCase()} ELEVATION") — it anchors the plan's compass orientation. ` +
                 `Enumerate its gables, classify its eave/rake edges, note any projection cues, and call record_face_reading with face:"${spec.face}".`,
             },
             sourceBlock(source),
@@ -262,6 +269,7 @@ export async function readElevationFace(
     const raw = toolUse.input as Partial<FaceReadingRaw>;
     const reading: FaceReadingRaw = {
       face: spec.face, // trust our spec over the model's echo
+      sheet_title: typeof raw.sheet_title === "string" && raw.sheet_title.trim() ? raw.sheet_title.trim() : null,
       readable: raw.readable !== false,
       unreadable_reason: raw.unreadable_reason ?? null,
       gable_count: typeof raw.gable_count === "number" ? raw.gable_count : null,

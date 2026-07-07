@@ -33,7 +33,16 @@ export const apply = (m: Mat, x: number, y: number): [number, number] => [
 export type WSeg = { seg: [number, number, number, number]; w: number | null };
 
 const MIN_SEG_LEN = 18; // points — drops dimension ticks / hatching
-const MAX_SEGMENTS = 140;
+const MAX_SEGMENTS = 300;
+
+// Walk-time guards. CAD exports draw text as thousands of tiny glyph strokes
+// (and the frame/title block FIRST in stream order) — a small emit cap starves
+// the walk before it ever reaches the drawing (the Woodinville A4 bug: exactly
+// ~8300 segments on every sheet = the old cap's fingerprint, drawing area
+// empty). Skip sub-glyph strokes inline instead, and keep a high cap purely as
+// a memory backstop.
+const WALK_MIN_LEN = 4; // points — glyph strokes / dots, never wall pieces
+const WALK_CAP = 60000;
 
 const HAIRLINE_USER = 0.01; // pt — below any real drawn weight (pdfjs width 0)
 /** Device-space stroke weight = user lineWidth × the CTM's isotropic 2D scale
@@ -83,8 +92,12 @@ export function segmentsFromOps(
   const stack: { ctm: Mat; w: number }[] = [];
   let ctm: Mat = IDENTITY;
   let widthUser = 1; // pdfjs initial graphics-state lineWidth
+  const emit = (x1: number, y1: number, x2: number, y2: number, w: number | null) => {
+    if (Math.hypot(x2 - x1, y2 - y1) < WALK_MIN_LEN) return; // glyph stroke
+    out.push({ seg: [x1, y1, x2, y2], w });
+  };
 
-  for (let k = 0; k < ops.fnArray.length && out.length < 8000; k++) {
+  for (let k = 0; k < ops.fnArray.length && out.length < WALK_CAP; k++) {
     const fn = ops.fnArray[k];
     if (fn === OPS.save) {
       stack.push({ ctm, w: widthUser });
@@ -146,7 +159,7 @@ export function segmentsFromOps(
             // lineTo
             if (i + 2 >= p.length) break;
             const [nx, ny] = apply(ctm, p[i + 1], p[i + 2]);
-            if (have) out.push({ seg: [cx, cy, nx, ny], w });
+            if (have) emit(cx, cy, nx, ny, w);
             cx = nx;
             cy = ny;
             i += 3;
@@ -162,7 +175,7 @@ export function segmentsFromOps(
             i += 5;
           } else if (op === 4) {
             // closePath
-            if (have) out.push({ seg: [cx, cy, sx, sy], w });
+            if (have) emit(cx, cy, sx, sy, w);
             cx = sx;
             cy = sy;
             i += 1;
@@ -177,6 +190,67 @@ export function segmentsFromOps(
 }
 
 type KeptSeg = { seg: number[]; len: number; w: number | null };
+
+// Chain-merge tuning. CAD exports draw one wall as a CHAIN of short collinear
+// strokes (line patterns / plotter dashes) — on the Woodinville A4 the walls
+// are 10–18pt pieces, ALL below MIN_SEG_LEN, so without merging the "footprint
+// segments" are just the sheet frame + dimension lines. Merging runs first so
+// a chained wall reads as one long segment.
+const CHAIN_GAP = 6; // points — max gap between chained strokes (door gaps stay open)
+const CHAIN_OFF = 1.2; // points — max off-axis wobble to treat strokes as collinear
+
+/**
+ * Stage 0: merge collinear AXIS-ALIGNED strokes chained with ≤CHAIN_GAP gaps
+ * into single long segments (interval union per shared axis line, so exact
+ * duplicates coalesce too). Diagonals pass through untouched — hips/ridges on
+ * roof sheets are drawn solid, and diagonal hatching must not merge into fake
+ * long lines. Width of a merged run = max of its pieces (a wall's pattern
+ * pieces share a weight; max keeps it eligible for the bold stage).
+ */
+export function mergeCollinearStrokes(raw: WSeg[]): WSeg[] {
+  type Run = { lo: number; hi: number; w: number | null };
+  const groups = new Map<string, { c: number; runs: Run[] }>();
+  const out: WSeg[] = [];
+  for (const { seg, w } of raw) {
+    const horiz = Math.abs(seg[1] - seg[3]) <= CHAIN_OFF;
+    const vert = Math.abs(seg[0] - seg[2]) <= CHAIN_OFF;
+    if (horiz === vert) {
+      out.push({ seg, w }); // diagonal (or degenerate) — pass through
+      continue;
+    }
+    const c = horiz ? (seg[1] + seg[3]) / 2 : (seg[0] + seg[2]) / 2;
+    const key = `${horiz ? "h" : "v"}:${Math.round(c / CHAIN_OFF)}`;
+    const lo = horiz ? Math.min(seg[0], seg[2]) : Math.min(seg[1], seg[3]);
+    const hi = horiz ? Math.max(seg[0], seg[2]) : Math.max(seg[1], seg[3]);
+    const g = groups.get(key) ?? { c, runs: [] };
+    g.runs.push({ lo, hi, w });
+    groups.set(key, g);
+  }
+  for (const [key, g] of groups) {
+    const horiz = key.startsWith("h");
+    g.runs.sort((a, b) => a.lo - b.lo);
+    let cur: Run | null = null;
+    const flush = () => {
+      if (!cur) return;
+      out.push({
+        seg: horiz ? [cur.lo, g.c, cur.hi, g.c] : [g.c, cur.lo, g.c, cur.hi],
+        w: cur.w,
+      });
+      cur = null;
+    };
+    for (const r of g.runs) {
+      if (cur && r.lo - cur.hi <= CHAIN_GAP) {
+        cur.hi = Math.max(cur.hi, r.hi);
+        if (r.w != null && (cur.w == null || r.w > cur.w)) cur.w = r.w;
+      } else {
+        flush();
+        cur = { lo: r.lo, hi: r.hi, w: r.w };
+      }
+    }
+    flush();
+  }
+  return out;
+}
 
 /** Stage 1: length / orientation filter + undirected dedupe, preserving each
  *  segment's device width for the optional bold stage. */
@@ -265,10 +339,12 @@ export function boldFilter(kept: KeptSeg[]): KeptSeg[] {
   return best.bold;
 }
 
-/** Public driver: length filter → (optional) bold filter → longest-first →
- *  cap → bare `number[]` coords. Always returns number[][] like before. */
+/** Public driver: chain-merge → length filter → (optional) bold filter →
+ *  longest-first → cap → bare `number[]` coords. Always returns number[][]
+ *  like before. */
 export function selectSegments(raw: WSeg[], boldOnly: boolean): number[][] {
-  const s1 = lengthFilter(raw);
+  const s0 = mergeCollinearStrokes(raw);
+  const s1 = lengthFilter(s0);
   const s2 = boldOnly ? boldFilter(s1) : s1;
   s2.sort((m, n) => n.len - m.len);
   return s2.slice(0, MAX_SEGMENTS).map((k) => k.seg);

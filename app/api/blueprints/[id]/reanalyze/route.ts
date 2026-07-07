@@ -288,6 +288,7 @@ export async function POST(
         scaleFtPerPx: gates.scaleFtPerPx,
         scheduleArea: gates.scheduleArea,
         roofMasses: gates.roofMasses,
+        orientation: gates.orientation,
       };
       if (elevations) {
         analysisJson._perFace = {

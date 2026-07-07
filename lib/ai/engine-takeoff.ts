@@ -27,6 +27,7 @@ import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { placeGablesFromFaces } from "./place-gables";
 import type { FaceReadingRaw } from "./face-merge";
 import type { RoofMassArea } from "./to-masses";
+import { DEFAULT_FACE_NORMALS, type FaceNormals } from "./plan-orientation";
 
 export type EngineTakeoffBundle = {
   takeoff: RoofTakeoff;
@@ -104,13 +105,7 @@ function edgeCoverage(a: Pt, b: Pt, s: { a: Pt; b: Pt }, tol: number): number {
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
-/** Outward normals for the four cardinal faces (PDF-pixel space, y down). */
-const FACE_NORMALS: { face: string; n: Pt }[] = [
-  { face: "north", n: { x: 0, y: -1 } },
-  { face: "south", n: { x: 0, y: 1 } },
-  { face: "east", n: { x: 1, y: 0 } },
-  { face: "west", n: { x: -1, y: 0 } },
-];
+const FACE_NAMES = ["north", "south", "east", "west"] as const;
 
 /** Index of the outline's principal edge on the side facing `n` (roughly
  *  perpendicular to n, furthest out that way), or -1. */
@@ -161,6 +156,7 @@ export function buildEngineTakeoff(
   analysis: BlueprintAnalysis,
   perFace?: Record<string, FaceReadingRaw> | null,
   roofMasses?: RoofMassArea[] | null,
+  faceNormals?: FaceNormals | null,
 ): EngineTakeoffBundle | null {
   try {
     const ftPerPx = ftPerPxOf(analysis);
@@ -208,7 +204,8 @@ export function buildEngineTakeoff(
     // don't cover that horizontal edge, so default-eave would wrongly count it;
     // the per-face read is the reliable signal. Drop that edge from the eaves.
     if (perFace) {
-      for (const { face, n } of FACE_NORMALS) {
+      for (const face of FACE_NAMES) {
+        const n = faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
         const r = perFace[face];
         if (r && r.readable !== false && r.continuous_eave === false) {
           const idx = principalEdgeIndex(outline, n);
@@ -224,7 +221,7 @@ export function buildEngineTakeoff(
     // Place the per-face gables on the outline (posts/beam ⇒ projecting pop-outs
     // with guttered side eaves + ridges/valleys; the rest flush). Without a
     // per-face read this is empty and the engine draws the perimeter only.
-    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses });
+    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses, faceNormals });
 
     // Decompose the footprint into its tier MASSES (main body + garage/porch/
     // patio jogs) so each tier draws its own clean hip, instead of one whole-

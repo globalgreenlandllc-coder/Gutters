@@ -114,6 +114,63 @@ function largestInside(g: Grid): Uint8Array {
   return comp;
 }
 
+/** Largest 4-connected component of an arbitrary mask. */
+function largestMaskComponent(g: Grid, mask: Uint8Array): Uint8Array {
+  const out = new Uint8Array(mask.length);
+  const seen = new Uint8Array(mask.length);
+  let best: number[] = [];
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i] || seen[i]) continue;
+    const cur: number[] = [];
+    const stack = [i];
+    seen[i] = 1;
+    while (stack.length) {
+      const idx = stack.pop()!;
+      cur.push(idx);
+      const x = idx % g.w;
+      const y = (idx / g.w) | 0;
+      const nb = [
+        x + 1 < g.w ? idx + 1 : -1,
+        x - 1 >= 0 ? idx - 1 : -1,
+        y + 1 < g.h ? idx + g.w : -1,
+        y - 1 >= 0 ? idx - g.w : -1,
+      ];
+      for (const n of nb)
+        if (n >= 0 && mask[n] && !seen[n]) {
+          seen[n] = 1;
+          stack.push(n);
+        }
+    }
+    if (cur.length > best.length) best = cur;
+  }
+  for (const idx of best) out[idx] = 1;
+  return out;
+}
+
+/** Dilate a mask by `iters` cells, constrained to cells set in `within`. */
+function dilate(g: Grid, mask: Uint8Array, iters: number, within: Uint8Array): Uint8Array {
+  let cur = mask;
+  for (let it = 0; it < iters; it++) {
+    const next = new Uint8Array(cur.length);
+    for (let y = 0; y < g.h; y++) {
+      for (let x = 0; x < g.w; x++) {
+        const i = y * g.w + x;
+        if (!within[i]) continue;
+        if (
+          cur[i] ||
+          (x + 1 < g.w && cur[i + 1]) ||
+          (x - 1 >= 0 && cur[i - 1]) ||
+          (y + 1 < g.h && cur[i + g.w]) ||
+          (y - 1 >= 0 && cur[i - g.w])
+        )
+          next[i] = 1;
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 /** Erode the inside mask by `iters` cells — undoes the wall-thickening so the
  *  traced outline sits on the wall centerline instead of its outer edge. */
 function erode(g: Grid, inside: Uint8Array, iters: number): Uint8Array {
@@ -328,9 +385,172 @@ export function outlineEdgesToRuns(
   return out;
 }
 
+/** Shoelace area of a polygon (absolute). */
+function polyAreaAbs(poly: Pt[]): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Ray-cast point-in-polygon. */
+function pointInPoly(p: Pt, poly: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+
+/** Min distance from a point to a polygon's boundary. */
+function distToPoly(p: Pt, poly: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/**
+ * Does this traced polygon look like the SHEET FRAME rather than the building?
+ * A frame (a) fills ~the entire segment bbox, and (b) has most of the drawn
+ * segment length strictly INSIDE it (the whole drawing sits inside the border).
+ * A building trace fails (a) on any sheet with dimension lines outside the
+ * walls, and fails (b) because only its interior partitions sit inside.
+ */
+function looksLikeFrame(
+  polygon: Pt[],
+  bbox: { x0: number; y0: number; x1: number; y1: number },
+  segments: number[][],
+): boolean {
+  const bboxArea = (bbox.x1 - bbox.x0) * (bbox.y1 - bbox.y0);
+  if (bboxArea <= 0) return false;
+  if (polyAreaAbs(polygon) < 0.95 * bboxArea) return false;
+  const tol = Math.max(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0) * 0.02;
+  let inLen = 0;
+  let totLen = 0;
+  for (const s of segments) {
+    if (s.length < 4) continue;
+    const len = Math.hypot(s[2] - s[0], s[3] - s[1]);
+    const mid = { x: (s[0] + s[2]) / 2, y: (s[1] + s[3]) / 2 };
+    totLen += len;
+    if (pointInPoly(mid, polygon) && distToPoly(mid, polygon) > tol) inLen += len;
+  }
+  return totLen > 0 && inLen / totLen >= 0.5;
+}
+
+/** Drop long axis-aligned segments hugging the bbox edges — the sheet border /
+ *  drawing-area frame. A closed frame at the extremes seals the exterior
+ *  flood-fill out, so the "largest enclosed region" becomes the whole sheet and
+ *  the trace returns a perfect 4-corner box instead of the building. */
+function stripFrameSegments(
+  segments: number[][],
+  bbox: { x0: number; y0: number; x1: number; y1: number },
+): number[][] {
+  const tol = Math.max(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0) * 0.02;
+  const nearEdge = (v: number, lo: number, hi: number) => v - lo < tol || hi - v < tol;
+  return segments.filter((s) => {
+    if (s.length < 4) return false;
+    const horiz = Math.abs(s[1] - s[3]) < tol;
+    const vert = Math.abs(s[0] - s[2]) < tol;
+    if (horiz && nearEdge(s[1], bbox.y0, bbox.y1) && nearEdge(s[3], bbox.y0, bbox.y1)) return false;
+    if (vert && nearEdge(s[0], bbox.x0, bbox.x1) && nearEdge(s[2], bbox.x0, bbox.x1)) return false;
+    return true;
+  });
+}
+
+/** One rasterize→flood→trace pass over a segment set. */
+function tracePass(
+  segments: number[][],
+  opts?: { grid?: number; gapCells?: number },
+): { polygon: Pt[]; bbox: { x0: number; y0: number; x1: number; y1: number } } | null {
+  const bbox = bboxOf(segments);
+  if (!bbox) return null;
+  const wWorld = bbox.x1 - bbox.x0;
+  const hWorld = bbox.y1 - bbox.y0;
+  if (wWorld <= 0 || hWorld <= 0) return null;
+
+  const G = opts?.grid ?? GRID;
+  const cell = Math.max(wWorld, hWorld) / G;
+  const gw = Math.max(4, Math.ceil(wWorld / cell) + 4);
+  const gh = Math.max(4, Math.ceil(hWorld / cell) + 4);
+  const grid: Grid = { w: gw, h: gh, cells: new Uint8Array(gw * gh) };
+  const toGx = (x: number) => (x - bbox.x0) / cell + 2;
+  const toGy = (y: number) => (y - bbox.y0) / cell + 2;
+
+  // Thicken walls by a couple of cells to bridge door gaps / hairline breaks.
+  const thick = Math.max(1, opts?.gapCells ?? Math.round(G / 90));
+  for (const s of segments) {
+    if (s.length < 4) continue;
+    drawSeg(grid, toGx(s[0]), toGy(s[1]), toGx(s[2]), toGy(s[3]), thick);
+  }
+
+  floodExterior(grid);
+  const insideRaw = largestInside(grid);
+  const insideCount = insideRaw.reduce((a, b) => a + b, 0);
+  // Reject if the "building" is a sliver (segments didn't enclose anything).
+  if (insideCount < gw * gh * 0.05) return null;
+
+  // Morphological OPENING (erode k → largest component → dilate k back within
+  // the original region): cuts the thin necks that attach non-building junk —
+  // a footing-schedule table connected through a leader line — while the
+  // building's real masses (≳8 ft wide) survive. Accepted only when it keeps
+  // the BULK of the region: a genuine neck-cut sheds a small appendage (~10%),
+  // while erosion dissolving the interior walls of a partitioned plan
+  // fragments the region (largest piece = one room) — fall back un-opened.
+  const k = Math.max(2, Math.round(G / 50));
+  let region = insideRaw;
+  const eroded = erode(grid, insideRaw, k);
+  if (eroded.some((v) => v)) {
+    const core = largestMaskComponent(grid, eroded);
+    const opened = dilate(grid, core, k, insideRaw);
+    const openedCount = opened.reduce((a, b) => a + b, 0);
+    if (openedCount >= Math.max(gw * gh * 0.05, insideCount * 0.8)) region = opened;
+  }
+
+  // Erode away the wall thickening so the outline tracks the real walls.
+  const inside = erode(grid, region, thick);
+
+  const gridPoly = traceOutline(grid, inside);
+  if (!gridPoly || gridPoly.length < 4) return null;
+
+  // Grid corners → world space (undo the +2 pad and cell scale).
+  const raw = gridPoly.map((p) => ({
+    x: bbox.x0 + (p.x - 2) * cell,
+    y: bbox.y0 + (p.y - 2) * cell,
+  }));
+  // Snap out sub-cell stair-steps + door-gap dimples so a real footprint reads
+  // as a clean ~6-corner polygon, not a 30-40 corner staircase (which feeds
+  // noisy geometry and can false-trip the roof's ≤40-corner gate). Real jogs
+  // survive — their coordinates cluster far apart. tol ≈ 2.5 cells.
+  const polygon = snapAndClean(raw, cell * 2.5);
+  return { polygon, bbox };
+}
+
 /**
  * Recover the building outline polygon from drawn wall segments. Returns the
- * polygon in the input's coordinate space + the bbox used, or null.
+ * polygon in the input's coordinate space + the POLYGON's bbox (the building's
+ * extent — callers co-register the AI trace onto it, so it must bound the
+ * building, not the whole sheet), or null.
+ *
+ * Sheet frames are peeled iteratively: when a pass traces a polygon that fills
+ * ~the whole segment bbox, that polygon IS the border/drawing frame — strip the
+ * frame-hugging segments and re-trace what's inside. Without this, any sheet
+ * with a closed border (i.e. every real plan set) traces as a perfect 4-corner
+ * box and the articulated footprint inside is never seen.
  */
 export function extractBuildingOutline(
   segments: number[][],
@@ -338,49 +558,28 @@ export function extractBuildingOutline(
 ): { polygon: Pt[]; bbox: { x0: number; y0: number; x1: number; y1: number } } | null {
   try {
     if (!segments || segments.length < 4) return null;
-    const bbox = bboxOf(segments);
-    if (!bbox) return null;
-    const wWorld = bbox.x1 - bbox.x0;
-    const hWorld = bbox.y1 - bbox.y0;
-    if (wWorld <= 0 || hWorld <= 0) return null;
-
-    const G = opts?.grid ?? GRID;
-    const cell = Math.max(wWorld, hWorld) / G;
-    const gw = Math.max(4, Math.ceil(wWorld / cell) + 4);
-    const gh = Math.max(4, Math.ceil(hWorld / cell) + 4);
-    const grid: Grid = { w: gw, h: gh, cells: new Uint8Array(gw * gh) };
-    const toGx = (x: number) => (x - bbox.x0) / cell + 2;
-    const toGy = (y: number) => (y - bbox.y0) / cell + 2;
-
-    // Thicken walls by a couple of cells to bridge door gaps / hairline breaks.
-    const thick = Math.max(1, opts?.gapCells ?? Math.round(G / 90));
-    for (const s of segments) {
-      if (s.length < 4) continue;
-      drawSeg(grid, toGx(s[0]), toGy(s[1]), toGx(s[2]), toGy(s[3]), thick);
+    let segs = segments;
+    let fallback: Pt[] | null = null; // the outermost frame-like trace
+    for (let pass = 0; pass < 3; pass++) {
+      const res = tracePass(segs, opts);
+      if (!res) break;
+      if (!looksLikeFrame(res.polygon, res.bbox, segs)) {
+        // A real building, not the frame — done.
+        return { polygon: res.polygon, bbox: bboxPts(res.polygon) };
+      }
+      fallback ??= res.polygon;
+      const peeled = stripFrameSegments(segs, res.bbox);
+      if (peeled.length === segs.length || peeled.length < 4) break; // nothing to peel
+      segs = peeled;
     }
-
-    floodExterior(grid);
-    const insideRaw = largestInside(grid);
-    const insideCount = insideRaw.reduce((a, b) => a + b, 0);
-    // Reject if the "building" is a sliver (segments didn't enclose anything).
-    if (insideCount < gw * gh * 0.05) return null;
-    // Erode away the wall thickening so the outline tracks the real walls.
-    const inside = erode(grid, insideRaw, thick);
-
-    const gridPoly = traceOutline(grid, inside);
-    if (!gridPoly || gridPoly.length < 4) return null;
-
-    // Grid corners → world space (undo the +2 pad and cell scale).
-    const raw = gridPoly.map((p) => ({
-      x: bbox.x0 + (p.x - 2) * cell,
-      y: bbox.y0 + (p.y - 2) * cell,
-    }));
-    // Snap out sub-cell stair-steps + door-gap dimples so a real footprint reads
-    // as a clean ~6-corner polygon, not a 30-40 corner staircase (which feeds
-    // noisy geometry and can false-trip the roof's ≤40-corner gate). Real jogs
-    // survive — their coordinates cluster far apart. tol ≈ 2.5 cells.
-    const polygon = snapAndClean(raw, cell * 2.5);
-    return { polygon, bbox };
+    // Never found a building inside the frame(s). A plain 4-corner frame may
+    // pass through (the caller's ≤4-corner gate skips it anyway); an
+    // "articulated" frame (border + title-block notch) must not masquerade as
+    // a footprint.
+    if (fallback && fallback.length <= 4) {
+      return { polygon: fallback, bbox: bboxPts(fallback) };
+    }
+    return null;
   } catch {
     return null;
   }

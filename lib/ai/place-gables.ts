@@ -18,10 +18,11 @@
  * PURE (no server-only / DOM) — node-testable.
  */
 
-import type { Facing, Gable } from "../roof-engine";
+import type { Gable } from "../roof-engine";
 import type { FaceReadingRaw, FaceGableRead, FaceProjection } from "./face-merge";
 import type { RoofMassArea } from "./to-masses";
 import type { Pt } from "../roof-skeleton";
+import { DEFAULT_FACE_NORMALS, facingLetterOf, type FaceNormals } from "./plan-orientation";
 
 export type PlaceResult = { gables: Gable[]; notes: string[] };
 
@@ -30,6 +31,10 @@ export type PlaceOptions = {
    *  gable matches one by kind, its DEPTH = area ÷ span (LAW 2 — depth from the
    *  plan, not the face view). */
   roofMasses?: RoofMassArea[] | null;
+  /** Compass→canvas outward normals derived from the plan's own elevation
+   *  titles (plan-orientation.ts). Without it the legacy north-up assumption
+   *  applies — wrong for sets drawn front-at-bottom with front≠south. */
+  faceNormals?: FaceNormals | null;
 };
 
 /** entry porches roof-share the "porch" schedule label. */
@@ -96,20 +101,20 @@ const PERP: Record<string, string[]> = {
 
 const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
 
-/** Along-face scalar that increases to the viewer's RIGHT (matches orientEdge:
- *  north→+x, south→−x, east→+y, west→−y). Lets multiple sub-edges of one face be
- *  ordered and addressed on a common axis. */
-function faceU(p: Pt, face: string): number {
-  switch (face) {
-    case "north":
-      return p.x;
-    case "south":
-      return -p.x;
-    case "east":
-      return p.y;
-    default: // west
-      return -p.y;
-  }
+/** The viewer's LEFT→RIGHT direction for a face with outward normal `n`
+ *  (y-down canvas): the viewer stands outside looking along −n, so their right
+ *  hand points along n rotated a quarter turn — rightDir = (n.y, −n.x).
+ *  Check (default north, n={0,−1}): the viewer stands north of the house
+ *  facing south; their left hand points EAST (+x), so u must DECREASE with x —
+ *  rightDir = {−1,0}. ✓  (The old per-face switch had all four faces mirrored:
+ *  a north gable read at position_frac 0 — the drawing's far LEFT, the house's
+ *  EAST end — landed on the WEST end.) */
+const rightDirOf = (n: Pt): Pt => ({ x: n.y, y: -n.x });
+
+/** Along-face scalar that increases to the viewer's RIGHT. Lets multiple
+ *  sub-edges of one face be ordered and addressed on a common axis. */
+function faceU(p: Pt, rightDir: Pt): number {
+  return p.x * rightDir.x + p.y * rightDir.y;
 }
 
 type FaceEdge = { L: Pt; R: Pt; uL: number; uR: number; out: number };
@@ -125,7 +130,7 @@ type FaceEdge = { L: Pt; R: Pt; uL: number; uR: number; out: number };
  * onto one principal edge (the cause of missing gables on articulated fronts).
  * A face with a single straight edge yields one FaceEdge → identical to before.
  */
-function faceEdges(poly: Pt[], n: Pt, face: string): FaceEdge[] {
+function faceEdges(poly: Pt[], n: Pt): FaceEdge[] {
   let cx = 0;
   let cy = 0;
   for (const p of poly) {
@@ -135,6 +140,7 @@ function faceEdges(poly: Pt[], n: Pt, face: string): FaceEdge[] {
   cx /= poly.length;
   cy /= poly.length;
   const centroidProj = cx * n.x + cy * n.y;
+  const rd = rightDirOf(n);
   const edges: FaceEdge[] = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];
@@ -147,8 +153,8 @@ function faceEdges(poly: Pt[], n: Pt, face: string): FaceEdge[] {
     if (Math.abs((dx / len) * n.x + (dy / len) * n.y) > 0.5) continue;
     const out = ((a.x + b.x) / 2) * n.x + ((a.y + b.y) / 2) * n.y;
     if (out < centroidProj) continue; // an edge on the opposite (back) half
-    const [L, R] = orientEdge(a, b, face);
-    edges.push({ L, R, uL: faceU(L, face), uR: faceU(R, face), out });
+    const [L, R] = orientEdge(a, b, rd);
+    edges.push({ L, R, uL: faceU(L, rd), uR: faceU(R, rd), out });
   }
   edges.sort((e1, e2) => e1.uL - e2.uL);
   return edges;
@@ -177,27 +183,13 @@ function pointAtU(edges: FaceEdge[], u: number, eps = 1e-6): Pt {
   return { x: pick.L.x + (pick.R.x - pick.L.x) * s, y: pick.L.y + (pick.R.y - pick.L.y) * s };
 }
 
-/** Order an edge's endpoints [left, right] as seen looking at that elevation. */
-function orientEdge(a: Pt, b: Pt, face: string): [Pt, Pt] {
-  const swap = (): [Pt, Pt] => [b, a];
-  switch (face) {
-    case "north": // viewer's right = +x  → left = min x
-      return a.x <= b.x ? [a, b] : swap();
-    case "south": // viewer's right = −x  → left = max x
-      return a.x >= b.x ? [a, b] : swap();
-    case "east": // left = min y
-      return a.y <= b.y ? [a, b] : swap();
-    default: // west: left = max y
-      return a.y >= b.y ? [a, b] : swap();
-  }
+/** Order an edge's endpoints [left, right] as seen looking at that elevation
+ *  (u increasing along the viewer's rightDir). */
+function orientEdge(a: Pt, b: Pt, rightDir: Pt): [Pt, Pt] {
+  return faceU(a, rightDir) <= faceU(b, rightDir) ? [a, b] : [b, a];
 }
 
-const FACES: { face: string; n: Pt; letter: Facing }[] = [
-  { face: "north", n: { x: 0, y: -1 }, letter: "N" },
-  { face: "south", n: { x: 0, y: 1 }, letter: "S" },
-  { face: "east", n: { x: 1, y: 0 }, letter: "E" },
-  { face: "west", n: { x: -1, y: 0 }, letter: "W" },
-];
+const FACE_NAMES = ["north", "south", "east", "west"] as const;
 
 /**
  * Place the per-face gables on the outline. `pxPerFt` converts span/projection
@@ -215,14 +207,18 @@ export function placeGablesFromFaces(
     return { gables, notes };
   }
 
-  for (const { face, n, letter } of FACES) {
+  for (const face of FACE_NAMES) {
+    const n = options?.faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
+    // The engine draws by CANVAS letter — under a derived orientation the
+    // compass-north gable projects wherever north points on this sheet.
+    const letter = facingLetterOf(n);
     const reading = perFace[face];
     if (!reading || reading.readable === false) continue;
     const read = (reading.gables ?? []).filter((g) => g && (g.span_ft ?? 0) >= 0);
     if (read.length === 0) continue;
     // ALL sub-edges on this side (incl. jogs), left→right — so each gable lands
     // on the sub-edge its position_frac maps to across the full face width.
-    const edges = faceEdges(outlinePx, n, face);
+    const edges = faceEdges(outlinePx, n);
     if (edges.length === 0) continue;
     const uMin = Math.min(...edges.map((e) => e.uL));
     const uMax = Math.max(...edges.map((e) => e.uR));

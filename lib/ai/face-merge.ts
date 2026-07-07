@@ -60,6 +60,10 @@ export type FaceProjection = {
 
 export type FaceReadingRaw = {
   face: ElevationFaceName;
+  /** The elevation's printed title exactly as it appears ("FRONT/NORTH
+   *  ELEVATION") — pairs the compass face with the house-relative word, which
+   *  anchors the plan's compass orientation (see plan-orientation.ts). */
+  sheet_title?: string | null;
   readable: boolean;
   unreadable_reason: string | null;
   gable_count: number | null;

@@ -23,6 +23,7 @@ import type {
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
 import type { FaceReadingRaw } from "./face-merge";
+import type { FaceNormals } from "./plan-orientation";
 import type { RoofMassArea } from "./to-masses";
 
 /**
@@ -454,6 +455,10 @@ export function blueprintToEstimateResult(
     /** Per-mass roof areas (analysisJson._engine.roofMasses) so a projecting
      *  gable's depth = roof area ÷ span (LAW 2), not a schematic guess. */
     roofMasses?: RoofMassArea[] | null;
+    /** Compass→canvas normals derived from the plan's own elevation titles
+     *  (plan-orientation.ts) so per-face gables land on the right canvas side
+     *  when the sheet isn't drawn north-up. Null → legacy north-up default. */
+    faceNormals?: FaceNormals | null;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -528,7 +533,7 @@ export function blueprintToEstimateResult(
   // there's no footprint / no scale, in which case both modes no-op.
   const engineBundle =
     opts?.useEngineTakeoff || opts?.useEngineDraw
-      ? buildEngineTakeoff(analysis, opts?.perFace, opts?.roofMasses)
+      ? buildEngineTakeoff(analysis, opts?.perFace, opts?.roofMasses, opts?.faceNormals)
       : null;
   const enginePrices = !!opts?.useEngineTakeoff && !!engineBundle;
 

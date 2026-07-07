@@ -8,6 +8,7 @@ import { engineDrawEnabled, engineTakeoffEnabled } from "@/lib/ai/engine-takeoff
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
+import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -525,10 +526,27 @@ export async function runEstimateFromPlan(
   // pipeline) let the engine draw each face's gables + pop-outs by rule (with
   // real projection depth = roof area ÷ span) when the engine flag is on.
   const engineStash = row.analysisJson as
-    | { _perFace?: { per_face?: Record<string, unknown> }; _engine?: { roofMasses?: unknown } }
+    | {
+        _perFace?: { per_face?: Record<string, unknown> };
+        _engine?: { roofMasses?: unknown; orientation?: { normals?: unknown } | null };
+      }
     | null;
   const perFace = engineStash?._perFace?.per_face ?? null;
   const roofMasses = engineStash?._engine?.roofMasses ?? null;
+
+  // Compass→canvas orientation: the per-face reads' sheet_title echoes are the
+  // primary source (the model reads "FRONT/NORTH ELEVATION" even when the title
+  // is drawn as glyph outlines); the gates' text-layer derivation is the stored
+  // fallback. Null → the legacy north-up assumption (unchanged behavior).
+  const titleOrientation = deriveOrientationFromFaceTitles(
+    perFace as Record<string, { sheet_title?: string | null }> | null,
+  );
+  const orientation =
+    titleOrientation ??
+    ((engineStash?._engine?.orientation ?? null) as import("@/lib/ai/plan-orientation").PlanOrientation | null);
+  if (titleOrientation) {
+    analysis.notes = [...(analysis.notes ?? []), `🧭 ${titleOrientation.note}`];
+  }
 
   const result = blueprintToEstimateResult(
     analysis,
@@ -544,6 +562,7 @@ export async function runEstimateFromPlan(
       useEngineDraw: engineDrawEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
+      faceNormals: orientation?.normals ?? null,
     },
   );
 

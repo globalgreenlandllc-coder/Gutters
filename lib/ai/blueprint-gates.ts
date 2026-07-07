@@ -19,6 +19,7 @@ import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import type { PlanClassification } from "./classify-plans";
 import { extractScheduleText } from "./pdf-vectors";
 import { validateBlueprintGeometry, parseScheduleAreaFt2, parseRoofMasses, type RoofMassArea } from "./to-masses";
+import { deriveOrientation, type PlanOrientation } from "./plan-orientation";
 import type { ReviewFlag } from "../roof-engine";
 
 export type BlueprintGateResult = {
@@ -27,6 +28,10 @@ export type BlueprintGateResult = {
   scheduleArea: { areaFt2: number; label: string; page: number } | null;
   /** Per-mass roof areas from the roof schedule (for projecting-gable depth). */
   roofMasses: RoofMassArea[];
+  /** Compass→canvas orientation from elevation titles in the TEXT layer, when
+   *  present (many sets outline their titles — the per-face `sheet_title` echo
+   *  is the fallback the estimate path also consults). */
+  orientation: PlanOrientation | null;
   /** Human-readable lines to fold into `analysis.notes`. */
   notes: string[];
 };
@@ -78,11 +83,19 @@ export async function runBlueprintGates(args: {
     );
   }
 
+  // Compass orientation from elevation titles in the text layer ("FRONT/NORTH
+  // ELEVATION" ⇒ front-at-bottom fixes where north points on the canvas). Many
+  // sets outline their titles (no text) — then this is null and the per-face
+  // reads' sheet_title echo takes over at estimate time.
+  const orientation = deriveOrientation(texts);
+  if (orientation) notes.push(`🧭 ${orientation.note}`);
+
   return {
     reviewFlags: v.reviewFlags,
     scaleFtPerPx: v.scaleFtPerPx,
     scheduleArea: schedule,
     roofMasses,
+    orientation,
     notes,
   };
 }

@@ -213,3 +213,66 @@ test("end-to-end: placed gables drive the engine → front porch adds guttered s
   assert.equal(res.masses[0].interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:")).length, 6);
   assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 2);
 });
+
+// ── Orientation: viewer left/right physics + derived compass normals ─────────
+
+test("position_frac follows the OUTSIDE viewer: south face 0.25 = west of center, north face 0 = the EAST end", () => {
+  // South face: viewer stands south looking north — their left hand points
+  // WEST (min x), so frac 0.25 lands at x = 0.25 × 640 = 160.
+  const south = placeGablesFromFaces(
+    { south: face({ face: "south", gables: [g({ id: "s", position_frac: 0.25 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+  ).gables[0];
+  assert.equal(south.baseCenter.y, 510);
+  assert.equal(south.baseCenter.x, 160);
+  // North face: viewer stands north looking south — their left hand points
+  // EAST (max x), so frac 0 is the east end of the wall.
+  const north = placeGablesFromFaces(
+    { north: face({ face: "north", gables: [g({ id: "n", position_frac: 0 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+  ).gables[0];
+  assert.equal(north.baseCenter.y, 0);
+  assert.equal(north.baseCenter.x, 640);
+});
+
+test("derived faceNormals (front-at-bottom, front=north): north gables land on the BOTTOM edge, west on the RIGHT", () => {
+  // The Woodinville case — elevation titles say FRONT/NORTH + RIGHT/WEST, so
+  // the compass is rotated 180° from north-up on the canvas.
+  const rotated = {
+    north: { x: 0, y: 1 },
+    south: { x: 0, y: -1 },
+    east: { x: -1, y: 0 },
+    west: { x: 1, y: 0 },
+  };
+  const placed = placeGablesFromFaces(
+    {
+      north: face({
+        face: "north",
+        gables: [
+          g({ id: "master", position_frac: 0.2 }),
+          g({ id: "entry", position_frac: 0.5 }),
+          g({ id: "great", position_frac: 0.8 }),
+        ],
+      }),
+      west: face({ face: "west", gables: [g({ id: "w1", position_frac: 0.5 })] }),
+    },
+    OUTLINE,
+    PX_PER_FT,
+    { faceNormals: rotated },
+  ).gables;
+  const north = placed.filter((x) => ["master", "entry", "great"].includes(x.name));
+  assert.equal(north.length, 3);
+  for (const gb of north) {
+    assert.equal(gb.baseCenter.y, 510, `${gb.name} sits on the canvas-BOTTOM edge (the front)`);
+    assert.equal(gb.facing, "S", `${gb.name} projects outward past the bottom (canvas letter)`);
+  }
+  // Viewer of the north elevation (standing north = below the canvas bottom,
+  // looking up-canvas): left hand = east = canvas-LEFT ⇒ frac increases with x.
+  const xs = Object.fromEntries(north.map((x) => [x.name, x.baseCenter.x]));
+  assert.ok(xs.master < xs.entry && xs.entry < xs.great, "frac order runs east(left)→west(right) for the rotated viewer");
+  const west = placed.find((x) => x.name === "w1")!;
+  assert.equal(west.baseCenter.x, 640, "west gable sits on the canvas-RIGHT edge");
+  assert.equal(west.facing, "E");
+});
