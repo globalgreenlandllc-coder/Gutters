@@ -39,6 +39,12 @@ export type FaceGableRead = {
   /** A positive depth cue visible ON THIS face (a "roof beyond" line, a porch at
    *  a different plane, posts/beam under an entry gable). Not a confirmation. */
   shows_projection_cue: boolean;
+  /** SET-BACK / dormer signal (Case 2): how far the gable base sits BEHIND the
+   *  eave, read from how far its base rises ABOVE the eave line in this elevation
+   *  (at eave level ⇒ 0). Drives Gable.setbackFt so the engine draws it as a
+   *  dormer — the eave keeps its gutter in front, the gable rises behind it.
+   *  Optional; absent/0 ⇒ a normal at-the-eave gable. */
+  set_back_ft?: number | null;
   notes: string;
 };
 

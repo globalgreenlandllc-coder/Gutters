@@ -74,6 +74,15 @@ export type ProjectionSource = "side_elevation" | "roof_plan" | "none";
  * often don't exist. `facing` is the outward direction (front gables face one
  * way, rear gables the other — never copy one face to the other). `intoDepth`
  * is the ridge run-back into the parent roof (default span/2).
+ *
+ * `setbackFt` handles a SET-BACK / dormer gable: a gable whose base sits a few
+ * feet BEHIND the eave, not on it (its base reads ABOVE the eave line in the
+ * elevation, because it's further up the slope). The eave keeps running with its
+ * gutter in FRONT and the gable rises behind it. Defaults to 0 (base on the
+ * eave — the normal case). When > 0 the whole gable is shifted inward by that
+ * depth; the front eave is untouched (still guttered), so a set-back gable adds
+ * ZERO gutter, exactly like a dormer. `baseCenter` stays on the eave (it's the
+ * anchor / position read); `setbackFt` is how far back the gable itself sits.
  */
 export type Gable = {
   baseCenter: Pt;
@@ -82,6 +91,9 @@ export type Gable = {
   projection: number;
   facing: Facing;
   intoDepth?: number;
+  /** Depth the gable base sits BEHIND the eave (dormer / set-back gable). 0 =
+   *  on the eave. The front eave stays guttered; the gable draws this far in. */
+  setbackFt?: number;
   name?: string;
   eaveCondition?: EaveCondition;
   supportedOn?: SupportedOn;
@@ -356,9 +368,16 @@ export function buildGableByRule(g: Gable): GableLines {
   const out = dirVector(g.facing);
   const side = perp(out);
   const half = g.span / 2;
-  const left = { x: g.baseCenter.x - side.x * half, y: g.baseCenter.y - side.y * half };
-  const right = { x: g.baseCenter.x + side.x * half, y: g.baseCenter.y + side.y * half };
-  const peak = add(g.baseCenter, scale(out, g.projection));
+  // Set-back / dormer: shift the whole gable INWARD (away from the eave, along
+  // −out) by setbackFt. The perimeter eave in front is left untouched by the
+  // caller, so a set-back gable keeps its front gutter — exactly a dormer.
+  // setbackFt 0 ⇒ base == baseCenter (the normal at-the-eave gable), so existing
+  // behaviour is byte-identical.
+  const setback = Math.max(0, g.setbackFt ?? 0);
+  const base = setback > 1e-9 ? { x: g.baseCenter.x - out.x * setback, y: g.baseCenter.y - out.y * setback } : g.baseCenter;
+  const left = { x: base.x - side.x * half, y: base.y - side.y * half };
+  const right = { x: base.x + side.x * half, y: base.y + side.y * half };
+  const peak = add(base, scale(out, g.projection));
 
   const lines: GableLines = {
     rakes: [],
@@ -388,7 +407,7 @@ export function buildGableByRule(g: Gable): GableLines {
       [peak, right],
     ];
     const into = g.intoDepth ?? half;
-    const ridgeEnd = { x: g.baseCenter.x - out.x * into, y: g.baseCenter.y - out.y * into };
+    const ridgeEnd = { x: base.x - out.x * into, y: base.y - out.y * into };
     lines.ridgeBack = [[peak, ridgeEnd]];
     lines.valleys = [
       [left, ridgeEnd],
@@ -408,7 +427,7 @@ export function buildGableByRule(g: Gable): GableLines {
     [right, rp],
   ];
   const into = g.intoDepth ?? half;
-  const ridgeEnd = { x: g.baseCenter.x - out.x * into, y: g.baseCenter.y - out.y * into };
+  const ridgeEnd = { x: base.x - out.x * into, y: base.y - out.y * into };
   lines.ridgeBack = [[peak, ridgeEnd]];
   lines.valleys = [
     [left, ridgeEnd],

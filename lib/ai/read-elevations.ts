@@ -86,6 +86,16 @@ projecting — flag the cue, but still leave the confirmation to the side view.
 Never invent a projection to add gutter.
 </projection_default>
 
+<set_back_gable>
+A gable normally starts AT the eave — its base sits on the eave/fascia line. But
+a gable can be SET BACK: its base reads a few feet ABOVE the eave line, with a
+strip of eave-and-gutter running IN FRONT of it (a dormer, or a gable recessed up
+the roof slope). When a gable base is clearly above the eave line rather than on
+it, set set_back_ft to how far back it reads (feet) — the eave in front keeps its
+gutter and the gable rises behind it. A base sitting ON the eave ⇒ set_back_ft 0
+(or omit).
+</set_back_gable>
+
 <profile_depth>
 This elevation CAN measure the DEPTH of pop-outs on the PERPENDICULAR faces —
 masses that stick out sideways ACROSS your view (a front porch or rear patio
@@ -146,6 +156,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
             eave_condition_guess: { type: "string", enum: ["projecting", "roof_mounted", "flush", "unknown"] },
             supported_on: { type: "string", enum: ["wall", "posts", "beam", "unknown"] },
             shows_projection_cue: { type: "boolean" },
+            set_back_ft: {
+              type: ["number", "null"],
+              description:
+                "SET-BACK / dormer gable: feet the base sits BEHIND the eave (its base reads ABOVE the eave line). 0 or omit for a normal at-the-eave gable.",
+            },
             notes: { type: "string" },
           },
           required: ["id", "kind", "position_frac", "eave_condition_guess", "supported_on", "shows_projection_cue"],

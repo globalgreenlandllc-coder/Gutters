@@ -108,6 +108,44 @@ test("buildGableByRule: flush gable (projection 0) contributes no gutter but DRA
   assert.equal(L.valleys.length, 2); // ...and two valleys, so it draws as a real gable in plan
 });
 
+test("buildGableByRule: a SET-BACK (dormer) gable draws INSIDE the eave; front eave untouched", () => {
+  // Case 2 — the gable base reads above the eave line, so it sits setbackFt in.
+  // baseCenter on the eave (y=0), facing N (out = {0,-1}); set back 6 ft.
+  const g: Gable = { baseCenter: { x: 30, y: 0 }, span: 12, pitch: 6, projection: 0, facing: "N", setbackFt: 6 };
+  const L = buildGableByRule(g);
+  assert.equal(L.projecting, false);
+  assert.equal(L.sideEaves.length, 0); // a dormer adds NO gutter
+  assert.equal(L.ridgeBack.length, 1);
+  assert.equal(L.valleys.length, 2);
+  // The whole gable is shifted 6 ft inside the eave: base = (30,0) − out·6 = (30,6),
+  // so every drawn point sits at y ≥ 6 (behind the eave, never on it).
+  const pts = [...L.rakes, ...L.ridgeBack, ...L.valleys].flat();
+  for (const p of pts) assert.ok(p.y >= 6 - 1e-9, `point y=${p.y} should be behind the eave (≥6)`);
+  assert.ok(Math.abs(L.peak.x - 30) < 1e-9 && Math.abs(L.peak.y - 6) < 1e-9, "peak sits at the set-back base");
+});
+
+test("buildGableByRule: setbackFt 0 (and omitted) is byte-identical — no regression", () => {
+  const g = { baseCenter: { x: 30, y: 0 }, span: 12, pitch: 6, projection: 0, facing: "N" as const };
+  assert.deepEqual(buildGableByRule({ ...g, setbackFt: 0 }), buildGableByRule(g));
+});
+
+test("a set-back dormer gable adds ZERO gutter — the eave runs whole in front", () => {
+  const res = runRoofEngine([
+    {
+      name: "m",
+      outline: box(64, 44),
+      statedArea: null,
+      eaveEdges: [0, 1, 2, 3],
+      gables: [{ baseCenter: { x: 32, y: 0 }, span: 14, pitch: 6, projection: 0, facing: "N", setbackFt: 8, name: "dormer" }],
+    },
+  ]);
+  const mass = res.masses[0];
+  assert.equal(mass.edges.filter((e) => e.gutter).length, 4); // 4 perimeter eaves; the dormer adds none
+  assert.equal(res.eaveLfByMass.m, 216);
+  // It still draws its ridge + 2 valleys, set back behind the (guttered) eave.
+  assert.equal(mass.interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:")).length, 2);
+});
+
 test("gablePeakHeightFt: (span/2) x (pitch/12)", () => {
   assert.equal(gablePeakHeightFt({ baseCenter: { x: 0, y: 0 }, span: 16, pitch: 6, projection: 0, facing: "S" }), 4);
   assert.equal(gablePeakHeightFt({ baseCenter: { x: 0, y: 0 }, span: 24, pitch: 4, projection: 0, facing: "S" }), 4);

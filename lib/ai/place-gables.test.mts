@@ -62,6 +62,25 @@ test("places a gable at its position along the correct outline edge, facing outw
   assert.equal(gb.span, 160);
 });
 
+test("Case 2: a set-back read (set_back_ft) becomes a dormer — setbackFt in px, roof_mounted, no gutter", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "dormer", set_back_ft: 5, span_ft: 12 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  const gb = gables[0];
+  assert.equal(gb.setbackFt, 50); // 5 ft × 10 px/ft
+  assert.equal(gb.eaveCondition, "roof_mounted"); // treated as a dormer
+  assert.equal(gb.projection, 0); // still zero gutter — the eave runs whole in front
+});
+
+test("Case 2: a normal at-eave gable has no setbackFt and stays flush", () => {
+  const perFace = { north: face({ face: "north", gables: [g({ id: "n1" })] }) };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables[0].setbackFt, undefined);
+  assert.equal(gables[0].eaveCondition, "flush");
+});
+
 test("posts/beam gable is promoted to PROJECTING with a schematic depth + flag", () => {
   const perFace = {
     north: face({ face: "north", gables: [g({ id: "porch", supported_on: "posts", span_ft: 10 })] }),

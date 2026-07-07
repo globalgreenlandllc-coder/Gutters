@@ -248,6 +248,9 @@ export function placeGablesFromFaces(
         ? resolveDepthFt(g, spanFt, options?.roofMasses, perpProjections)
         : { depthFt: 0, source: "", note: undefined };
       const name = g.id || `${face}_gable_${i + 1}`;
+      // Set-back / dormer (Case 2): base reads above the eave line ⇒ it sits this
+      // far behind the eave. The eave stays guttered in front; treat as a dormer.
+      const setbackFt = g.set_back_ft && g.set_back_ft > 0 ? g.set_back_ft : 0;
       gables.push({
         baseCenter: base,
         span: spanFt * pxPerFt,
@@ -255,8 +258,9 @@ export function placeGablesFromFaces(
         projection: depthFt * pxPerFt,
         facing: letter,
         name,
-        eaveCondition: projecting ? "projecting" : "flush",
+        eaveCondition: projecting ? "projecting" : setbackFt > 0 ? "roof_mounted" : "flush",
         supportedOn: g.supported_on === "unknown" ? undefined : g.supported_on,
+        ...(setbackFt > 0 ? { setbackFt: setbackFt * pxPerFt } : {}),
       });
       if (projecting) {
         const verify = source === "schematic default" ? " (schematic) — verify depth & position" : " — verify position";

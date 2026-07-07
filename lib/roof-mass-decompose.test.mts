@@ -100,6 +100,33 @@ test("garage-jog footprint splits into main + garage (2 clean tiers), LF-neutral
   for (const m of ms) assert.ok(polygonCloses(m.outline));
 });
 
+// Case 1 — middle-of-wall jogs. Invisible from the side elevations (the sides
+// only see the outer profile), but the top-down footprint has them, so the
+// decomposer must handle a mid-wall bump/notch like any other jog.
+test("Case 1: a middle BUMP-OUT (T) decomposes area-preserving + LF-neutral", () => {
+  const T: Pt[] = [
+    { x: 0, y: 0 }, { x: 24, y: 0 }, { x: 24, y: -12 }, { x: 36, y: -12 },
+    { x: 36, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 30 }, { x: 0, y: 30 },
+  ];
+  const ms = decomposeMasses(T, allIdx(T));
+  assert.ok(ms.length >= 2, "the mid-wall bump splits off");
+  assert.ok(CLOSE(totalArea(ms), 1944), `area ${totalArea(ms)}`);
+  assert.ok(CLOSE(totalLf(ms), 204), `LF-neutral, got ${totalLf(ms)}`);
+  for (const m of ms) assert.ok(polygonCloses(m.outline));
+});
+
+test("Case 1: a middle NOTCH (courtyard pop-in) decomposes area-preserving + LF-neutral", () => {
+  const U: Pt[] = [
+    { x: 0, y: 0 }, { x: 24, y: 0 }, { x: 24, y: 12 }, { x: 36, y: 12 },
+    { x: 36, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 30 }, { x: 0, y: 30 },
+  ];
+  const ms = decomposeMasses(U, allIdx(U));
+  assert.ok(ms.length >= 2, "the notch forces a split");
+  assert.ok(CLOSE(totalArea(ms), 1656), `area ${totalArea(ms)}`);
+  assert.ok(CLOSE(totalLf(ms), 204), `LF-neutral, got ${totalLf(ms)}`);
+  for (const m of ms) assert.ok(polygonCloses(m.outline));
+});
+
 test("a non-rectilinear outline (diagonal edge) bails to a single 'main' mass", () => {
   const tri: Pt[] = [
     { x: 0, y: 0 },
