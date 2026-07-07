@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decomposeMasses } from "./roof-mass-decompose.ts";
+import { decomposeMasses, matchTierAreas } from "./roof-mass-decompose.ts";
 import { polyArea, polygonCloses, type MassInput } from "./roof-engine.ts";
 
 type Pt = { x: number; y: number };
@@ -120,6 +120,38 @@ test("a NEAR-rectilinear (noisy) L still snaps and splits, area ~preserved", () 
   const ms = decomposeMasses(noisy, allIdx(noisy));
   assert.equal(ms.length, 2, "snapped then split");
   assert.ok(Math.abs(totalArea(ms) - 2100) / 2100 < 0.05, "area within 5% of the clean L");
+});
+
+test("matchTierAreas: tiers match their nearest schedule area, one-to-one", () => {
+  const m = matchTierAreas(
+    [2816, 720],
+    [
+      { label: "upper", areaFt2: 2902 },
+      { label: "garage", areaFt2: 674 },
+      { label: "patio", areaFt2: 228 },
+    ],
+  );
+  assert.equal(m[0]?.label, "upper");
+  assert.equal(m[0]?.areaFt2, 2902);
+  assert.equal(m[1]?.label, "garage");
+  assert.equal(m[1]?.areaFt2, 674);
+});
+
+test("matchTierAreas: a tier with no schedule area within tolerance stays unmatched (null)", () => {
+  const m = matchTierAreas([5000], [{ label: "upper", areaFt2: 2902 }]); // 72% off
+  assert.equal(m[0], null);
+});
+
+test("matchTierAreas: no schedule ⇒ all null", () => {
+  assert.deepEqual(matchTierAreas([2816, 720], []), [null, null]);
+  assert.deepEqual(matchTierAreas([2816, 720], null), [null, null]);
+});
+
+test("matchTierAreas: two similar tiers don't both claim the same schedule entry", () => {
+  const m = matchTierAreas([700, 690], [{ label: "garage", areaFt2: 674 }]);
+  assert.equal(m.filter(Boolean).length, 1, "only one tier claims the single entry");
+  assert.equal(m[1]?.areaFt2, 674); // 690 is nearer than 700
+  assert.equal(m[0], null);
 });
 
 test("every decomposed mass is a valid closed ring with in-range eave indices", () => {

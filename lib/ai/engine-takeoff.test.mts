@@ -238,6 +238,38 @@ test("buildEngineTakeoff: a garage-jog footprint decomposes into main + garage (
   assert.equal(b!.eaveLfFt, 132);
 });
 
+test("buildEngineTakeoff: with a roof schedule, each decomposed tier gets its own area gate", () => {
+  // Models the real post-swap analysis: building_footprint is the exact jogged
+  // vector outline (main 2816 px² → 704 ft², garage 720 px² → 180 ft² at 0.5
+  // ft/px), and a roof schedule is present. Each tier should match a schedule
+  // area and be gated against it — the per-tier validation the single mass never got.
+  const GARAGE_FP = [
+    { x: 0, y: 0 },
+    { x: 64, y: 0 },
+    { x: 64, y: 10 },
+    { x: 88, y: 10 },
+    { x: 88, y: 40 },
+    { x: 64, y: 40 },
+    { x: 64, y: 44 },
+    { x: 0, y: 44 },
+  ];
+  const b = buildEngineTakeoff(
+    analysis({ building_footprint: GARAGE_FP, gutter_runs: [run([0, 0], [64, 0])] }),
+    null,
+    [
+      { label: "upper", areaFt2: 700 },
+      { label: "garage", areaFt2: 185 },
+    ],
+  );
+  assert.ok(b);
+  assert.equal(b!.takeoff.masses.length, 2);
+  assert.ok(b!.takeoff.masses.every((m) => m.statedArea != null), "each tier got a stated area");
+  const ag = b!.takeoff.reviewFlags.filter((f) => f.code === "area_gate");
+  assert.equal(ag.length, 2, "one area gate per tier");
+  assert.equal(b!.takeoff.reviewFlags.filter((f) => f.code === "no_schedule").length, 0);
+  assert.ok(ag.every((f) => f.severity === "info"), "both tiers reconcile with the schedule");
+});
+
 test("buildEngineTakeoff: null when EVERY edge is marked a rake (nothing to price)", () => {
   const allRakes = analysis({
     excluded_edges: [

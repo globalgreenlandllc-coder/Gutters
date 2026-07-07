@@ -21,8 +21,8 @@
  */
 
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
-import { runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine";
-import { decomposeMasses } from "../roof-mass-decompose";
+import { polyArea, runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine";
+import { decomposeMasses, matchTierAreas } from "../roof-mass-decompose";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { placeGablesFromFaces } from "./place-gables";
 import type { FaceReadingRaw } from "./face-merge";
@@ -247,6 +247,20 @@ export function buildEngineTakeoff(
         }
       }
       (best.gables ??= []).push(g);
+    }
+
+    // Per-tier AREA GATE: match each tier to a stated roof-schedule area (UPPER /
+    // GARAGE / PATIO …) so the engine validates each mass against the plan
+    // instead of leaving it unverified. Only once we've actually split into
+    // tiers AND have a schedule — a single "main" mass keeps statedArea null
+    // (identical to before), and an unmatched tier stays null (honest
+    // no_schedule, never a force-fit label).
+    if (massInputs.length > 1 && roofMasses && roofMasses.length) {
+      const tierAreasFt2 = massInputs.map((m) => polyArea(m.outline) * ftPerPx * ftPerPx);
+      const matched = matchTierAreas(tierAreasFt2, roofMasses);
+      massInputs.forEach((m, i) => {
+        if (matched[i]) m.statedArea = matched[i]!.areaFt2;
+      });
     }
     // The engine runs on the PIXEL outline (so its geometry registers with the
     // canvas). pxPerFt lets its ft-based gates (long-run, reentrant valley, area,

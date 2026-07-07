@@ -269,6 +269,44 @@ export type DecomposeOptions = {
   snapTol?: number;
 };
 
+export type TierAreaMatch = { areaFt2: number; label: string } | null;
+
+/**
+ * Match each decomposed tier to a stated ROOF-SCHEDULE area (e.g. UPPER 2902 sf,
+ * GARAGE 674 sf, PATIO 228 sf) by nearest area, one-to-one, so the engine can
+ * area-gate each tier against the plan instead of leaving it unverified. Greedy
+ * on the closest relative match; a tier is left UNMATCHED (null ⇒ no gate, an
+ * honest `no_schedule`) unless a schedule area is within `tolFrac` — so a wrong
+ * label is never force-fit onto a tier. Pure + deterministic.
+ */
+export function matchTierAreas(
+  tierAreasFt2: number[],
+  schedule: { label: string; areaFt2: number }[] | null | undefined,
+  tolFrac = 0.25,
+): TierAreaMatch[] {
+  const out: TierAreaMatch[] = tierAreasFt2.map(() => null);
+  if (!Array.isArray(schedule) || schedule.length === 0) return out;
+  const cand: { t: number; s: number; rel: number }[] = [];
+  tierAreasFt2.forEach((ta, t) => {
+    if (!(ta > 0)) return;
+    schedule.forEach((sc, s) => {
+      if (!sc || !(sc.areaFt2 > 0)) return;
+      const rel = Math.abs(ta - sc.areaFt2) / sc.areaFt2;
+      if (rel <= tolFrac) cand.push({ t, s, rel });
+    });
+  });
+  cand.sort((a, b) => a.rel - b.rel);
+  const usedT = new Set<number>();
+  const usedS = new Set<number>();
+  for (const c of cand) {
+    if (usedT.has(c.t) || usedS.has(c.s)) continue;
+    out[c.t] = { areaFt2: schedule[c.s].areaFt2, label: schedule[c.s].label };
+    usedT.add(c.t);
+    usedS.add(c.s);
+  }
+  return out;
+}
+
 /**
  * Split one footprint into its tier masses. Returns a single `main` mass
  * (unchanged) whenever decomposition isn't clean/safe, so a caller can always
