@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Bell,
   BookOpen,
   CalendarDays,
   ChevronsUpDown,
@@ -24,6 +23,7 @@ import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
 import { Avatar } from "@/components/ui/avatar";
 import { CreditsChip } from "./credits-chip";
+import { NotificationsBell } from "./notifications-bell";
 import { useSession } from "@/lib/auth-mock";
 import { cn } from "@/lib/utils";
 
@@ -256,13 +256,7 @@ export function DashboardShell({
                 </kbd>
               </div>
               <CreditsChip />
-              <button
-                className="relative flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
-                aria-label="Notifications"
-              >
-                <Bell className="h-4 w-4" />
-                <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent-600" />
-              </button>
+              <NotificationsBell />
               {actions}
             </div>
           </div>

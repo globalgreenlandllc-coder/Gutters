@@ -410,6 +410,96 @@ export async function listOwnerJobs(): Promise<OwnerJobDTO[]> {
   }));
 }
 
+/** Slim event for the owner's week calendar — assigned jobs overlay. */
+export type JobCalendarEventDTO = {
+  id: string;
+  title: string;
+  address: string;
+  workerId: string;
+  workerName: string;
+  status: JobAssignmentStatus;
+  kindLabel: string;
+  workerPayCents: number;
+  startsAt: string;
+  endsAt: string;
+};
+
+export async function listJobCalendarEvents(
+  rangeStartIso: string,
+  rangeEndIso: string,
+): Promise<JobCalendarEventDTO[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const rangeStart = new Date(rangeStartIso);
+  const rangeEnd = new Date(rangeEndIso);
+  if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime())) return [];
+  const jobs = await db.jobAssignment.findMany({
+    where: {
+      ownerId: me.user.id,
+      status: { not: "CANCELLED" },
+      startsAt: { lt: rangeEnd },
+      endsAt: { gt: rangeStart },
+    },
+    orderBy: { startsAt: "asc" },
+    include: { worker: { select: { name: true, email: true } } },
+  });
+  return jobs.map((j) => ({
+    id: j.id,
+    title: j.title,
+    address: j.address,
+    workerId: j.workerId,
+    workerName: j.worker.name || j.worker.email,
+    status: j.status,
+    kindLabel: JOB_KIND_LABEL[j.kind],
+    workerPayCents: j.workerPayCents,
+    startsAt: j.startsAt.toISOString(),
+    endsAt: j.endsAt.toISOString(),
+  }));
+}
+
+/** Recent worker responses (accepted / declined / completed) for the owner's
+ *  notification bell. Newest first. */
+export type WorkerActivityDTO = {
+  id: string;
+  jobId: string;
+  jobTitle: string;
+  workerName: string;
+  event: "ACCEPTED" | "DECLINED" | "COMPLETED";
+  declineReason: string | null;
+  at: string;
+};
+
+export async function listWorkerActivity(): Promise<WorkerActivityDTO[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const since = new Date(Date.now() - 14 * 24 * 3600_000);
+  const jobs = await db.jobAssignment.findMany({
+    where: {
+      ownerId: me.user.id,
+      OR: [
+        { respondedAt: { gte: since }, status: { in: ["ACCEPTED", "DECLINED", "IN_PROGRESS"] } },
+        { completedAt: { gte: since }, status: "COMPLETED" },
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 12,
+    include: { worker: { select: { name: true, email: true } } },
+  });
+  return jobs.map((j) => {
+    const completed = j.status === "COMPLETED";
+    const at = (completed ? j.completedAt : j.respondedAt) ?? j.updatedAt;
+    return {
+      id: `${j.id}:${j.status}`,
+      jobId: j.id,
+      jobTitle: j.title,
+      workerName: j.worker.name || j.worker.email,
+      event: completed ? "COMPLETED" : j.status === "DECLINED" ? "DECLINED" : "ACCEPTED",
+      declineReason: j.status === "DECLINED" ? j.declineReason : null,
+      at: at.toISOString(),
+    };
+  });
+}
+
 export async function cancelJob(jobId: string): Promise<VoidResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };

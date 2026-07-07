@@ -1,0 +1,128 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { Bell, Check, X, CheckCircle2, HardHat } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { listWorkerActivity, type WorkerActivityDTO } from "@/app/actions/workers";
+
+const SEEN_KEY = "gutters:worker-activity-seen";
+
+/** Real notifications: recent worker job responses (accepted / declined /
+ *  completed). The dot shows when there's activity newer than the last time the
+ *  dropdown was opened (localStorage watermark — per-browser, good enough). */
+export function NotificationsBell() {
+  const [items, setItems] = useState<WorkerActivityDTO[]>([]);
+  const [open, setOpen] = useState(false);
+  const [seenAt, setSeenAt] = useState<string>(() => {
+    if (typeof window === "undefined") return new Date(0).toISOString();
+    return localStorage.getItem(SEEN_KEY) ?? new Date(0).toISOString();
+  });
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    listWorkerActivity().then((a) => {
+      if (alive) setItems(a);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const unseen = items.filter((i) => i.at > seenAt).length;
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      const now = new Date().toISOString();
+      localStorage.setItem(SEEN_KEY, now);
+      setSeenAt(now);
+    }
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={toggle}
+        className="relative flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+        aria-label="Notifications"
+      >
+        <Bell className="h-4 w-4" />
+        {unseen > 0 && (
+          <span className="absolute right-1.5 top-1.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-accent-600 px-0.5 text-[9px] font-bold leading-none text-white">
+            {unseen > 9 ? "9+" : unseen}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
+          <div className="border-b border-zinc-100 px-4 py-2.5 text-sm font-semibold text-ink">
+            Worker activity
+          </div>
+          {items.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-zinc-400">
+              No recent responses from your crew.
+            </div>
+          ) : (
+            <ul className="max-h-96 divide-y divide-zinc-50 overflow-y-auto">
+              {items.map((i) => (
+                <li key={i.id}>
+                  <Link
+                    href="/dashboard/workers"
+                    onClick={() => setOpen(false)}
+                    className="flex items-start gap-2.5 px-4 py-2.5 hover:bg-zinc-50"
+                  >
+                    <span
+                      className={cn(
+                        "mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full",
+                        i.event === "ACCEPTED" && "bg-emerald-50 text-emerald-600",
+                        i.event === "DECLINED" && "bg-rose-50 text-rose-600",
+                        i.event === "COMPLETED" && "bg-sky-50 text-sky-600",
+                      )}
+                    >
+                      {i.event === "ACCEPTED" && <Check className="h-3.5 w-3.5" />}
+                      {i.event === "DECLINED" && <X className="h-3.5 w-3.5" />}
+                      {i.event === "COMPLETED" && <CheckCircle2 className="h-3.5 w-3.5" />}
+                    </span>
+                    <span className="min-w-0 text-sm text-zinc-700">
+                      <strong className="font-medium text-ink">{i.workerName}</strong>{" "}
+                      {i.event === "ACCEPTED" ? "accepted" : i.event === "DECLINED" ? "declined" : "completed"}{" "}
+                      <span className="text-zinc-500">“{i.jobTitle}”</span>
+                      {i.declineReason && (
+                        <span className="mt-0.5 block truncate text-xs text-rose-600">
+                          {i.declineReason}
+                        </span>
+                      )}
+                      <span className="mt-0.5 block text-[11px] text-zinc-400">
+                        {new Date(i.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link
+            href="/dashboard/workers"
+            onClick={() => setOpen(false)}
+            className="flex items-center justify-center gap-1.5 border-t border-zinc-100 px-4 py-2 text-xs font-medium text-accent-700 hover:bg-zinc-50"
+          >
+            <HardHat className="h-3.5 w-3.5" /> Manage workers
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}

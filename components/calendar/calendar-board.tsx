@@ -30,6 +30,10 @@ import {
   type AppointmentDTO,
   type SchedulableItem,
 } from "@/app/actions/schedule";
+import {
+  listJobCalendarEvents,
+  type JobCalendarEventDTO,
+} from "@/app/actions/workers";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -84,6 +88,32 @@ const TYPE_META: Record<
     text: "text-zinc-900",
     chip: "bg-zinc-500",
   },
+};
+
+/* Per-worker tile palette for assigned-job overlays — deterministic on the
+   workerId so a worker keeps their color across weeks. */
+const WORKER_PALETTE = [
+  { bg: "bg-indigo-50", ring: "ring-indigo-300", text: "text-indigo-900", chip: "bg-indigo-500" },
+  { bg: "bg-teal-50", ring: "ring-teal-300", text: "text-teal-900", chip: "bg-teal-500" },
+  { bg: "bg-orange-50", ring: "ring-orange-300", text: "text-orange-900", chip: "bg-orange-500" },
+  { bg: "bg-fuchsia-50", ring: "ring-fuchsia-300", text: "text-fuchsia-900", chip: "bg-fuchsia-500" },
+  { bg: "bg-lime-50", ring: "ring-lime-300", text: "text-lime-900", chip: "bg-lime-600" },
+  { bg: "bg-cyan-50", ring: "ring-cyan-300", text: "text-cyan-900", chip: "bg-cyan-500" },
+] as const;
+
+function workerTone(workerId: string) {
+  let h = 0;
+  for (let i = 0; i < workerId.length; i++) h = (h * 31 + workerId.charCodeAt(i)) >>> 0;
+  return WORKER_PALETTE[h % WORKER_PALETTE.length];
+}
+
+const JOB_STATUS_LABEL: Record<JobCalendarEventDTO["status"], string> = {
+  OFFERED: "offered",
+  ACCEPTED: "accepted",
+  DECLINED: "declined",
+  IN_PROGRESS: "in progress",
+  COMPLETED: "done",
+  CANCELLED: "cancelled",
 };
 
 /* ------------------------------------------------------------------ */
@@ -156,6 +186,7 @@ function minutesFromDayStart(d: Date): number {
 export function CalendarBoard() {
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
   const [appointments, setAppointments] = useState<AppointmentDTO[]>([]);
+  const [jobEvents, setJobEvents] = useState<JobCalendarEventDTO[]>([]);
   const [schedulable, setSchedulable] = useState<SchedulableItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<AppointmentDTO | null>(null);
@@ -170,11 +201,13 @@ export function CalendarBoard() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const [appts, items] = await Promise.all([
+    const [appts, jobs, items] = await Promise.all([
       listAppointments(weekStart.toISOString(), weekEnd.toISOString()),
+      listJobCalendarEvents(weekStart.toISOString(), weekEnd.toISOString()),
       listSchedulableItems(),
     ]);
     setAppointments(appts);
+    setJobEvents(jobs);
     setSchedulable(items);
     setLoading(false);
   }, [weekStart, weekEnd]);
@@ -336,6 +369,7 @@ export function CalendarBoard() {
         <CalendarGrid
           weekStart={weekStart}
           appointments={appointments}
+          jobEvents={jobEvents}
           loading={loading}
           onApptClick={(a) => setEditing(a)}
           onApptDragStart={startDragAppt}
@@ -466,6 +500,7 @@ function Header({
 function CalendarGrid({
   weekStart,
   appointments,
+  jobEvents,
   loading,
   onApptClick,
   onApptDragStart,
@@ -475,6 +510,7 @@ function CalendarGrid({
 }: {
   weekStart: Date;
   appointments: AppointmentDTO[];
+  jobEvents: JobCalendarEventDTO[];
   loading: boolean;
   onApptClick: (a: AppointmentDTO) => void;
   onApptDragStart: (e: DragEvent, a: AppointmentDTO) => void;
@@ -504,6 +540,22 @@ function CalendarGrid({
     }
     return map;
   }, [appointments, days]);
+
+  // Assigned-job overlays bucketed the same way (read-only tiles).
+  const jobsByDay = useMemo(() => {
+    const map: Record<number, JobCalendarEventDTO[]> = {};
+    for (let i = 0; i < 7; i++) map[i] = [];
+    for (const j of jobEvents) {
+      const startsAt = new Date(j.startsAt);
+      for (let i = 0; i < 7; i++) {
+        if (sameDay(startsAt, days[i])) {
+          map[i].push(j);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [jobEvents, days]);
 
   // Current-time indicator (red line). Only show when "today" is in view.
   const todayIndex = days.findIndex((d) => sameDay(d, today));
@@ -614,6 +666,10 @@ function CalendarGrid({
                   onResizeStart={(e) => onApptResizeStart(e, a)}
                 />
               ))}
+              {/* Assigned-job overlays (read-only, per-worker colors) */}
+              {jobsByDay[dayIdx].map((j) => (
+                <JobTile key={j.id} job={j} />
+              ))}
             </div>
           ))}
 
@@ -716,6 +772,49 @@ function EventTile({
         title="Drag to resize"
       />
     </div>
+  );
+}
+
+/** Read-only tile for a job assigned to a WORKER. Not draggable/resizable —
+ *  its schedule belongs to the assignment (manage it on /dashboard/workers).
+ *  Color is per-worker so a glance shows who's where; a small status word
+ *  shows offered / accepted / declined / done. */
+function JobTile({ job }: { job: JobCalendarEventDTO }) {
+  const start = new Date(job.startsAt);
+  const end = new Date(job.endsAt);
+  const topMin = minutesFromDayStart(start);
+  const durMin = Math.max(SLOT_MINUTES, (end.getTime() - start.getTime()) / 60000);
+  const tone = workerTone(job.workerId);
+  const dimmed = job.status === "DECLINED" || job.status === "COMPLETED";
+
+  return (
+    <a
+      href="/dashboard/workers"
+      className={cn(
+        "absolute inset-x-1 z-[5] block overflow-hidden rounded-md ring-1",
+        tone.bg,
+        tone.ring,
+        dimmed && "opacity-45",
+        job.status === "DECLINED" && "line-through",
+      )}
+      style={{
+        top: (topMin / 60) * HOUR_PX,
+        height: Math.max((durMin / 60) * HOUR_PX - 2, SLOT_PX - 2),
+      }}
+      title={`${job.title} — ${job.workerName} (${JOB_STATUS_LABEL[job.status]})`}
+    >
+      <span className={cn("absolute inset-y-0 left-0 w-[3px]", tone.chip)} aria-hidden />
+      <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
+        <Hammer className={cn("h-3 w-3 shrink-0", tone.text)} />
+        <span className={cn("truncate text-[11px] font-semibold", tone.text)}>{job.title}</span>
+      </div>
+      <div className={cn("truncate pl-3 pr-2 text-[10px] opacity-80", tone.text)}>
+        {job.workerName} · {JOB_STATUS_LABEL[job.status]}
+      </div>
+      <div className={cn("truncate pl-3 pr-2 pb-1 text-[10px] opacity-70", tone.text)}>
+        {fmtTime(start)} – {fmtTime(end)}
+      </div>
+    </a>
   );
 }
 
