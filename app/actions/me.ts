@@ -28,7 +28,7 @@ export type MeData = {
     clerkId: string;
     email: string;
     name: string;
-    role: "CONTRACTOR" | "SUPER_ADMIN";
+    role: "CONTRACTOR" | "WORKER" | "SUPER_ADMIN";
     status: "ACTIVE" | "SUSPENDED";
   };
   profile: ContractorProfile;
@@ -144,10 +144,19 @@ async function findOrCreateUser(
     return user;
   }
 
+  // Only SUPER_ADMIN is env-driven (ADMIN_EMAILS). A promoted WORKER role must
+  // be PRESERVED — a worker is flipped to WORKER when they accept an invite, and
+  // this every-request sync must not clobber that back to CONTRACTOR.
+  const desiredRole = isAdminEmail(email)
+    ? "SUPER_ADMIN"
+    : user.role === "WORKER"
+      ? "WORKER"
+      : "CONTRACTOR";
+
   const updates: Record<string, unknown> = { lastLoginAt: new Date() };
   if (user.clerkId !== clerkId) updates.clerkId = clerkId;
   if (user.email !== email) updates.email = email;
-  if (user.role !== targetRole) updates.role = targetRole;
+  if (user.role !== desiredRole) updates.role = desiredRole;
   await db.user.update({ where: { id: user.id }, data: updates });
 
   if (!user.contractorProfile) {

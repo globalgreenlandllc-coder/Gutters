@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   FileSpreadsheet,
   FileText,
+  HardHat,
   LayoutGrid,
   LogOut,
   MapPin,
@@ -33,6 +34,7 @@ const NAV: { href: string; label: string; Icon: NavIcon }[] = [
   { href: "/dashboard/calendar", label: "Calendar", Icon: CalendarDays },
   { href: "/dashboard/blueprints", label: "Blueprints", Icon: FileSpreadsheet },
   { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
+  { href: "/dashboard/workers", label: "Workers", Icon: HardHat },
   { href: "/dashboard/clients", label: "Clients", Icon: Users },
 ];
 

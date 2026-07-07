@@ -25,12 +25,43 @@ datasource db {
 
 enum UserRole {
   CONTRACTOR
+  WORKER
   SUPER_ADMIN
 }
 
 enum UserStatus {
   ACTIVE
   SUSPENDED
+}
+
+// A crew member a contractor (owner) invites to run jobs. Status tracks the
+// invite lifecycle; `userId` is null until the invited person signs up and
+// accepts (linking their own Clerk-backed User account). One person can be a
+// worker for several owners — one Worker row per (owner, worker) relationship.
+enum WorkerStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+// What the worker is being sent to do — drives the badge/label on the job card.
+enum JobKind {
+  GUTTERS_REPLACEMENT
+  GUTTERS_NEW
+  ROOF
+  REPAIR
+  OTHER
+}
+
+// Lifecycle of a job the owner hands to a worker. OFFERED → worker ACCEPTS or
+// DECLINES; an accepted job runs IN_PROGRESS → COMPLETED. The owner may CANCEL.
+enum JobAssignmentStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 model User {
@@ -62,6 +93,12 @@ model User {
   leadInteractions  UserLeadInteraction[]
   planAnalyses      PlanAnalysis[]
   appointments      Appointment[]
+  // Workers this user (as an OWNER/contractor) has invited to run jobs.
+  workersOwned      Worker[]              @relation("WorkerOwner")
+  // Worker relationships where THIS user is the crew member (one per owner).
+  workerLinks       Worker[]              @relation("WorkerAccount")
+  // Jobs this user (as owner) has assigned out to workers.
+  jobsOwned         JobAssignment[]       @relation("JobOwner")
 
   @@index([role])
   @@index([status])
@@ -293,10 +330,11 @@ model Proposal {
   acceptedAt        DateTime?
   expiresAt         DateTime?
 
-  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  events       ProposalEvent[]
-  transactions Transaction[]
-  appointments Appointment[]
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events         ProposalEvent[]
+  transactions   Transaction[]
+  appointments   Appointment[]
+  jobAssignments JobAssignment[]
 
   @@index([userId, status])
   @@index([publicToken])
@@ -663,4 +701,71 @@ model Appointment {
   @@index([leadId])
   @@index([proposalId])
   @@map("appointments")
+}
+
+// A crew member an owner (contractor) invites. Before the person signs up,
+// `userId` is null and only email/inviteToken exist; when they open the invite
+// link and accept, their Clerk-backed User is linked and status flips to ACTIVE.
+// One (owner, email) pair is unique — re-inviting updates the same row.
+model Worker {
+  id          String       @id @default(cuid())
+  ownerId     String
+  userId      String? // the worker's own account, null until they accept
+  email       String
+  name        String?
+  phone       String?
+  trade       String? // e.g. "Gutter installer", "Roofer"
+  status      WorkerStatus @default(INVITED)
+  inviteToken String       @unique
+  invitedAt   DateTime     @default(now())
+  acceptedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  owner   User            @relation("WorkerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  account User?           @relation("WorkerAccount", fields: [userId], references: [id], onDelete: SetNull)
+  jobs    JobAssignment[]
+
+  @@unique([ownerId, email])
+  @@index([ownerId])
+  @@index([userId])
+  @@index([inviteToken])
+  @@map("workers")
+}
+
+// A job an owner hands to a worker. This table is the ONLY thing a worker ever
+// reads about a job, so it deliberately carries NO owner pricing — `workerPayCents`
+// is the worker's own pay (owner-set), and `roofSnapshot` is a price-free copy of
+// the takeoff geometry. Client price (Proposal.totalCents / data.packages) is
+// never copied here. Schedule window drives both the owner's and worker's calendars.
+model JobAssignment {
+  id             String              @id @default(cuid())
+  ownerId        String
+  workerId       String
+  proposalId     String? // source job, when assigned off a proposal
+  title          String
+  address        String
+  clientName     String?
+  clientPhone    String? // owner opts in — the worker may need to reach the client
+  kind           JobKind             @default(GUTTERS_REPLACEMENT)
+  scope          String?             @db.Text // "what needs to be done", owner-written
+  workerPayCents Int                 @default(0) // the WORKER's pay — never the client price
+  roofSnapshot   Json? // price-free takeoff geometry + measurements for the worker
+  startsAt       DateTime
+  endsAt         DateTime
+  status         JobAssignmentStatus @default(OFFERED)
+  declineReason  String?             @db.Text
+  respondedAt    DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  owner    User      @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  worker   Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, startsAt])
+  @@index([workerId, startsAt])
+  @@index([proposalId])
+  @@map("job_assignments")
 }
