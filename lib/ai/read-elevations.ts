@@ -72,6 +72,20 @@ label near it — "other" if unlabelled. The two SLOPED edges of a gable are
 RAKES → they carry NO gutter.
 </gable_enumeration>
 
+<not_a_gable>
+Do NOT count these as gables — mistaking one for a roof face miscounts the gables
+and misplaces a mass:
+  - a direct-vent "F.P. FLUE", plumbing vent, or roof/ridge vent (a PIPE — a
+    penetration, not a roof face)
+  - a SKYLIGHT (e.g. "4'x4' SKYLIGHT w/ LAM. GLASS" — in-plane glass, not a
+    triangle)
+  - a "SLOPE CHANGE" line (a pitch break within one plane, not a gable)
+  - a detached "MASONRY FIRE-PIT BY OTHERS" (a ground feature, not on the roof)
+Only a triangular roof FACE pointing at the viewer is a gable. A masonry CHIMNEY
+CHASE that projects past the wall IS a real mass — report it (kind:"other" with
+its width) — but a flue PIPE is not.
+</not_a_gable>
+
 <projection_default>
 A gable's FACE view shows that it EXISTS and how wide it is. It does NOT show
 whether the gable projects forward — that is only visible in the perpendicular

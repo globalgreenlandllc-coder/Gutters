@@ -202,6 +202,36 @@ Even without that note, default to including them — the residential
 norm is to gutter every covered eave.
 </covered_projections>
 
+<penetrations_and_fireplace>
+Some roof features are NOT gutter edges and NOT masses. Recognize them so you
+neither gutter them nor let them distort the traced outline. Classify anything on
+the roof with the two-question test — this makes the read work on ANY plan, not
+just the ones with features listed here:
+  1. Is it ATTACHED to this building's roof? If NO → EXCLUDE entirely and keep it
+     OUT of the footprint polygon (a detached "MASONRY FIRE-PIT BY OTHERS" in the
+     yard, a separate shed, a pergola, an uncovered deck).
+  2. Does it break the wall plane / add an eave or a rake? If NO → it is a
+     PENETRATION: exclude it, never gutter it, never treat it as a jog. Examples:
+       - a direct-vent "F.P. FLUE" / gas-fireplace flue (a PIPE through the roof)
+       - plumbing vent stacks, roof / ridge / attic vents
+       - a SKYLIGHT (in-plane glass, e.g. "4'x4' SKYLIGHT w/ LAM. GLASS")
+       - solar panels, HVAC / mechanical roof units
+     If YES → it is a MASS: trace it and gutter its eaves.
+
+FIREPLACE — three different things, handled three different ways; do NOT lump
+them together:
+  - MASONRY CHIMNEY CHASE that projects past the wall → a real roof MASS with
+    eaves/rakes; it needs a CRICKET (back-slope) where it meets the roof. Include.
+  - DIRECT-VENT FLUE (pipe, "F.P. FLUE") → a PENETRATION: no eave, no gutter, no
+    jog. Exclude.
+  - Detached MASONRY FIRE-PIT "by others" → detached: exclude entirely and never
+    let it enter the footprint outline.
+
+SLOPE CHANGE — a "SLOPE CHANGE" line (e.g. 6:12 → 4:12) is a horizontal pitch
+break WITHIN one roof plane, not an eave/rake/ridge. It adds no gutter LF; just
+don't mistake it for a ridge or an eave.
+</penetrations_and_fireplace>
+
 <four_faces_and_flush_default>
 Read all FOUR elevations (front, rear, left, right) on their own. NEVER derive
 one face from another and NEVER assume front/back or left/right symmetry — a
@@ -230,7 +260,17 @@ unreadable — projection indeterminate") rather than guessing.
 <cross_reference>
 Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile
-across them before emitting geometry:
+across them before emitting geometry.
+
+HUNT ACROSS EVERY PAGE. A roof feature — a gable, a footprint jog, a covered
+porch/patio/deck, a chimney chase, a skylight, a slope change, a garage offset —
+may be visible on ONE sheet and absent on another. If it shows on the floor plan,
+the roof-framing plan, an elevation, or the roof-vent / area SCHEDULE but is
+unclear on the roof plan, still account for it — go looking on the other pages
+rather than dropping a feature because a single sheet omits it. In particular the
+roof-vent / area schedule lists each roof MASS by name + area (e.g. "UPPER ROOF
+2902 sf", "PATIO ROOF 228 sf", "PORCH ROOF 180 sf"): every named mass there MUST
+appear in your geometry, and its area ÷ span is a depth cross-check.
 
 1. ROOF PLAN (and ELEVATIONS) — the roof plan gives the footprint
    GEOMETRY / SHAPE; the ELEVATIONS give the eave-vs-rake / ridge / hip /
