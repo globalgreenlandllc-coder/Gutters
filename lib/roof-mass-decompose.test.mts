@@ -190,3 +190,31 @@ test("every decomposed mass is a valid closed ring with in-range eave indices", 
     }
   }
 });
+
+test("matchTierAreas GROUP pass: a split schedule mass matches the SUM of tiers (Woodinville UPPER 2902 = main 1687 + tier-1 1229)", () => {
+  const m = matchTierAreas(
+    [1687, 1229, 266, 262, 57],
+    [
+      { label: "upper", areaFt2: 2902 },
+      { label: "patio", areaFt2: 228 },
+      { label: "porch", areaFt2: 180 },
+    ],
+  );
+  // One-to-one: tier index 3 (262) is the nearest to PATIO 228 (14.9%).
+  assert.deepEqual(m[3], { areaFt2: 228, label: "patio" });
+  // GROUP: main + tier-1 sum to 2916 — a 0.5% match on UPPER 2902; each gets
+  // its proportional share so the per-tier gate measures the group's error.
+  assert.ok(m[0] && m[0].label.startsWith("upper (split"), `main got ${JSON.stringify(m[0])}`);
+  assert.ok(m[1] && m[1].label.startsWith("upper (split"), `tier-1 got ${JSON.stringify(m[1])}`);
+  const share0 = (1687 / (1687 + 1229)) * 2902;
+  assert.ok(Math.abs(m[0]!.areaFt2 - share0) < 0.2, "proportional share");
+  // PORCH 180 has no tier or group within 25% (266+57=323 is 79% off) → honest null.
+  assert.equal(m[2], null);
+  assert.equal(m[4], null);
+});
+
+test("matchTierAreas GROUP pass: no grouping when one-to-one already consumed the schedule", () => {
+  const m = matchTierAreas([1000, 500], [{ label: "upper", areaFt2: 1010 }]);
+  assert.deepEqual(m[0], { areaFt2: 1010, label: "upper" });
+  assert.equal(m[1], null, "leftover tier stays unmatched — never force-fit");
+});

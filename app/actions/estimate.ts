@@ -9,6 +9,7 @@ import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
+import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -546,6 +547,25 @@ export async function runEstimateFromPlan(
     ((engineStash?._engine?.orientation ?? null) as import("@/lib/ai/plan-orientation").PlanOrientation | null);
   if (titleOrientation) {
     analysis.notes = [...(analysis.notes ?? []), `🧭 ${titleOrientation.note}`];
+  }
+
+  // VECTOR CLOSURE — only when the footprint is the plan's own vector outline
+  // (the swap above applied). Every outline edge is then real CAD linework, so
+  // an exterior edge with no gutter/rake classification is a silently-missed
+  // eave (Woodinville priced 189 LF of a ~240 LF perimeter). Prices those
+  // edges as eaves at the runs' own cross-validated scale, honoring gable-end
+  // face reads; loud note for review. AI-trace footprints keep the strict
+  // symmetric-twin-only reconcile from analysis time.
+  if (footprintSource !== "AI trace (best-of read)") {
+    const closed = closeVectorPerimeter(analysis, {
+      faceNormals: orientation?.normals ?? null,
+      perFace: perFace as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,
+    });
+    if (closed.reconcileNotes.length > 0) {
+      analysis.gutter_runs = closed.analysis.gutter_runs;
+      analysis.totals = closed.analysis.totals;
+      analysis.notes = [...(analysis.notes ?? []), ...closed.reconcileNotes.map((n) => `➕ ${n}`)];
+    }
   }
 
   const result = blueprintToEstimateResult(

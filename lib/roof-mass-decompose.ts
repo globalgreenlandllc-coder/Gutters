@@ -279,7 +279,17 @@ export type TierAreaMatch = { areaFt2: number; label: string } | null;
  * area-gate each tier against the plan instead of leaving it unverified. Greedy
  * on the closest relative match; a tier is left UNMATCHED (null ⇒ no gate, an
  * honest `no_schedule`) unless a schedule area is within `tolFrac` — so a wrong
- * label is never force-fit onto a tier. Pure + deterministic.
+ * label is never force-fit onto a tier.
+ *
+ * GROUP pass: the decomposition often SPLITS one schedule mass into several
+ * tiers (Woodinville: UPPER 2902 sf decomposes as main 1687 + tier-1 1229 =
+ * 2916 sf — a 0.5% match that one-to-one can't see, so every tier reported
+ * `no_schedule`). After one-to-one, each unused schedule entry tries subsets
+ * (size 2–3) of the still-unmatched tiers; when a subset's SUM lands within
+ * `tolFrac`, each member tier is gated against its PROPORTIONAL SHARE of the
+ * stated area (per-tier rel error then equals the group's — meaningful, not a
+ * freebie) with a "(split n/m)" label so the flag reads honestly.
+ * Pure + deterministic.
  */
 export function matchTierAreas(
   tierAreasFt2: number[],
@@ -306,6 +316,40 @@ export function matchTierAreas(
     usedT.add(c.t);
     usedS.add(c.s);
   }
+
+  // GROUP pass — unused schedule entries vs sums of unmatched tiers.
+  const freeTiers = tierAreasFt2
+    .map((ta, t) => ({ ta, t }))
+    .filter(({ ta, t }) => ta > 0 && !usedT.has(t));
+  schedule.forEach((sc, s) => {
+    if (usedS.has(s) || !sc || !(sc.areaFt2 > 0)) return;
+    const avail = freeTiers.filter(({ t }) => !usedT.has(t));
+    let best: { idxs: number[]; rel: number } | null = null;
+    const consider = (idxs: number[]) => {
+      const sum = idxs.reduce((a, t) => a + tierAreasFt2[t], 0);
+      const rel = Math.abs(sum - sc.areaFt2) / sc.areaFt2;
+      if (rel <= tolFrac && (!best || rel < best.rel)) best = { idxs: [...idxs], rel };
+    };
+    for (let i = 0; i < avail.length; i++)
+      for (let j = i + 1; j < avail.length; j++) {
+        consider([avail[i].t, avail[j].t]);
+        for (let k = j + 1; k < avail.length; k++) consider([avail[i].t, avail[j].t, avail[k].t]);
+      }
+    if (!best) return;
+    const chosen: { idxs: number[]; rel: number } = best;
+    const sum = chosen.idxs.reduce((a, t) => a + tierAreasFt2[t], 0);
+    chosen.idxs.forEach((t, i) => {
+      // Proportional share: the per-tier gate then measures the same relative
+      // error as the group sum, instead of failing tier-vs-whole.
+      const share = (tierAreasFt2[t] / sum) * sc.areaFt2;
+      out[t] = {
+        areaFt2: Math.round(share * 10) / 10,
+        label: `${sc.label} (split ${i + 1}/${chosen.idxs.length})`,
+      };
+      usedT.add(t);
+    });
+    usedS.add(s);
+  });
   return out;
 }
 

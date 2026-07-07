@@ -38,6 +38,7 @@ import type {
   BlueprintRun,
 } from "./blueprint-from-plans";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
+import { DEFAULT_FACE_NORMALS, type FaceNormals } from "./plan-orientation";
 
 type Edge = {
   a: Pt;
@@ -277,6 +278,174 @@ export function reconcileEaves(analysis: BlueprintAnalysis): ReconcileResult {
     return { analysis: next, reconcileNotes: notes };
   } catch {
     // Fail-safe: never break a takeoff over a reconcile bug.
+    return { analysis, reconcileNotes: notes };
+  }
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+/**
+ * VECTOR-footprint closure — a stronger pass than reconcileEaves, valid ONLY
+ * when building_footprint is the plan's own vector outline (the estimate-time
+ * A9/A4 swap applied), not an AI freehand trace.
+ *
+ * reconcileEaves refuses to price an unclassified wall without a symmetric
+ * guttered twin, because on a freehand trace an unmatched edge may simply be
+ * mis-drawn. A vector outline changes the evidence: every edge IS a real roof/
+ * wall edge from the CAD linework, and residential sets default to
+ * "CONTINUOUS GUTTERS & DOWNSPOUTS @ ALL EAVES, TYP." — so an exterior edge
+ * with no gutter run and no rake/ridge classification is a missed EAVE, not
+ * a guess (Woodinville: the AI traced 7 runs = 189 LF on a ~240 LF perimeter,
+ * leaving 6 walls silently unpriced).
+ *
+ * Rules:
+ *  - length_ft = edge px × the median ft/px of the AI's own runs (their
+ *    printed-dimension lengths ÷ remapped pixels — cross-validated scale);
+ *  - a face read as a FULL GABLE END (continuous_eave === false) keeps its
+ *    principal edge unguttered (same rule as the engine), respecting the
+ *    derived compass orientation;
+ *  - sub-2-ft slivers are skipped;
+ *  - everything added is flagged loudly for review.
+ * Pure + never throws.
+ */
+export function closeVectorPerimeter(
+  analysis: BlueprintAnalysis,
+  opts?: {
+    faceNormals?: FaceNormals | null;
+    perFace?: Record<string, { readable?: boolean; continuous_eave?: boolean } | undefined> | null;
+  },
+): ReconcileResult {
+  const notes: string[] = [];
+  try {
+    const rawPoly = (analysis?.building_footprint ?? [])
+      .map(asPt)
+      .filter((p): p is Pt => p !== null);
+    if (rawPoly.length < 4) return { analysis, reconcileNotes: notes };
+
+    // Independent scale: median ft/px over the AI's measured runs.
+    const ratios: number[] = [];
+    for (const r of analysis.gutter_runs ?? []) {
+      if (typeof r.length_ft === "number" && r.length_ft > 0 && typeof r.length_px === "number" && r.length_px > 0)
+        ratios.push(r.length_ft / r.length_px);
+    }
+    if (ratios.length === 0) return { analysis, reconcileNotes: notes };
+    ratios.sort((a, b) => a - b);
+    const ftPerPx = ratios[Math.floor(ratios.length / 2)];
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of rawPoly) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const span = Math.max(maxX - minX, maxY - minY);
+    if (!Number.isFinite(span) || span <= 0) return { analysis, reconcileNotes: notes };
+    const tol = Math.max(2, span * 0.012);
+
+    const ring = cleanRing(rawPoly, tol);
+    if (ring.length < 4) return { analysis, reconcileNotes: notes };
+    const centroid = {
+      x: ring.reduce((s, p) => s + p.x, 0) / ring.length,
+      y: ring.reduce((s, p) => s + p.y, 0) / ring.length,
+    };
+
+    const edges: Edge[] = [];
+    for (let i = 0; i < ring.length; i++) {
+      const e = makeEdge(ring[i], ring[(i + 1) % ring.length]);
+      if (e && e.len > tol) edges.push(e);
+    }
+    if (edges.length === 0) return { analysis, reconcileNotes: notes };
+
+    // Outward normal per edge: the perpendicular that points away from the
+    // centroid (good enough to pick a cardinal side word / gable-end face).
+    const outwardOf = (e: Edge): Pt => {
+      const n1 = { x: e.uy, y: -e.ux };
+      const away = (e.mid.x - centroid.x) * n1.x + (e.mid.y - centroid.y) * n1.y;
+      return away >= 0 ? n1 : { x: -n1.x, y: -n1.y };
+    };
+
+    // Principal edge of each face read as a full gable end → keep unguttered.
+    const gableEndEdges = new Set<number>();
+    const gableEndFaces: string[] = [];
+    if (opts?.perFace) {
+      for (const face of ["north", "south", "east", "west"] as const) {
+        const r = opts.perFace[face];
+        if (!r || r.readable === false || r.continuous_eave !== false) continue;
+        const n = opts.faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
+        let best = -1;
+        let bestScore = -Infinity;
+        edges.forEach((e, i) => {
+          if (Math.abs(e.ux * n.x + e.uy * n.y) > 0.5) return; // runs along n
+          const score = e.mid.x * n.x + e.mid.y * n.y;
+          if (score > bestScore) {
+            bestScore = score;
+            best = i;
+          }
+        });
+        if (best >= 0) {
+          gableEndEdges.add(best);
+          gableEndFaces.push(face);
+        }
+      }
+    }
+
+    const gutterSegs: Seg[] = (analysis.gutter_runs ?? [])
+      .map((r) => ({ a: asPt(r.start), b: asPt(r.end) }))
+      .filter((s): s is Seg => s.a !== null && s.b !== null);
+    const exclusionSegs: Seg[] = (analysis.excluded_edges ?? [])
+      .map((x) => ({ a: asPt(x.start), b: asPt(x.end) }))
+      .filter((s): s is Seg => s.a !== null && s.b !== null);
+    const COVER = 0.5;
+
+    const sideOf = (n: Pt): Side =>
+      Math.abs(n.x) >= Math.abs(n.y) ? (n.x >= 0 ? "right" : "left") : n.y >= 0 ? "front" : "back";
+
+    const newRuns: BlueprintRun[] = [];
+    let skippedGableEnd = 0;
+    edges.forEach((e, i) => {
+      if (coveredFraction(e, gutterSegs, tol) > COVER) return;
+      if (coveredFraction(e, exclusionSegs, tol) > COVER) return;
+      if (gableEndEdges.has(i)) {
+        skippedGableEnd++;
+        return;
+      }
+      const lenFt = round1(e.len * ftPerPx);
+      if (lenFt < 2) return; // jog sliver — not worth a run
+      newRuns.push({
+        id: `vclose-${newRuns.length + 1}`,
+        side: sideOf(outwardOf(e)),
+        start: { x: e.a.x, y: e.a.y },
+        end: { x: e.b.x, y: e.b.y },
+        length_ft: lenFt,
+        length_px: e.len,
+        drains_to: [],
+        tier: "unknown",
+      });
+    });
+
+    if (newRuns.length === 0) return { analysis, reconcileNotes: notes };
+
+    const addedFt = round1(newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0));
+    const gutter_runs = [...analysis.gutter_runs, ...newRuns];
+    const prevTotal = analysis.totals?.linear_feet_gutter;
+    const totals =
+      prevTotal != null && Number.isFinite(prevTotal)
+        ? { ...analysis.totals, linear_feet_gutter: round1(prevTotal + addedFt) }
+        : analysis.totals;
+
+    notes.push(
+      `Vector closure: the footprint is the plan's own vector outline, so its ${
+        newRuns.length
+      } unclassified exterior edge(s) priced as eaves (+${addedFt} LF at the runs' own ${(1 / ftPerPx).toFixed(1)} px/ft scale) per the "continuous gutters @ all eaves" default — VERIFY each against the elevations.${
+        skippedGableEnd > 0
+          ? ` ${skippedGableEnd} gable-end edge(s) (${gableEndFaces.join("/")}) left unguttered per the elevation read.`
+          : ""
+      }`,
+    );
+
+    return { analysis: { ...analysis, gutter_runs, totals }, reconcileNotes: notes };
+  } catch {
     return { analysis, reconcileNotes: notes };
   }
 }

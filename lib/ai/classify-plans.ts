@@ -57,6 +57,12 @@ export type PlanSheet = {
     tier_1_ft: number | null;
     tier_2_ft: number | null;
   } | null;
+  /** Roof-area schedule entries printed on this sheet (roof-ventilation /
+   *  roof-area tables: "UPPER ROOF … ROOF AREA 2902 s.f."). Read VISUALLY —
+   *  many sets outline this text, so the PDF text layer is empty and the
+   *  text-parse backstop finds nothing. Drives the per-tier area gate +
+   *  projecting-gable depth (area ÷ span). */
+  roof_areas?: { label: string; area_ft2: number }[] | null;
   /** Notes that should constrain the geometry pass — e.g. "ALL EAVES TO
    *  HAVE 5\" K-STYLE GUTTER", attached covered porch, garage, dormers. */
   takeoff_notes: string[];
@@ -179,6 +185,19 @@ const CLASSIFY_TOOL: Anthropic.Tool = {
               properties: {
                 tier_1_ft: NULLABLE_NUMBER,
                 tier_2_ft: NULLABLE_NUMBER,
+              },
+            },
+            roof_areas: {
+              type: ["array", "null"],
+              description:
+                'Roof-area schedule entries printed on THIS sheet (roof-ventilation / roof-area tables), read visually: [{"label":"upper","area_ft2":2902}]. label is the mass name lowercased (upper/main/lower/patio/porch/garage/deck). Null when the sheet has none.',
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                  area_ft2: { type: "number" },
+                },
+                required: ["label", "area_ft2"],
               },
             },
             takeoff_notes: { type: "array", items: { type: "string" } },
@@ -332,6 +351,18 @@ elevations) so the geometry pass can assign each downspout a real drop
 height instead of defaulting every spout to 10 ft.
 </tier_heights>
 
+<roof_area_schedule>
+Schedule/code-summary sheets (often "IRC SCHEDULES" / "ROOF VENTILATION")
+tabulate each roof mass's area: "Roof Area: 2902 s.f." under a heading
+like UPPER ROOF / PATIO ROOF / PORCH ROOF / GARAGE ROOF. Read these
+VISUALLY and report them in that sheet's roof_areas as
+[{"label":"upper","area_ft2":2902}, ...] — many sets outline this text,
+so downstream text extraction sees nothing. These areas verify the roof
+geometry (per-tier area gate) and size projecting gable depth
+(area ÷ span). Use lowercase mass labels: upper|main|lower|patio|porch|
+garage|deck. Omit/null when a sheet has no such table.
+</roof_area_schedule>
+
 <covered_projections>
 Attached covered structures are the most common omission in plan
 takeoffs: covered front porch, covered entry, covered rear patio,
@@ -420,6 +451,7 @@ Output ONLY the JSON object below. No prose, no markdown fence.
         "tier_1_ft": number | null,
         "tier_2_ft": number | null
       } | null,
+      "roof_areas": [{"label": "upper", "area_ft2": 2902}, ...] | null,
       "takeoff_notes": ["<short string>", ...],
       "summary": "<one sentence>"
     }

@@ -64,11 +64,28 @@ export async function runBlueprintGates(args: {
       if (m.areaFt2 > (byLabel.get(m.label) ?? 0)) byLabel.set(m.label, m.areaFt2);
     }
   }
+  // Text-layer parse first; when it finds nothing (many sets OUTLINE their
+  // schedule text — the Woodinville PDF's whole text layer is 137 chars of
+  // title-block boilerplate), fall back to the classifier's VISUAL read of the
+  // roof-area tables (sheets[].roof_areas).
+  let roofMassSource = "text layer";
+  if (byLabel.size === 0 && args.classification?.sheets) {
+    roofMassSource = "classifier (visual read)";
+    for (const sheet of args.classification.sheets) {
+      for (const ra of sheet.roof_areas ?? []) {
+        if (!ra || typeof ra.area_ft2 !== "number") continue;
+        if (!(ra.area_ft2 >= 50 && ra.area_ft2 <= 50000)) continue;
+        const label = String(ra.label ?? "").trim().toLowerCase();
+        if (!label) continue;
+        if (ra.area_ft2 > (byLabel.get(label) ?? 0)) byLabel.set(label, ra.area_ft2);
+      }
+    }
+  }
   const roofMasses: RoofMassArea[] = [...byLabel.entries()].map(([label, areaFt2]) => ({ label, areaFt2 }));
   console.log(
     `[blueprint-gates] schedule area: ${
       schedule ? `${schedule.areaFt2} sf (${schedule.label}, p${schedule.page})` : "NONE → area gate uses width×depth"
-    }; roof masses: ${roofMasses.length ? roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ") : "NONE → gable depth uses schematic"}.`,
+    }; roof masses: ${roofMasses.length ? `${roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ")} (${roofMassSource})` : "NONE → gable depth uses schematic"}.`,
   );
 
   const v = validateBlueprintGeometry(args.analysis, args.classification, {

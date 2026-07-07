@@ -156,3 +156,64 @@ test("shallow recess survives the smaller tolerance", () => {
   const added = analysis.gutter_runs.filter((r) => r.id.startsWith("recon-"));
   assert.ok(added.some((r) => r.side === "back" && r.length_ft === 12), "recessed rear-center eave re-added with copied 12 ft");
 });
+
+// ── closeVectorPerimeter — the vector-authoritative closure ──────────────────
+import { closeVectorPerimeter } from "./reconcile-eaves.ts";
+
+test("vector closure: unclassified edges price as eaves at the runs' own scale", () => {
+  // 200×120 vector footprint; the AI traced only front + left (0.5 ft/px).
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100), // 200 px → 0.5 ft/px
+      run("left", [0, 0], [0, 120], 60),
+    ],
+    totals: { linear_feet_gutter: 160, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a);
+  assert.equal(analysis.gutter_runs.length, 4, "right + rear added");
+  const added = analysis.gutter_runs.slice(2);
+  const bySide = Object.fromEntries(added.map((r) => [r.side, r]));
+  // Side words follow the canvas convention (bottom = front, orientation-anchor).
+  assert.equal(bySide.front?.length_ft, 100, "bottom edge = 200 px × 0.5");
+  assert.equal(bySide.right?.length_ft, 60, "right edge = 120 px × 0.5");
+  assert.equal(analysis.totals.linear_feet_gutter, 320);
+  assert.ok(reconcileNotes.some((n) => /Vector closure/.test(n)));
+});
+
+test("vector closure: a gable-end face read (continuous_eave=false) keeps its edge unguttered", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100),
+      run("left", [0, 0], [0, 120], 60),
+    ],
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    // default orientation: east = +x = the right edge
+    perFace: { east: { readable: true, continuous_eave: false } },
+  });
+  assert.equal(analysis.gutter_runs.length, 3, "only the bottom edge added — east edge is a gable end");
+  assert.equal(analysis.gutter_runs[2].side, "front");
+  assert.ok(reconcileNotes.some((n) => /gable-end/.test(n)));
+});
+
+test("vector closure: excluded (rake) edges and covered edges are not re-priced; no runs → no-op", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100),
+      run("left", [0, 0], [0, 120], 60),
+      run("right", [200, 0], [200, 120], 60),
+    ],
+    excluded_edges: [
+      { id: "x1", kind: "rake", start: { x: 0, y: 120 }, end: { x: 200, y: 120 }, reason: "gable end" },
+    ],
+  });
+  const r1 = closeVectorPerimeter(a);
+  assert.equal(r1.analysis.gutter_runs.length, 3, "everything classified — nothing added");
+  // No measured runs at all → no independent scale → untouched.
+  const r2 = closeVectorPerimeter(base({ building_footprint: FOOT }));
+  assert.equal(r2.analysis.gutter_runs.length, 0);
+  assert.equal(r2.reconcileNotes.length, 0);
+});
