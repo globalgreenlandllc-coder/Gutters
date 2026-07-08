@@ -10,6 +10,7 @@ import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
+import { polygonCloses } from "@/lib/roof-engine";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -304,7 +305,11 @@ export async function runEstimateFromPlan(
           ? "A9 read REJECTED (aspect / fill-fraction / corner-count gate in readRoofFromVectors)"
           : `A9 outline ${roof.perimeter.length} corners${roof.perimeter.length > 4 && roof.perimeter.length <= 60 ? "" : " — outside the 5–60 gate, skipped"}`,
       );
-      if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+      if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60 && !polygonCloses(roof.perimeter)) {
+        // A self-intersecting (bow-tie / pinched) ring draws garbage roof faces
+        // and poisons every downstream consumer — never swap it in.
+        vecTrace.push("A9 outline self-intersects — skipped");
+      } else if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
         const poly = roof.perimeter;
         const pbb = roof.bbox;
         const aiPts = [
@@ -416,7 +421,9 @@ export async function runEstimateFromPlan(
       // eave/gable read. CRUCIALLY we keep the AI's eave-vs-gable + tier
       // classification — we align it onto the copied outline (per-axis), not
       // flatten everything to eaves (which forced a wrong HIP roof before).
-      if (outline && outline.polygon.length > 4 && outline.polygon.length <= 60) {
+      if (outline && outline.polygon.length > 4 && outline.polygon.length <= 60 && !polygonCloses(outline.polygon)) {
+        vecTrace.push("A4 outline self-intersects — skipped");
+      } else if (outline && outline.polygon.length > 4 && outline.polygon.length <= 60) {
         const poly = outline.polygon;
         const pbb = outline.bbox;
         const aiPts = [

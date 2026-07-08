@@ -390,6 +390,22 @@ export function closeVectorPerimeter(
       }
     }
 
+    // ── EVIDENCE GATE ────────────────────────────────────────────────────
+    // "Unclassified exterior edge ⇒ eave" is only a safe default when we had
+    // SOME way to tell eaves from gable ends: a readable elevation face, or
+    // rake/no-gutter classifications on the trace. When every elevation read
+    // failed (e.g. the vision API erroring) AND the trace marked no rakes,
+    // pricing the whole perimeter is invented gutter — the Woodinville
+    // credits-outage run inflated 223 LF to 520 LF exactly this way. In that
+    // case: add nothing, flag for review, keep pricing on the AI's own runs.
+    const readableFaces = opts?.perFace
+      ? Object.values(opts.perFace).filter((f) => f && f.readable !== false).length
+      : 0;
+    const hasRakeClassification = (analysis.excluded_edges ?? []).some(
+      (x) => x.kind === "rake" || x.kind === "dormer_rake" || x.kind === "eave_no_gutter",
+    );
+    const hasEvidence = readableFaces > 0 || hasRakeClassification;
+
     const gutterSegs: Seg[] = (analysis.gutter_runs ?? [])
       .map((r) => ({ a: asPt(r.start), b: asPt(r.end) }))
       .filter((s): s is Seg => s.a !== null && s.b !== null);
@@ -397,15 +413,31 @@ export function closeVectorPerimeter(
       .map((x) => ({ a: asPt(x.start), b: asPt(x.end) }))
       .filter((s): s is Seg => s.a !== null && s.b !== null);
     const COVER = 0.5;
+    // The AI runs/exclusions were BBOX-remapped onto the vector outline, so
+    // they sit NEAR their walls, not exactly on them. Deduping with the tight
+    // ring tolerance misses those matches and re-prices walls the AI already
+    // priced (double count). Coverage gets a looser tolerance; the ring
+    // cleaning + sliver filter keep the tight one.
+    const covTol = Math.max(tol * 2.5, span * 0.03);
 
     const sideOf = (n: Pt): Side =>
       Math.abs(n.x) >= Math.abs(n.y) ? (n.x >= 0 ? "right" : "left") : n.y >= 0 ? "front" : "back";
 
     const newRuns: BlueprintRun[] = [];
+    let uncoveredFt = 0;
+    let uncoveredCount = 0;
     let skippedGableEnd = 0;
     edges.forEach((e, i) => {
-      if (coveredFraction(e, gutterSegs, tol) > COVER) return;
-      if (coveredFraction(e, exclusionSegs, tol) > COVER) return;
+      if (coveredFraction(e, gutterSegs, covTol) > COVER) return;
+      if (coveredFraction(e, exclusionSegs, covTol) > COVER) return;
+      if (!hasEvidence) {
+        const lenFt = round1(e.len * ftPerPx);
+        if (lenFt >= 2) {
+          uncoveredFt += lenFt;
+          uncoveredCount++;
+        }
+        return;
+      }
       if (gableEndEdges.has(i)) {
         skippedGableEnd++;
         return;
@@ -424,6 +456,12 @@ export function closeVectorPerimeter(
       });
     });
 
+    if (!hasEvidence && uncoveredCount > 0) {
+      notes.push(
+        `Vector closure SKIPPED — every elevation read failed and the trace marked no rakes, so eaves can't be told from gable ends. ${uncoveredCount} exterior edge(s) (~${round1(uncoveredFt)} LF) left UNPRICED for review; the total stays on the AI's measured runs.`,
+      );
+      return { analysis, reconcileNotes: notes };
+    }
     if (newRuns.length === 0) return { analysis, reconcileNotes: notes };
 
     const addedFt = round1(newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0));

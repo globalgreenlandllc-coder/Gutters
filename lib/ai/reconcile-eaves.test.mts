@@ -160,8 +160,10 @@ test("shallow recess survives the smaller tolerance", () => {
 // ── closeVectorPerimeter — the vector-authoritative closure ──────────────────
 import { closeVectorPerimeter } from "./reconcile-eaves.ts";
 
-test("vector closure: unclassified edges price as eaves at the runs' own scale", () => {
+test("vector closure: unclassified edges price as eaves at the runs' own scale (with elevation evidence)", () => {
   // 200×120 vector footprint; the AI traced only front + left (0.5 ft/px).
+  // A readable elevation (continuous eave) provides the classification
+  // EVIDENCE that makes the "@ all eaves" default safe to apply.
   const a = base({
     building_footprint: FOOT,
     gutter_runs: [
@@ -170,7 +172,9 @@ test("vector closure: unclassified edges price as eaves at the runs' own scale",
     ],
     totals: { linear_feet_gutter: 160, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
   });
-  const { analysis, reconcileNotes } = closeVectorPerimeter(a);
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
   assert.equal(analysis.gutter_runs.length, 4, "right + rear added");
   const added = analysis.gutter_runs.slice(2);
   const bySide = Object.fromEntries(added.map((r) => [r.side, r]));
@@ -179,6 +183,64 @@ test("vector closure: unclassified edges price as eaves at the runs' own scale",
   assert.equal(bySide.right?.length_ft, 60, "right edge = 120 px × 0.5");
   assert.equal(analysis.totals.linear_feet_gutter, 320);
   assert.ok(reconcileNotes.some((n) => /Vector closure/.test(n)));
+});
+
+test("vector closure: NO evidence (all elevations failed, no rakes marked) → adds NOTHING, flags for review", () => {
+  // The Woodinville credits-outage regression: every per-face read errored and
+  // the trace marked no rakes. Defaulting "unclassified ⇒ eave" would price the
+  // whole perimeter blind (223 → 520 LF). The closure must skip instead.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100),
+      run("left", [0, 0], [0, 120], 60),
+    ],
+    totals: { linear_feet_gutter: 160, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  // No opts at all (no perFace, no excluded_edges) = zero evidence.
+  const r = closeVectorPerimeter(a);
+  assert.equal(r.analysis.gutter_runs.length, 2, "nothing priced");
+  assert.equal(r.analysis.totals.linear_feet_gutter, 160, "total unchanged");
+  assert.ok(r.reconcileNotes.some((n) => /SKIPPED/.test(n) && /UNPRICED for review/.test(n)));
+  // Faces present but ALL unreadable is the same as no faces.
+  const r2 = closeVectorPerimeter(a, {
+    perFace: { north: { readable: false }, south: { readable: false } },
+  });
+  assert.equal(r2.analysis.gutter_runs.length, 2, "unreadable faces are not evidence");
+  // A rake classification on the trace IS evidence — closure prices again.
+  const withRake = base({
+    building_footprint: FOOT,
+    gutter_runs: [run("front", [0, 0], [200, 0], 100), run("left", [0, 0], [0, 120], 60)],
+    excluded_edges: [{ id: "x1", kind: "rake", start: { x: 200, y: 0 }, end: { x: 200, y: 120 }, reason: "gable end" }],
+  });
+  const r3 = closeVectorPerimeter(withRake);
+  assert.ok(r3.analysis.gutter_runs.length > 2, "rake classification unlocks the closure");
+  assert.ok(
+    r3.analysis.gutter_runs.every((g) => !(g.id.startsWith("vclose") && g.side === "right")),
+    "the rake-classified right edge stays unguttered",
+  );
+});
+
+test("vector closure: a remapped run slightly OFF its wall still counts as coverage (no double-price)", () => {
+  // The AI runs are bbox-remapped onto the vector outline, so they sit near
+  // their walls, not on them. A front run floating 5px inside (2.5% of the
+  // 200px span) must still cover the front edge — re-pricing it would double
+  // count the same wall.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 5], [200, 5], 100), // 5px inside the y=0 front wall
+      run("left", [5, 0], [5, 120], 60), // 5px inside the x=0 left wall
+      run("right", [195, 0], [195, 120], 60),
+      run("back", [0, 115], [200, 115], 100),
+    ],
+    totals: { linear_feet_gutter: 320, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis } = closeVectorPerimeter(a, {
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
+  assert.equal(analysis.gutter_runs.length, 4, "all four walls already covered — nothing re-priced");
+  assert.equal(analysis.totals.linear_feet_gutter, 320);
 });
 
 test("vector closure: a gable-end face read (continuous_eave=false) keeps its edge unguttered", () => {
