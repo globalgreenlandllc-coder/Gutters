@@ -160,10 +160,37 @@ function faceEdges(poly: Pt[], n: Pt): FaceEdge[] {
   return edges;
 }
 
-/** The outline point at along-face position `u`, on the OUTERMOST sub-edge that
- *  spans it (so a gable over a projecting jog sits on the jog, not the wall
- *  behind it). Falls back to the nearest sub-edge when `u` lands in a gap. */
-function pointAtU(edges: FaceEdge[], u: number, eps = 1e-6): Pt {
+/** The outline point at along-face position `u`. Which DEPTH plane it lands on
+ *  depends on what's being placed:
+ *  - "outer": a PROJECTING gable (porch/patio on posts, a pop-out) rides the
+ *    outermost sub-edge covering `u` — its own forward eave.
+ *  - "inner": a FLUSH gable sits ON THE HOUSE WALL — the face's DOMINANT wall
+ *    plane (the depth carrying the most sub-edge length), extrapolated across
+ *    any pop-out that interrupts the wall in front of it. Picking outermost
+ *    here parked flush wall gables (e.g. a great-room gable) on a porch's
+ *    outer eave standing in front of them — wrong plane.
+ *  Falls back to the nearest sub-edge when `u` lands in a gap. */
+function pointAtU(edges: FaceEdge[], u: number, prefer: "outer" | "inner" = "outer", eps = 1e-6): Pt {
+  if (prefer === "inner" && edges.length > 1) {
+    // Dominant wall plane: group sub-edges by depth (out) and take the group
+    // with the greatest total length — that's the house wall, not a pop-out.
+    const outs = edges.map((e) => e.out);
+    const tol = Math.max(2, (Math.max(...outs) - Math.min(...outs)) * 0.1);
+    let wall: FaceEdge[] = [];
+    let wallLen = -1;
+    for (const e of edges) {
+      const grp = edges.filter((o) => Math.abs(o.out - e.out) <= tol);
+      const len = grp.reduce((s, o) => s + Math.abs(o.uR - o.uL), 0);
+      if (len > wallLen) { wallLen = len; wall = grp; }
+    }
+    // Interpolate on the wall sub-edge covering u, else EXTRAPOLATE along the
+    // wall plane (the wall line continues behind an interrupting pop-out).
+    const cover = wall.find((e) => u >= Math.min(e.uL, e.uR) - eps && u <= Math.max(e.uL, e.uR) + eps);
+    const ref = cover ?? wall.reduce((a, b) => (Math.abs(a.uR - a.uL) >= Math.abs(b.uR - b.uL) ? a : b));
+    const denom = ref.uR - ref.uL;
+    const s = denom !== 0 ? (u - ref.uL) / denom : 0; // unclamped ⇒ extrapolates
+    return { x: ref.L.x + (ref.R.x - ref.L.x) * s, y: ref.L.y + (ref.R.y - ref.L.y) * s };
+  }
   const covers = edges.filter(
     (e) => u >= Math.min(e.uL, e.uR) - eps && u <= Math.max(e.uL, e.uR) + eps,
   );
@@ -231,13 +258,16 @@ export function placeGablesFromFaces(
 
     read.forEach((g, i) => {
       const t = clamp01(g.position_frac ?? (read.length === 1 ? 0.5 : (i + 0.5) / read.length));
-      const base = pointAtU(edges, uMin + t * uSpan);
       const spanFt = g.span_ft && g.span_ft > 0 ? g.span_ft : 12;
       const projecting =
         g.supported_on === "posts" ||
         g.supported_on === "beam" ||
         g.eave_condition_guess === "projecting" ||
         g.shows_projection_cue === true;
+      // Depth plane: a projecting gable rides the outermost sub-edge (its own
+      // pop-out eave); a FLUSH gable sits on the house WALL (innermost) — never
+      // on a porch pop-out that happens to stand in front of it.
+      const base = pointAtU(edges, uMin + t * uSpan, projecting ? "outer" : "inner");
       // Depth by the two-angle rule: perpendicular elevation, then roof area ÷
       // span, then schematic.
       const { depthFt, source, note } = projecting

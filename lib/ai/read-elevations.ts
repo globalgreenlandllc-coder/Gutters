@@ -86,6 +86,14 @@ CHASE that projects past the wall IS a real mass — report it (kind:"other" wit
 its width) — but a flue PIPE is not.
 </not_a_gable>
 
+<gable_end_span>
+When the gable IS the entire END of the house — the whole face you are reading is
+one triangle over the full wall width (a GABLE END, common on side elevations) —
+report span_ft as the FULL width of that face, read from the overall dimension
+string when present. NEVER leave span_ft null for a gable end: a null span gets a
+small default downstream and draws the whole roof end as a tiny mid-wall gable.
+</gable_end_span>
+
 <projection_default>
 A gable's FACE view shows that it EXISTS and how wide it is. It does NOT show
 whether the gable projects forward — that is only visible in the perpendicular

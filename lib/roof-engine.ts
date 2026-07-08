@@ -146,7 +146,8 @@ export type FlagCode =
   | "area_gate"
   | "no_schedule"
   | "long_run"
-  | "skeleton_rejected";
+  | "skeleton_rejected"
+  | "gable_rake_end";
 
 /** Structured review flag. Replaces the spec's bare strings so the UI can group
  *  by mass, filter by severity, and place `at` markers on the canvas. */
@@ -445,6 +446,76 @@ const edgeLen = (e: Edge): number => dist(e.p1, e.p2);
  * + interior lines by rule, and append gate flags (unanchored gable,
  * roof-mounted note, reentrant-corner-without-valley) to `flags`.
  */
+/**
+ * Deterministic roof primitive for a NEAR-RECTANGULAR mass. On a simple
+ * rectangle the correct skeleton is not a search problem — it is a rule:
+ * the RIDGE runs parallel to the opposite EAVE pair, flush out to each
+ * RAKE (gable) end, inset by half-depth with two HIPS at each EAVE end.
+ * Using this instead of the offset-simulation straight skeleton kills the
+ * degenerate "pyramid / long diagonal hips across the roof" failure on the
+ * masses tier decomposition produces (which are near-rect by construction).
+ * Returns null for articulated outlines (those keep the straight skeleton).
+ */
+export function rectPrimitiveSkeleton(
+  outline: readonly Pt[],
+  eaveSet: ReadonlySet<number>,
+): { ridges: [Pt, Pt][]; hips: [Pt, Pt][] } | null {
+  const n = outline.length;
+  if (n < 4) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of outline) {
+    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+  }
+  const W = x1 - x0, H = y1 - y0;
+  if (!(W > 0) || !(H > 0)) return null;
+  // Near-rectangular only — an articulated mass keeps the straight skeleton
+  // (its jog valleys are exactly what the offset simulation is FOR).
+  if (Math.abs(polyArea([...outline])) / (W * H) < 0.82) return null;
+  const tol = Math.max(2, Math.max(W, H) * 0.02);
+  // Guttered fraction of the boundary along each bbox side.
+  const gut = { top: 0, bottom: 0, left: 0, right: 0 };
+  const tot = { top: 0, bottom: 0, left: 0, right: 0 };
+  for (let i = 0; i < n; i++) {
+    const a = outline[i], b = outline[(i + 1) % n];
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    if (l <= 0) continue;
+    const g = eaveSet.has(i) ? l : 0;
+    if (Math.abs(a.y - y0) <= tol && Math.abs(b.y - y0) <= tol) { tot.top += l; gut.top += g; }
+    else if (Math.abs(a.y - y1) <= tol && Math.abs(b.y - y1) <= tol) { tot.bottom += l; gut.bottom += g; }
+    else if (Math.abs(a.x - x0) <= tol && Math.abs(b.x - x0) <= tol) { tot.left += l; gut.left += g; }
+    else if (Math.abs(a.x - x1) <= tol && Math.abs(b.x - x1) <= tol) { tot.right += l; gut.right += g; }
+  }
+  const isEave = (s: keyof typeof gut) => tot[s] > 0 && gut[s] / tot[s] >= 0.5;
+  const T = isEave("top"), B = isEave("bottom"), L = isEave("left"), R = isEave("right");
+  const horiz = T && B, vert = L && R;
+  let axis: "h" | "v" | null = null;
+  if (horiz && vert) axis = W >= H ? "h" : "v"; // full hip — ridge on the long axis
+  else if (horiz) axis = "h";
+  else if (vert) axis = "v";
+  if (!axis) return null; // no opposite eave pair — not a simple gable/hip form
+  const ridges: [Pt, Pt][] = [];
+  const hips: [Pt, Pt][] = [];
+  if (axis === "h") {
+    const ym = (y0 + y1) / 2, half = H / 2;
+    let xs = L ? x0 + half : x0; // eave end → hips inset; rake end → ridge to the wall
+    let xe = R ? x1 - half : x1;
+    if (xe < xs) xs = xe = (x0 + x1) / 2; // near-square pyramid: hips meet centre
+    if (xe > xs) ridges.push([{ x: xs, y: ym }, { x: xe, y: ym }]);
+    if (L) hips.push([{ x: xs, y: ym }, { x: x0, y: y0 }], [{ x: xs, y: ym }, { x: x0, y: y1 }]);
+    if (R) hips.push([{ x: xe, y: ym }, { x: x1, y: y0 }], [{ x: xe, y: ym }, { x: x1, y: y1 }]);
+  } else {
+    const xm = (x0 + x1) / 2, half = W / 2;
+    let ys = T ? y0 + half : y0;
+    let ye = B ? y1 - half : y1;
+    if (ye < ys) ys = ye = (y0 + y1) / 2;
+    if (ye > ys) ridges.push([{ x: xm, y: ys }, { x: xm, y: ye }]);
+    if (T) hips.push([{ x: xm, y: ys }, { x: x0, y: y0 }], [{ x: xm, y: ys }, { x: x1, y: y0 }]);
+    if (B) hips.push([{ x: xm, y: ye }, { x: x0, y: y1 }], [{ x: xm, y: ye }, { x: x1, y: y1 }]);
+  }
+  return { ridges, hips };
+}
+
 export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Required<EngineOptions>): Mass {
   const { name, outline } = input;
   const mass: Mass = { name, outline, statedArea: input.statedArea ?? null, edges: [], interior: [] };
@@ -471,8 +542,45 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
     }
   }
 
+  // Nearest outline edge to a point — used to tell which wall a gable base
+  // actually sits on (eave vs rake/gable-end).
+  const nearestEdgeIdx = (p: Pt): number => {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < n; i++) {
+      const a = outline[i], b = outline[(i + 1) % n];
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const L2 = vx * vx + vy * vy;
+      let t = L2 > 0 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const dx = p.x - (a.x + t * vx), dy = p.y - (a.y + t * vy);
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bd) { bd = d2; best = i; }
+    }
+    return best;
+  };
+
   for (const g of input.gables ?? []) {
     const gname = g.name ?? "gable";
+
+    // A FLUSH gable whose base sits on a RAKE edge is the mass's GABLE END —
+    // that end is already drawn by its rake edges plus the ridge running out to
+    // it (rectPrimitiveSkeleton holds rake ends flush). Drawing a default-span
+    // stub there paints a floating mini-triangle mid-wall (the "tiny side
+    // gable" artifact on side reads with span_ft null). Depict it by the end
+    // itself; suppress the stub. Projecting gables still draw (a real pop-out
+    // on a gable-end side is possible, if rare).
+    const baseEdge = nearestEdgeIdx(g.baseCenter);
+    if (!isProjecting(g) && baseEdge >= 0 && !eaveSet.has(baseEdge)) {
+      flags.push({
+        code: "gable_rake_end",
+        severity: "info",
+        mass: name,
+        at: g.baseCenter,
+        message: `[${name}] gable '${gname}' sits on a rake/gable-END wall — the end is already drawn by its rakes + the ridge running to it; suppressed the duplicate stub (zero gutter either way).`,
+      });
+      continue;
+    }
+
     const d = distPointToBoundary(g.baseCenter, outline);
     if (d / opts.pxPerFt > opts.anchorTolFt) {
       flags.push({
@@ -526,6 +634,15 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
   // added) on a non-rectilinear/degenerate footprint, so the caller degrades to
   // its own skeleton rather than drawing junk.
   {
+    // NEAR-RECT masses (what tier decomposition produces) get the deterministic
+    // primitive — ridge parallel to the eave pair, flush to rake/gable ends,
+    // hips only at eave ends. Always geometrically correct; no offset
+    // simulation to degenerate into a pyramid / long diagonals.
+    const prim = rectPrimitiveSkeleton(outline, eaveSet);
+    if (prim) {
+      for (const [p1, p2] of prim.hips) mass.interior.push({ p1, p2, type: "hip", gutter: false, source: "skeleton" });
+      for (const [p1, p2] of prim.ridges) mass.interior.push({ p1, p2, type: "ridge", gutter: false, source: "skeleton" });
+    } else {
     const eaveSegments: [Pt, Pt][] = [];
     const rakeSegments: [Pt, Pt][] = [];
     for (let i = 0; i < n; i++) {
@@ -562,6 +679,7 @@ export function assembleMass(input: MassInput, flags: ReviewFlag[], opts: Requir
           reentrantsCovered ? "degenerate centroid-fan" : "leaves a reentrant (jog) corner with no valley"
         }, not a real hip topology. Interior lines omitted (the consumer falls back to the grid skeleton); the true topology needs tier decomposition.`,
       });
+    }
     }
   }
 

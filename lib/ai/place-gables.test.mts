@@ -172,20 +172,25 @@ test("jogged front: gables route to the correct sub-edge (bay vs wall), not one 
     south: face({
       face: "south",
       gables: [
-        g({ id: "mid", position_frac: 0.5, span_ft: 12 }), // over the bay
-        g({ id: "left", position_frac: 0.05, span_ft: 12 }), // over a wall segment
+        // PROJECTING (on posts) over the bay → rides the bay's outer eave.
+        g({ id: "mid", position_frac: 0.5, span_ft: 12, supported_on: "posts" }),
+        g({ id: "left", position_frac: 0.05, span_ft: 12 }), // flush, over a wall segment
+        // FLUSH gable positioned over the bay → sits on the house WALL plane
+        // (y=510), NOT parked on the pop-out's outer eave in front of it.
+        g({ id: "mid_flush", position_frac: 0.45, span_ft: 14 }),
       ],
     }),
   };
   const { gables } = placeGablesFromFaces(perFace, OUTLINE_JOG, PX_PER_FT);
-  assert.equal(gables.length, 2);
+  assert.equal(gables.length, 3);
   const mid = gables.find((gg) => gg.name === "mid")!;
   const left = gables.find((gg) => gg.name === "left")!;
-  // Middle gable sits on the projecting bay edge (y=560); the near-end gable on a
-  // flush wall segment (y=510) — proof each routed to its own sub-edge instead of
-  // all landing on the single furthest-out edge.
+  const midFlush = gables.find((gg) => gg.name === "mid_flush")!;
+  // Projecting gable rides the bay's outer eave (y=560); flush gables sit on the
+  // wall plane (y=510) even when a pop-out stands in front of them.
   assert.equal(mid.baseCenter.y, 560);
   assert.equal(left.baseCenter.y, 510);
+  assert.equal(midFlush.baseCenter.y, 510);
 });
 
 test("end-to-end: placed gables drive the engine → front porch adds guttered side eaves + a valley", () => {

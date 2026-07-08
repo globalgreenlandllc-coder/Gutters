@@ -114,8 +114,8 @@ const minX = Math.min(...pts.map((p) => p.x));
 const minY = Math.min(...pts.map((p) => p.y));
 const maxX = Math.max(...pts.map((p) => p.x));
 const maxY = Math.max(...pts.map((p) => p.y));
-const W = (maxX - minX) * S + PAD * 2;
-const H = (maxY - minY) * S + PAD * 2 + 96;
+const W = (maxX - minX) * S + PAD * 2 + 160; // +160 right margin for tier labels
+const H = Math.max((maxY - minY) * S + PAD * 2 + 96, W); // square-ish so a square thumbnailer shows full width
 const X = (x: number) => (x - minX) * S + PAD;
 const Y = (y: number) => (y - minY) * S + PAD;
 

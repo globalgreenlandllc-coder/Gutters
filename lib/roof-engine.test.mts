@@ -307,8 +307,11 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   // alike now draw the full cross-gable signature; flush just omits side eaves).
   const all = res.masses.flatMap((m) => m.interior);
   const gableLines = (t: string) => all.filter((e) => e.type === t && e.source?.startsWith("gable:")).length;
-  assert.equal(gableLines("ridge"), 6); // 4 main + 1 garage + 1 flush patio gable
-  assert.equal(gableLines("valley"), 12); // 8 main + 2 garage + 2 flush patio (all 6 gables draw valleys)
+  // The flush patio gable's base sits on the patio's RAKE (gable-end) edge —
+  // its roof end is now depicted by the ridge running to that end (rect
+  // primitive), so the duplicate stub is suppressed (gable_rake_end flag).
+  assert.equal(gableLines("ridge"), 5); // 4 main + 1 garage (patio end = ridge-to-rake-end)
+  assert.equal(gableLines("valley"), 10); // 8 main + 2 garage
   // Clean main-roof skeleton present too (decorative, source "skeleton").
   assert.ok(all.some((e) => e.type === "hip" && e.source === "skeleton"));
 
@@ -319,7 +322,8 @@ test("demo_woodinville oracle: eave LF, interior lines, downspouts, flags are st
   // flush note on the patio gable. No unanchored / open / long-run.
   assert.equal(res.reviewFlags.filter((f) => f.code === "area_gate").length, 2);
   assert.equal(res.reviewFlags.filter((f) => f.code === "no_schedule").length, 1);
-  assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 1);
+  assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 0);
+  assert.equal(res.reviewFlags.filter((f) => f.code === "gable_rake_end").length, 1);
   assert.equal(res.reviewFlags.filter((f) => f.severity === "error").length, 0);
 });
 
@@ -411,3 +415,89 @@ function gable(
 ): Gable {
   return { baseCenter: { x: cx, y: cy }, span, pitch, projection, facing, name };
 }
+
+// ── rect-primitive skeleton + gable-end stub suppression ────────────────────
+
+test("gable-ended rectangle: skeleton is ONE full-length ridge to both rake ends — no diagonals", () => {
+  // 100×43 ft, north+south eaves, east+west RAKE (gable) ends — the Woodinville
+  // main-mass shape that used to draw a pyramid of long diagonal hips.
+  const rect: MassInput = {
+    name: "main",
+    outline: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 43 },
+      { x: 0, y: 43 },
+    ],
+    statedArea: null,
+    eaveEdges: [0, 2], // top + bottom eaves; left/right rakes (gable ends)
+    gables: [],
+  };
+  const res = runRoofEngine([rect]);
+  const interior = res.masses[0].interior;
+  const ridges = interior.filter((e) => e.type === "ridge");
+  const hips = interior.filter((e) => e.type === "hip");
+  assert.equal(ridges.length, 1, "one ridge");
+  assert.equal(hips.length, 0, "no hips at gable ends");
+  // Full-length: ridge runs wall to wall at mid-depth.
+  const r = ridges[0];
+  const len = Math.hypot(r.p2.x - r.p1.x, r.p2.y - r.p1.y);
+  assert.equal(Math.round(len), 100);
+  assert.equal(Math.round((r.p1.y + r.p2.y) / 2), 22); // mid-depth (43/2 -> 21.5)
+  // LF untouched: two 100-ft eaves.
+  assert.equal(res.masses[0].edges.filter((e) => e.gutter).length, 2);
+});
+
+test("all-eave rectangle: primitive draws the classic hip — inset ridge + 4 hips", () => {
+  const rect: MassInput = {
+    name: "main",
+    outline: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 40 },
+      { x: 0, y: 40 },
+    ],
+    statedArea: null,
+    eaveEdges: [0, 1, 2, 3],
+    gables: [],
+  };
+  const res = runRoofEngine([rect]);
+  const interior = res.masses[0].interior;
+  const ridges = interior.filter((e) => e.type === "ridge");
+  const hips = interior.filter((e) => e.type === "hip");
+  assert.equal(ridges.length, 1);
+  assert.equal(hips.length, 4);
+  const r = ridges[0];
+  // ridge inset by half-depth (20) at both ends → 60 ft long, centered
+  assert.equal(Math.round(Math.hypot(r.p2.x - r.p1.x, r.p2.y - r.p1.y)), 60);
+});
+
+test("flush gable based on a RAKE (gable-end) wall is suppressed with a flag; LF unchanged", () => {
+  const rect: MassInput = {
+    name: "main",
+    outline: [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 43 },
+      { x: 0, y: 43 },
+    ],
+    statedArea: null,
+    eaveEdges: [0, 2],
+    gables: [
+      // the "span_ft null → 12ft default at face centre" side-read artifact:
+      // a flush gable whose base sits on the WEST rake end
+      { baseCenter: { x: 0, y: 21.5 }, span: 12, pitch: 6, projection: 0, facing: "W", name: "west_end" },
+    ],
+  };
+  const res = runRoofEngine([rect]);
+  const gableLines = res.masses[0].interior.filter((e) => e.source.startsWith("gable:"));
+  assert.equal(gableLines.length, 0, "no stub ridge/valleys drawn for the gable end");
+  assert.ok(res.reviewFlags.some((f) => f.code === "gable_rake_end"));
+  // and a flush gable on an EAVE still draws its ridge+valleys
+  const withFront: MassInput = {
+    ...rect,
+    gables: [{ baseCenter: { x: 50, y: 0 }, span: 18, pitch: 6, projection: 0, facing: "N", name: "front" }],
+  };
+  const res2 = runRoofEngine([withFront]);
+  assert.ok(res2.masses[0].interior.some((e) => e.source === "gable:front"));
+});
