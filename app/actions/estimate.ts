@@ -6,7 +6,7 @@ import { runAIEstimatePipeline, type EstimateResult } from "@/lib/ai";
 import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import { engineDrawEnabled, engineTakeoffEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
-import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
+import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
@@ -375,10 +375,25 @@ export async function runEstimateFromPlan(
               gableMarks++;
             }
           }
+          // Re-anchor the scale to the printed overall dimension (see the A4
+          // block below for the rationale) so the point-space outline prices at
+          // true feet instead of the AI's inconsistent raster-pixel scale.
+          const vscale = deriveVectorScale(poly, analysis.scale?.source);
+          if (vscale) {
+            analysis.scale = { unit: "pixels", feet_per_unit: vscale.ftPerPt, source: vscale.source };
+            analysis.gutter_runs = analysis.gutter_runs.map((r) => ({
+              ...r,
+              length_ft:
+                r.length_px != null && Number.isFinite(r.length_px)
+                  ? Math.round(r.length_px * vscale.ftPerPt * 10) / 10
+                  : r.length_ft,
+            }));
+          }
           analysis.notes = [
             ...(analysis.notes ?? []),
             `Roof read from the A9 roof-framing sheet (single coordinate space, ${poly.length} corners)` +
-              (gableMarks ? `; ${gableMarks} gable end(s) marked from GABLE labels.` : "."),
+              (gableMarks ? `; ${gableMarks} gable end(s) marked from GABLE labels.` : ".") +
+              (vscale ? ` Scale re-anchored to ${vscale.ptPerFt} pt/ft.` : ""),
           ];
           footprintSource = `A9 roof vector (${poly.length} corners)`;
           vecTrace.push(`✓ USED A9 roof outline (${poly.length} corners)`);
@@ -460,12 +475,32 @@ export async function runEstimateFromPlan(
             ...d,
             at: T(d.at),
           }));
+          // Reprice the coordinate space: the runs now sit in the outline's own
+          // PDF-point space, but their length_ft (and analysis.scale) were
+          // calibrated on the AI's RASTER-pixel trace — a different, and on a
+          // mis-traced plan wildly inconsistent, scale (Woodinville: footprint
+          // px say 0.035 ft/px, runs say 0.099, 2.9× apart). Anchor to the
+          // printed overall dimension the model echoed in scale.source, snap to
+          // the sheet's real drawing scale, and rewrite each run's length_ft
+          // from its on-outline length. Fail-safe: no parse → AI scale stands.
+          const vscale = deriveVectorScale(poly, analysis.scale?.source);
+          if (vscale) {
+            analysis.scale = { unit: "pixels", feet_per_unit: vscale.ftPerPt, source: vscale.source };
+            analysis.gutter_runs = analysis.gutter_runs.map((r) => ({
+              ...r,
+              length_ft:
+                r.length_px != null && Number.isFinite(r.length_px)
+                  ? Math.round(r.length_px * vscale.ftPerPt * 10) / 10
+                  : r.length_ft,
+            }));
+          }
           analysis.notes = [
             ...(analysis.notes ?? []),
-            `Footprint shape copied from the plan's vector outline (${poly.length} corners); the AI's eave/gable/tier classification kept.`,
+            `Footprint shape copied from the plan's vector outline (${poly.length} corners); the AI's eave/gable/tier classification kept.` +
+              (vscale ? ` Scale re-anchored to ${vscale.ptPerFt} pt/ft from the printed overall dimension.` : ""),
           ];
           footprintSource = `A4 foundation vector (${poly.length} corners)`;
-          vecTrace.push(`✓ USED A4 footprint outline (${poly.length} corners)`);
+          vecTrace.push(`✓ USED A4 footprint outline (${poly.length} corners)${vscale ? `, scale ${vscale.ptPerFt} pt/ft` : ""}`);
         } else {
           vecTrace.push("A4 skipped — AI trace has <2 points to map the outline onto");
         }

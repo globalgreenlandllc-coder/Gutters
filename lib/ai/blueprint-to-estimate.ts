@@ -825,7 +825,15 @@ export function blueprintToEstimateResult(
     // run longer than that is a projection artifact (the 103 ft run on a
     // 64 ft house); pull it back to that limit. Falls back to the eave
     // bbox diagonal when no length_ft is available.
-    const maxRunFt = analysis.gutter_runs.reduce((m, r) => {
+    //
+    // SKIP this in engine-draw mode: there the eaves are the engine's
+    // footprint-perimeter edges (chained real walls), not noisy freehand AI
+    // runs. A real long wall (e.g. a 64 ft side) legitimately exceeds the
+    // longest measured AI run, and shrinking it about its midpoint detaches it
+    // from both corners — that is exactly what left the teal perimeter "open"
+    // with ~8 ft gaps. The engine's own long_run review flag already guards
+    // genuinely-impossible walls, so no clip is needed here.
+    const maxRunFt = engineBundle ? Infinity : analysis.gutter_runs.reduce((m, r) => {
       const f = (r.length_ft ?? 0) * ftScale;
       return Number.isFinite(f) && f > m ? f : m;
     }, 0);

@@ -385,6 +385,96 @@ export function outlineEdgesToRuns(
   return out;
 }
 
+/** Perimeter of a closed polygon. */
+function polyPerimeter(poly: Pt[]): number {
+  let p = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    p += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return p;
+}
+
+// Standard architectural drawing scales, in PDF points per foot (72 pt/inch):
+// 1/8"=1' → 9, 3/16" → 13.5, 1/4" → 18, 3/8" → 27, 1/2" → 36, plus a couple of
+// less-common residential scales. A derived pt/ft that lands within 12% of one
+// of these is snapped to it, so small trace / dimension-read noise self-corrects
+// to the real sheet scale.
+const STD_PT_PER_FT = [4.5, 6.75, 9, 12, 13.5, 18, 24, 27, 36, 48];
+
+/**
+ * Recover the TRUE feet-per-point of a vector footprint outline by anchoring it
+ * to the building's real overall dimension.
+ *
+ * Why this is needed: after the footprint is swapped to the plan's own vector
+ * outline (PDF-point coordinates), the AI's stored `scale.feet_per_unit` — and
+ * the AI gutter runs' own length_ft/length_px ratio — are calibrated on the
+ * model's RASTER-pixel trace, a different (and, on a mis-traced plan, wildly
+ * inconsistent) coordinate space. Pricing the point-space outline at that scale
+ * inflates every LF. The one number the model reads reliably is the PRINTED
+ * overall dimension (e.g. "64'-0 OVERALL"), which it echoes into scale.source;
+ * dividing the outline's matching extent by it gives the real point scale.
+ *
+ * Fail-safe: returns null when no plausible overall dimension can be parsed or
+ * the derived scale is physically implausible, so the caller keeps the existing
+ * run-derived scale (today's behavior).
+ */
+export function deriveVectorScale(
+  outline: Pt[],
+  scaleSource: string | null | undefined,
+): { ftPerPt: number; ptPerFt: number; source: string } | null {
+  if (!outline || outline.length < 4) return null;
+  const bb = bboxPts(outline);
+  const w = bb.x1 - bb.x0;
+  const h = bb.y1 - bb.y0;
+  if (!(w > 0) || !(h > 0)) return null;
+  const src = String(scaleSource ?? "");
+  if (!src) return null;
+
+  // Parse feet values: `64'-0"`, `64'`, `64 ft`. Keep building-sized overalls
+  // (15–200 ft); a perimeter figure (>200) is ignored — it's usually derived
+  // from a mis-traced width and can't be axis-matched.
+  const feet: number[] = [];
+  for (const m of src.matchAll(/(\d{2,3})\s*'(?:\s*-?\s*(\d{1,2}))?/g)) {
+    const ft = Number(m[1]) + (m[2] ? Number(m[2]) / 12 : 0);
+    if (ft >= 15 && ft <= 200) feet.push(ft);
+  }
+  for (const m of src.matchAll(/(\d{2,3})\s*ft\b/gi)) {
+    const ft = Number(m[1]);
+    if (ft >= 15 && ft <= 200) feet.push(ft);
+  }
+  if (feet.length === 0) return null;
+
+  // The overall dimension is the building's largest side → the outline's larger
+  // bbox extent. Try matching it to each axis and snap to the nearest standard
+  // sheet scale; accept the closest snap.
+  const overallFt = Math.max(...feet);
+  const snap = (ptPerFt: number): { std: number; err: number } | null => {
+    let best: { std: number; err: number } | null = null;
+    for (const std of STD_PT_PER_FT) {
+      const err = Math.abs(ptPerFt - std) / std;
+      if (!best || err < best.err) best = { std, err };
+    }
+    return best && best.err <= 0.12 ? best : null;
+  };
+  const candidates = [Math.max(w, h) / overallFt, Math.min(w, h) / overallFt];
+  let pick: { std: number; err: number } | null = null;
+  for (const c of candidates) {
+    const s = snap(c);
+    if (s && (!pick || s.err < pick.err)) pick = s;
+  }
+  if (!pick) return null;
+
+  const ptPerFt = pick.std;
+  const inchesPerFt = ptPerFt / 72; // e.g. 18 pt/ft → 0.25" = 1/4"=1'-0"
+  return {
+    ftPerPt: 1 / ptPerFt,
+    ptPerFt,
+    source: `vector outline anchored to ${overallFt.toFixed(0)}ft overall dimension (${ptPerFt} pt/ft ≈ ${inchesPerFt.toFixed(3).replace(/0+$/, "")}"=1'-0" sheet scale)`,
+  };
+}
+
 /** Shoelace area of a polygon (absolute). */
 function polyAreaAbs(poly: Pt[]): number {
   let a = 0;
@@ -540,46 +630,152 @@ function tracePass(
   return { polygon, bbox };
 }
 
+type Outline = { polygon: Pt[]; bbox: { x0: number; y0: number; x1: number; y1: number } };
+
+/**
+ * One flood-fill trace over a fixed segment set, with iterative sheet-frame
+ * peeling: when a pass traces a polygon that fills ~the whole segment bbox,
+ * that polygon IS the border/drawing frame — strip the frame-hugging segments
+ * and re-trace what's inside. Without this, any sheet with a closed border
+ * (i.e. every real plan set) traces as a perfect 4-corner box and the
+ * articulated footprint inside is never seen.
+ */
+function traceWithFramePeel(
+  segments: number[][],
+  opts?: { grid?: number; gapCells?: number },
+): Outline | null {
+  let segs = segments;
+  let fallback: Pt[] | null = null; // the outermost frame-like trace
+  for (let pass = 0; pass < 3; pass++) {
+    const res = tracePass(segs, opts);
+    if (!res) break;
+    if (!looksLikeFrame(res.polygon, res.bbox, segs)) {
+      // A real building, not the frame — done.
+      return { polygon: res.polygon, bbox: bboxPts(res.polygon) };
+    }
+    fallback ??= res.polygon;
+    const peeled = stripFrameSegments(segs, res.bbox);
+    if (peeled.length === segs.length || peeled.length < 4) break; // nothing to peel
+    segs = peeled;
+  }
+  // Never found a building inside the frame(s). A plain 4-corner frame may
+  // pass through (the caller's ≤4-corner gate skips it anyway); an
+  // "articulated" frame (border + title-block notch) must not masquerade as
+  // a footprint.
+  if (fallback && fallback.length <= 4) {
+    return { polygon: fallback, bbox: bboxPts(fallback) };
+  }
+  return null;
+}
+
+const WIDTH_COVERAGE = 0.5; // ≥50% of segs must carry a stroke weight to tier
+
+/**
+ * Peel the DIMENSION-LINE LATTICE off a dimensioned plan using stroke weight.
+ *
+ * The flood-fill in traceWithFramePeel stops at the OUTERMOST closed contour.
+ * On a foundation / floor plan that contour is the ring of stacked dimension
+ * strings + extension lines that surrounds the walls — NOT the building. The
+ * true stem walls sit strictly inside it and are never traced (Woodinville:
+ * an 80×80 ft dimension ring hiding the real 64×63 ft house). But the walls
+ * are drawn HEAVIER than the dimension/grid lines and LIGHTER than the sheet
+ * frame, so re-tracing on just the structural-weight band recovers the real
+ * footprint.
+ *
+ * Strictly additive: returns a tiered outline only when it is a clean,
+ * meaningfully-SMALLER improvement over `base` (the all-segments trace) —
+ * i.e. it actually peeled the lattice. Any ambiguity → null and `base` stands,
+ * so a plan with uniform stroke weights, or no widths at all (legacy rows),
+ * degrades to exactly today's behavior.
+ */
+function tierByWidth(
+  segments: number[][],
+  base: Outline | null,
+  opts?: { grid?: number; gapCells?: number },
+): Outline | null {
+  const measured = segments.filter((s) => s.length >= 5 && Number.isFinite(s[4]) && s[4] > 0);
+  if (measured.length < WIDTH_COVERAGE * segments.length) return null;
+
+  // Length-weighted distinct (quantized) widths, thinnest → thickest.
+  const lenByW = new Map<number, number>();
+  for (const s of measured) {
+    const w = Math.round(s[4] * 100) / 100;
+    lenByW.set(w, (lenByW.get(w) ?? 0) + Math.hypot(s[2] - s[0], s[3] - s[1]));
+  }
+  const distinct = [...lenByW.keys()].sort((a, b) => a - b);
+  if (distinct.length < 3) return null; // need thin dims / walls / frame to separate
+
+  // Exclude the sheet frame: the thickest tier when it stands clearly above the
+  // rest (heavy border stroke). Structural walls are everything below it.
+  const top = distinct[distinct.length - 1];
+  const prev = distinct[distinct.length - 2];
+  const frameCeil = top / prev >= 1.5 ? top : Infinity; // strict `< frameCeil`
+
+  const baseArea = base ? polyAreaAbs(base.polygon) : Infinity;
+  const grossArea = (() => {
+    const bb = bboxOf(segments);
+    return bb ? (bb.x1 - bb.x0) * (bb.y1 - bb.y0) : Infinity;
+  })();
+
+  // Candidate weight floors: each distinct wall-tier width, skipping the single
+  // thinnest tier (dimension lines) and anything at/above the frame. For each,
+  // trace {s : floor ≤ w < frameCeil}. As the floor drops the trace stays on
+  // the inner building until it reaches the grid/dimension weight, at which
+  // point its AREA JUMPS to the lattice — the area-ratio band below rejects
+  // that jump, so we keep the LOWEST clean floor (most articulation, e.g. a
+  // garage wing whose footings are lighter than the main walls) before it.
+  let bestPick: Outline | null = null;
+  let bestArea = -Infinity;
+  for (let fi = 1; fi < distinct.length; fi++) {
+    const floor = distinct[fi];
+    if (floor >= frameCeil) break;
+    const subset = segments.filter(
+      (s) => s.length >= 5 && Number.isFinite(s[4]) && s[4] >= floor && s[4] < frameCeil,
+    );
+    if (subset.length < 4) continue; // need at least a closed ring's worth
+    const res = traceWithFramePeel(subset, opts);
+    if (!res || res.polygon.length < 5 || res.polygon.length > 40) continue;
+    const area = polyAreaAbs(res.polygon);
+    if (area <= 0) continue;
+    // Must be strictly smaller than the all-segments trace (it peeled the
+    // lattice) but not a tiny fragment of the sheet; reference against whichever
+    // of base / gross area is finite.
+    const ref = Number.isFinite(baseArea) ? baseArea : grossArea;
+    if (!Number.isFinite(ref) || ref <= 0) continue;
+    const ratio = area / ref;
+    if (ratio < 0.15 || ratio > 0.8) continue;
+    // Prefer the most-inclusive qualifying tier (largest area still inside the
+    // band) — captures wings the heavier-only tiers drop.
+    if (area > bestArea) {
+      bestArea = area;
+      bestPick = { polygon: res.polygon, bbox: bboxPts(res.polygon) };
+    }
+  }
+  return bestPick;
+}
+
 /**
  * Recover the building outline polygon from drawn wall segments. Returns the
  * polygon in the input's coordinate space + the POLYGON's bbox (the building's
  * extent — callers co-register the AI trace onto it, so it must bound the
  * building, not the whole sheet), or null.
  *
- * Sheet frames are peeled iteratively: when a pass traces a polygon that fills
- * ~the whole segment bbox, that polygon IS the border/drawing frame — strip the
- * frame-hugging segments and re-trace what's inside. Without this, any sheet
- * with a closed border (i.e. every real plan set) traces as a perfect 4-corner
- * box and the articulated footprint inside is never seen.
+ * Two stages: (1) the all-segments flood-fill trace with sheet-frame peeling;
+ * (2) when the segments carry stroke weights (5-tuples from selectSegments),
+ * a width-tiered refinement that peels the surrounding dimension-line lattice
+ * off a dimensioned plan and recovers the true wall polygon inside it. The
+ * refinement only replaces stage 1 when it is a clean, strictly-smaller
+ * improvement, so weightless input (legacy rows) is unchanged.
  */
 export function extractBuildingOutline(
   segments: number[][],
   opts?: { grid?: number; gapCells?: number },
-): { polygon: Pt[]; bbox: { x0: number; y0: number; x1: number; y1: number } } | null {
+): Outline | null {
   try {
     if (!segments || segments.length < 4) return null;
-    let segs = segments;
-    let fallback: Pt[] | null = null; // the outermost frame-like trace
-    for (let pass = 0; pass < 3; pass++) {
-      const res = tracePass(segs, opts);
-      if (!res) break;
-      if (!looksLikeFrame(res.polygon, res.bbox, segs)) {
-        // A real building, not the frame — done.
-        return { polygon: res.polygon, bbox: bboxPts(res.polygon) };
-      }
-      fallback ??= res.polygon;
-      const peeled = stripFrameSegments(segs, res.bbox);
-      if (peeled.length === segs.length || peeled.length < 4) break; // nothing to peel
-      segs = peeled;
-    }
-    // Never found a building inside the frame(s). A plain 4-corner frame may
-    // pass through (the caller's ≤4-corner gate skips it anyway); an
-    // "articulated" frame (border + title-block notch) must not masquerade as
-    // a footprint.
-    if (fallback && fallback.length <= 4) {
-      return { polygon: fallback, bbox: bboxPts(fallback) };
-    }
-    return null;
+    const base = traceWithFramePeel(segments, opts);
+    const tiered = tierByWidth(segments, base, opts);
+    return tiered ?? base;
   } catch {
     return null;
   }

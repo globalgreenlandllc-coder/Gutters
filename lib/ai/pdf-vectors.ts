@@ -190,8 +190,10 @@ export async function extractPlanVectors(
 
 const fmtText = (items: PdfTextItem[]) =>
   items.map((i) => `${i.s}@(${i.x},${i.y})`).join("  ");
+// Only the 4 coords go to the model — a 5th stroke-weight element (used
+// downstream for wall/dimension tiering) is not geometry the AI should see.
 const fmtSegs = (segs: number[][]) =>
-  segs.map((s) => `[${s.join(",")}]`).join(" ");
+  segs.map((s) => `[${s.slice(0, 4).join(",")}]`).join(" ");
 
 /**
  * Render the extracted vectors into a compact ground-truth block for the

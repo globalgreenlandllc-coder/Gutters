@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { extractBuildingOutline, type Pt } from "./outline-from-vectors.ts";
+import { extractBuildingOutline, deriveVectorScale, type Pt } from "./outline-from-vectors.ts";
 
 /** Wall segments for a closed rectilinear ring (consecutive corners). */
 function ring(corners: [number, number][]): number[][] {
@@ -12,6 +12,11 @@ function ring(corners: [number, number][]): number[][] {
     segs.push([a[0], a[1], b[0], b[1]]);
   }
   return segs;
+}
+
+/** Same, tagged with a stroke weight (the 5th tuple element selectSegments emits). */
+function wring(corners: [number, number][], w: number): number[][] {
+  return ring(corners).map((s) => [...s, w]);
 }
 
 function bbox(poly: Pt[]) {
@@ -101,6 +106,66 @@ test("interior walls are ignored — outer perimeter only", () => {
 test("garbage / non-enclosing input → null (caller falls back)", () => {
   assert.equal(extractBuildingOutline([]), null);
   assert.equal(extractBuildingOutline([[0, 0, 10, 0]]), null); // a lone stroke
+});
+
+test("width-tiering peels the surrounding dimension lattice off the real walls", () => {
+  // A dimensioned plan: the flood-fill's outermost closed contour is the thin
+  // DIMENSION-LINE lattice ring (w=0.3) around the building, with a heavy sheet
+  // FRAME (w=3.0) outside that; the real WALLS (w=1.5) sit inside. Without
+  // stroke weight the trace grabs the outer lattice/frame (Woodinville's 80×80
+  // ft ring). With weights the structural tier is isolated and the true inner
+  // building is recovered.
+  const frame = wring([[0, 0], [760, 0], [760, 760], [0, 760]], 3.0);
+  const lattice = wring([[40, 40], [720, 40], [720, 720], [40, 720]], 0.3);
+  // Inner building: an L (so we can prove it's the building, not a box copy).
+  const walls = wring([[180, 200], [560, 200], [560, 380], [400, 380], [400, 540], [180, 540]], 1.5);
+  const segs = [...frame, ...lattice, ...walls];
+
+  // Weightless (legacy rows): the outer lattice/frame wins — the pre-fix behavior.
+  const legacy = extractBuildingOutline(segs.map((s) => s.slice(0, 4)));
+  assert.ok(legacy, "legacy path still returns something");
+  const legacyBB = bbox(legacy!.polygon);
+  assert.ok(legacyBB.x1 - legacyBB.x0 > 640, "weightless trace grabs the wide outer ring");
+
+  // With weights: the inner building walls (380×340) are recovered, not the ring.
+  const out = extractBuildingOutline(segs);
+  assert.ok(out, "width-tiered outline");
+  const bb = bbox(out!.polygon);
+  assert.ok(Math.abs(bb.x1 - bb.x0 - 380) < 40, `inner building width ~380 (got ${(bb.x1 - bb.x0).toFixed(0)})`);
+  assert.ok(Math.abs(bb.y1 - bb.y0 - 340) < 40, `inner building depth ~340 (got ${(bb.y1 - bb.y0).toFixed(0)})`);
+  assert.ok(out!.polygon.length >= 6, "keeps the L notch");
+  assert.equal(pointInPoly({ x: 500, y: 500 }, out!.polygon), false, "the L's bite stays outside");
+});
+
+test("width-tiering is strictly additive — uniform weights or missing widths fall back to base", () => {
+  // A plain box drawn at one weight: no tier to peel → same as today's trace.
+  const uniform = wring([[0, 0], [600, 0], [600, 480], [0, 480]], 1.0);
+  const out = extractBuildingOutline(uniform);
+  assert.ok(out, "still traces the box");
+  const bb = bbox(out!.polygon);
+  assert.ok(Math.abs(bb.x1 - bb.x0 - 600) < 16 && Math.abs(bb.y1 - bb.y0 - 480) < 16, "unchanged box");
+});
+
+// ── deriveVectorScale — anchor point-space outline to real feet ──────────────
+test("deriveVectorScale anchors to the printed overall dimension and snaps to a sheet scale", () => {
+  // 1152pt-wide outline, printed 64'-0 overall → 1152/64 = 18 pt/ft = 1/4\"=1'-0\".
+  const outline: Pt[] = [
+    { x: 100, y: 100 }, { x: 1252, y: 100 }, { x: 1252, y: 1120 }, { x: 100, y: 1120 },
+  ];
+  const s = deriveVectorScale(outline, "dimensioned wall — 64'-0 OVERALL foundation width vs ~1843 px roof-plan trace");
+  assert.ok(s, "derived a scale");
+  assert.equal(s!.ptPerFt, 18, "snapped to 18 pt/ft (1/4\" scale)");
+  assert.ok(Math.abs(s!.ftPerPt - 1 / 18) < 1e-9, "ftPerPt is the reciprocal");
+});
+
+test("deriveVectorScale fails safe when no overall dimension is parseable or the scale is implausible", () => {
+  const outline: Pt[] = [
+    { x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 800 }, { x: 0, y: 800 },
+  ];
+  assert.equal(deriveVectorScale(outline, "no dimensions here"), null, "no dim → null");
+  assert.equal(deriveVectorScale(outline, ""), null, "empty source → null");
+  // 1000pt / 3ft = 333 pt/ft — nowhere near a standard scale → reject.
+  assert.equal(deriveVectorScale(outline, "3'-0 OVERALL"), null, "implausible → null");
 });
 
 /** Ray-cast point-in-polygon for the test assertions. */

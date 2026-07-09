@@ -207,16 +207,26 @@ test("vector closure: NO evidence (all elevations failed, no rakes marked) → a
     perFace: { north: { readable: false }, south: { readable: false } },
   });
   assert.equal(r2.analysis.gutter_runs.length, 2, "unreadable faces are not evidence");
-  // A rake classification on the trace IS evidence — closure prices again.
+  // A rake classification on the trace is NOT enough on its own: it proves some
+  // edge is a gable end but can't tell which UNCLASSIFIED edges are eaves, and
+  // there is no readable face to suppress gable ends. With every elevation
+  // failed, closure must skip + flag rather than price the perimeter blind
+  // (the exact credits-outage over-count). A readable face is required.
   const withRake = base({
     building_footprint: FOOT,
     gutter_runs: [run("front", [0, 0], [200, 0], 100), run("left", [0, 0], [0, 120], 60)],
     excluded_edges: [{ id: "x1", kind: "rake", start: { x: 200, y: 0 }, end: { x: 200, y: 120 }, reason: "gable end" }],
   });
   const r3 = closeVectorPerimeter(withRake);
-  assert.ok(r3.analysis.gutter_runs.length > 2, "rake classification unlocks the closure");
+  assert.equal(r3.analysis.gutter_runs.length, 2, "rake classification alone does NOT unlock closure (no readable face)");
+  assert.ok(r3.reconcileNotes.some((n) => /SKIPPED/.test(n)), "skips + flags for review");
+  // But a readable face DOES unlock it, still honoring the explicit rake edge.
+  const r4 = closeVectorPerimeter(withRake, {
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
+  assert.ok(r4.analysis.gutter_runs.length > 2, "a readable face unlocks the closure");
   assert.ok(
-    r3.analysis.gutter_runs.every((g) => !(g.id.startsWith("vclose") && g.side === "right")),
+    r4.analysis.gutter_runs.every((g) => !(g.id.startsWith("vclose") && g.side === "right")),
     "the rake-classified right edge stays unguttered",
   );
 });

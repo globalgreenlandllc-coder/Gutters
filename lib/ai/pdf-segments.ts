@@ -340,12 +340,23 @@ export function boldFilter(kept: KeptSeg[]): KeptSeg[] {
 }
 
 /** Public driver: chain-merge → length filter → (optional) bold filter →
- *  longest-first → cap → bare `number[]` coords. Always returns number[][]
- *  like before. */
+ *  longest-first → cap → coords. Returns `[x1,y1,x2,y2]` when the segment's
+ *  device-space stroke weight is unknown (fill paths, unresolved paint op),
+ *  and `[x1,y1,x2,y2,w]` when it IS known — so a downstream consumer can
+ *  tier by weight (walls vs dimension lines vs sheet frame) without a second
+ *  extraction pass. Every existing consumer indexes s[0..3] and length-guards,
+ *  so the optional 5th element is backward compatible (legacy 4-tuple rows and
+ *  the AI-prompt formatter both stay correct — see fmtSegs). */
 export function selectSegments(raw: WSeg[], boldOnly: boolean): number[][] {
   const s0 = mergeCollinearStrokes(raw);
   const s1 = lengthFilter(s0);
   const s2 = boldOnly ? boldFilter(s1) : s1;
   s2.sort((m, n) => n.len - m.len);
-  return s2.slice(0, MAX_SEGMENTS).map((k) => k.seg);
+  return s2
+    .slice(0, MAX_SEGMENTS)
+    .map((k) =>
+      k.w != null && Number.isFinite(k.w) && k.w > 0
+        ? [...k.seg, Math.round(k.w * 100) / 100]
+        : k.seg,
+    );
 }

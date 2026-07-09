@@ -391,20 +391,21 @@ export function closeVectorPerimeter(
     }
 
     // ── EVIDENCE GATE ────────────────────────────────────────────────────
-    // "Unclassified exterior edge ⇒ eave" is only a safe default when we had
-    // SOME way to tell eaves from gable ends: a readable elevation face, or
-    // rake/no-gutter classifications on the trace. When every elevation read
-    // failed (e.g. the vision API erroring) AND the trace marked no rakes,
-    // pricing the whole perimeter is invented gutter — the Woodinville
-    // credits-outage run inflated 223 LF to 520 LF exactly this way. In that
-    // case: add nothing, flag for review, keep pricing on the AI's own runs.
+    // "Unclassified exterior edge ⇒ eave" is only a safe default when a
+    // READABLE elevation face confirms the eave-vs-gable-end split for that
+    // side. A rake classification on the plan-view trace was previously enough
+    // on its own, but it only proves that SOME edge is a gable end — it cannot
+    // tell which of the UNCLASSIFIED edges are eaves vs gable ends, and the
+    // gable-end suppression below needs face reads it doesn't have. The
+    // Woodinville credits-outage run is the failure: every elevation 400-errored
+    // yet a lone trace rake unlocked +204 LF of blind gutter, some of it priced
+    // straight across gable ends. With no readable face: add nothing, flag for
+    // review, keep pricing on the AI's own runs (an unpriced edge is visible to
+    // the contractor; invented gutter across a gable end is not).
     const readableFaces = opts?.perFace
       ? Object.values(opts.perFace).filter((f) => f && f.readable !== false).length
       : 0;
-    const hasRakeClassification = (analysis.excluded_edges ?? []).some(
-      (x) => x.kind === "rake" || x.kind === "dormer_rake" || x.kind === "eave_no_gutter",
-    );
-    const hasEvidence = readableFaces > 0 || hasRakeClassification;
+    const hasEvidence = readableFaces > 0;
 
     const gutterSegs: Seg[] = (analysis.gutter_runs ?? [])
       .map((r) => ({ a: asPt(r.start), b: asPt(r.end) }))
@@ -458,7 +459,7 @@ export function closeVectorPerimeter(
 
     if (!hasEvidence && uncoveredCount > 0) {
       notes.push(
-        `Vector closure SKIPPED — every elevation read failed and the trace marked no rakes, so eaves can't be told from gable ends. ${uncoveredCount} exterior edge(s) (~${round1(uncoveredFt)} LF) left UNPRICED for review; the total stays on the AI's measured runs.`,
+        `Vector closure SKIPPED — no readable elevation face, so unclassified exterior edges can't be told apart as eaves vs gable ends. ${uncoveredCount} exterior edge(s) (~${round1(uncoveredFt)} LF) left UNPRICED for review; the total stays on the AI's measured runs.`,
       );
       return { analysis, reconcileNotes: notes };
     }
