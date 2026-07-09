@@ -168,6 +168,20 @@ test("deriveVectorScale fails safe when no overall dimension is parseable or the
   assert.equal(deriveVectorScale(outline, "3'-0 OVERALL"), null, "implausible → null");
 });
 
+test("deriveVectorScale finds the overall dim wherever the model wrote it (notes, not just scale.source)", () => {
+  const outline: Pt[] = [
+    { x: 0, y: 0 }, { x: 1152, y: 0 }, { x: 1152, y: 1020 }, { x: 0, y: 1020 },
+  ]; // 1152pt / 64ft = 18 pt/ft
+  // Gemini regression: scale.source has no dimension, but a note does. The
+  // caller passes a joined blob of scale.source + notes.
+  const blob = "Scale derived from multiple dimensioned walls due to X/Y inconsistencies. | overall building width 64'-0\" per foundation plan. | Kitchen 12'-0\".";
+  const s = deriveVectorScale(outline, blob);
+  assert.ok(s, "found the dim in the notes");
+  assert.equal(s!.ptPerFt, 18, "snapped to 18 pt/ft");
+  // A room-only dimension must NOT anchor the scale (12ft → 96 pt/ft, no snap).
+  assert.equal(deriveVectorScale(outline, "Kitchen 12'-0\" wide; hallway 4'-0\"."), null, "room dims don't anchor");
+});
+
 /** Ray-cast point-in-polygon for the test assertions. */
 function pointInPoly(p: Pt, poly: Pt[]): boolean {
   let inside = false;

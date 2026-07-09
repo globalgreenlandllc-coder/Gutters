@@ -268,6 +268,18 @@ export async function runEstimateFromPlan(
   const vecTrace: string[] = [];
   let footprintSource = "AI trace (best-of read)";
   let roofApplied = false;
+  // Text the model may have echoed the plan's printed OVERALL dimension into —
+  // used to re-anchor the swapped point-space outline to the sheet's real scale
+  // (deriveVectorScale). Model wording varies (Opus writes "64'-0 OVERALL" into
+  // scale.source; Gemini phrases it differently and it can land in a note), so
+  // scan the source AND the ORIGINAL notes here, before our own note appends
+  // dilute them with derived numbers.
+  const scaleAnchorText = [
+    analysis.scale?.source,
+    ...(analysis.notes ?? []),
+  ]
+    .filter(Boolean)
+    .join(" | ");
   try {
     const ajR = row.analysisJson as {
       _vectorGeometry?: {
@@ -378,7 +390,7 @@ export async function runEstimateFromPlan(
           // Re-anchor the scale to the printed overall dimension (see the A4
           // block below for the rationale) so the point-space outline prices at
           // true feet instead of the AI's inconsistent raster-pixel scale.
-          const vscale = deriveVectorScale(poly, analysis.scale?.source);
+          const vscale = deriveVectorScale(poly, scaleAnchorText);
           if (vscale) {
             analysis.scale = { unit: "pixels", feet_per_unit: vscale.ftPerPt, source: vscale.source };
             analysis.gutter_runs = analysis.gutter_runs.map((r) => ({
@@ -483,7 +495,7 @@ export async function runEstimateFromPlan(
           // printed overall dimension the model echoed in scale.source, snap to
           // the sheet's real drawing scale, and rewrite each run's length_ft
           // from its on-outline length. Fail-safe: no parse → AI scale stands.
-          const vscale = deriveVectorScale(poly, analysis.scale?.source);
+          const vscale = deriveVectorScale(poly, scaleAnchorText);
           if (vscale) {
             analysis.scale = { unit: "pixels", feet_per_unit: vscale.ftPerPt, source: vscale.source };
             analysis.gutter_runs = analysis.gutter_runs.map((r) => ({

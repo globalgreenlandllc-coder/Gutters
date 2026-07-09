@@ -422,47 +422,53 @@ const STD_PT_PER_FT = [4.5, 6.75, 9, 12, 13.5, 18, 24, 27, 36, 48];
  */
 export function deriveVectorScale(
   outline: Pt[],
-  scaleSource: string | null | undefined,
+  textOrSource: string | null | undefined,
 ): { ftPerPt: number; ptPerFt: number; source: string } | null {
   if (!outline || outline.length < 4) return null;
   const bb = bboxPts(outline);
   const w = bb.x1 - bb.x0;
   const h = bb.y1 - bb.y0;
   if (!(w > 0) || !(h > 0)) return null;
-  const src = String(scaleSource ?? "");
+  const src = String(textOrSource ?? "");
   if (!src) return null;
 
-  // Parse feet values: `64'-0"`, `64'`, `64 ft`. Keep building-sized overalls
+  // Parse feet values from ANY of the AI's text (scale.source, notes, stated
+  // dimensions) — model wording varies (Opus echoes "64'-0 OVERALL" in
+  // scale.source; Gemini buries it elsewhere), so the caller passes a joined
+  // blob. Accept `64'-0"`, `64'`, `64 ft`, `64-0`. Keep building-sized overalls
   // (15–200 ft); a perimeter figure (>200) is ignored — it's usually derived
   // from a mis-traced width and can't be axis-matched.
   const feet: number[] = [];
-  for (const m of src.matchAll(/(\d{2,3})\s*'(?:\s*-?\s*(\d{1,2}))?/g)) {
+  for (const m of src.matchAll(/(\d{2,3})\s*['’](?:\s*-?\s*(\d{1,2}))?/g)) {
     const ft = Number(m[1]) + (m[2] ? Number(m[2]) / 12 : 0);
     if (ft >= 15 && ft <= 200) feet.push(ft);
   }
-  for (const m of src.matchAll(/(\d{2,3})\s*ft\b/gi)) {
+  for (const m of src.matchAll(/(\d{2,3})\s*(?:ft|feet)\b/gi)) {
     const ft = Number(m[1]);
     if (ft >= 15 && ft <= 200) feet.push(ft);
   }
   if (feet.length === 0) return null;
 
-  // The overall dimension is the building's largest side → the outline's larger
-  // bbox extent. Try matching it to each axis and snap to the nearest standard
-  // sheet scale; accept the closest snap.
-  const overallFt = Math.max(...feet);
+  // Snap a raw pt/ft to the nearest standard architectural sheet scale.
   const snap = (ptPerFt: number): { std: number; err: number } | null => {
     let best: { std: number; err: number } | null = null;
     for (const std of STD_PT_PER_FT) {
       const err = Math.abs(ptPerFt - std) / std;
       if (!best || err < best.err) best = { std, err };
     }
-    return best && best.err <= 0.12 ? best : null;
+    return best && best.err <= 0.1 ? best : null;
   };
-  const candidates = [Math.max(w, h) / overallFt, Math.min(w, h) / overallFt];
-  let pick: { std: number; err: number } | null = null;
-  for (const c of candidates) {
-    const s = snap(c);
-    if (s && (!pick || s.err < pick.err)) pick = s;
+  // A printed dimension is the building's overall side; try each candidate foot
+  // value against BOTH bbox axes and keep whichever lands CLEANEST on a standard
+  // scale. The real overall (64→18, 4% off) beats a spurious room dim or a
+  // mis-traced width (82→13.5, 8% off), so the cleanest snap self-selects the
+  // right anchor even when several numbers are present.
+  let pick: { std: number; err: number; overallFt: number } | null = null;
+  for (const ft of feet) {
+    for (const dim of [Math.max(w, h), Math.min(w, h)]) {
+      const s = snap(dim / ft);
+      if (s && (!pick || s.err < pick.err)) pick = { ...s, overallFt: ft };
+    }
   }
   if (!pick) return null;
 
@@ -471,7 +477,7 @@ export function deriveVectorScale(
   return {
     ftPerPt: 1 / ptPerFt,
     ptPerFt,
-    source: `vector outline anchored to ${overallFt.toFixed(0)}ft overall dimension (${ptPerFt} pt/ft ≈ ${inchesPerFt.toFixed(3).replace(/0+$/, "")}"=1'-0" sheet scale)`,
+    source: `vector outline anchored to ${pick.overallFt.toFixed(0)}ft overall dimension (${ptPerFt} pt/ft ≈ ${inchesPerFt.toFixed(3).replace(/0+$/, "")}"=1'-0" sheet scale)`,
   };
 }
 
@@ -721,10 +727,9 @@ function tierByWidth(
   // thinnest tier (dimension lines) and anything at/above the frame. For each,
   // trace {s : floor ≤ w < frameCeil}. As the floor drops the trace stays on
   // the inner building until it reaches the grid/dimension weight, at which
-  // point its AREA JUMPS to the lattice — the area-ratio band below rejects
-  // that jump, so we keep the LOWEST clean floor (most articulation, e.g. a
-  // garage wing whose footings are lighter than the main walls) before it.
+  // point its AREA JUMPS to the lattice — the area-ratio band rejects that jump.
   let bestPick: Outline | null = null;
+  let bestCorners = -Infinity;
   let bestArea = -Infinity;
   for (let fi = 1; fi < distinct.length; fi++) {
     const floor = distinct[fi];
@@ -744,9 +749,14 @@ function tierByWidth(
     if (!Number.isFinite(ref) || ref <= 0) continue;
     const ratio = area / ref;
     if (ratio < 0.15 || ratio > 0.8) continue;
-    // Prefer the most-inclusive qualifying tier (largest area still inside the
-    // band) — captures wings the heavier-only tiers drop.
-    if (area > bestArea) {
+    // Prefer the MOST ARTICULATED qualifying tier — the one that captures the
+    // most real jogs (rear patio, entry, garage step). snapAndClean already
+    // removed sub-cell staircase noise, so within the clean 5–40 corner band a
+    // higher corner count means more genuine wall jogs, not more noise. Tie-break
+    // on the larger area (the more inclusive tier of two equally-articulated).
+    const corners = res.polygon.length;
+    if (corners > bestCorners || (corners === bestCorners && area > bestArea)) {
+      bestCorners = corners;
       bestArea = area;
       bestPick = { polygon: res.polygon, bbox: bboxPts(res.polygon) };
     }
