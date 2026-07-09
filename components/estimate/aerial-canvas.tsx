@@ -977,11 +977,12 @@ export function AerialCanvas({
             structure={roofStructure}
             tone={theme === "tactical" ? "onDark" : "onLight"}
             scale={renderScale}
-            // Keep derive ON for plans so the overlay still draws the GABLE
-            // wings; the overlay itself swaps in the engine's clean skeleton
-            // lines (below) when they're present, so we get gables AND a clean
-            // hip instead of the grid fan.
-            derive={!!planSource}
+            // PERIMETER-ONLY: never DERIVE the interior grid skeleton — it's the
+            // fan/tangle garbage on a complex footprint. The overlay draws only
+            // the perimeter outline; the eave (teal) and rake (dashed GABLE)
+            // edges are drawn color-coded below. A gutter takeoff is the
+            // perimeter + eave/rake classification, not the interior geometry.
+            derive={false}
             eaves={eaves}
             rakes={rakes}
           />
@@ -1027,12 +1028,11 @@ export function AerialCanvas({
             );
           })}
 
-        {/* Rakes — gray-dashed "no-gutter" lines for verification.
-            In PLAN mode the roof-structure overlay draws connected GABLE
-            ends (ridge flush to the wall) from these rakes, so we suppress
-            the separate floating stubs here to avoid the disconnected look.
-            Satellite mode keeps them (no derived skeleton there). */}
-        {showRakes && !planSource &&
+        {/* Rakes — gray-dashed "GABLE" (no-gutter) edges, color-coded on the
+            perimeter. Drawn in BOTH plan and satellite mode now: perimeter-only
+            plans no longer derive an interior skeleton, so these edges ARE the
+            gable-end markers (there's no connected gable geometry to draw). */}
+        {showRakes &&
           rakes.map((line) => {
             const a = line.points[0];
             const b = line.points[line.points.length - 1];

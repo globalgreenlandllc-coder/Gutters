@@ -62,6 +62,19 @@ export function engineDrawEnabled(override?: boolean): boolean {
   return process.env.BLUEPRINT_ENGINE_DRAW !== "0";
 }
 
+/** Flag: PERIMETER-ONLY render. A gutter takeoff needs the footprint perimeter
+ *  + which edges are eaves (gutter) vs rakes (gable end, no gutter) — NOT the
+ *  interior roof geometry (hips/ridges/valleys/tier masses), which is decorative,
+ *  never priced, and the sole source of the fanned/tangled garbage renders (the
+ *  engine skeleton fan, the grid-skeleton fallback, tier over-decomposition).
+ *  When ON (DEFAULT) we keep the engine's deterministic per-edge eave/rake
+ *  classification but DRAW only the perimeter, color-coded — nothing to fan or
+ *  reject. Disable with BLUEPRINT_PERIMETER_ONLY=0 to restore the interior draw. */
+export function perimeterOnlyEnabled(override?: boolean): boolean {
+  if (typeof override === "boolean") return override;
+  return process.env.BLUEPRINT_PERIMETER_ONLY !== "0";
+}
+
 /**
  * feet-per-pixel for the CURRENT coordinate space. Derived from the runs' own
  * `length_px / length_ft` (each run carries both, and after any re-spacing the

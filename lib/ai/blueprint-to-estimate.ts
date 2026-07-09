@@ -69,6 +69,24 @@ function lineLenFt(line: { points: BlueprintPoint[] }): number {
   return lineLenPx(line) / SAFE_PX_PER_FT;
 }
 
+/** Minimum distance from a point to a polygon's boundary (nearest edge). Used
+ *  to keep only the engine edges that lie on the OUTER footprint perimeter,
+ *  dropping the internal tier-decomposition boundaries in perimeter-only mode. */
+function distToPolygonBoundary(p: BlueprintPoint, poly: BlueprintPoint[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
 /**
  * IQR-based outlier filter on a 2D point set. Drops points whose x or
  * y lies more than 3×IQR outside the [Q1, Q3] range — generous enough
@@ -459,6 +477,11 @@ export function blueprintToEstimateResult(
      *  (plan-orientation.ts) so per-face gables land on the right canvas side
      *  when the sheet isn't drawn north-up. Null → legacy north-up default. */
     faceNormals?: FaceNormals | null;
+    /** PERIMETER-ONLY render (perimeterOnlyEnabled(), default ON): keep the
+     *  engine's per-edge eave/rake classification but DROP the interior roof
+     *  skeleton (ridges/hips/valleys) from the drawn structure. The interior is
+     *  decorative + unpriced and the sole source of the fanned garbage renders. */
+    perimeterOnly?: boolean;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -537,6 +560,28 @@ export function blueprintToEstimateResult(
       : null;
   const enginePrices = !!opts?.useEngineTakeoff && !!engineBundle;
 
+  // PERIMETER-ONLY (default): draw only the OUTER footprint edges, color-coded
+  // eave vs rake. The engine decomposes the footprint into tier masses whose
+  // SHARED internal boundaries also appear as mass edges — drawing those puts
+  // dashed "rake" lines INSIDE the building. Keep only edges that lie on the
+  // outer footprint boundary; internal tier splits are dropped.
+  const perimeterOnly = opts?.perimeterOnly !== false;
+  const outerFp = (analysis.building_footprint ?? []).filter(
+    (p): p is BlueprintPoint => !!p && Number.isFinite(p.x) && Number.isFinite(p.y),
+  );
+  const outerBoundaryTol = (() => {
+    if (outerFp.length < 3) return Infinity;
+    const xs = outerFp.map((p) => p.x);
+    const ys = outerFp.map((p) => p.y);
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    return Math.max(span * 0.02, 2);
+  })();
+  const onOuterBoundary = (e: { p1: BlueprintPoint; p2: BlueprintPoint }): boolean => {
+    if (!perimeterOnly || outerFp.length < 3) return true;
+    const mid = { x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2 };
+    return distToPolygonBoundary(mid, outerFp) <= outerBoundaryTol;
+  };
+
   // A point is "bad" when the stored analysis has null/undefined/NaN
   // coords — projection would collapse it to viewBox center and the
   // canvas would render every degenerate eave on top of one another
@@ -575,7 +620,7 @@ export function blueprintToEstimateResult(
   if (engineBundle) {
     eaves = engineBundle.takeoff.masses
       .flatMap((m) => m.edges)
-      .filter((e) => e.gutter)
+      .filter((e) => e.gutter && onOuterBoundary(e))
       .map((e, i): EditableLine => ({
         id: `engine-eave-${i}`,
         kind: "eave",
@@ -623,7 +668,7 @@ export function blueprintToEstimateResult(
   if (engineBundle) {
     rakes = engineBundle.takeoff.masses
       .flatMap((m) => m.edges)
-      .filter((e) => e.type === "rake")
+      .filter((e) => e.type === "rake" && onOuterBoundary(e))
       .map((e, i): EditableLine => ({ id: `engine-rake-${i}`, kind: "rake", points: [project(e.p1), project(e.p2)] }));
   }
 
@@ -992,6 +1037,17 @@ export function blueprintToEstimateResult(
       : analysis.confidence === "low"
         ? 0.35
         : 0.6;
+  // PERIMETER-ONLY: drop the interior roof geometry from the DRAWN structure.
+  // A gutter takeoff is the perimeter + which edges are eaves vs rakes; the
+  // hips/ridges/valleys are decorative, never priced, and the only thing that
+  // fans/tangles/rejects. Pricing (eaveLF) is untouched — it's the sum of the
+  // eave edges, computed above. The canvas draws the perimeter with the eave/
+  // rake edges color-coded and NOTHING inside it.
+  if (perimeterOnly) {
+    roofRidges = [];
+    roofValleys = [];
+    roofHips = [];
+  }
   const roofStructure: RoofStructure | undefined =
     !synthesized && roofPerimeter.length >= 3
       ? {
