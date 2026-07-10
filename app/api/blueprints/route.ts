@@ -8,6 +8,7 @@ import {
   blueprintFromPlanSourcesBestOf,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
+import { humanizeAiError } from "@/lib/ai/humanize-error";
 import {
   geminiAvailable,
   geminiBlueprintFromPlan,
@@ -425,7 +426,7 @@ export async function POST(request: Request) {
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id: analysis.id },
-          data: { status: "FAILED", errorMessage: result.reason },
+          data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },
         });
         return;
       }
@@ -554,8 +555,9 @@ export async function POST(request: Request) {
         },
       });
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "blueprint analysis failed";
+      const message = humanizeAiError(
+        e instanceof Error ? e.message : "blueprint analysis failed",
+      );
       console.error("[/api/blueprints after()] analysis threw:", e);
       await db.planAnalysis
         .update({

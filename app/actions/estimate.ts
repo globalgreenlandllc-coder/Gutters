@@ -7,6 +7,7 @@ import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import { engineDrawEnabled, engineTakeoffEnabled, perimeterOnlyEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
+import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
@@ -144,7 +145,9 @@ export async function runEstimate(
   try {
     result = await runAIEstimatePipeline(trimmed);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "AI pipeline failed";
+    const message = humanizeAiError(
+      e instanceof Error ? e.message : "AI pipeline failed",
+    );
     await db.estimateRun.create({
       data: {
         userId,

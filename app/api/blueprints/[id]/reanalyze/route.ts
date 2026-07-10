@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
+import { humanizeAiError } from "@/lib/ai/humanize-error";
 import {
   blueprintFromPlanSourcesBestOf,
   type PlanSource,
@@ -240,7 +241,7 @@ export async function POST(
       if (!result.ok) {
         await db.planAnalysis.update({
           where: { id },
-          data: { status: "FAILED", errorMessage: result.reason },
+          data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },
         });
         return;
       }
@@ -331,8 +332,9 @@ export async function POST(
         },
       });
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "blueprint re-analysis failed";
+      const message = humanizeAiError(
+        e instanceof Error ? e.message : "blueprint re-analysis failed",
+      );
       console.error(`[/api/blueprints/${id}/reanalyze] threw:`, e);
       await db.planAnalysis
         .update({
