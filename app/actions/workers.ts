@@ -8,6 +8,7 @@ import { appBaseUrl } from "@/lib/base-url";
 import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderWorkerInviteEmail, renderJobOfferEmail } from "@/lib/email/worker-templates";
 import { buildWorkerRoofSnapshot, JOB_KIND_LABEL } from "@/lib/worker-dto";
+import { checkUserEmailBudget } from "@/lib/abuse/guards";
 import type { JobKind, JobAssignmentStatus, WorkerStatus } from "@prisma/client";
 
 /**
@@ -107,6 +108,8 @@ export async function inviteWorker(input: {
   const email = input.email.trim().toLowerCase();
   if (!isPlausibleEmail(email)) return { ok: false, reason: "Enter a valid email address" };
   if (email === me.user.email.toLowerCase()) return { ok: false, reason: "You can't invite yourself" };
+  const emailBudget = await checkUserEmailBudget(me.user.id, "inviteWorker");
+  if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
 
   const token = randomBytes(16).toString("hex");
   // Upsert on (owner, email): re-inviting the same person refreshes the token
@@ -195,6 +198,8 @@ export async function resendWorkerInvite(workerId: string): Promise<Result<{ inv
   if (!me) return { ok: false, reason: "Not signed in" };
   const worker = await db.worker.findFirst({ where: { id: workerId, ownerId: me.user.id } });
   if (!worker) return { ok: false, reason: "Worker not found" };
+  const emailBudget = await checkUserEmailBudget(me.user.id, "resendWorkerInvite");
+  if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
   const token = randomBytes(16).toString("hex");
   await db.worker.update({
     where: { id: worker.id },

@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 const isPublic = createRouteMatcher([
   "/",
@@ -10,7 +11,116 @@ const isPublic = createRouteMatcher([
   "/api/cron/(.*)",
 ]);
 
+// ---------------------------------------------------------------------
+// Layer-1 abuse protection: in-memory per-IP rate limiting at the edge.
+//
+// Scope-honest: these Maps are per-isolate (reset on deploy/cold start,
+// not shared across regions), so this layer is a cheap flood-dampener
+// and ban hammer for single-IP abuse — NOT the durable quota system.
+// Durable per-user/per-action quotas + spend caps live in lib/abuse/*
+// (Postgres) and run inside the route handlers and server actions.
+// For volumetric DDoS, enable Vercel WAF / Attack Challenge Mode —
+// that runs in front of this code entirely.
+//
+// Anonymous-reachable surfaces get much stricter limits than the
+// signed-in app, per class below.
+// ---------------------------------------------------------------------
+
+type Bucket = { count: number; resetAt: number };
+
+const buckets = new Map<string, Bucket>();
+const strikes = new Map<string, Bucket>();
+const bans = new Map<string, number>(); // ip → banned-until (epoch ms)
+
+const BAN_AFTER_STRIKES = 3; // limit trips within STRIKE_WINDOW_MS …
+const STRIKE_WINDOW_MS = 10 * 60_000;
+const BAN_MS = 15 * 60_000; // … earn a 15-minute timeout.
+
+/** Increment a fixed-window counter; returns the post-increment count. */
+function hit(map: Map<string, Bucket>, key: string, windowMs: number): number {
+  const now = Date.now();
+  const b = map.get(key);
+  if (!b || b.resetAt <= now) {
+    // Opportunistic sweep so the maps can't grow unbounded in a hot isolate.
+    if (map.size > 10_000) {
+      for (const [k, v] of map) if (v.resetAt <= now) map.delete(k);
+    }
+    map.set(key, { count: 1, resetAt: now + windowMs });
+    return 1;
+  }
+  b.count += 1;
+  return b.count;
+}
+
+/** Requests allowed per IP per minute, by route class. */
+function limitFor(pathname: string): { limit: number; cls: string } {
+  // Unauthenticated portal — homeowners click links here; bots probe here.
+  if (pathname.startsWith("/p/")) return { limit: 40, cls: "portal" };
+  // Signature/secret-gated machine endpoints. Stripe retries are modest;
+  // anything hammering these is brute-forcing the secret.
+  if (pathname.startsWith("/api/webhooks/")) return { limit: 120, cls: "webhook" };
+  if (pathname.startsWith("/api/cron/")) return { limit: 30, cls: "cron" };
+  // Auth + marketing pages (Clerk adds its own bot detection on top).
+  if (
+    pathname === "/" ||
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up") ||
+    pathname.startsWith("/demo")
+  ) {
+    return { limit: 60, cls: "anon-page" };
+  }
+  // Signed-in app + API: generous — this only catches floods.
+  if (pathname.startsWith("/api/")) return { limit: 240, cls: "api" };
+  return { limit: 300, cls: "app" };
+}
+
+function tooMany(retryAfterSec: number): NextResponse {
+  return new NextResponse(
+    JSON.stringify({ error: "Too many requests", retryAfterSec }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSec),
+      },
+    },
+  );
+}
+
+function edgeRateLimit(req: Request, pathname: string): NextResponse | null {
+  const fwd = req.headers.get("x-forwarded-for");
+  const ip = fwd ? fwd.split(",")[0]!.trim() : req.headers.get("x-real-ip");
+  if (!ip) return null; // local dev / unknown — the durable layer still applies
+
+  const now = Date.now();
+  const bannedUntil = bans.get(ip);
+  if (bannedUntil && bannedUntil > now) {
+    return tooMany(Math.ceil((bannedUntil - now) / 1000));
+  }
+  if (bannedUntil) bans.delete(ip);
+
+  // Short-window burst check across everything from this IP …
+  const burst = hit(buckets, `${ip}|burst`, 10_000);
+  // … plus the per-minute class limit.
+  const { limit, cls } = limitFor(pathname);
+  const perMin = hit(buckets, `${ip}|${cls}`, 60_000);
+
+  if (burst > 80 || perMin > limit) {
+    const strikeCount = hit(strikes, ip, STRIKE_WINDOW_MS);
+    if (strikeCount >= BAN_AFTER_STRIKES) {
+      bans.set(ip, now + BAN_MS);
+      console.warn(`[edge-limit] banned ${ip} for ${BAN_MS / 60000}m (class=${cls})`);
+      return tooMany(Math.ceil(BAN_MS / 1000));
+    }
+    return tooMany(burst > 80 ? 10 : 60);
+  }
+  return null;
+}
+
 export default clerkMiddleware(async (auth, req) => {
+  const limited = edgeRateLimit(req, req.nextUrl.pathname);
+  if (limited) return limited;
+
   if (isPublic(req)) return;
   const { userId, redirectToSignIn } = await auth();
   if (!userId) {

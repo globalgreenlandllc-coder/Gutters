@@ -3,11 +3,29 @@ import { Prisma, LeadStatus, InteractionStatus } from "@prisma/client";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
+import { consumeLimit, requestIp } from "@/lib/abuse/rate-limit";
+import { POLICIES } from "@/lib/abuse/policies";
 
 const MAP_LIMIT = 500;
 
 export async function GET(request: Request) {
   const { userId: clerkId } = await auth();
+
+  // Heavy multi-query read fired on every map pan — cheap to serve
+  // once, expensive when scripted. Fail-open: a limiter blip should
+  // never blank the leads map.
+  const ip = requestIp(request);
+  const rl = await consumeLimit({
+    policy: POLICIES.leadsQuery,
+    key: clerkId ? `user:${clerkId}` : ip ? `ip:${ip}` : "anon",
+    context: { ip: ip ?? undefined, route: "/api/leads" },
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: rl.reason },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
 
   const url = new URL(request.url);
   const bbox = url.searchParams.get("bbox");

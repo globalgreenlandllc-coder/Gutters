@@ -370,17 +370,39 @@ export function QuickStart() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
-      className="surface relative p-6 shadow-card"
+      className="relative overflow-hidden rounded-xl border border-accent-100 bg-gradient-to-br from-white via-accent-50/60 to-violet-50/50 p-6 shadow-card"
     >
+      {/* Ambient color — soft brand-gradient blobs + faint grid, all
+          behind the content so the card reads "alive", not busy. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-accent-200/40 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-28 -left-16 h-56 w-56 rounded-full bg-stripe-coral/15 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-grid opacity-30"
+      />
       <div className="relative">
-        <div className="font-label inline-flex items-center gap-1.5 text-[11px] text-accent-600">
-          <Sparkles className="h-3 w-3" />
+        <div className="font-label inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[11px] text-accent-700 ring-1 ring-accent-200">
+          <Sparkles className="h-3 w-3 text-stripe-violet" />
           New estimate
         </div>
-        <h2 className="mt-2 text-balance text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">
-          {source === "address"
-            ? "Type one address. Get an AI takeoff."
-            : "Upload construction plans. Get a gutter layout."}
+        <h2 className="mt-2.5 text-balance text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">
+          {source === "address" ? (
+            <>
+              Type one address.{" "}
+              <span className="text-gradient">Get an AI takeoff.</span>
+            </>
+          ) : (
+            <>
+              Upload construction plans.{" "}
+              <span className="text-gradient">Get a gutter layout.</span>
+            </>
+          )}
         </h2>
         <p className="mt-1 max-w-xl text-sm text-zinc-500">
           {source === "address"
@@ -485,7 +507,7 @@ export function QuickStart() {
               />
               <button
                 type="submit"
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 active:translate-y-px"
+                className="btn-gradient inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3.5 text-sm font-medium text-white shadow-glow transition hover:brightness-110 active:translate-y-px"
               >
                 <Sparkles className="h-4 w-4" />
                 Estimate
@@ -573,7 +595,7 @@ export function QuickStart() {
                   type="button"
                   onClick={onUpload}
                   disabled={uploading}
-                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-accent-600 px-3.5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60 active:translate-y-px"
+                  className="btn-gradient inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3.5 text-sm font-medium text-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 active:translate-y-px"
                 >
                   {uploading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -640,7 +662,7 @@ function SegmentedToggle<T extends string>({
       <span className="font-label text-[10px] text-zinc-400">
         {label}
       </span>
-      <div className="inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
+      <div className="inline-flex rounded-lg border border-zinc-200 bg-white/80 p-0.5">
         {options.map((opt) => {
           const active = opt.value === value;
           return (
@@ -651,7 +673,7 @@ function SegmentedToggle<T extends string>({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition",
                 active
-                  ? "bg-zinc-100 text-zinc-900"
+                  ? "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
                   : "text-zinc-500 hover:text-zinc-900",
               )}
             >

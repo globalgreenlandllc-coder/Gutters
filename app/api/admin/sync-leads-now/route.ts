@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { runLeadsSync } from "@/lib/leads/run-sync";
 import { getOptionalSuperAdmin } from "@/lib/admin";
+import { recordSpend } from "@/lib/abuse/spend-guard";
+import { EST_COST_CENTS } from "@/lib/abuse/policies";
 
 // Same 60s budget the cron job uses — see vercel.json + the cron route.
 // Without this Vercel kills the function at the 10s default and the
@@ -22,6 +24,13 @@ export async function POST() {
 
   try {
     const result = await runLeadsSync();
+    await recordSpend({
+      userId: me.user.id,
+      kind: "LEAD_SYNC",
+      provider: "openai",
+      costCents: EST_COST_CENTS.LEAD_SYNC,
+      meta: { trigger: "admin" },
+    });
     return NextResponse.json(result);
   } catch (error: unknown) {
     console.error("[Admin sync-leads-now] Error:", error);

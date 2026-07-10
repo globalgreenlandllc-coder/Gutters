@@ -183,8 +183,11 @@ export function ProposalsTable({
         </div>
       )}
 
-      <div className="font-label hidden grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] gap-4 px-4 py-2.5 text-[11px] text-zinc-400 lg:grid">
-        <div>Property · Client</div>
+      {/* Column template must leave the flexible first column real room on
+          the Overview's narrower main pane (lg) — the wide template only
+          engages at xl. Keep in sync with the row grid below. */}
+      <div className="font-label hidden grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] gap-3 px-4 py-2.5 text-[11px] text-zinc-400 lg:grid xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
+        <div className="truncate">Property · Client</div>
         <div>Status</div>
         <div className="text-right">Total</div>
         <div className="text-center">Client views</div>
@@ -227,7 +230,7 @@ export function ProposalsTable({
               transition={{ delay: Math.min(i, 8) * 0.02 }}
               className="relative border-t border-zinc-100"
             >
-              <div className="group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] lg:items-center lg:gap-4">
+              <div className="group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] lg:items-center lg:gap-3 xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
                 <Link
                   href={`/proposal?id=${p.id}`}
                   className="min-w-0"

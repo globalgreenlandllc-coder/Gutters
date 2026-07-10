@@ -803,6 +803,81 @@ model Appointment {
   @@map("appointments")
 }
 
+// -----------------------------------------------------------------------
+// Abuse protection: rate-limit counters, spend ledger, abuse events
+//
+// RateLimitBucket is a fixed-window counter — one row per
+// (policy, identity, window). Rows expire and are swept by the daily
+// cron. Postgres is the source of truth (no Redis in this stack); the
+// in-memory per-IP limiter in middleware.ts is a separate first line.
+//
+// SpendEvent is a cost LEDGER for capping, not billing: every AI /
+// external-API action appends a conservative cost estimate (actual
+// token math where usage is captured, flat estimates elsewhere).
+// Hour/day aggregates over this table drive the spend circuit breaker.
+// -----------------------------------------------------------------------
+
+model RateLimitBucket {
+  key       String   @id // "<policy>|<identity>|<windowSec>|<windowStart>"
+  count     Int      @default(0)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("rate_limit_buckets")
+}
+
+enum SpendKind {
+  SATELLITE_ESTIMATE
+  BLUEPRINT_ANALYSIS
+  LEAD_SYNC
+  EMAIL_SEND
+}
+
+// Deliberately no FK to users — the ledger must survive user deletion
+// and a spend write must never fail on referential integrity.
+model SpendEvent {
+  id           String    @id @default(cuid())
+  userId       String? // null = system (cron / unattributed)
+  kind         SpendKind
+  provider     String? // "anthropic" | "openai" | "gemini" | "fal" | "google" | "resend"
+  costCents    Int // conservative estimate — for capping, not invoicing
+  inputTokens  Int?
+  outputTokens Int?
+  meta         Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([kind, createdAt])
+  @@map("spend_events")
+}
+
+enum AbuseEventKind {
+  RATE_LIMITED
+  QUOTA_EXCEEDED
+  SPEND_CAP_USER
+  CIRCUIT_OPENED
+  CIRCUIT_CLOSED
+  ALERT_SENT
+}
+
+model AbuseEvent {
+  id        String         @id @default(cuid())
+  kind      AbuseEventKind
+  policy    String? // which limit tripped, e.g. "estimate.run"
+  scopeKey  String? // "user:<id>" | "ip:<addr>" | "token:<..>" | "global"
+  userId    String?
+  ip        String?
+  route     String?
+  detail    Json?
+  createdAt DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([kind, createdAt])
+  @@index([scopeKey, createdAt])
+  @@map("abuse_events")
+}
+
 // A crew member an owner (contractor) invites. Before the person signs up,
 // `userId` is null and only email/inviteToken exist; when they open the invite
 // link and accept, their Clerk-backed User is linked and status flips to ACTIVE.

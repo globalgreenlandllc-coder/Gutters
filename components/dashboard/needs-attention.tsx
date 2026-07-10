@@ -49,11 +49,13 @@ export function NeedsAttention({
     <div className="surface shadow-card">
       <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
         <h3 className="inline-flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900">
-          <Bell className="h-4 w-4 text-zinc-400" />
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-50 text-amber-500">
+            <Bell className="h-3.5 w-3.5" />
+          </span>
           Needs attention
         </h3>
         {items.length > 0 && (
-          <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-600">
+          <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200/70">
             {items.length}
           </span>
         )}

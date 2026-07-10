@@ -24,6 +24,13 @@ import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
+import { consumeLimit } from "@/lib/abuse/rate-limit";
+import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
+import {
+  checkAiSpendAllowed,
+  recordSpend,
+  estimateModelCostCents,
+} from "@/lib/abuse/spend-guard";
 
 export const maxDuration = 300;
 
@@ -56,10 +63,36 @@ export async function POST(
   }
   const user = await db.user.findUnique({
     where: { clerkId },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // Same guard pair as the upload route — a re-analyze burns the same
+  // Opus ensemble as a fresh upload, and it's a one-click button.
+  const isAdmin = user.role === "SUPER_ADMIN";
+  if (!isAdmin) {
+    const rl = await consumeLimit({
+      policy: POLICIES.blueprintAnalyze,
+      key: `user:${user.id}`,
+      context: { userId: user.id, route: "/api/blueprints/reanalyze" },
+    });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: rl.reason },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+      );
+    }
+  }
+  const spend = await checkAiSpendAllowed({
+    userId: user.id,
+    kind: "BLUEPRINT_ANALYSIS",
+    estCostCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+    isAdmin,
+  });
+  if (!spend.ok) {
+    return NextResponse.json({ error: spend.reason }, { status: 503 });
   }
 
   const { id } = await context.params;
@@ -241,6 +274,12 @@ export async function POST(
         geminiReaders,
       );
       if (!result.ok) {
+        await recordSpend({
+          userId: user.id,
+          kind: "BLUEPRINT_ANALYSIS",
+          costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+          meta: { planId: id, failed: true, reanalyze: true },
+        });
         await db.planAnalysis.update({
           where: { id },
           data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },
@@ -394,7 +433,26 @@ export async function POST(
           durationMs: totalDurationMs,
         },
       });
+
+      await recordSpend({
+        userId: user.id,
+        kind: "BLUEPRINT_ANALYSIS",
+        provider: "anthropic",
+        costCents: Math.max(
+          estimateModelCostCents(result.usage.model, totalInputTokens, totalOutputTokens),
+          EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+        ),
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        meta: { planId: id, model: result.usage.model, reanalyze: true },
+      });
     } catch (e) {
+      await recordSpend({
+        userId: user.id,
+        kind: "BLUEPRINT_ANALYSIS",
+        costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+        meta: { planId: id, failed: true, reanalyze: true },
+      });
       const message = humanizeAiError(
         e instanceof Error ? e.message : "blueprint re-analysis failed",
       );

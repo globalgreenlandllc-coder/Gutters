@@ -34,6 +34,7 @@ const NAV: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: "/admin/pricing", label: "Pricing", icon: Tag },
   { href: "/admin/material-defaults", label: "Material defaults", icon: Palette },
   { href: "/admin/prompts", label: "AI prompts", icon: Sparkles },
+  { href: "/admin/abuse", label: "Abuse guard", icon: ShieldAlert },
 ];
 
 export function AdminShell({

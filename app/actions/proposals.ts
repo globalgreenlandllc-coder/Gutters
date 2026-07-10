@@ -14,6 +14,8 @@ import {
   type Proposal,
 } from "@/lib/proposal-mock";
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
+import { checkUserEmailBudget, checkPortalWrite } from "@/lib/abuse/guards";
+import { POLICIES } from "@/lib/abuse/policies";
 import { getMe } from "./me";
 import { createDefaultSchedule } from "./payments";
 
@@ -45,6 +47,13 @@ export async function sendProposal(args: {
   }
   if (!proposal.address.trim()) {
     return { ok: false, reason: "Property address is required before sending" };
+  }
+
+  // Per-sender email budget (20/hr, 100/day) — a compromised account
+  // can't turn the proposal sender into a spam cannon.
+  const emailBudget = await checkUserEmailBudget(me.user.id, "sendProposal");
+  if (!emailBudget.ok) {
+    return { ok: false, reason: emailBudget.reason };
   }
 
   // Persist (or update) the proposal so /p/[token] resolves to real data.
@@ -527,6 +536,18 @@ export async function acceptProposalByToken(args: {
   paymentChoice: "deposit" | "full";
 }): Promise<AcceptProposalResult> {
   try {
+    // Unauthenticated write that mutates contract state and emails the
+    // contractor — per-token + per-IP limited. Legit re-accepts are
+    // already idempotent no-ops, so 5/day/token never blocks a human.
+    const guard = await checkPortalWrite(
+      POLICIES.portalAccept,
+      args.token,
+      "acceptProposalByToken",
+    );
+    if (!guard.ok) {
+      return { ok: false, reason: guard.reason };
+    }
+
     const row = await db.proposal.findUnique({
       where: { publicToken: args.token },
       include: { user: { include: { contractorProfile: true } } },

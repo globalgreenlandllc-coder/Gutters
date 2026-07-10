@@ -118,12 +118,34 @@ export async function GET(request: Request) {
       }
     }
 
+    // Piggybacked daily housekeeping for the abuse-protection tables:
+    // sweep expired rate-limit buckets and age out old event/ledger rows.
+    // Best-effort — reminder results never depend on it.
+    let sweep: { buckets: number; abuseEvents: number; spendEvents: number } | null = null;
+    try {
+      const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 3600 * 1000);
+      const yearAgo = new Date(now.getTime() - 365 * 24 * 3600 * 1000);
+      const [buckets, abuseEvents, spendEvents] = await Promise.all([
+        db.rateLimitBucket.deleteMany({ where: { expiresAt: { lt: now } } }),
+        db.abuseEvent.deleteMany({ where: { createdAt: { lt: ninetyDaysAgo } } }),
+        db.spendEvent.deleteMany({ where: { createdAt: { lt: yearAgo } } }),
+      ]);
+      sweep = {
+        buckets: buckets.count,
+        abuseEvents: abuseEvents.count,
+        spendEvents: spendEvents.count,
+      };
+    } catch (e) {
+      console.error("[payment-reminders] abuse-table sweep failed", e);
+    }
+
     return NextResponse.json({
       ok: true,
       candidates: due.length,
       sent,
       skipped,
       failures,
+      sweep,
     });
   } catch (error: unknown) {
     console.error("[payment-reminders] error:", error);

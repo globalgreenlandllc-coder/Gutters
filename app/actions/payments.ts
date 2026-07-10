@@ -14,6 +14,8 @@ import {
   deriveTotalCentsFromData,
   type Proposal as ProposalBlob,
 } from "@/lib/proposal-mock";
+import { checkUserEmailBudget, checkPortalWrite } from "@/lib/abuse/guards";
+import { POLICIES } from "@/lib/abuse/policies";
 import { getMe } from "./me";
 
 /* ------------------------------------------------------------------ */
@@ -760,6 +762,8 @@ export async function sendInstallmentReminder(args: {
   try {
     const me = await getMe();
     if (!me) return { ok: false, reason: "Not signed in" };
+    const emailBudget = await checkUserEmailBudget(me.user.id, "sendInstallmentReminder");
+    if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
     const inst = await db.paymentInstallment.findFirst({
       where: { id: args.installmentId, proposal: { userId: me.user.id } },
       include: {
@@ -827,6 +831,8 @@ export async function resendReceipt(args: {
   try {
     const me = await getMe();
     if (!me) return { ok: false, reason: "Not signed in" };
+    const emailBudget = await checkUserEmailBudget(me.user.id, "resendReceipt");
+    if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
     const inst = await db.paymentInstallment.findFirst({
       where: { id: args.installmentId, proposal: { userId: me.user.id } },
       include: {
@@ -970,6 +976,8 @@ export async function sendChangeOrder(args: {
   try {
     const me = await getMe();
     if (!me) return { ok: false, reason: "Not signed in" };
+    const emailBudget = await checkUserEmailBudget(me.user.id, "sendChangeOrder");
+    if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
     const co = await db.changeOrder.findFirst({
       where: { id: args.changeOrderId, proposal: { userId: me.user.id } },
       include: {
@@ -1183,6 +1191,18 @@ export async function respondToChangeOrder(args: {
   declineReason?: string;
 }): Promise<RespondToChangeOrderResult> {
   try {
+    // Unauthenticated write that can bump the contract total and email
+    // the contractor — per-token + per-IP limited. Decided COs are
+    // already idempotent, so the cap only ever bites a loop.
+    const guard = await checkPortalWrite(
+      POLICIES.portalChangeOrder,
+      args.token,
+      "respondToChangeOrder",
+    );
+    if (!guard.ok) {
+      return { ok: false, reason: guard.reason };
+    }
+
     const name = args.name.trim();
     if (args.decision === "approve" && name.length < 2) {
       return { ok: false, reason: "Type your full name to approve" };

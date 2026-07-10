@@ -6,6 +6,27 @@ import { cn } from "@/lib/utils";
 
 type IconCmp = React.ComponentType<{ className?: string }>;
 
+export type StatTone =
+  | "zinc"
+  | "accent"
+  | "emerald"
+  | "violet"
+  | "amber"
+  | "rose"
+  | "coral";
+
+/* Muted 50-bg / 600-text pairs — enough hue to tell metrics apart at a
+ * glance without turning the summary row into a rainbow. */
+const TONE_CHIP: Record<StatTone, string> = {
+  zinc: "bg-zinc-50 text-zinc-400",
+  accent: "bg-accent-50 text-accent-600",
+  emerald: "bg-emerald-50 text-emerald-600",
+  violet: "bg-violet-50 text-violet-600",
+  amber: "bg-amber-50 text-amber-600",
+  rose: "bg-rose-50 text-rose-600",
+  coral: "bg-rose-50 text-stripe-coral",
+};
+
 /**
  * Hyperline KPI cell. Renders borderless — pages compose 2–4 of these
  * inside a single bordered row (see the Overview page: a grid with
@@ -19,6 +40,7 @@ export function StatTile({
   spark,
   index = 0,
   Icon,
+  tone = "zinc",
 }: {
   label: string;
   value: string;
@@ -27,9 +49,8 @@ export function StatTile({
   spark?: number[];
   index?: number;
   Icon?: IconCmp;
+  tone?: StatTone;
 }) {
-  // Uniform, quiet icon chip — a rainbow of per-metric colors read as
-  // noise on a summary row.
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -40,7 +61,12 @@ export function StatTile({
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm text-zinc-500">{label}</div>
         {Icon && (
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-50 text-zinc-400">
+          <div
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded-md",
+              TONE_CHIP[tone],
+            )}
+          >
             <Icon className="h-3.5 w-3.5" />
           </div>
         )}

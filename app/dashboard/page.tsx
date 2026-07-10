@@ -111,24 +111,28 @@ function Inner() {
             label="Sent this month"
             value={String(k.sent)}
             Icon={Send}
+            tone="accent"
           />
           <StatTile
             index={1}
             label="Accepted"
             value={String(k.accepted)}
             Icon={CheckCircle2}
+            tone="emerald"
           />
           <StatTile
             index={2}
             label="Revenue MTD"
             value={formatCurrency(k.revenueMtd)}
             Icon={DollarSign}
+            tone="violet"
           />
           <StatTile
             index={3}
             label="Pipeline"
             value={formatCurrency(k.pipelineValue)}
             Icon={TrendingUp}
+            tone="coral"
             delta={
               k.pipelineValue > 0
                 ? `${Math.round(k.conversion * 100)}% close rate`
@@ -148,12 +152,14 @@ function Inner() {
                 label="Collected this month"
                 value={formatCurrency(money.collectedMtdCents / 100)}
                 Icon={HandCoins}
+                tone="emerald"
               />
               <StatTile
                 index={1}
                 label="Outstanding"
                 value={formatCurrency(money.outstandingCents / 100)}
                 Icon={Wallet}
+                tone="accent"
                 delta={
                   money.jobsInProgress > 0
                     ? `${money.jobsInProgress} job${money.jobsInProgress === 1 ? "" : "s"} in progress`
@@ -165,6 +171,7 @@ function Inner() {
                 label="Overdue"
                 value={formatCurrency(money.overdueCents / 100)}
                 Icon={AlertTriangle}
+                tone={money.overdueCount > 0 ? "rose" : "amber"}
                 positive={money.overdueCount === 0}
                 delta={
                   money.overdueCount > 0
@@ -177,6 +184,7 @@ function Inner() {
                 label="Done jobs"
                 value={String(money.jobsDone)}
                 Icon={Hammer}
+                tone="violet"
                 delta={
                   money.pendingChangeOrders > 0
                     ? `${money.pendingChangeOrders} change order${money.pendingChangeOrders === 1 ? "" : "s"} pending`
@@ -191,7 +199,8 @@ function Inner() {
             <QuickStart />
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
+                <h2 className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight text-zinc-900">
+                  <span className="h-4 w-1 rounded-full bg-cta-gradient" aria-hidden />
                   Recent proposals
                 </h2>
               </div>
@@ -221,7 +230,7 @@ function Inner() {
 function EmptyProposals() {
   return (
     <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-10 text-center">
-      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-cta-gradient text-white shadow-glow">
         <Sparkles className="h-5 w-5" />
       </div>
       <h3 className="mt-4 text-lg font-semibold tracking-tight text-zinc-900">
@@ -264,7 +273,7 @@ function ConversionCard({ kpis }: { kpis: MyKpis }) {
       </div>
       <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
         <div
-          className="h-full rounded-full bg-accent-600"
+          className="h-full rounded-full bg-cta-gradient"
           style={{ width: `${conv}%` }}
         />
       </div>
