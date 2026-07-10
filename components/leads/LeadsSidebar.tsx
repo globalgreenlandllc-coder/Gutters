@@ -14,6 +14,8 @@ import {
   Calendar,
   DollarSign,
   Crosshair,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { InteractionStatus } from "@prisma/client";
 import type { GutterScore } from "@/lib/leads/gutter-score";
@@ -175,25 +177,41 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
       el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }, [selectedLeadId]);
 
+    // Prime-band count for the collapsed pill — "how much am I missing
+    // while the list is tucked away".
+    const hotCount = leads.reduce(
+      (n, l) => n + ((scores.get(l.id)?.score ?? 0) >= 70 ? 1 : 0),
+      0,
+    );
+
     if (collapsed) {
       return (
-        <aside className="flex w-12 flex-col items-center border-r border-white/10 bg-ink py-3">
-          <button
-            onClick={onToggleCollapse}
-            title="Show leads list"
-            className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
-          >
-            <Inbox size={18} />
-          </button>
-          <div className="mt-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 tabular-nums">
-            {leads.length}
-          </div>
-        </aside>
+        <button
+          onClick={onToggleCollapse}
+          title="Show leads list"
+          className="absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-3.5 py-2 shadow-2xl backdrop-blur-xl transition hover:bg-zinc-900"
+        >
+          <PanelLeftOpen size={14} className="text-zinc-300" />
+          <span className="text-xs font-semibold tabular-nums text-white">
+            {isLoading ? "…" : leads.length}
+          </span>
+          <span className="text-xs text-zinc-400">
+            leads{radiusActive ? " in radius" : ""}
+          </span>
+          {hotCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-stripe-coral/15 px-1.5 py-0.5 text-[10px] font-semibold text-stripe-coral ring-1 ring-stripe-coral/40">
+              <Flame size={9} />
+              {hotCount}
+            </span>
+          )}
+        </button>
       );
     }
 
     return (
-      <aside className="flex h-full w-[380px] shrink-0 flex-col border-r border-white/10 bg-ink">
+      // Floating glass overlay: left rail on ≥sm, bottom sheet on phones.
+      // The map runs full-bleed underneath either way.
+      <aside className="absolute inset-x-3 bottom-3 z-20 flex h-[42dvh] flex-col overflow-hidden rounded-2xl border border-white/10 bg-ink/85 shadow-2xl backdrop-blur-xl sm:inset-x-auto sm:bottom-3 sm:left-3 sm:top-3 sm:h-auto sm:w-[360px]">
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
           <div className="flex items-baseline gap-2">
@@ -231,10 +249,10 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
             </select>
             <button
               onClick={onToggleCollapse}
-              title="Hide list"
+              title="Hide list — see the whole map"
               className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-white"
             >
-              <Inbox size={14} />
+              <PanelLeftClose size={14} />
             </button>
           </div>
         </div>

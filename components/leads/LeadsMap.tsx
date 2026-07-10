@@ -299,6 +299,9 @@ function buildActiveChips(
 }
 
 interface MapControlsProps {
+  /** True while the floating leads list is expanded — the toolbar slides
+   *  right so the two never overlap. */
+  sidebarOpen: boolean;
   filters: FilterState;
   setTradeFilter: (v: string) => void;
   setStatusFilter: (v: LeadStatus | "All") => void;
@@ -315,6 +318,7 @@ interface MapControlsProps {
 }
 
 function MapControls({
+  sidebarOpen,
   filters,
   setTradeFilter,
   setStatusFilter,
@@ -357,7 +361,16 @@ function MapControls({
     "bg-zinc-900 text-sm text-white rounded-lg px-3 py-2 border border-white/10 outline-none focus:border-accent-500";
 
   return (
-    <div className="absolute top-4 left-4 right-4 sm:right-auto z-10 bg-ink/95 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden max-w-[min(900px,calc(100vw-2rem))]">
+    <div
+      className={`absolute top-4 left-4 right-4 sm:right-auto z-10 bg-ink/95 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden transition-[left] duration-300 max-w-[min(900px,calc(100vw-2rem))] ${
+        // On ≥sm the list floats over the map's left edge (360px + gutters)
+        // while expanded; slide the toolbar right so they never stack. On
+        // phones the list is a bottom sheet, so the toolbar keeps the top.
+        sidebarOpen
+          ? "sm:left-[384px] sm:max-w-[calc(100vw-384px-1rem)]"
+          : ""
+      }`}
+    >
       {/* Row 1: Presets + Search button */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-b border-white/10">
         {PRESETS.map((p) => {
@@ -580,6 +593,12 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [zoom, setZoom] = useState(11);
   const [sort, setSort] = useState<SortMode>("score");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Smart auto-hide: opening a lead's details collapses the list so the
+  // map + panel get the full width; closing the details restores it. If
+  // the user re-expands the list WHILE details are open, they're telling
+  // us they want both — stop auto-hiding for the rest of the session.
+  const autoHideRef = useRef(true);
+  const autoCollapsedRef = useRef(false);
   const [viewMode, setViewMode] = useState<"pins" | "heatmap">("pins");
   // Prospect mode: armed → next map click drops a radius circle; the
   // sidebar then narrows to leads inside it and the stats bar offers a
@@ -707,6 +726,25 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // Phones: start with the list tucked away — the map is the product.
+  useEffect(() => {
+    if (window.innerWidth < 640) setSidebarCollapsed(true);
+  }, []);
+
+  // Auto-hide wiring (see autoHideRef above).
+  useEffect(() => {
+    if (selectedLead) {
+      if (autoHideRef.current && !sidebarCollapsed) {
+        autoCollapsedRef.current = true;
+        setSidebarCollapsed(true);
+      }
+    } else if (autoCollapsedRef.current) {
+      autoCollapsedRef.current = false;
+      setSidebarCollapsed(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLead?.id]);
 
   useEffect(() => {
     return () => {
@@ -886,27 +924,14 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     // nav-chip row ≈ 6rem) + page-title row (≈ 3.25rem) sit above the map,
     // so subtract ~9.25rem there. min-h keeps the cockpit usable on short
     // landscape viewports.
-    <div className="flex h-[calc(100dvh-9.25rem)] min-h-[420px] w-full bg-ink lg:h-[calc(100vh-4rem)]">
+    //
+    // The map is FULL-BLEED; the leads list and detail panel float over it
+    // as translucent glass overlays, so panels never steal map width.
+    <div className="relative h-[calc(100dvh-9.25rem)] min-h-[420px] w-full overflow-hidden bg-ink lg:h-[calc(100vh-4rem)]">
       <APIProvider apiKey={apiKey} libraries={["visualization"]}>
-        <LeadsSidebar
-          ref={sidebarRef}
-          leads={sortedLeads}
-          scores={scores}
-          hoveredLeadId={hoveredLead?.id ?? null}
-          selectedLeadId={selectedLead?.id ?? null}
-          onHover={setHoveredLead}
-          onSelect={setSelectedLead}
-          isLoading={isLoading}
-          hasMore={hasMore}
-          sort={sort}
-          onSortChange={setSort}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-          radiusActive={prospect != null}
-        />
-
-        <div className="relative flex-1">
+        <div className="absolute inset-0">
           <MapControls
+            sidebarOpen={!sidebarCollapsed}
             filters={{
               trade: tradeFilter,
               status: statusFilter,
@@ -1353,6 +1378,30 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               )}
           </GoogleMap>
         </div>
+
+        <LeadsSidebar
+          ref={sidebarRef}
+          leads={sortedLeads}
+          scores={scores}
+          hoveredLeadId={hoveredLead?.id ?? null}
+          selectedLeadId={selectedLead?.id ?? null}
+          onHover={setHoveredLead}
+          onSelect={setSelectedLead}
+          isLoading={isLoading}
+          hasMore={hasMore}
+          sort={sort}
+          onSortChange={setSort}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() =>
+            setSidebarCollapsed((c) => {
+              const next = !c;
+              // Re-expanding while a lead is open = "I want both panels".
+              if (!next && selectedLead) autoHideRef.current = false;
+              return next;
+            })
+          }
+          radiusActive={prospect != null}
+        />
       </APIProvider>
 
       {selectedLead && (

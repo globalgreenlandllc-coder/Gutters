@@ -284,7 +284,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 220 }}
-        className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-ink border-l border-white/10 shadow-2xl flex flex-col z-50 text-zinc-200"
+        className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-ink/90 backdrop-blur-xl border-l border-white/10 shadow-2xl flex flex-col z-50 text-zinc-200"
       >
         {/* Hero header */}
         <div className="relative px-5 pt-5 pb-6 bg-zinc-950 border-b border-white/10">
