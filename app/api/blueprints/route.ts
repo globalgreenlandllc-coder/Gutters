@@ -22,6 +22,8 @@ import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
+import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
+import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -495,6 +497,64 @@ export async function POST(request: Request) {
         );
       }
 
+      // v2 EDGE TAKEOFF — classify the plan's own vector outline edge-by-edge
+      // (eave/rake/unknown + D.S. marks + dimension values) in one expensive
+      // vision call. Stored on the row; the estimate path consumes it INSTEAD
+      // of freehand runs + blind closure. Fail-safe: {ok:false} → v1 unchanged.
+      let edgeTakeoff: Awaited<ReturnType<typeof classifyPerimeterEdges>> | null = null;
+      if (
+        edgeTakeoffEnabled() &&
+        isPdf &&
+        source.kind === "pdf" &&
+        Array.isArray(vectorGeometry?.roof?.segments) &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) >= 4
+      ) {
+        try {
+          const rsegs = vectorGeometry!.roof!.segments as number[][];
+          const rlabels = vectorGeometry!.roof!.labels ?? [];
+          const fp = finalAnalysis.building_footprint ?? [];
+          let expectedAspect: number | undefined;
+          if (fp.length >= 3) {
+            const xs = fp.map((p) => p.x).filter(Number.isFinite);
+            const ys = fp.map((p) => p.y).filter(Number.isFinite);
+            const w = Math.max(...xs) - Math.min(...xs);
+            const h = Math.max(...ys) - Math.min(...ys);
+            if (w > 0 && h > 0) expectedAspect = Math.max(w, h) / Math.min(w, h);
+          }
+          const roof = readRoofFromVectors(
+            rlabels,
+            rsegs,
+            expectedAspect ? { expectedAspect } : undefined,
+          );
+          if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+            edgeTakeoff = await classifyPerimeterEdges({
+              source,
+              outline: roof.perimeter,
+              segments: rsegs,
+              roofPageSize: {
+                widthPt: vectorGeometry?.roof?.widthPt,
+                heightPt: vectorGeometry?.roof?.heightPt,
+              },
+              footprint: vectorGeometry?.footprint ?? null,
+            });
+            if (edgeTakeoff.notes.length > 0) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
+            }
+            console.log(
+              `[/api/blueprints after()] edge takeoff: ok=${edgeTakeoff.ok}` +
+                (edgeTakeoff.ok
+                  ? ` (${edgeTakeoff.classes.length} edges, ptPerFt=${edgeTakeoff.ptPerFt})`
+                  : ` — ${edgeTakeoff.reason} (v1 path stays)`),
+            );
+          }
+        } catch (e) {
+          console.warn(
+            `[/api/blueprints after()] edge takeoff threw (v1 path stays):`,
+            e instanceof Error ? e.message : e,
+          );
+        }
+      }
+
       // Stash the classifier output alongside the geometry under
       // `_classifier` so the detail page can show it without a schema
       // migration. analysisJson is a free-form Json column.
@@ -526,6 +586,9 @@ export async function POST(request: Request) {
       // page (what dimensions/labels the model actually got).
       if (vectorGeometry) {
         analysisJson._vectorGeometry = vectorGeometry;
+      }
+      if (edgeTakeoff) {
+        analysisJson._edgeTakeoff = edgeTakeoff;
       }
 
       // Telemetry rolls up both calls so the dashboard's "cost per

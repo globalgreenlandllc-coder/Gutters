@@ -12,6 +12,9 @@ import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
 import { polygonCloses } from "@/lib/roof-engine";
+import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
+import { outlineEdges } from "@/lib/ai/plan-overlay";
+import { edgeTakeoffEnabled, type EdgeClassification } from "@/lib/ai/classify-edges";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -271,6 +274,84 @@ export async function runEstimateFromPlan(
   const vecTrace: string[] = [];
   let footprintSource = "AI trace (best-of read)";
   let roofApplied = false;
+
+  // v2 EDGE TAKEOFF — when the analysis stored a successful per-edge
+  // classification (classify-edges.ts), the takeoff is rebuilt WHOLESALE from
+  // the plan's own outline + the classifier's labels: exact edge lengths at
+  // the dimension-line-solved scale, rakes carry no gutter, downspouts at the
+  // sheet's D.S. marks, and unknown edges stay visibly UNPRICED. The freehand
+  // run remap, prose scale anchor, and blind closure default are all skipped —
+  // they are the error sources v2 exists to remove. Fail-safe: anything
+  // missing → v1 path unchanged.
+  let edgeApplied = false;
+  if (edgeTakeoffEnabled()) {
+    try {
+      const stash = (row.analysisJson as { _edgeTakeoff?: EdgeClassification })
+        ?._edgeTakeoff;
+      if (
+        stash?.ok &&
+        stash.ptPerFt &&
+        Number.isFinite(stash.ptPerFt) &&
+        Array.isArray(stash.outline) &&
+        stash.outline.length >= 3 &&
+        Array.isArray(stash.classes) &&
+        stash.classes.some((c) => c.edge_class === "eave")
+      ) {
+        const edges = outlineEdges(stash.outline);
+        const t = buildEdgeTakeoff({
+          outline: stash.outline,
+          edges,
+          classes: stash.classes,
+          ptPerFt: stash.ptPerFt,
+          downspouts: stash.downspouts ?? [],
+        });
+        analysis.building_footprint = stash.outline.map((p) => ({ x: p.x, y: p.y }));
+        analysis.gutter_runs = t.gutter_runs;
+        // Keep only the classifier's rakes — the AI's freehand interior lines
+        // (ridge/hip/valley) are exactly the strokes v2 stops trusting; the
+        // engine draws the interior by rule instead.
+        analysis.excluded_edges = t.excluded_edges
+          .filter((e) => e.kind === "rake")
+          .map((e) => ({ kind: "rake" as const, start: e.start, end: e.end, reason: e.reason }));
+        analysis.downspouts = t.downspouts.map((d, i) => ({
+          id: `edge-ds-${i + 1}`,
+          at: d.at,
+          from_gutter: `edge-${d.edge_id}`,
+          drop_direction: d.side === "interior" ? "front" : d.side,
+          reason: "outside_corner" as const,
+          drop_height_ft: d.drop_height_ft,
+        }));
+        analysis.totals = {
+          ...analysis.totals,
+          linear_feet_gutter: t.totals.eave_lf,
+          downspout_count: t.downspouts.length,
+          outside_corner_miters: t.totals.outside_corner_miters,
+          inside_corner_miters: t.totals.inside_corner_miters,
+        };
+        analysis.scale = {
+          unit: "pixels",
+          feet_per_unit: 1 / stash.ptPerFt,
+          source: stash.scaleSource ?? "dimension-line solve",
+        };
+        analysis.notes = [...(analysis.notes ?? []), ...t.notes];
+        footprintSource = "edge-classified outline (v2)";
+        vecTrace.push(
+          `✓ EDGE TAKEOFF: ${t.gutter_runs.length} eave edge(s) = ${t.totals.eave_lf} LF, ` +
+            `${analysis.excluded_edges.length} rake(s), ${t.unpricedIds.length} unpriced, ` +
+            `${t.downspouts.length} D.S. @ ${Math.round(stash.ptPerFt * 100) / 100} pt/ft`,
+        );
+        edgeApplied = true;
+      } else if (stash) {
+        vecTrace.push(
+          `edge takeoff stored but not applied (${stash.ok ? "no scale/eaves" : stash.reason ?? "failed"})`,
+        );
+      }
+    } catch (e) {
+      vecTrace.push(
+        `edge takeoff errored (${e instanceof Error ? e.message : "?"}) — v1 path`,
+      );
+    }
+  }
   // Text the model may have echoed the plan's printed OVERALL dimension into —
   // used to re-anchor the swapped point-space outline to the sheet's real scale
   // (deriveVectorScale). Model wording varies (Opus writes "64'-0 OVERALL" into
@@ -283,7 +364,7 @@ export async function runEstimateFromPlan(
   ]
     .filter(Boolean)
     .join(" | ");
-  try {
+  if (!edgeApplied) try {
     const ajR = row.analysisJson as {
       _vectorGeometry?: {
         roof?: {
@@ -428,7 +509,7 @@ export async function runEstimateFromPlan(
   // drawing); the AI's runs only lend their tier/feature labels. Fully
   // fail-safe: any miss leaves the AI geometry untouched. SKIPPED when the A9
   // single-sheet read above already produced a roof.
-  if (!roofApplied) try {
+  if (!edgeApplied && !roofApplied) try {
     const aj = row.analysisJson as {
       _vectorGeometry?: { footprint?: { segments?: number[][] } };
     } | null;
@@ -613,7 +694,11 @@ export async function runEstimateFromPlan(
   // edges as eaves at the runs' own cross-validated scale, honoring gable-end
   // face reads; loud note for review. AI-trace footprints keep the strict
   // symmetric-twin-only reconcile from analysis time.
-  if (footprintSource !== "AI trace (best-of read)") {
+  // Closure is a v1 repair for freehand runs that under-cover the vector
+  // outline. The v2 edge takeoff covers every edge explicitly (unknowns are
+  // flagged UNPRICED on purpose) — running closure would re-introduce the
+  // blind "continuous gutters" default it exists to remove. Skip it.
+  if (!edgeApplied && footprintSource !== "AI trace (best-of read)") {
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
       perFace: perFace as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,

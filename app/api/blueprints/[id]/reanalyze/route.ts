@@ -22,6 +22,8 @@ import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
+import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
+import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 
 export const maxDuration = 300;
 
@@ -281,6 +283,64 @@ export async function POST(
         ];
       }
 
+      // v2 EDGE TAKEOFF — one expensive vision call that classifies the
+      // plan's own vector outline edge-by-edge (eave/rake/unknown + D.S.
+      // marks + dimension values). Stored on the row; the estimate path
+      // consumes it INSTEAD of freehand runs + blind closure. Fail-safe:
+      // any miss stores {ok:false} and v1 behavior is unchanged.
+      let edgeTakeoff: Awaited<ReturnType<typeof classifyPerimeterEdges>> | null = null;
+      if (
+        edgeTakeoffEnabled() &&
+        isPdf &&
+        finalSource.kind === "pdf" &&
+        Array.isArray(vectorGeometry?.roof?.segments) &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) >= 4
+      ) {
+        try {
+          const rsegs = vectorGeometry!.roof!.segments as number[][];
+          const rlabels = vectorGeometry!.roof!.labels ?? [];
+          const fp = finalAnalysis.building_footprint ?? [];
+          let expectedAspect: number | undefined;
+          if (fp.length >= 3) {
+            const xs = fp.map((p) => p.x).filter(Number.isFinite);
+            const ys = fp.map((p) => p.y).filter(Number.isFinite);
+            const w = Math.max(...xs) - Math.min(...xs);
+            const h = Math.max(...ys) - Math.min(...ys);
+            if (w > 0 && h > 0) expectedAspect = Math.max(w, h) / Math.min(w, h);
+          }
+          const roof = readRoofFromVectors(
+            rlabels,
+            rsegs,
+            expectedAspect ? { expectedAspect } : undefined,
+          );
+          if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+            edgeTakeoff = await classifyPerimeterEdges({
+              source: finalSource,
+              outline: roof.perimeter,
+              segments: rsegs,
+              roofPageSize: {
+                widthPt: vectorGeometry?.roof?.widthPt,
+                heightPt: vectorGeometry?.roof?.heightPt,
+              },
+              footprint: vectorGeometry?.footprint ?? null,
+            });
+            if (edgeTakeoff.notes.length > 0) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
+            }
+            if (!edgeTakeoff.ok) {
+              console.warn(
+                `[/api/blueprints/${id}/reanalyze] edge classifier failed (v1 path stays): ${edgeTakeoff.reason}`,
+              );
+            }
+          }
+        } catch (e) {
+          console.warn(
+            `[/api/blueprints/${id}/reanalyze] edge takeoff threw (v1 path stays):`,
+            e instanceof Error ? e.message : e,
+          );
+        }
+      }
+
       const analysisJson: Record<string, unknown> = {
         ...(finalAnalysis as unknown as Record<string, unknown>),
       };
@@ -307,6 +367,9 @@ export async function POST(
       }
       if (vectorGeometry) {
         analysisJson._vectorGeometry = vectorGeometry;
+      }
+      if (edgeTakeoff) {
+        analysisJson._edgeTakeoff = edgeTakeoff;
       }
 
       const totalInputTokens =
