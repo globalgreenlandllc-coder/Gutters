@@ -281,7 +281,9 @@ export async function readElevationFace(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 1500,
-      temperature: 0,
+      // Opus 4.7+/Sonnet 5 reject `temperature`. Positive allowlist: pin 0
+      // only on models KNOWN to accept it; unknown models get no sampling params.
+      ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),
       system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [
         {

@@ -13,6 +13,7 @@ import {
 import { findDimSpanCandidates, solvePtPerFt } from "./dim-scale";
 import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
+import { buildRoofLayout, type RoofLayout } from "./roof-layout";
 
 /**
  * classify-edges.ts — the ONE expensive vision call of the v2 takeoff.
@@ -52,6 +53,10 @@ export type EdgeClassification = {
   usage: { input_tokens: number; output_tokens: number };
   model: string;
   notes: string[];
+  /** Deterministic ridge/hip/valley layout computed from the classified
+   *  perimeter (straight skeleton, rakes as stationary gable walls) and
+   *  evidence-checked against the roof sheet's own 45° linework. */
+  layout?: RoofLayout | null;
 };
 
 const EDGE_SYSTEM = `
@@ -273,6 +278,7 @@ export async function classifyPerimeterEdges(opts: {
     usage: { input_tokens: 0, output_tokens: 0 },
     model: MODEL,
     notes: [],
+    layout: null,
   });
 
   try {
@@ -330,7 +336,10 @@ export async function classifyPerimeterEdges(opts: {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 8000,
-      temperature: 0,
+      // Opus 4.7+/Sonnet 5 reject `temperature` ("deprecated for this model")
+      // — this 400 killed the first v2 run. Positive allowlist: pin 0 only on
+      // models KNOWN to accept it; unknown/newer models get no sampling params.
+      ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),
       system: [{ type: "text", text: EDGE_SYSTEM, cache_control: { type: "ephemeral" } }],
       messages: [
         {
@@ -453,6 +462,15 @@ export async function classifyPerimeterEdges(opts: {
       )
       .map((h) => ({ direction: h.direction, near_edge_id: h.near_edge_id }));
 
+    // Interior geometry — computed, never traced. Stored alongside the
+    // classes so the estimate path draws the same layout the evidence built.
+    const layout = buildRoofLayout({
+      outline: opts.outline,
+      edges,
+      classes,
+      segments: opts.segments ?? null,
+    });
+
     const eaves = classes.filter((c) => c.edge_class === "eave").length;
     const rakes = classes.filter((c) => c.edge_class === "rake").length;
     const unknown = classes.filter((c) => c.edge_class === "unknown").length;
@@ -462,6 +480,7 @@ export async function classifyPerimeterEdges(opts: {
         (solved
           ? `; scale ${Math.round(solved.ptPerFt * 100) / 100} pt/ft from dimension line(s) ${solved.used.join(", ")}.`
           : `; no dimension value read — scale unsolved.`),
+      ...layout.notes,
     ];
 
     return {
@@ -479,6 +498,7 @@ export async function classifyPerimeterEdges(opts: {
       usage,
       model: MODEL,
       notes,
+      layout,
     };
   } catch (e) {
     return empty(e instanceof Error ? e.message : "edge classification failed");

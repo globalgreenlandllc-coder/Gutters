@@ -15,6 +15,10 @@ import { polygonCloses } from "@/lib/roof-engine";
 import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
 import { outlineEdges } from "@/lib/ai/plan-overlay";
 import { edgeTakeoffEnabled, type EdgeClassification } from "@/lib/ai/classify-edges";
+import type { RoofLayout } from "@/lib/ai/roof-layout";
+import { consumeLimit } from "@/lib/abuse/rate-limit";
+import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
+import { checkAiSpendAllowed, recordSpend } from "@/lib/abuse/spend-guard";
 import { getMe } from "./me";
 
 // Note: the 90s function timeout for this server action is set on
@@ -123,6 +127,31 @@ export async function runEstimate(
     ? Number.POSITIVE_INFINITY
     : Math.max(totalCredits - me.credits.used, 0);
 
+  // Abuse guards, cheapest first: request-rate limit (10/hr, 30/day per
+  // user — on top of the credit wallet, which a stolen session or bought
+  // account could otherwise burn through in minutes), then the cost-aware
+  // spend gate (per-user daily cents + global circuit breaker). Both
+  // fail CLOSED — this action spends real money on Solar/SAM-2/GPT-4o.
+  if (!isAdmin) {
+    const rl = await consumeLimit({
+      policy: POLICIES.estimateRun,
+      key: `user:${userId}`,
+      context: { userId, route: "runEstimate" },
+    });
+    if (!rl.ok) {
+      return { ok: false, reason: rl.reason, remaining: remainingBefore };
+    }
+  }
+  const spend = await checkAiSpendAllowed({
+    userId,
+    kind: "SATELLITE_ESTIMATE",
+    estCostCents: EST_COST_CENTS.SATELLITE_ESTIMATE,
+    isAdmin,
+  });
+  if (!spend.ok) {
+    return { ok: false, reason: spend.reason, remaining: remainingBefore };
+  }
+
   const recentSame = await db.estimateRun.count({
     where: { userId, addressNormalized: norm, createdAt: { gte: since } },
   });
@@ -148,6 +177,14 @@ export async function runEstimate(
   try {
     result = await runAIEstimatePipeline(trimmed);
   } catch (e) {
+    // A failed pipeline still burned geocode/Solar/tile/SAM-2 calls —
+    // ledger it so a bot fishing with bad addresses can't spend for free.
+    await recordSpend({
+      userId,
+      kind: "SATELLITE_ESTIMATE",
+      costCents: EST_COST_CENTS.SATELLITE_ESTIMATE,
+      meta: { address: norm, failed: true },
+    });
     const message = humanizeAiError(
       e instanceof Error ? e.message : "AI pipeline failed",
     );
@@ -192,6 +229,13 @@ export async function runEstimate(
     );
   }
   const [created] = (await db.$transaction(writes)) as [{ id: string }];
+
+  await recordSpend({
+    userId,
+    kind: "SATELLITE_ESTIMATE",
+    costCents: EST_COST_CENTS.SATELLITE_ESTIMATE,
+    meta: { address: norm, reused: isReused, runId: created.id },
+  });
 
   const remainingAfter = consumesCredit
     ? Math.max(remainingBefore - 1, 0)
@@ -284,6 +328,7 @@ export async function runEstimateFromPlan(
   // they are the error sources v2 exists to remove. Fail-safe: anything
   // missing → v1 path unchanged.
   let edgeApplied = false;
+  let edgeLayout: RoofLayout | null = null;
   if (edgeTakeoffEnabled()) {
     try {
       const stash = (row.analysisJson as { _edgeTakeoff?: EdgeClassification })
@@ -341,6 +386,37 @@ export async function runEstimateFromPlan(
             `${t.downspouts.length} D.S. @ ${Math.round(stash.ptPerFt * 100) / 100} pt/ft`,
         );
         edgeApplied = true;
+        // Interior geometry: ONLY the classifier-time layout. It was computed
+        // WITH the sheet's vectors, so the evidence gate (discard a skeleton
+        // the sheet contradicts) had its say — recomputing here without the
+        // vectors would skip that gate and can draw a wrong-in-kind skeleton
+        // on multi-pitch roofs. Older stashes without the field draw the
+        // perimeter only until the next Re-analyze. Guard the array shapes:
+        // this is free-form JSON from the DB; a malformed stash must degrade,
+        // never crash the estimate.
+        const stored = stash.layout;
+        if (
+          stored?.ok &&
+          Array.isArray(stored.ridges) &&
+          Array.isArray(stored.hips) &&
+          Array.isArray(stored.valleys)
+        ) {
+          edgeLayout = stored;
+          vecTrace.push(
+            `📐 layout: ${stored.ridges.length} ridge / ${stored.hips.length} hip / ` +
+              `${stored.valleys.length} valley, ${stored.gableCount} gable end(s)` +
+              (stored.diag
+                ? `, diag match ${stored.diag.matchedPlan}/${stored.diag.planDiagonals}` +
+                  ` +${stored.diag.adopted} adopted`
+                : ""),
+          );
+        } else {
+          vecTrace.push(
+            stored
+              ? `📐 layout not drawn (${stored.reason ?? "stored layout malformed"})`
+              : "📐 layout not in stash (pre-layout analysis) — Re-analyze to draw the interior",
+          );
+        }
       } else if (stash) {
         vecTrace.push(
           `edge takeoff stored but not applied (${stash.ok ? "no scale/eaves" : stash.reason ?? "failed"})`,
@@ -720,12 +796,25 @@ export async function runEstimateFromPlan(
       sheets,
     },
     {
-      useEngineTakeoff: engineTakeoffEnabled(),
-      useEngineDraw: engineDrawEnabled(),
+      // v2 edge takeoff: the classifier's exact per-edge runs ARE the drawn
+      // geometry, and the layout skeleton is the drawn interior. The guess
+      // engine (elevation-placed gables, per-mass skeletons, mass-edge eave
+      // rebuild) would overwrite both — keep it off on this path.
+      useEngineTakeoff: engineTakeoffEnabled() && !edgeApplied,
+      useEngineDraw: engineDrawEnabled() && !edgeApplied,
       perimeterOnly: perimeterOnlyEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
       faceNormals: orientation?.normals ?? null,
+      edgeLayout: edgeApplied && edgeLayout?.ok
+        ? {
+            ridges: edgeLayout.ridges,
+            valleys: edgeLayout.valleys,
+            hips: edgeLayout.hips,
+            gableCount: edgeLayout.gableCount,
+            confidence: edgeLayout.confidence,
+          }
+        : null,
     },
   );
 

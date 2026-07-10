@@ -483,6 +483,19 @@ export function blueprintToEstimateResult(
      *  skeleton (ridges/hips/valleys) from the drawn structure. The interior is
      *  decorative + unpriced and the sole source of the fanned garbage renders. */
     perimeterOnly?: boolean;
+    /** v2 EDGE-TAKEOFF layout: the deterministic ridge/hip/valley skeleton
+     *  computed from the classified perimeter (lib/ai/roof-layout.ts), in the
+     *  SAME analysis coordinate space as building_footprint/gutter_runs. When
+     *  present it is the drawn interior — projected through the same
+     *  transforms as the eaves so everything stays registered. Decorative,
+     *  never priced. `confidence` is evidence-based (plan-diagonal match). */
+    edgeLayout?: {
+      ridges: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>;
+      valleys: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>;
+      hips: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>;
+      gableCount: number;
+      confidence: number;
+    } | null;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -816,6 +829,33 @@ export function blueprintToEstimateResult(
     }
   }
 
+  // v2 edge-takeoff layout: the whole-perimeter skeleton computed from the
+  // classified outline OWNS the interior. It wins over both the AI-traced
+  // lines and the per-mass engine skeleton (the caller disables engine draw on
+  // the v2 path anyway). Ids carry the "engine-" prefix so the perimeter-only
+  // filter below keeps them — they ARE rule-drawn engine output.
+  if (opts?.edgeLayout) {
+    const el = opts.edgeLayout;
+    const goodSeg = (s: { p1: BlueprintPoint; p2: BlueprintPoint }) =>
+      !!s && isGoodPoint(s.p1) && isGoodPoint(s.p2);
+    const layoutLines = (
+      kind: "ridge" | "valley" | "hip",
+      arr: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>,
+    ): RoofStructureLine[] =>
+      // The layout is free-form JSON off the DB by the time it gets here —
+      // tolerate a malformed array rather than crash the whole estimate.
+      (Array.isArray(arr) ? arr : [])
+        .filter(goodSeg)
+        .map((s, i) => ({
+          id: `engine-${kind}-${i}`,
+          kind,
+          points: [project(s.p1), project(s.p2)],
+        }));
+    roofRidges = layoutLines("ridge", el.ridges);
+    roofValleys = layoutLines("valley", el.valleys);
+    roofHips = layoutLines("hip", el.hips);
+  }
+
   // Synthesis fallback. Triggers in two cases:
   //   1. ALL eaves were dropped because every gutter_run had bad
   //      coords (eaves array empty but analysis.gutter_runs has data).
@@ -1078,12 +1118,16 @@ export function blueprintToEstimateResult(
   // AI's coords were unusable and we laid out a rectangle from the run
   // lengths), the building_footprint coords are unusable too, so an
   // outline would float misaligned — drop it.
+  // v2 layout carries its own evidence-based confidence (how many of the
+  // sheet's drawn 45° lines the computed skeleton reproduced) — it outranks
+  // the coarse analysis-level confidence.
   const roofConfidence =
-    analysis.confidence === "high"
+    opts?.edgeLayout?.confidence ??
+    (analysis.confidence === "high"
       ? 0.9
       : analysis.confidence === "low"
         ? 0.35
-        : 0.6;
+        : 0.6);
   // PERIMETER-ONLY: drop the AI-TRACED interior roof geometry from the DRAWN
   // structure (ids "plan-…"). A gutter takeoff is the perimeter + which edges
   // are eaves vs rakes; AI-freehand hips/ridges/valleys off a dense truss
@@ -1096,7 +1140,12 @@ export function blueprintToEstimateResult(
   // invariants (no crossings, no over-long hips/valleys, every line anchored
   // to the perimeter or a junction) and keeps only what draws clean.
   // Decorative either way: pricing (eaveLF) is untouched.
-  if (perimeterOnly) {
+  // v2 edgeLayout lines are exempt: they satisfy the invariants by
+  // construction (ridges are clipped to die into valleys, T-junction
+  // anchored, sheet-adopted valleys are the plan's own strokes — the 40%
+  // hip/valley length cap would silently drop a legitimate long valley the
+  // confidence score already credited).
+  if (perimeterOnly && !opts?.edgeLayout) {
     const engineDrawn = (l: { id: string }) => l.id.startsWith("engine-");
     const filtered = filterRoofDiagramLines(
       {
@@ -1117,15 +1166,17 @@ export function blueprintToEstimateResult(
           ridges: roofRidges,
           valleys: roofValleys,
           hips: roofHips,
-          // True gable-structure count from the engine (per-face placement), so
-          // the legend reports "6 gables" not the rake-edge count. Absent when
-          // the engine isn't drawing (AI-only path).
-          gableCount: engineBundle
-            ? engineBundle.massInputs.reduce(
-                (s, m) => s + (m.gables?.length ?? 0),
-                0,
-              )
-            : undefined,
+          // True gable-structure count: v2 layout counts classified gable-end
+          // walls; otherwise the engine's per-face placement. Absent when
+          // neither is drawing (AI-only path).
+          gableCount:
+            opts?.edgeLayout?.gableCount ??
+            (engineBundle
+              ? engineBundle.massInputs.reduce(
+                  (s, m) => s + (m.gables?.length ?? 0),
+                  0,
+                )
+              : undefined),
           confidence: roofConfidence,
         }
       : undefined;

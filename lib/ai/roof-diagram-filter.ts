@@ -140,16 +140,24 @@ export function filterRoofDiagramLines<T extends DiagramLine>(
     (t) => t.kind === "ridge" || lineLen(t.line) <= span * HIP_VALLEY_MAX_SPAN_FRAC,
   );
 
-  // 3. ANCHORING — BFS from boundary-touching seeds through endpoint
-  //    junctions; anything unreachable is a floating stub (or an island of
-  //    stubs propping each other up) and gets dropped.
+  // 3. ANCHORING — BFS from boundary-touching seeds through junctions;
+  //    anything unreachable is a floating stub (or an island of stubs
+  //    propping each other up) and gets dropped.
   const ends = pool.map((t) => endpoints(t.line)!);
+  const distToLine = (p: DiagramPt, [a, b]: readonly [DiagramPt, DiagramPt]) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    if (l2 < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+    const u = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+    return Math.hypot(p.x - (a.x + u * dx), p.y - (a.y + u * dy));
+  };
+  // Connected = endpoint meets endpoint OR endpoint dies into the other
+  // line's span (a T-junction — a gable ridge ending on a valley, a valley
+  // ending on a ridge — is a physical roof connection, not a float).
   const touches = (i: number, j: number): boolean => {
-    for (const p of ends[i]) {
-      for (const q of ends[j]) {
-        if (Math.hypot(q.x - p.x, q.y - p.y) <= tol) return true;
-      }
-    }
+    for (const p of ends[i]) if (distToLine(p, ends[j]) <= tol) return true;
+    for (const q of ends[j]) if (distToLine(q, ends[i]) <= tol) return true;
     return false;
   };
   const reachable = new Array<boolean>(pool.length).fill(false);
