@@ -70,3 +70,65 @@ test("facingLetterOf maps canvas normals to engine letters", () => {
   assert.equal(facingLetterOf({ x: 1, y: 0 }), "E");
   assert.equal(facingLetterOf({ x: -1, y: 0 }), "W");
 });
+
+// ── sideOfPerimeterEdge — geometric orientation-chip sides ──────────────
+
+test("sideOfPerimeterEdge: rectangle edges map bottom→front, top→back, left/right (y-down canvas)", async () => {
+  const { sideOfPerimeterEdge } = await import("./plan-orientation.ts");
+  // 100×60 rectangle, y grows down (canvas/PDF-pixel space).
+  const fp = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 60 },
+    { x: 0, y: 60 },
+  ];
+  // Bottom edge (max y) — outward normal points +y (down) = FRONT.
+  assert.equal(sideOfPerimeterEdge({ x: 0, y: 60 }, { x: 100, y: 60 }, fp), "front");
+  // Top edge — outward -y = BACK. Direction of travel must not matter.
+  assert.equal(sideOfPerimeterEdge({ x: 100, y: 0 }, { x: 0, y: 0 }, fp), "back");
+  assert.equal(sideOfPerimeterEdge({ x: 0, y: 0 }, { x: 100, y: 0 }, fp), "back");
+  // Left / right walls.
+  assert.equal(sideOfPerimeterEdge({ x: 0, y: 0 }, { x: 0, y: 60 }, fp), "left");
+  assert.equal(sideOfPerimeterEdge({ x: 100, y: 60 }, { x: 100, y: 0 }, fp), "right");
+});
+
+test("sideOfPerimeterEdge: notch edges face by OUTWARD normal, not by position on the plan", async () => {
+  const { sideOfPerimeterEdge } = await import("./plan-orientation.ts");
+  // U-shape opening downward (front courtyard): the notch's inner-left wall
+  // sits in the LEFT half of the plan but its outward normal points +x —
+  // it faces RIGHT (into the courtyard). Centroid heuristics get this wrong;
+  // the point-in-polygon probe must not.
+  const fp = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 60 },
+    { x: 70, y: 60 },
+    { x: 70, y: 30 },
+    { x: 30, y: 30 },
+    { x: 30, y: 60 },
+    { x: 0, y: 60 },
+  ];
+  // Notch inner-left wall x=30 (interior of the U is to its LEFT, outside the
+  // polygon is the courtyard to its... let's check: polygon material is where?
+  // Points (29, 45) is inside the left leg; (31, 45) is in the courtyard.
+  assert.equal(sideOfPerimeterEdge({ x: 30, y: 30 }, { x: 30, y: 60 }, fp), "right");
+  // Notch inner-right wall x=70 faces LEFT into the courtyard.
+  assert.equal(sideOfPerimeterEdge({ x: 70, y: 60 }, { x: 70, y: 30 }, fp), "left");
+  // The notch's back wall (y=30, courtyard below it) faces +y = FRONT.
+  assert.equal(sideOfPerimeterEdge({ x: 30, y: 30 }, { x: 70, y: 30 }, fp), "front");
+});
+
+test("sideOfPerimeterEdge: degenerate inputs → null", async () => {
+  const { sideOfPerimeterEdge } = await import("./plan-orientation.ts");
+  const fp = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+  ];
+  assert.equal(sideOfPerimeterEdge({ x: 5, y: 5 }, { x: 5, y: 5 }, fp), null);
+  assert.equal(sideOfPerimeterEdge({ x: 0, y: 0 }, { x: 10, y: 0 }, []), null);
+  assert.equal(
+    sideOfPerimeterEdge({ x: 0, y: 0 }, { x: 10, y: 0 }, [fp[0], fp[1]]),
+    null,
+  );
+});

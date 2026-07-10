@@ -1028,14 +1028,13 @@ export function AerialCanvas({
             );
           })}
 
-        {/* Rakes — gray-dashed "GABLE" (no-gutter) edges, color-coded on the
-            perimeter. Drawn in BOTH plan and satellite mode now: perimeter-only
-            plans no longer derive an interior skeleton, so these edges ARE the
-            gable-end markers (there's no connected gable geometry to draw).
-            Each rake also gets a small translucent GABLE-PEAK glyph (a tent
-            from the edge endpoints to an inward apex) — decorative only, so the
-            diagram reads "gable end here" at a glance without reintroducing any
-            interior roof geometry. */}
+        {/* Rakes — gray-dashed (no-gutter) gable edges, color-coded on the
+            perimeter. Drawn in BOTH plan and satellite mode. Each rake gets a
+            small translucent GABLE-PEAK glyph (a tent from the edge endpoints
+            to an inward apex) — decorative only, drawn WITHOUT a text label so
+            the diagram stays clean; the tent shape itself reads "gable end
+            here", and the engine's rule-drawn skeleton (ridges/valleys under
+            the trace) completes the roof-plan look. */}
         {showRakes &&
           rakes.map((line) => {
             const a = line.points[0];
@@ -1080,37 +1079,6 @@ export function AerialCanvas({
                   fill="none"
                   opacity={0.75}
                 />
-                {/* GABLE tag — marks a sloped no-gutter edge so the
-                    contractor reads eave (gutter) vs gable (none) vs a
-                    gap (missing run). Skip tiny rakes to avoid clutter. */}
-                {lenPx > 16 && (
-                  <g>
-                    <rect
-                      x={mx - 20 * renderScale}
-                      y={my - 7 * renderScale}
-                      width={40 * renderScale}
-                      height={14 * renderScale}
-                      rx={3 * renderScale}
-                      fill={tac ? "rgba(2,6,23,0.82)" : "rgba(255,255,255,0.92)"}
-                      stroke={
-                        tac ? "rgba(148,163,184,0.55)" : "rgba(100,116,139,0.5)"
-                      }
-                      strokeWidth={renderScale}
-                    />
-                    <text
-                      x={mx}
-                      y={my + 3 * renderScale}
-                      textAnchor="middle"
-                      fill={tac ? "#cbd5e1" : "#475569"}
-                      fontSize={8 * renderScale}
-                      fontWeight={700}
-                      fontFamily="ui-sans-serif, system-ui"
-                      letterSpacing={0.8 * renderScale}
-                    >
-                      GABLE
-                    </text>
-                  </g>
-                )}
               </g>
             );
           })}

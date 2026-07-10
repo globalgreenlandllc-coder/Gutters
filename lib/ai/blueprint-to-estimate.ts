@@ -23,7 +23,8 @@ import type {
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
 import type { FaceReadingRaw } from "./face-merge";
-import type { FaceNormals } from "./plan-orientation";
+import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
+import { filterRoofDiagramLines } from "./roof-diagram-filter";
 import type { RoofMassArea } from "./to-masses";
 
 /**
@@ -618,13 +619,14 @@ export function blueprintToEstimateResult(
   // (footprint perimeter + confirmed projecting-gable side eaves), projected
   // with the SAME transform so the canvas registers and re-prices consistently.
   if (engineBundle) {
-    // Inherit each engine edge's side / tier / feature from the NEAREST AI
-    // gutter run (same analysis coordinate space). The engine's geometry is
-    // authoritative but carries no labels; without `side` the canvas can't
-    // place its FRONT/BACK/LEFT/RIGHT orientation chips, and without `tier`
-    // the upper/lower eave coloring is lost. Match by midpoint distance,
-    // capped at 20% of the footprint span so a far-away run can't mislabel
-    // an unrelated wall.
+    // Inherit each engine edge's tier / feature from the NEAREST AI gutter
+    // run (same analysis coordinate space) — without `tier` the upper/lower
+    // eave coloring is lost, and `feature` names the porch/patio. Match by
+    // midpoint distance, capped at 20% of the footprint span so a far-away
+    // run can't mislabel an unrelated wall. `side` is NOT inherited: the AI's
+    // per-run side tags proved swappable (front↔back), so the orientation
+    // chips' side comes from pure geometry instead (sideOfPerimeterEdge —
+    // the edge's outward normal under the front-at-bottom convention).
     const labelDonors = analysis.gutter_runs
       .filter(
         (r) =>
@@ -659,11 +661,14 @@ export function blueprintToEstimateResult(
       .filter((e) => e.gutter && onOuterBoundary(e))
       .map((e, i): EditableLine => {
         const donor = nearestDonor(e);
+        const geomSide =
+          outerFp.length >= 3 ? sideOfPerimeterEdge(e.p1, e.p2, outerFp) : null;
+        const side = geomSide ?? donor?.side;
         return {
           id: `engine-eave-${i}`,
           kind: "eave",
           points: [project(e.p1), project(e.p2)],
-          ...(donor?.side ? { side: donor.side } : {}),
+          ...(side ? { side } : {}),
           ...(donor ? { tier: donor.tier } : {}),
           ...(donor?.feature ? { feature: donor.feature } : {}),
         };
@@ -1079,16 +1084,31 @@ export function blueprintToEstimateResult(
       : analysis.confidence === "low"
         ? 0.35
         : 0.6;
-  // PERIMETER-ONLY: drop the interior roof geometry from the DRAWN structure.
-  // A gutter takeoff is the perimeter + which edges are eaves vs rakes; the
-  // hips/ridges/valleys are decorative, never priced, and the only thing that
-  // fans/tangles/rejects. Pricing (eaveLF) is untouched — it's the sum of the
-  // eave edges, computed above. The canvas draws the perimeter with the eave/
-  // rake edges color-coded and NOTHING inside it.
+  // PERIMETER-ONLY: drop the AI-TRACED interior roof geometry from the DRAWN
+  // structure (ids "plan-…"). A gutter takeoff is the perimeter + which edges
+  // are eaves vs rakes; AI-freehand hips/ridges/valleys off a dense truss
+  // sheet are the sparse floating dashes that made the roof unreadable. The
+  // ENGINE's interior lines (ids "engine-…") are different: a rule-drawn
+  // straight skeleton + gable ridge-backs — those STAY so the diagram reads
+  // as a roof plan, not a bare outline. But tier masses overlap in plan, so
+  // the flat-mapped skeletons can stack into crossing whole-body fans and
+  // floating stubs — filterRoofDiagramLines enforces the roof-plan
+  // invariants (no crossings, no over-long hips/valleys, every line anchored
+  // to the perimeter or a junction) and keeps only what draws clean.
+  // Decorative either way: pricing (eaveLF) is untouched.
   if (perimeterOnly) {
-    roofRidges = [];
-    roofValleys = [];
-    roofHips = [];
+    const engineDrawn = (l: { id: string }) => l.id.startsWith("engine-");
+    const filtered = filterRoofDiagramLines(
+      {
+        ridges: roofRidges.filter(engineDrawn),
+        valleys: roofValleys.filter(engineDrawn),
+        hips: roofHips.filter(engineDrawn),
+      },
+      roofPerimeter,
+    );
+    roofRidges = filtered.ridges;
+    roofValleys = filtered.valleys;
+    roofHips = filtered.hips;
   }
   const roofStructure: RoofStructure | undefined =
     !synthesized && roofPerimeter.length >= 3

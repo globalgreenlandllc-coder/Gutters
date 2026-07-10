@@ -162,3 +162,62 @@ export function deriveOrientationFromFaceTitles(
   }
   return resolveFromPairs(pairs);
 }
+
+/**
+ * House-relative side (front/back/left/right) of a perimeter EDGE, from pure
+ * geometry: the edge's outward normal (away from the footprint interior),
+ * snapped to its dominant axis under the same front-at-bottom drafting
+ * convention the rest of this module encodes (front = bottom of the sheet,
+ * canvas y down). This is how the orientation chips get their sides in engine
+ * mode — the AI's per-run `side` tags proved swappable (front↔back), while the
+ * footprint polygon itself cannot lie about which way an edge faces.
+ *
+ * Returns null for degenerate edges or footprints (< 3 points).
+ */
+export function sideOfPerimeterEdge(
+  p1: Pt,
+  p2: Pt,
+  footprint: readonly Pt[],
+): "front" | "back" | "left" | "right" | null {
+  if (!footprint || footprint.length < 3) return null;
+  const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  if (!Number.isFinite(len) || len < 1e-6) return null;
+  const mx = (p1.x + p2.x) / 2;
+  const my = (p1.y + p2.y) / 2;
+  let nx = -(p2.y - p1.y) / len;
+  let ny = (p2.x - p1.x) / len;
+  // Orient the normal OUTWARD: probe a point a small step along the normal;
+  // if it lands inside the polygon, flip. Probe distance scales with the
+  // footprint so tiny jog edges on large plans still probe past the wall line.
+  const xs = footprint.map((p) => p.x);
+  const ys = footprint.map((p) => p.y);
+  const span = Math.max(
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+  );
+  const probe = Math.max(span * 0.005, 1e-3);
+  if (pointInPolygon({ x: mx + nx * probe, y: my + ny * probe }, footprint)) {
+    nx = -nx;
+    ny = -ny;
+  }
+  // Dominant axis → house word. Canvas y grows DOWN, so +y = sheet bottom =
+  // FRONT under the drafting convention (see WORD_NORMALS above).
+  if (Math.abs(ny) >= Math.abs(nx)) return ny >= 0 ? "front" : "back";
+  return nx >= 0 ? "right" : "left";
+}
+
+/** Standard ray-cast point-in-polygon (exported for tests). */
+export function pointInPolygon(p: Pt, poly: readonly Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (
+      a.y > p.y !== b.y > p.y &&
+      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
