@@ -100,3 +100,15 @@ test("no cues, matching readable opposite faces → only the coverage summary, n
   assert.ok(!merged.review_flags.some((f) => /NOT mirrored/.test(f)));
   assert.equal(merged.symmetry_assumed, false);
 });
+
+test("elevation prompt keeps the multi-gable recall guidance (source-text check — module is server-only)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./read-elevations.ts", import.meta.url), "utf8")
+    .replace(/\s+/g, " "); // prompt prose wraps — match independent of line breaks
+  // The Woodinville miss: front showed main + entry + GARAGE gables, read found 2.
+  // These phrases are load-bearing for recall — losing them regresses the read.
+  assert.ok(src.includes("MULTIPLE GABLES PER FACE ARE THE NORM"), "multi-gable norm guidance present");
+  assert.ok(src.includes("GARAGE CHECK"), "above-garage-doors check present");
+  assert.ok(src.includes("left / center / right thirds"), "thirds self-check present");
+  assert.ok(src.includes("BLUEPRINT_ELEVATION_MODEL"), "reader model env override present");
+});

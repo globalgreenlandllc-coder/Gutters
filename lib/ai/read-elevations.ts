@@ -38,7 +38,10 @@ export { mergeFaceReadings } from "./face-merge";
  * stage never throws and never blocks the takeoff.
  */
 
-const MODEL = "claude-haiku-4-5-20251001";
+// Per-face reads are 4 vision calls per analysis. Haiku keeps them cheap; if
+// gable recall misses persist on real sheets (e.g. the classic missed garage
+// gable), set BLUEPRINT_ELEVATION_MODEL=claude-sonnet-5 to trade cost for eyes.
+const MODEL = process.env.BLUEPRINT_ELEVATION_MODEL || "claude-haiku-4-5-20251001";
 
 export type ElevationReadResult = {
   per_face: Record<string, FaceReadingRaw>;
@@ -70,6 +73,26 @@ building, 0.5 = center, 1 = far right edge, as you look at this elevation), and
 what it ROOFS (kind: porch / patio / entry / garage / dormer / main) from any
 label near it — "other" if unlabelled. The two SLOPED edges of a gable are
 RAKES → they carry NO gutter.
+
+MULTIPLE GABLES PER FACE ARE THE NORM, not the exception: a craftsman FRONT
+typically stacks TWO or THREE (main gable + entry-porch gable + GARAGE gable).
+Finding one or two does NOT mean you are done — under-counting is the #1 read
+error, and every missed gable becomes gutter billed across a rake.
+
+Gable signatures to look for (any ONE of these marks a gable):
+  - a triangular panel of vertical board-and-batten siding above the eave line
+  - a barge-board / rake-trim callout pointing at the edge (e.g. "BARGE BOARD,
+    TYPICAL @ GABLE ENDS & RAKES")
+  - a louvered GABLE END VENT in the triangle
+  - two sloped fascia lines rising to a peak
+
+GARAGE CHECK: if this face shows garage doors, look directly ABOVE them — a
+gable over the garage is one of the most common forms and the most commonly
+missed. Report it with kind:"garage".
+
+Before you report the count, SELF-CHECK: split the face into left / center /
+right thirds and confirm you scanned each third — misses cluster at the far
+left and far right of the sheet.
 </gable_enumeration>
 
 <not_a_gable>
