@@ -1031,7 +1031,11 @@ export function AerialCanvas({
         {/* Rakes — gray-dashed "GABLE" (no-gutter) edges, color-coded on the
             perimeter. Drawn in BOTH plan and satellite mode now: perimeter-only
             plans no longer derive an interior skeleton, so these edges ARE the
-            gable-end markers (there's no connected gable geometry to draw). */}
+            gable-end markers (there's no connected gable geometry to draw).
+            Each rake also gets a small translucent GABLE-PEAK glyph (a tent
+            from the edge endpoints to an inward apex) — decorative only, so the
+            diagram reads "gable end here" at a glance without reintroducing any
+            interior roof geometry. */}
         {showRakes &&
           rakes.map((line) => {
             const a = line.points[0];
@@ -1040,8 +1044,33 @@ export function AerialCanvas({
             const my = (a.y + b.y) / 2;
             const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
             const tac = theme === "tactical";
+            // Inward apex: perpendicular from the edge midpoint, pointed at the
+            // footprint interior (perimeter centroid). Falls back to no glyph
+            // when there's no perimeter to orient against.
+            const peak = (() => {
+              const perim = roofStructure?.perimeter;
+              if (!perim || perim.length < 3 || lenPx < 12) return null;
+              let cx = 0, cy = 0;
+              for (const p of perim) { cx += p.x; cy += p.y; }
+              cx /= perim.length;
+              cy /= perim.length;
+              let nx = -(b.y - a.y) / lenPx;
+              let ny = (b.x - a.x) / lenPx;
+              if ((cx - mx) * nx + (cy - my) * ny < 0) { nx = -nx; ny = -ny; }
+              const h = Math.min(lenPx * 0.32, 24 * renderScale);
+              return { x: mx + nx * h, y: my + ny * h };
+            })();
             return (
               <g key={line.id} pointerEvents="none">
+                {peak && (
+                  <polygon
+                    points={`${a.x},${a.y} ${peak.x},${peak.y} ${b.x},${b.y}`}
+                    fill={tac ? "rgba(148,163,184,0.14)" : "rgba(100,116,139,0.10)"}
+                    stroke={tac ? "rgba(148,163,184,0.55)" : "rgba(100,116,139,0.45)"}
+                    strokeWidth={1.2 * renderScale}
+                    strokeLinejoin="round"
+                  />
+                )}
                 <path
                   d={pathFor(line)}
                   stroke={tac ? "#94a3b8" : "#64748b"}

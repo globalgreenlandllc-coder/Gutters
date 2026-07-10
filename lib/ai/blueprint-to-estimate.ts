@@ -618,14 +618,56 @@ export function blueprintToEstimateResult(
   // (footprint perimeter + confirmed projecting-gable side eaves), projected
   // with the SAME transform so the canvas registers and re-prices consistently.
   if (engineBundle) {
+    // Inherit each engine edge's side / tier / feature from the NEAREST AI
+    // gutter run (same analysis coordinate space). The engine's geometry is
+    // authoritative but carries no labels; without `side` the canvas can't
+    // place its FRONT/BACK/LEFT/RIGHT orientation chips, and without `tier`
+    // the upper/lower eave coloring is lost. Match by midpoint distance,
+    // capped at 20% of the footprint span so a far-away run can't mislabel
+    // an unrelated wall.
+    const labelDonors = analysis.gutter_runs
+      .filter(
+        (r) =>
+          r.start && r.end &&
+          Number.isFinite(r.start.x) && Number.isFinite(r.start.y) &&
+          Number.isFinite(r.end.x) && Number.isFinite(r.end.y),
+      )
+      .map((r) => ({
+        x: (r.start.x + r.end.x) / 2,
+        y: (r.start.y + r.end.y) / 2,
+        side: r.side as EaveSide | undefined,
+        tier: (r.tier ?? "unknown") as EaveTier,
+        feature: r.feature as EaveFeature | undefined,
+      }));
+    const donorCap = Number.isFinite(outerBoundaryTol) ? outerBoundaryTol * 10 : Infinity;
+    const nearestDonor = (e: { p1: BlueprintPoint; p2: BlueprintPoint }) => {
+      const mx = (e.p1.x + e.p2.x) / 2;
+      const my = (e.p1.y + e.p2.y) / 2;
+      let best: (typeof labelDonors)[number] | null = null;
+      let bestD = Infinity;
+      for (const d of labelDonors) {
+        const dist = Math.hypot(d.x - mx, d.y - my);
+        if (dist < bestD) {
+          bestD = dist;
+          best = d;
+        }
+      }
+      return best && bestD <= donorCap ? best : null;
+    };
     eaves = engineBundle.takeoff.masses
       .flatMap((m) => m.edges)
       .filter((e) => e.gutter && onOuterBoundary(e))
-      .map((e, i): EditableLine => ({
-        id: `engine-eave-${i}`,
-        kind: "eave",
-        points: [project(e.p1), project(e.p2)],
-      }));
+      .map((e, i): EditableLine => {
+        const donor = nearestDonor(e);
+        return {
+          id: `engine-eave-${i}`,
+          kind: "eave",
+          points: [project(e.p1), project(e.p2)],
+          ...(donor?.side ? { side: donor.side } : {}),
+          ...(donor ? { tier: donor.tier } : {}),
+          ...(donor?.feature ? { feature: donor.feature } : {}),
+        };
+      });
   }
 
   // Also detect "all eaves got projected to the same point" — the
