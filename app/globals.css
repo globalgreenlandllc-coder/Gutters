@@ -96,6 +96,99 @@ body {
   }
 }
 
+/* ---- Landing v2 gutter-scene animations ---- */
+@keyframes rain-fall {
+  0% {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(96px);
+    opacity: 0;
+  }
+}
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+@keyframes trace-draw {
+  0% {
+    stroke-dashoffset: 900;
+  }
+  55% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+@keyframes splash-pop {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.anim-rain {
+  animation: rain-fall 1.5s linear infinite;
+}
+.anim-flow {
+  animation: dash-flow 1.4s linear infinite;
+}
+.anim-trace {
+  animation: trace-draw 3.2s ease-in-out infinite;
+}
+.anim-float {
+  animation: float-y 3.4s ease-in-out infinite;
+}
+.anim-splash {
+  animation: splash-pop 1.5s ease-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+.anim-orbit {
+  animation: orbit-spin 28s linear infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-rain,
+  .anim-flow,
+  .anim-trace,
+  .anim-float,
+  .anim-splash,
+  .anim-orbit {
+    animation: none;
+  }
+}
+
 /* Full-height vertical column lines over the light landing canvas */
 .hl-grid {
   background-image: linear-gradient(90deg, rgba(13, 13, 18, 0.06) 1px, transparent 1px);

@@ -14,15 +14,21 @@ import { TermsSection } from "@/components/proposal/terms-section";
 import { SignaturePad } from "./signature-pad";
 import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
+import { PaymentHub } from "./payment-hub";
 import { packageTotal, type Proposal } from "@/lib/proposal-mock";
 import { acceptProposalByToken } from "@/app/actions/proposals";
+import type { PortalPaymentState } from "@/app/actions/payments";
 
 export function ClientPortalView({
   proposal,
   previewMode,
+  portal,
 }: {
   proposal: Proposal;
   previewMode?: boolean;
+  /** Post-acceptance payment state (schedule, change orders). When set,
+   *  the portal renders the payment hub instead of the accept flow. */
+  portal?: PortalPaymentState | null;
 }) {
   const recommended =
     proposal.packages.find((p) => p.recommended)?.id ??
@@ -60,6 +66,22 @@ export function ClientPortalView({
   else if (!signature) reason = "Sign above to enable accept";
   else if (signerName.trim().length <= 1) reason = "Add your printed name";
   else if (!agreed) reason = "Acknowledge the terms to continue";
+
+  // Accepted proposals get the payment hub: schedule, progress, pay
+  // buttons and change-order approvals. The accept flow below only
+  // renders while the proposal is still open.
+  if (portal && !previewMode) {
+    return (
+      <div className="relative">
+        <PortalNav proposal={proposal} />
+        <PaymentHub
+          proposal={proposal}
+          initialState={portal}
+          token={proposal.token}
+        />
+      </div>
+    );
+  }
 
   if (accepted) {
     const due =

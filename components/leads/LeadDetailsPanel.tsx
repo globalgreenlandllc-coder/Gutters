@@ -20,7 +20,11 @@ import {
   Wrench,
   Hammer,
   Home,
+  Ruler,
+  Gauge,
+  Clock,
 } from "lucide-react";
+import type { GutterScore } from "@/lib/leads/gutter-score";
 
 export interface LeadWithInteraction {
   id: string;
@@ -52,8 +56,74 @@ export interface LeadWithInteraction {
 
 interface LeadDetailsPanelProps {
   lead: LeadWithInteraction | null;
+  /** Pre-computed Gutter Score (from LeadsMap's shared map) — null hides
+   *  the score card. */
+  score?: GutterScore | null;
+  /** Google Maps browser key — powers the Street View peek. Optional so
+   *  the panel degrades gracefully when no key is configured. */
+  mapsApiKey?: string;
   onClose: () => void;
   onUpdateInteraction: (leadId: string, status: InteractionStatus, notes: string) => void;
+}
+
+/**
+ * Street View peek — lets the contractor SEE the roofline (stories,
+ * complexity, existing gutters) before ever driving out. Uses the Street
+ * View Static API metadata endpoint to check imagery exists so we never
+ * render Google's gray "no imagery" placeholder.
+ */
+function StreetViewPeek({
+  lat,
+  lng,
+  apiKey,
+}: {
+  lat: number;
+  lng: number;
+  apiKey: string;
+}) {
+  const [available, setAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAvailable(null);
+    fetch(
+      `https://maps.googleapis.com/maps/api/streetview/metadata?location=${lat},${lng}&key=${encodeURIComponent(apiKey)}`,
+    )
+      .then((r) => r.json())
+      .then((d: { status?: string }) => {
+        if (!cancelled) setAvailable(d.status === "OK");
+      })
+      .catch(() => {
+        // Metadata blocked (CORS/network) — optimistically show the image;
+        // worst case is Google's gray placeholder.
+        if (!cancelled) setAvailable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lat, lng, apiKey]);
+
+  if (available === false) return null;
+
+  const imgSrc = `https://maps.googleapis.com/maps/api/streetview?size=640x300&location=${lat},${lng}&fov=75&key=${encodeURIComponent(apiKey)}`;
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-zinc-900/60">
+      {available === null ? (
+        <div className="h-[150px] animate-pulse bg-zinc-900" />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element -- external Google API image, next/image gains nothing
+        <img
+          src={imgSrc}
+          alt="Street view of the property"
+          className="h-[150px] w-full object-cover"
+          loading="lazy"
+        />
+      )}
+      <span className="absolute bottom-2 left-2 rounded bg-ink/80 px-1.5 py-0.5 text-[9px] font-medium text-zinc-300 backdrop-blur">
+        Street view
+      </span>
+    </div>
+  );
 }
 
 const interactionMeta: Record<
@@ -135,7 +205,7 @@ function ownerLookupUrl(sourceCity: string, address: string): string | null {
   }
 }
 
-export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }: LeadDetailsPanelProps) {
+export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onUpdateInteraction }: LeadDetailsPanelProps) {
   const [notes, setNotes] = useState(lead?.interaction?.notes ?? "");
   const [savedFlash, setSavedFlash] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -193,6 +263,10 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
   };
 
   const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lead.latitude},${lead.longitude}`;
+  // One click from lead → AI roof takeoff. The estimate page's ?address=
+  // param runs the full satellite pipeline (geocode → Solar → SAM trace),
+  // so the contractor can walk into the call with eave LF already in hand.
+  const scanUrl = `/estimate?address=${encodeURIComponent(`${lead.address}, ${lead.sourceCity}`)}`;
   const ownerUrl = ownerLookupUrl(lead.sourceCity, lead.address);
   const contractorSearchUrl = lead.contractorName
     ? `https://www.google.com/search?q=${encodeURIComponent(`${lead.contractorName} ${lead.sourceCity} contractor phone`)}`
@@ -295,6 +369,105 @@ export default function LeadDetailsPanel({ lead, onClose, onUpdateInteraction }:
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          {/* See the house before you call */}
+          {mapsApiKey && (
+            <StreetViewPeek
+              lat={lead.latitude}
+              lng={lead.longitude}
+              apiKey={mapsApiKey}
+            />
+          )}
+
+          {/* Lead → takeoff in one click. The single highest-leverage
+              action on this panel: walk into the first call with the
+              eave footage already measured. */}
+          <a
+            href={scanUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 rounded-xl bg-cta-gradient px-3 py-3 text-sm font-semibold text-white shadow-glow transition hover:opacity-95"
+          >
+            <Ruler size={16} />
+            Scan this roof with AI
+            <span className="text-[10px] font-normal opacity-80">
+              — instant gutter takeoff
+            </span>
+          </a>
+
+          {/* Gutter Score — the "why should I care" breakdown */}
+          {score && (
+            <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Gauge size={14} className="text-accent-300" />
+                  <span className="font-label text-[10px] text-zinc-500">
+                    Gutter Score
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-lg font-bold tabular-nums ${
+                      score.band === "prime"
+                        ? "text-stripe-coral"
+                        : score.band === "strong"
+                          ? "text-accent-300"
+                          : "text-zinc-300"
+                    }`}
+                  >
+                    {score.score}
+                  </span>
+                  <span className="text-[10px] text-zinc-500">/100</span>
+                </div>
+              </div>
+              {/* Meter — single-hue magnitude bar */}
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                <div
+                  className={`h-full rounded-full ${
+                    score.band === "prime" ? "bg-stripe-coral" : "bg-accent-500"
+                  }`}
+                  style={{ width: `${score.score}%` }}
+                />
+              </div>
+              {/* Timing window */}
+              <div
+                className={`mt-3 flex items-start gap-2 rounded-lg px-2.5 py-2 text-xs ring-1 ${
+                  score.window.state === "now"
+                    ? "bg-stripe-coral/10 text-stripe-coral ring-stripe-coral/30"
+                    : score.window.state === "soon" ||
+                        score.window.state === "closing"
+                      ? "bg-amber-500/10 text-amber-300 ring-amber-500/30"
+                      : "bg-white/5 text-zinc-400 ring-white/10"
+                }`}
+              >
+                <Clock size={13} className="mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-medium">{score.window.label}</div>
+                  <div className="mt-0.5 text-[11px] leading-snug opacity-80">
+                    {score.window.detail}
+                  </div>
+                </div>
+              </div>
+              {/* Top reasons */}
+              <ul className="mt-3 space-y-1">
+                {score.reasons.slice(0, 5).map((r, i) => (
+                  <li
+                    key={i}
+                    className="flex items-center justify-between gap-2 text-[11px]"
+                  >
+                    <span className="truncate text-zinc-300">{r.text}</span>
+                    <span
+                      className={`shrink-0 font-semibold tabular-nums ${
+                        r.points >= 0 ? "text-emerald-300" : "text-zinc-500"
+                      }`}
+                    >
+                      {r.points >= 0 ? `+${r.points}` : r.points}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Stat cards */}
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">

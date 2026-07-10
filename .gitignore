@@ -29,3 +29,6 @@ next-env.d.ts
 scripts/*.png
 scripts/*.svg
 scripts/*.html
+
+# Claude Code session config
+.claude/

@@ -28,7 +28,21 @@ export type ProposalListItem = {
   /** First VIEWED event timestamp (ISO), if any. */
   firstViewedAt?: string;
   paid?: number;
+  /** Payment tracking (accepted jobs). Dollars, mirroring `total`. */
+  paidTotal?: number;
+  /** ISO timestamp when the job hit 100% collected → "Done jobs". */
+  completedAt?: string;
+  /** Change orders sitting with the client (status SENT). */
+  pendingChangeOrders?: number;
+  /** Overdue pending installments (due date in the past). */
+  overdueInstallments?: number;
 };
+
+/** Derived job stage for accepted proposals: collecting vs fully paid. */
+export function jobStage(p: ProposalListItem): "in_progress" | "done" | null {
+  if (p.status !== "accepted") return null;
+  return p.completedAt ? "done" : "in_progress";
+}
 
 export type ActivityEvent = {
   id: string;

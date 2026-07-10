@@ -13,11 +13,13 @@ import {
   Inbox,
   Calendar,
   DollarSign,
+  Crosshair,
 } from "lucide-react";
 import { InteractionStatus } from "@prisma/client";
+import type { GutterScore } from "@/lib/leads/gutter-score";
 import type { LeadWithInteraction } from "./LeadDetailsPanel";
 
-export type SortMode = "relevance" | "newest" | "value";
+export type SortMode = "score" | "relevance" | "newest" | "value";
 
 const RELEVANCE_META: Record<
   string,
@@ -48,7 +50,9 @@ const INTERACTION_PILL: Record<
   { label: string; cls: string }
 > = {
   UNREAD: {
-    label: "New",
+    // "Unread" (not "New") — the fresh-ingest "Just in" chip owns the
+    // new-arrival vocabulary; this pill is about YOUR interaction state.
+    label: "Unread",
     cls: "bg-stripe-coral/15 text-stripe-coral ring-stripe-coral/40",
   },
   CONTACTED: {
@@ -110,6 +114,9 @@ export interface LeadsSidebarHandle {
 
 interface LeadsSidebarProps {
   leads: LeadWithInteraction[];
+  /** Gutter Score per lead id — computed once in LeadsMap so the pins,
+   *  heatmap, and list all read the same number. */
+  scores: Map<string, GutterScore>;
   hoveredLeadId: string | null;
   selectedLeadId: string | null;
   onHover: (lead: LeadWithInteraction | null) => void;
@@ -120,12 +127,15 @@ interface LeadsSidebarProps {
   onSortChange: (s: SortMode) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /** True when a prospect radius is narrowing this list. */
+  radiusActive?: boolean;
 }
 
 const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
   function LeadsSidebar(
     {
       leads,
+      scores,
       hoveredLeadId,
       selectedLeadId,
       onHover,
@@ -136,6 +146,7 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
       onSortChange,
       collapsed,
       onToggleCollapse,
+      radiusActive,
     },
     ref,
   ) {
@@ -190,8 +201,20 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
               {isLoading ? "…" : leads.length}
             </span>
             <span className="text-xs text-zinc-400">
-              {leads.length === 1 ? "lead" : "leads"} in view
-              {hasMore && " (top 500)"}
+              {leads.length === 1 ? "lead" : "leads"}{" "}
+              {radiusActive ? (
+                <span className="inline-flex items-center gap-1 text-emerald-300">
+                  <Crosshair size={10} />
+                  in radius
+                </span>
+              ) : (
+                "in view"
+              )}
+              {/* Truncation disclosure must SURVIVE radius mode — the
+                  radius stats are computed over the same top-500 subset,
+                  so hiding the cap exactly when prospect mode makes
+                  quantitative claims would misrepresent the data. */}
+              {hasMore && " (of top 500)"}
             </span>
           </div>
           <div className="flex items-center gap-1">
@@ -201,6 +224,7 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
               className="rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-accent-500"
               title="Sort leads"
             >
+              <option value="score">Gutter Score</option>
               <option value="relevance">Hot first</option>
               <option value="newest">Newest</option>
               <option value="value">Highest value</option>
@@ -240,6 +264,7 @@ const LeadsSidebar = forwardRef<LeadsSidebarHandle, LeadsSidebarProps>(
                 <li key={lead.id}>
                   <LeadCard
                     lead={lead}
+                    score={scores.get(lead.id) ?? null}
                     isHovered={hoveredLeadId === lead.id}
                     isSelected={selectedLeadId === lead.id}
                     onHover={onHover}
@@ -263,6 +288,7 @@ export default LeadsSidebar;
 
 interface LeadCardProps {
   lead: LeadWithInteraction;
+  score: GutterScore | null;
   isHovered: boolean;
   isSelected: boolean;
   onHover: (lead: LeadWithInteraction | null) => void;
@@ -270,8 +296,16 @@ interface LeadCardProps {
   registerRef: (el: HTMLButtonElement | null) => void;
 }
 
+/** True for leads ingested in the last 48h — "new since your last look". */
+function isFreshLead(createdAt?: string | null): boolean {
+  if (!createdAt) return false;
+  const t = new Date(createdAt).getTime();
+  return Number.isFinite(t) && Date.now() - t < 48 * 3600 * 1000;
+}
+
 function LeadCard({
   lead,
+  score,
   isHovered,
   isSelected,
   onHover,
@@ -285,6 +319,9 @@ function LeadCard({
     : null;
   const value = formatMoney(lead.projectValue);
   const age = daysSince(lead.issuedDate);
+  const windowNow = score?.window.state === "now";
+  const windowSoon = score?.window.state === "soon";
+  const fresh = isFreshLead(lead.createdAt);
 
   return (
     <button
@@ -292,7 +329,7 @@ function LeadCard({
       onMouseEnter={() => onHover(lead)}
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(lead)}
-      className={`group block w-full px-4 py-3 text-left transition ${
+      className={`group block w-full px-4 py-3.5 text-left transition ${
         isSelected
           ? "bg-accent-500/10 ring-1 ring-inset ring-accent-500/40"
           : isHovered
@@ -301,24 +338,55 @@ function LeadCard({
       }`}
     >
       <div className="flex items-start gap-3">
-        <div
-          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${
-            rel
-              ? `${rel.ring} bg-zinc-950`
-              : "bg-zinc-900 ring-white/10"
-          }`}
-        >
-          <Icon
-            size={16}
-            className={rel ? rel.text : "text-zinc-300"}
-            strokeWidth={2.5}
-          />
-        </div>
+        {/* Gutter Score meter — the sidebar's primary "should I care"
+            signal, same number that sizes the map pin. */}
+        {score ? (
+          <div className="mt-0.5 shrink-0">
+            <MiniScoreRing score={score.score} />
+          </div>
+        ) : (
+          <div
+            className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ${
+              rel ? `${rel.ring} bg-zinc-950` : "bg-zinc-900 ring-white/10"
+            }`}
+          >
+            <Icon
+              size={16}
+              className={rel ? rel.text : "text-zinc-300"}
+              strokeWidth={2.5}
+            />
+          </div>
+        )}
         <div className="min-w-0 flex-1">
-          {/* Top row: relevance + value */}
+          {/* Top row: timing window / relevance + value */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
-              {rel && (
+              {fresh && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-accent-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-accent-300 ring-1 ring-accent-500/40"
+                  title="Ingested in the last 48 hours"
+                >
+                  JUST IN
+                </span>
+              )}
+              {(windowNow || windowSoon) && (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ${
+                    windowNow
+                      ? "bg-stripe-coral/15 text-stripe-coral ring-stripe-coral/40"
+                      : "bg-amber-500/10 text-amber-300 ring-amber-500/30"
+                  }`}
+                  title={score?.window.detail}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      windowNow ? "bg-stripe-coral" : "bg-amber-400"
+                    }`}
+                  />
+                  {windowNow ? "Call now" : "Call soon"}
+                </span>
+              )}
+              {!windowNow && !windowSoon && rel && (
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ${rel.ring} ${rel.text} bg-zinc-950`}
                 >
@@ -382,14 +450,58 @@ function LeadCard({
             )}
           </div>
 
-          {/* AI summary preview */}
+          {/* AI summary preview — one line here; full text on click. */}
           {lead.aiSummary && (
-            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-zinc-300/80">
+            <p className="mt-1.5 line-clamp-1 text-[11px] leading-snug text-zinc-300/70">
               {lead.aiSummary}
             </p>
           )}
         </div>
       </div>
     </button>
+  );
+}
+
+/** Compact circular Gutter Score meter for the list cards. Single-hue
+ *  magnitude encoding (accent); coral reserved for the prime band, matching
+ *  the map pins. Local copy — LeadsMap imports this file, so importing its
+ *  ScoreRing back would be circular. */
+function MiniScoreRing({ score }: { score: number }) {
+  const size = 36;
+  const r = (size - 6) / 2;
+  const c = 2 * Math.PI * r;
+  const frac = Math.max(0, Math.min(1, score / 100));
+  const prime = score >= 70;
+  const color = prime ? "#f8717e" : "#7d8bfc";
+  return (
+    <div
+      className="relative"
+      style={{ width: size, height: size }}
+      title={`Gutter Score ${score}/100 — trade fit, timing window, building type, value`}
+    >
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.16)"
+          strokeWidth={3}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeDasharray={`${c * frac} ${c}`}
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold tabular-nums text-white">
+        {score}
+      </span>
+    </div>
   );
 }

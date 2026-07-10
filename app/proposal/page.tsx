@@ -315,8 +315,8 @@ function Inner() {
           )}
         </>
       ) : (
-        <main className="mx-auto grid max-w-[1600px] gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:p-6">
-          <div className="space-y-6">
+        <main className="mx-auto grid max-w-[1600px] gap-6 p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:p-6 lg:py-8">
+          <div className="space-y-8">
             <CoverSection proposal={proposal} onChange={setProposal} />
             <AerialSection proposal={proposal} onChange={setProposal} />
             <PackagesSection

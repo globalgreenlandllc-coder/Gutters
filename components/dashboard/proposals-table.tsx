@@ -4,23 +4,28 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
+  AlertTriangle,
   ArrowUpRight,
   ChevronRight,
   Eye,
+  FileDiff,
   Loader2,
   MoreHorizontal,
   Search,
   Send,
   Trash2,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
+  jobStage,
   timeAgo,
   type ProposalListItem,
   type ProposalStatus,
 } from "@/lib/dashboard-mock";
 import { SendModal } from "@/components/proposal/send-modal";
+import { PaymentsDrawer } from "@/components/dashboard/payments-drawer";
 import { getMyProposal } from "@/app/actions/dashboard";
 import { deleteProposal } from "@/app/actions/proposals";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -37,14 +42,24 @@ const STATUS_TONE: Record<
   expired: { tone: "amber", label: "Expired" },
 };
 
-const FILTERS: { id: "all" | ProposalStatus; label: string }[] = [
+type FilterId = "all" | ProposalStatus | "in_progress" | "done";
+
+const FILTERS: { id: FilterId; label: string }[] = [
   { id: "all", label: "All" },
   { id: "draft", label: "Drafts" },
   { id: "sent", label: "Sent" },
   { id: "viewed", label: "Viewed" },
-  { id: "accepted", label: "Accepted" },
+  { id: "in_progress", label: "In progress" },
+  { id: "done", label: "Done" },
   { id: "expired", label: "Expired" },
 ];
+
+function matchesFilter(p: ProposalListItem, filter: FilterId): boolean {
+  if (filter === "all") return true;
+  if (filter === "in_progress") return jobStage(p) === "in_progress";
+  if (filter === "done") return jobStage(p) === "done";
+  return p.status === filter;
+}
 
 export function ProposalsTable({
   items,
@@ -55,8 +70,16 @@ export function ProposalsTable({
   compact?: boolean;
   showFilters?: boolean;
 }) {
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
+  const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
+  // Payments drawer for accepted jobs (schedule, mark-paid, change
+  // orders). Auto-opens when the URL carries ?pay=<proposalId> — the
+  // Overview needs-attention feed links here.
+  const [payFor, setPayFor] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("pay");
+    if (id) setPayFor(id);
+  }, []);
   // Send-from-list: when the row's Send button is clicked, we load the
   // full Proposal blob from the DB and pop the same SendModal the
   // /proposal editor uses. Loading state is per-row so multiple rows
@@ -105,7 +128,7 @@ export function ProposalsTable({
 
   const filtered = items.filter((p) => {
     if (deletedIds.has(p.id)) return false;
-    if (filter !== "all" && p.status !== filter) return false;
+    if (!matchesFilter(p, filter)) return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return (
@@ -120,10 +143,7 @@ export function ProposalsTable({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
           <div className="flex flex-wrap gap-1.5">
             {FILTERS.map((f) => {
-              const count =
-                f.id === "all"
-                  ? items.length
-                  : items.filter((p) => p.status === f.id).length;
+              const count = items.filter((p) => matchesFilter(p, f.id)).length;
               const active = filter === f.id;
               return (
                 <button
@@ -190,6 +210,7 @@ export function ProposalsTable({
         )}
         {filtered.map((p, i) => {
           const tone = STATUS_TONE[p.status];
+          const stage = jobStage(p);
           // Send is meaningful for drafts and re-sends; suppress only
           // for accepted / declined / expired where it'd be misleading.
           const canSend =
@@ -227,17 +248,57 @@ export function ProposalsTable({
                     )}
                   </div>
                 </Link>
-                <Link
-                  href={`/proposal?id=${p.id}`}
-                  className="flex items-center gap-2"
-                >
-                  <Badge tone={tone.tone}>{tone.label}</Badge>
-                  {p.status === "accepted" && p.paid !== undefined && (
-                    <span className="text-[11px] text-emerald-600">
-                      paid {formatCurrency(p.paid)}
-                    </span>
+                <div className="flex items-center gap-2">
+                  {stage === "done" ? (
+                    <Badge tone="emerald">Done · paid</Badge>
+                  ) : stage === "in_progress" ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPayFor(p.id);
+                      }}
+                      className="group/progress flex items-center gap-2"
+                      title={`${formatCurrency(p.paidTotal ?? 0)} of ${formatCurrency(p.total)} collected — open payments`}
+                    >
+                      <Badge tone="accent">In progress</Badge>
+                      <span className="hidden h-1 w-14 overflow-hidden rounded-full bg-zinc-100 xl:block">
+                        <span
+                          className="block h-full rounded-full bg-accent-600"
+                          style={{
+                            width: `${p.total > 0 ? Math.min(100, Math.round(((p.paidTotal ?? 0) / p.total) * 100)) : 0}%`,
+                          }}
+                        />
+                      </span>
+                      {(p.overdueInstallments ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-rose-600"
+                          title="Overdue payment"
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          {p.overdueInstallments}
+                        </span>
+                      )}
+                      {(p.pendingChangeOrders ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-sky-600"
+                          title="Change order awaiting client"
+                        >
+                          <FileDiff className="h-3 w-3" />
+                          {p.pendingChangeOrders}
+                        </span>
+                      )}
+                    </button>
+                  ) : (
+                    <Link
+                      href={`/proposal?id=${p.id}`}
+                      className="flex items-center gap-2"
+                    >
+                      <Badge tone={tone.tone}>{tone.label}</Badge>
+                    </Link>
                   )}
-                </Link>
+                </div>
                 <Link
                   href={`/proposal?id=${p.id}`}
                   className="text-right text-sm font-medium tabular-nums text-zinc-900"
@@ -279,6 +340,21 @@ export function ProposalsTable({
                   {timeAgo(p.updatedAt)}
                 </Link>
                 <div className="flex items-center justify-end gap-1">
+                  {stage && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPayFor(p.id);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700"
+                      title="Payment schedule, receipts & change orders"
+                    >
+                      <Wallet className="h-3 w-3" />
+                      Payments
+                    </button>
+                  )}
                   {canSend && (
                     <button
                       type="button"
@@ -333,6 +409,9 @@ export function ProposalsTable({
           onClose={() => setSendProposal(null)}
           proposal={sendProposal}
         />
+      )}
+      {payFor && (
+        <PaymentsDrawer proposalId={payFor} onClose={() => setPayFor(null)} />
       )}
     </div>
   );

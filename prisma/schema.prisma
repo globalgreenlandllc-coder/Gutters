@@ -329,12 +329,18 @@ model Proposal {
   sentAt            DateTime?
   acceptedAt        DateTime?
   expiresAt         DateTime?
+  // Set when the contract is 100% collected (all installments PAID).
+  // "Done jobs" in the dashboard = ACCEPTED + completedAt != null.
+  // Cleared automatically if an approved change order reopens a balance.
+  completedAt       DateTime?
 
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   events         ProposalEvent[]
   transactions   Transaction[]
   appointments   Appointment[]
   jobAssignments JobAssignment[]
+  installments   PaymentInstallment[]
+  changeOrders   ChangeOrder[]
 
   @@index([userId, status])
   @@index([publicToken])
@@ -351,6 +357,10 @@ enum ProposalEventKind {
   PAID
   DECLINED
   EXPIRED
+  CHANGE_ORDER_SENT
+  CHANGE_ORDER_APPROVED
+  CHANGE_ORDER_DECLINED
+  COMPLETED
 }
 
 model ProposalEvent {
@@ -366,6 +376,96 @@ model ProposalEvent {
 
   @@index([proposalId, createdAt])
   @@map("proposal_events")
+}
+
+// -----------------------------------------------------------------------
+// Payment schedule (installments) + change orders
+//
+// Created when a proposal is ACCEPTED: the homeowner's payment choice
+// becomes a schedule of installments (Deposit + Final, or one Full
+// payment). Contractors can edit the schedule, mark installments paid
+// (cash/check/card/bank), and every paid installment auto-emails the
+// client a receipt. When the sum of PAID installments covers the
+// contract total, the proposal's completedAt is stamped → "Done jobs".
+//
+// Change orders are extra-work requests sent mid-job. The client
+// approves/declines from the same portal link; approval appends an
+// installment and bumps the contract total — one running invoice.
+// -----------------------------------------------------------------------
+
+enum InstallmentStatus {
+  PENDING
+  PAID
+}
+
+enum PaymentMethod {
+  CARD
+  CASH
+  CHECK
+  BANK_TRANSFER
+  OTHER
+}
+
+model PaymentInstallment {
+  id            String            @id @default(cuid())
+  proposalId    String
+  label         String
+  sortOrder     Int               @default(0)
+  amountCents   Int
+  // null = due on completion (no calendar date). Overdue is derived:
+  // status PENDING && dueAt < now.
+  dueAt         DateTime?
+  status        InstallmentStatus @default(PENDING)
+  paidAt        DateTime?
+  method        PaymentMethod?
+  note          String?
+  receiptSentAt DateTime?
+  // Reminder throttling for the daily cron + manual "Remind" button.
+  remindedAt    DateTime?
+  reminderCount Int               @default(0)
+  // Set when this installment was created by an approved change order.
+  changeOrderId String?           @unique
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  proposal    Proposal     @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  changeOrder ChangeOrder? @relation(fields: [changeOrderId], references: [id], onDelete: SetNull)
+
+  @@index([proposalId, sortOrder])
+  @@index([status, dueAt])
+  @@map("payment_installments")
+}
+
+enum ChangeOrderStatus {
+  DRAFT
+  SENT
+  APPROVED
+  DECLINED
+}
+
+model ChangeOrder {
+  id            String            @id @default(cuid())
+  proposalId    String
+  // Sequential per proposal: CO #1, CO #2, …
+  number        Int
+  title         String
+  description   String?           @db.Text
+  amountCents   Int
+  status        ChangeOrderStatus @default(DRAFT)
+  sentAt        DateTime?
+  decidedAt     DateTime?
+  // Client-typed name captured on approval (lightweight e-sign).
+  approvedName  String?
+  declineReason String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  proposal    Proposal            @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  installment PaymentInstallment?
+
+  @@unique([proposalId, number])
+  @@index([proposalId, status])
+  @@map("change_orders")
 }
 
 // -----------------------------------------------------------------------

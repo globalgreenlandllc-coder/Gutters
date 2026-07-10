@@ -368,6 +368,54 @@ export function packageTotal(
 }
 
 /**
+ * Derives a proposal's contract total (in cents) from its JSON data
+ * blob. Single source of truth shared by the dashboard list, KPIs,
+ * acceptance flow and payment schedule so every surface prices a
+ * proposal the same way.
+ *
+ * Priority: explicit `preferPackageId` (what the homeowner picked) →
+ * the recommended tier → index 1 ("Pro Shield") → first package.
+ * Returns `fallbackCents` untouched when it's already a real number.
+ */
+export function deriveTotalCentsFromData(
+  data: unknown,
+  fallbackCents: number = 0,
+  preferPackageId?: string | null,
+): number {
+  if (fallbackCents > 0 && !preferPackageId) return fallbackCents;
+  const proposal = data as Partial<Proposal> | null;
+  if (
+    !proposal ||
+    !Array.isArray(proposal.packages) ||
+    proposal.packages.length === 0 ||
+    !proposal.measurements
+  ) {
+    return Math.max(0, fallbackCents);
+  }
+  const packages = proposal.packages;
+  const selectedId =
+    preferPackageId ??
+    (proposal as { selectedPackageId?: string }).selectedPackageId;
+  const pick =
+    (selectedId ? packages.find((p) => p.id === selectedId) : null) ??
+    packages.find((p) => p.recommended) ??
+    packages[1] ??
+    packages[0];
+  if (!pick) return Math.max(0, fallbackCents);
+  try {
+    const { total } = packageTotal(
+      pick,
+      proposal.measurements,
+      proposal.discountPct ?? 0,
+    );
+    const cents = Math.max(0, Math.round(total * 100));
+    return cents > 0 ? cents : Math.max(0, fallbackCents);
+  } catch {
+    return Math.max(0, fallbackCents);
+  }
+}
+
+/**
  * Inverse of `packageTotal`'s `total`. Given a sticker price the
  * contractor types in, return the `markupPct` that produces it at the
  * current subtotal + discount, so the editor can offer a "type any

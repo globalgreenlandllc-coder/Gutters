@@ -9,11 +9,13 @@ import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderProposalEmail } from "@/lib/email/proposal-template";
 import {
   blankProposal,
+  deriveTotalCentsFromData,
   packageTotal,
   type Proposal,
 } from "@/lib/proposal-mock";
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
 import { getMe } from "./me";
+import { createDefaultSchedule } from "./payments";
 
 export type SendProposalResult =
   | { ok: true; token: string; portalUrl: string; messageId: string }
@@ -554,8 +556,38 @@ export async function acceptProposalByToken(args: {
         status: "ACCEPTED",
         acceptedAt: now,
         selectedPackageId: args.selectedPackageId ?? row.selectedPackageId,
+        // Lock the contract total to the package the homeowner actually
+        // picked — the stored column may still reflect the recommended
+        // tier from draft time.
+        totalCents: deriveTotalCentsFromData(
+          row.data,
+          row.totalCents,
+          args.selectedPackageId ?? row.selectedPackageId,
+        ),
       },
     });
+
+    // Build the payment schedule from the homeowner's choice (deposit +
+    // final, or one full payment). Best-effort: acceptance must never
+    // fail because of schedule bookkeeping — getPaymentOverview lazily
+    // repairs missing schedules later.
+    try {
+      await createDefaultSchedule({
+        row: {
+          id: accepted.id,
+          status: "ACCEPTED",
+          totalCents: accepted.totalCents,
+          paidCents: accepted.paidCents,
+          selectedPackageId: accepted.selectedPackageId,
+          acceptedAt: accepted.acceptedAt,
+          updatedAt: accepted.updatedAt,
+          data: accepted.data,
+        },
+        paymentChoice: args.paymentChoice,
+      });
+    } catch (e) {
+      console.warn("[acceptProposalByToken] schedule creation failed", e);
+    }
 
     await db.proposalEvent.create({
       data: {

@@ -77,32 +77,9 @@ export function CoverSection({
         value={proposal.intro}
         onChange={(v) => onChange({ ...proposal, intro: v })}
         readOnly={readOnly}
-        className="mt-6 text-base leading-relaxed text-zinc-700"
+        className="mt-6 max-w-2xl text-base leading-relaxed text-zinc-700"
       />
-
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Client" value={proposal.client.name} />
-        <Stat label="Gutter LF" value={`${proposal.measurements.eaveLF} LF`} />
-        <Stat
-          label="Downspouts"
-          value={`${proposal.measurements.downspoutCount}`}
-        />
-        <Stat label="Valid for" value={`${proposal.validDays} days`} />
-      </div>
     </section>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 px-3 py-2.5">
-      <div className="font-label text-[10px] text-zinc-500">
-        {label}
-      </div>
-      <div className="mt-0.5 truncate text-sm font-medium tabular-nums text-zinc-900">
-        {value}
-      </div>
-    </div>
   );
 }
 

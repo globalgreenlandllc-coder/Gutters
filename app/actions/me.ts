@@ -187,6 +187,22 @@ async function findOrCreateUser(
         resetsAt: nextMonthBoundary(),
       },
     });
+  } else if (user.creditWallet.resetsAt.getTime() < Date.now()) {
+    // Lazy monthly rollover — without this, wallets brick at 12 lifetime
+    // estimates. Monthly `included` refreshes (used → 0); purchased
+    // `bonus` credits carry over minus whatever the user already burned
+    // beyond the monthly allowance. The updateMany guard on resetsAt
+    // makes concurrent requests idempotent (only one resets).
+    const cw = user.creditWallet;
+    const overflowUsed = Math.max(0, cw.used - cw.included);
+    await db.creditWallet.updateMany({
+      where: { userId: user.id, resetsAt: cw.resetsAt },
+      data: {
+        used: 0,
+        bonus: Math.max(0, cw.bonus - overflowUsed),
+        resetsAt: nextMonthBoundary(),
+      },
+    });
   }
 
   return db.user.findUnique({

@@ -1,23 +1,33 @@
-import { Nav } from "@/components/landing/nav";
-import { Hero } from "@/components/landing/hero";
-import { DashboardCascade } from "@/components/landing/dashboard-cascade";
-import { OldVsAi } from "@/components/landing/old-vs-ai";
-import { HowItWorks } from "@/components/landing/how-it-works";
-import { Features } from "@/components/landing/features";
-import { Pricing } from "@/components/landing/pricing";
-import { CTA } from "@/components/landing/cta";
-import { Footer } from "@/components/landing/footer";
+import { Banner } from "@/components/landing2/banner";
+import { Nav } from "@/components/landing2/nav";
+import { Hero } from "@/components/landing2/hero";
+import { Stats } from "@/components/landing2/stats";
+import { Logos } from "@/components/landing2/logos";
+import { Manifesto } from "@/components/landing2/manifesto";
+import { Engine } from "@/components/landing2/engine";
+import { Detection } from "@/components/landing2/detection";
+import { Gap } from "@/components/landing2/gap";
+import { Dashboard } from "@/components/landing2/dashboard";
+import { Tiers } from "@/components/landing2/tiers";
+import { Insights } from "@/components/landing2/insights";
+import { CTA } from "@/components/landing2/cta";
+import { Footer } from "@/components/landing2/footer";
 
 export default function HomePage() {
   return (
-    <main className="relative bg-paper">
+    <main className="relative bg-[#faf8f4] text-[#1c1a17]">
+      <Banner />
       <Nav />
       <Hero />
-      <DashboardCascade />
-      <OldVsAi />
-      <HowItWorks />
-      <Features />
-      <Pricing />
+      <Stats />
+      <Logos />
+      <Manifesto />
+      <Engine />
+      <Detection />
+      <Gap />
+      <Dashboard />
+      <Tiers />
+      <Insights />
       <CTA />
       <Footer />
     </main>

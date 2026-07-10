@@ -3,12 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   DollarSign,
+  HandCoins,
+  Hammer,
   Send,
   Sparkles,
   TrendingUp,
+  Wallet,
 } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardShell } from "@/components/dashboard/dashboard-nav";
@@ -17,7 +21,7 @@ import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
 import { QuickStart } from "@/components/dashboard/quick-start";
 import { OnboardingStrip } from "@/components/dashboard/onboarding-strip";
-import { Badge } from "@/components/ui/badge";
+import { NeedsAttention } from "@/components/dashboard/needs-attention";
 import { Button } from "@/components/ui/button";
 import {
   listMyActivity,
@@ -27,6 +31,12 @@ import {
   type MyKpis,
   type MyProposalRow,
 } from "@/app/actions/dashboard";
+import {
+  getNeedsAttention,
+  getPaymentStats,
+  type AttentionItem,
+  type PaymentStats,
+} from "@/app/actions/payments";
 import { formatCurrency } from "@/lib/utils";
 import { useSession } from "@/lib/auth-mock";
 
@@ -43,16 +53,26 @@ function Inner() {
   const [proposals, setProposals] = useState<MyProposalRow[]>([]);
   const [kpis, setKpis] = useState<MyKpis | null>(null);
   const [activity, setActivity] = useState<MyActivityEvent[]>([]);
+  const [attention, setAttention] = useState<AttentionItem[]>([]);
+  const [money, setMoney] = useState<PaymentStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listMyProposals(), getMyKpis(), listMyActivity()])
-      .then(([p, k, a]) => {
+    Promise.all([
+      listMyProposals(),
+      getMyKpis(),
+      listMyActivity(),
+      getNeedsAttention(),
+      getPaymentStats(),
+    ])
+      .then(([p, k, a, att, m]) => {
         if (cancelled) return;
         setProposals(p);
         setKpis(k);
         setActivity(a);
+        setAttention(att);
+        setMoney(m);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -74,11 +94,8 @@ function Inner() {
   const isEmpty = !loading && proposals.length === 0;
 
   return (
-    <DashboardShell
-      title="Overview"
-      actions={<Badge tone="emerald">All systems healthy</Badge>}
-    >
-      <div className="space-y-6">
+    <DashboardShell title="Overview">
+      <div className="space-y-8">
         <p className="text-sm text-zinc-500">
           {greetingTime()}, {session?.user.name.split(" ")[0]} —{" "}
           {isEmpty
@@ -94,38 +111,80 @@ function Inner() {
             label="Sent this month"
             value={String(k.sent)}
             Icon={Send}
-            tone="sky"
-            delta={k.sent > 0 ? undefined : "Send your first proposal"}
           />
           <StatTile
             index={1}
             label="Accepted"
             value={String(k.accepted)}
             Icon={CheckCircle2}
-            tone="emerald"
-            delta={k.accepted > 0 ? undefined : "—"}
           />
           <StatTile
             index={2}
             label="Revenue MTD"
             value={formatCurrency(k.revenueMtd)}
             Icon={DollarSign}
-            tone="emerald"
-            delta={k.revenueMtd > 0 ? undefined : "—"}
           />
           <StatTile
             index={3}
             label="Pipeline"
             value={formatCurrency(k.pipelineValue)}
             Icon={TrendingUp}
-            tone="violet"
             delta={
               k.pipelineValue > 0
                 ? `${Math.round(k.conversion * 100)}% close rate`
-                : "—"
+                : undefined
             }
           />
         </section>
+
+        {/* Money row — collections across accepted jobs */}
+        {money &&
+          (money.jobsInProgress > 0 ||
+            money.jobsDone > 0 ||
+            money.collectedMtdCents > 0) && (
+            <section className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 shadow-card sm:grid-cols-2 lg:grid-cols-4">
+              <StatTile
+                index={0}
+                label="Collected this month"
+                value={formatCurrency(money.collectedMtdCents / 100)}
+                Icon={HandCoins}
+              />
+              <StatTile
+                index={1}
+                label="Outstanding"
+                value={formatCurrency(money.outstandingCents / 100)}
+                Icon={Wallet}
+                delta={
+                  money.jobsInProgress > 0
+                    ? `${money.jobsInProgress} job${money.jobsInProgress === 1 ? "" : "s"} in progress`
+                    : undefined
+                }
+              />
+              <StatTile
+                index={2}
+                label="Overdue"
+                value={formatCurrency(money.overdueCents / 100)}
+                Icon={AlertTriangle}
+                positive={money.overdueCount === 0}
+                delta={
+                  money.overdueCount > 0
+                    ? `${money.overdueCount} payment${money.overdueCount === 1 ? "" : "s"} late`
+                    : "nothing late"
+                }
+              />
+              <StatTile
+                index={3}
+                label="Done jobs"
+                value={String(money.jobsDone)}
+                Icon={Hammer}
+                delta={
+                  money.pendingChangeOrders > 0
+                    ? `${money.pendingChangeOrders} change order${money.pendingChangeOrders === 1 ? "" : "s"} pending`
+                    : undefined
+                }
+              />
+            </section>
+          )}
 
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
@@ -149,8 +208,9 @@ function Inner() {
           </div>
 
           <div className="space-y-6">
+            <NeedsAttention items={attention} loading={loading} />
             <ActivityFeed events={activity} />
-            <ConversionCard kpis={k} />
+            {k.sent > 0 && <ConversionCard kpis={k} />}
           </div>
         </section>
       </div>

@@ -107,21 +107,6 @@ export function ProposalTopBar({
           </button>
         </div>
 
-        {/* Prominent escape hatch from preview — sits next to the tabs
-            so contractors who don't realize the tabs are tabs still
-            have a clear way back to editing price. */}
-        {preview && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onTogglePreview}
-            className="hidden md:inline-flex"
-          >
-            <Pencil className="h-4 w-4" />
-            Back to edit
-          </Button>
-        )}
-
         {onSave && (
           <Button
             variant="secondary"

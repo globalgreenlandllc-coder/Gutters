@@ -246,6 +246,89 @@ export async function getAdminKpis(): Promise<AdminKpis> {
   };
 }
 
+export type AdminFinancials = {
+  mrrCents: number;
+  activeSubs: number;
+  pastDueSubs: number;
+  revenue30dCents: number;
+  subscriptionRevenue30dCents: number;
+  creditRevenue30dCents: number;
+  allTimeRevenueCents: number;
+  transactions: Array<{
+    id: string;
+    userEmail: string;
+    type: string;
+    status: string;
+    grossCents: number;
+    description: string | null;
+    createdAt: string;
+  }>;
+};
+
+/**
+ * Platform revenue view for /admin/financials. All rows come from the
+ * Transaction ledger the Stripe webhook writes (subscriptions +
+ * credit top-ups) — empty until Stripe keys are configured and the
+ * first payment lands.
+ */
+export async function getAdminFinancials(): Promise<AdminFinancials> {
+  await requireAdmin();
+  const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  const [activeSubs, pastDueSubs, sub30, credit30, allTime, recent] =
+    await Promise.all([
+      db.subscription.count({ where: { status: "ACTIVE" } }),
+      db.subscription.count({ where: { status: "PAST_DUE" } }),
+      db.transaction.aggregate({
+        where: {
+          status: "SUCCEEDED",
+          type: "SUBSCRIPTION",
+          createdAt: { gte: since30d },
+        },
+        _sum: { grossCents: true },
+      }),
+      db.transaction.aggregate({
+        where: {
+          status: "SUCCEEDED",
+          type: "CREDIT_TOPUP",
+          createdAt: { gte: since30d },
+        },
+        _sum: { grossCents: true },
+      }),
+      db.transaction.aggregate({
+        where: { status: "SUCCEEDED" },
+        _sum: { grossCents: true },
+      }),
+      db.transaction.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 25,
+        include: { user: { select: { email: true } } },
+      }),
+    ]);
+
+  const subscriptionRevenue30dCents = sub30._sum.grossCents ?? 0;
+  const creditRevenue30dCents = credit30._sum.grossCents ?? 0;
+
+  return {
+    mrrCents: activeSubs * 5000,
+    activeSubs,
+    pastDueSubs,
+    revenue30dCents: subscriptionRevenue30dCents + creditRevenue30dCents,
+    subscriptionRevenue30dCents,
+    creditRevenue30dCents,
+    allTimeRevenueCents: allTime._sum.grossCents ?? 0,
+    transactions: recent.map((t) => ({
+      id: t.id,
+      userEmail: t.user.email,
+      type: t.type,
+      status: t.status,
+      grossCents: t.grossCents,
+      description: t.description,
+      createdAt: t.createdAt.toISOString(),
+    })),
+  };
+}
+
 export async function startImpersonation(
   targetUserId: string,
   reason: string,

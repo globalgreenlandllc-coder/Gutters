@@ -139,8 +139,8 @@ export function PaymentsSection() {
           </Button>
           <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
             <ShieldCheck className="h-3.5 w-3.5 text-accent-600" />
-            Links are stored encrypted and shown only on your accepted
-            proposals.
+            Links are validated (https only) and shown to clients on your
+            accepted proposals, payment reminders and receipts.
           </span>
         </div>
       </div>

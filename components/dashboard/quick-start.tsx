@@ -608,26 +608,6 @@ export function QuickStart() {
             )}
           </div>
         )}
-
-        {/* Sample addresses only in address mode */}
-        {source === "address" && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <span>Try:</span>
-            {[
-              "1247 Maple Ridge Drive, Austin, TX",
-              "82 Lakeshore Ave, Oakland, CA",
-            ].map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => goAddress(s)}
-                className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-zinc-600 transition hover:border-accent-400 hover:text-accent-700"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     </motion.div>
   );

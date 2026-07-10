@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { CheckCircle2, FileText, Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
+import { Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
@@ -40,7 +40,6 @@ export function BuilderSidebar({
   });
   const recommended =
     totals.find((t) => t.pkg.recommended) ?? totals[1] ?? totals[0];
-  const enabledTermsCount = proposal.terms.filter((t) => t.enabled).length;
 
   return (
     <aside className="space-y-4">
@@ -167,11 +166,7 @@ export function BuilderSidebar({
           <Send className="h-4 w-4" />
           Send to client
         </Button>
-        <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-          <span className="flex items-center gap-1.5">
-            <FileText className="h-3 w-3" />
-            {proposal.photos.length} photos · {enabledTermsCount} terms
-          </span>
+        <div className="mt-3 flex justify-center">
           <Badge tone="neutral">Auto-saved</Badge>
         </div>
       </div>
@@ -198,23 +193,9 @@ export function BuilderSidebar({
               client: { ...proposal.client, email: e.target.value },
             })
           }
-          className="mt-1 w-full bg-transparent text-sm text-zinc-600 outline-none"
+          placeholder="client@email.com"
+          className="mt-1 w-full bg-transparent text-sm text-zinc-600 outline-none placeholder:text-zinc-400"
         />
-
-        <ul className="mt-4 space-y-1.5 text-xs text-zinc-500">
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Email + secure portal link
-          </li>
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Stripe Connect deposit on accept
-          </li>
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Live "viewed" + "accepted" status
-          </li>
-        </ul>
       </div>
     </aside>
   );

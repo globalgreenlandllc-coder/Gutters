@@ -90,11 +90,18 @@ const STATUS_TO_UI: Record<
 export async function listMyProposals(): Promise<MyProposalRow[]> {
   const me = await getMe();
   if (!me) return [];
+  const now = new Date();
   const rows = await db.proposal.findMany({
     where: { userId: me.user.id },
     orderBy: { updatedAt: "desc" },
     include: {
-      _count: { select: { events: true } },
+      _count: {
+        select: {
+          events: true,
+          changeOrders: { where: { status: "SENT" } },
+          installments: { where: { status: "PENDING", dueAt: { lt: now } } },
+        },
+      },
       events: {
         where: { kind: "VIEWED" },
         orderBy: { createdAt: "asc" },
@@ -123,6 +130,10 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
       firstViewedAt: viewEvents[0]?.createdAt.toISOString(),
       lastViewedAt: viewEvents[viewEvents.length - 1]?.createdAt.toISOString(),
       paid: r.paidCents > 0 ? r.paidCents / 100 : undefined,
+      paidTotal: r.paidCents / 100,
+      completedAt: r.completedAt?.toISOString(),
+      pendingChangeOrders: r._count.changeOrders,
+      overdueInstallments: r._count.installments,
     };
   });
 }
@@ -287,7 +298,13 @@ function mapEventKind(
     case "ACCEPTED":
       return "accepted";
     case "PAID":
+    case "COMPLETED":
       return "paid";
+    case "CHANGE_ORDER_SENT":
+      return "sent";
+    case "CHANGE_ORDER_APPROVED":
+      return "accepted";
+    case "CHANGE_ORDER_DECLINED":
     case "DECLINED":
       return "declined";
     case "EXPIRED":
@@ -312,7 +329,15 @@ function messageForEvent(kind: string, address: string, client: string): string 
     case "ACCEPTED":
       return `Accepted · ${address}`;
     case "PAID":
-      return `Paid · ${address}`;
+      return `Payment received · ${address}`;
+    case "COMPLETED":
+      return `Job complete — paid in full · ${address}`;
+    case "CHANGE_ORDER_SENT":
+      return `Change order sent to ${client}`;
+    case "CHANGE_ORDER_APPROVED":
+      return `${client} approved a change order`;
+    case "CHANGE_ORDER_DECLINED":
+      return `${client} declined a change order`;
     case "DECLINED":
       return `Declined · ${address}`;
     case "EXPIRED":

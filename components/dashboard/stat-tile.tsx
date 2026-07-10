@@ -19,7 +19,6 @@ export function StatTile({
   spark,
   index = 0,
   Icon,
-  tone = "emerald",
 }: {
   label: string;
   value: string;
@@ -28,38 +27,26 @@ export function StatTile({
   spark?: number[];
   index?: number;
   Icon?: IconCmp;
-  /** Visual tone of the icon chip. */
-  tone?: "emerald" | "violet" | "sky" | "amber";
 }) {
-  const chip = {
-    emerald: "bg-emerald-50 text-emerald-600",
-    violet: "bg-violet-50 text-violet-600",
-    sky: "bg-sky-50 text-sky-600",
-    amber: "bg-amber-50 text-amber-600",
-  }[tone];
-
+  // Uniform, quiet icon chip — a rainbow of per-metric colors read as
+  // noise on a summary row.
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3, delay: index * 0.04 }}
-      className="bg-white p-5"
+      className="bg-white p-6"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm text-zinc-500">{label}</div>
         {Icon && (
-          <div
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-md",
-              chip,
-            )}
-          >
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-50 text-zinc-400">
             <Icon className="h-3.5 w-3.5" />
           </div>
         )}
       </div>
-      <div className="mt-2 flex items-end justify-between gap-3">
-        <div className="text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
+      <div className="mt-3 flex items-end justify-between gap-3">
+        <div className="text-[28px] font-semibold tracking-tight tabular-nums text-zinc-900">
           {value}
         </div>
         {spark && <Sparkline data={spark} positive={positive} />}

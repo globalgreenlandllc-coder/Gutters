@@ -37,6 +37,7 @@ import {
   simplify,
   transformToCanvas,
 } from "./geometry";
+import { countOpenEaveEnds } from "./roof-geom";
 import {
   assessSatelliteTrace,
   type FootprintBboxCanvas,
@@ -508,7 +509,27 @@ export async function runAIEstimatePipeline(
     const samPoint = didCrop
       ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
       : (buildingPointPx ?? undefined);
-    const samOutcome = await segmentRoofViaSam(workImage, samPoint);
+    // Hand SAM a TIGHT box hugging the actual building (Google Solar bbox
+    // translated into work-image space + ~10px overhang pad), instead of
+    // letting sam.ts default to the whole-crop-minus-5% box. The crop
+    // carries ~120px of yard on every side, so the default box invites SAM
+    // to lock onto one bright plane (this house: 3.7% coverage → rejected).
+    // Bounded: a mis-tightened box still faces the unchanged 15% area gate
+    // and Solar-mask fallback, so worst case === today.
+    let samBox:
+      | { x_min: number; y_min: number; x_max: number; y_max: number }
+      | undefined;
+    if (buildingBoxPx) {
+      const PAD = 10;
+      const bx1 = buildingBoxPx.x1 - cropOffset.x - PAD;
+      const by1 = buildingBoxPx.y1 - cropOffset.y - PAD;
+      const bx2 = buildingBoxPx.x2 - cropOffset.x + PAD;
+      const by2 = buildingBoxPx.y2 - cropOffset.y + PAD;
+      if (bx2 - bx1 > 20 && by2 - by1 > 20) {
+        samBox = { x_min: bx1, y_min: by1, x_max: bx2, y_max: by2 };
+      }
+    }
+    const samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
     // Gate SAM acceptance on areaFraction. A real residential roof, tightly
     // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
     // locked onto a sub-region (one gable, a high-contrast plane, a
@@ -680,6 +701,10 @@ export async function runAIEstimatePipeline(
   // angular hip planes, so they drew as straight stubs through the
   // middle of the roof. Contractor adds these eaves manually with the
   // drawing tool when they exist.
+  // Hoisted so BOTH return paths (polygon + vision) can feed the count
+  // into trace-quality — a multi-tier roof whose interior gutters weren't
+  // auto-drawn must never ship as "ok / no adjustment needed."
+  let interiorTiersDetected = 0;
   if (solarRoofSegments.length > 0) {
     const perimeterEdges = (classifiedEaveLatLng ?? []).map((e) => ({
       a: e.a,
@@ -689,6 +714,7 @@ export async function runAIEstimatePipeline(
       solarRoofSegments,
       perimeterEdges,
     );
+    interiorTiersDetected = tierBreaks.length;
     if (tierBreaks.length > 0) {
       const meanStepFt =
         (tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
@@ -844,7 +870,10 @@ export async function runAIEstimatePipeline(
             };
           });
         totalEaveLF = dsmLF * 1.08;
-        sourceLabel = "DSM-classified";
+        // Classification here runs through classifyEdgeWithAzimuth (Solar
+        // plane azimuths), NOT the dead DSM classifier — label it honestly
+        // so the run notes don't misdirect debugging.
+        sourceLabel = "azimuth-classified";
       } else {
         notes.push(
           `DSM kept ${imageSpaceEdges.length} edge(s) — too few to trust, falling back to all ${roofPolygon.points.length} polygon edges`,
@@ -912,13 +941,28 @@ export async function runAIEstimatePipeline(
       // to weight downspout placement (valleys discharge water onto an
       // eave below; that's a natural drop point).
       const roofStructure = await resolveRoofStructure();
+      // Eaves handed to placeDownspoutsOnPolygon are canvas-space (900×580
+      // viewBox), so downspout spacing must divide by the SATELLITE
+      // canvas-px-per-foot, NOT the plan-takeoff constant 2.4. Passing 2.4
+      // inflates internal LF ~3× (this house's tile ≈7.2 px/ft), which
+      // over-fires the per-30-LF target and the >35-ft mid-run rule and
+      // over-places downspouts. Guard against a non-finite return (NaN ≤ 35
+      // is false → a mid-run downspout on every eave), which the literal
+      // 2.4 could never produce.
+      const rawCpf = canvasPxPerFoot(
+        geocoded.lat,
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      const cpf = Number.isFinite(rawCpf) && rawCpf > 0 ? rawCpf : 2.4;
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
         eaves,
         image.width,
         image.height,
         estimatedStories,
-        2.4,
+        cpf,
         roofStructure?.valleys ?? [],
       );
 
@@ -931,6 +975,11 @@ export async function runAIEstimatePipeline(
         image.width,
         image.height,
       );
+      // End caps belong at OPEN eave-run terminations (a run that stops in
+      // mid-air, e.g. where an eave meets a rake), a topological quantity —
+      // not the length-blind eaveLF/60 heuristic. Runs computed on the
+      // post-merge eaves so continuous walls count as one run.
+      const openEnds = countOpenEaveEnds(eaves);
       const measurements = measurementsFromVision({
         eaveLF: totalEaveLF,
         downspoutCount: downspouts.length,
@@ -944,6 +993,7 @@ export async function runAIEstimatePipeline(
           cornerSplit.outside + cornerSplit.inside > 0
             ? cornerSplit.inside
             : undefined,
+        endCaps: Math.max(2, openEnds),
       });
 
       notes.push(
@@ -983,6 +1033,8 @@ export async function runAIEstimatePipeline(
             totalEaveLF,
             footprintAreaFt2: fp?.areaFt2 ?? null,
             footprintBboxCanvas: fp?.bbox ?? null,
+            interiorTiersDetected,
+            segmentCount: solarRoofSegments.length,
           });
         })(),
         roofStructure,
@@ -1180,6 +1232,8 @@ export async function runAIEstimatePipeline(
             totalEaveLF,
             footprintAreaFt2: fp?.areaFt2 ?? null,
             footprintBboxCanvas: fp?.bbox ?? null,
+            interiorTiersDetected,
+            segmentCount: solarRoofSegments.length,
           });
         })(),
         roofStructure,

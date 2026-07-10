@@ -125,13 +125,11 @@ export function PackagesSection({
                 )}
                 <span className="text-xs text-zinc-500">total</span>
               </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {formatCurrency(totals.subtotal)} subtotal ·{" "}
-                {p.markupPct.toFixed(1)}% markup
-                {!readOnly && (
-                  <span className="text-zinc-400"> · type any price above</span>
-                )}
-              </div>
+              {!readOnly && !interactive && (
+                <div className="mt-1 text-xs text-zinc-400">
+                  Tap the price to set your number
+                </div>
+              )}
 
               <ul className="mt-5 space-y-2">
                 {p.highlights.map((h, i) => (
@@ -228,26 +226,13 @@ export function PackagesSection({
               )}
 
               {!readOnly && !interactive && (
-                <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
-                  <span>Markup</span>
-                  <input
-                    type="number"
-                    step={0.5}
-                    value={Math.round(p.markupPct * 10) / 10}
-                    onChange={(e) =>
-                      update(p.id, {
-                        markupPct: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    className="h-7 w-14 rounded-md border border-zinc-200 bg-white px-1.5 text-right text-xs text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  />
-                  <span>%</span>
+                <div className="mt-4 flex items-center justify-end border-t border-zinc-100 pt-3 text-xs">
                   <button
                     type="button"
                     onClick={() =>
                       update(p.id, { recommended: !p.recommended })
                     }
-                    className="ml-auto rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 transition hover:border-accent-400 hover:text-accent-700"
+                    className="rounded-md px-2 py-1 font-medium text-zinc-500 transition hover:text-accent-700"
                   >
                     {p.recommended ? "Unmark popular" : "Mark popular"}
                   </button>

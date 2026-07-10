@@ -1,6 +1,7 @@
 import "server-only";
 import type { SegmentedEavePolyline } from "./vision";
 import type { RoofPolygon } from "./sam";
+import { isArchitecturalCorner } from "./roof-geom";
 import { STORY_HEIGHT_FT } from "@/lib/types";
 import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
 
@@ -562,18 +563,28 @@ export function classifyPolygonCorners(
     const prev = pts[(i - 1 + pts.length) % pts.length];
     const curr = pts[i];
     const next = pts[(i + 1) % pts.length];
+    // Only count architectural corners (25–155° turns). A jaggy 0.5 m
+    // Solar-mask polygon carries dozens of near-collinear jitter vertices
+    // and near-180° hairpin spikes; the old |cross|<1e-6-only skip counted
+    // those as real corners and billed phantom miters (the impossible
+    // "7 outside / 15 inside" this house produced).
+    if (!isArchitecturalCorner(prev, curr, next)) continue;
     const v1x = curr.x - prev.x;
     const v1y = curr.y - prev.y;
     const v2x = next.x - curr.x;
     const v2y = next.y - curr.y;
     const cross = v1x * v2y - v1y * v2x;
-    if (Math.abs(cross) < 1e-6) continue; // collinear — not a corner
     // CCW polygon, y-down screen coords:
     //   cross < 0 → right turn at this vertex → OUTSIDE corner
     //   cross > 0 → left turn → INSIDE corner (concave)
     if (cross < 0) outside++;
     else inside++;
   }
+  // A valid simple building footprint always has more outside (convex)
+  // than inside (concave) corners. inside > outside means the polygon is
+  // still noise-dominated — return {0,0} so the caller falls back to the
+  // measurementsFromVision heuristic instead of billing fictitious miters.
+  if (inside > outside) return { outside: 0, inside: 0 };
   return { outside, inside };
 }
 
@@ -821,6 +832,10 @@ export function measurementsFromVision(args: {
    *  mock fallback paths where we don't have a polygon. */
   outsideCorners?: number;
   insideCorners?: number;
+  /** Geometry-derived end-cap count (open eave-run terminations, via
+   *  countOpenEaveEnds). When absent, falls back to the topology-blind
+   *  eaveLF/60 length heuristic — kept for the vision/mock paths. */
+  endCaps?: number;
 }): Measurements {
   return {
     eaveLF: Math.round(args.eaveLF),
@@ -829,7 +844,7 @@ export function measurementsFromVision(args: {
       args.outsideCorners ?? Math.max(4, Math.round(args.cornerCount * 0.7)),
     insideCorners:
       args.insideCorners ?? Math.max(0, Math.round(args.cornerCount * 0.3)),
-    endCaps: Math.max(2, Math.round(args.eaveLF / 60)),
+    endCaps: args.endCaps ?? Math.max(2, Math.round(args.eaveLF / 60)),
     downspoutCount: args.downspoutCount,
     stories: args.stories ?? 2,
     wasteFactorPct: 8,

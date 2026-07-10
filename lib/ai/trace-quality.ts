@@ -46,6 +46,14 @@ export function assessSatelliteTrace(args: {
   footprintAreaFt2: number | null;
   /** Solar footprint extent in canvas space. null = no Solar coverage. */
   footprintBboxCanvas: FootprintBboxCanvas | null;
+  /** Number of upper roof tiers Solar detected that the perimeter trace
+   *  does NOT cover — each is an interior gutter (upper roof draining onto
+   *  a lower roof) that isn't auto-drawn. >0 means the trace is a correct
+   *  OUTLINE but is missing interior runs, so it can't be "no-adjustment"
+   *  no matter how clean the perimeter is. */
+  interiorTiersDetected?: number;
+  /** Count of Solar roof segments — diagnostics only. */
+  segmentCount?: number;
 }): TraceQuality {
   // 1. No real trace at all — the pipeline fell through to mock geometry.
   if (args.source === "mock") {
@@ -117,8 +125,32 @@ export function assessSatelliteTrace(args: {
   }
 
   const confidence = Math.max(0, Math.min(1, score));
-  const status: TraceQuality["status"] =
+  let status: TraceQuality["status"] =
     confidence < 0.45 ? "unusable" : confidence < 0.8 ? "low" : "ok";
 
-  return { status, confidence, reasons: status === "ok" ? [] : reasons };
+  // 6. Multi-tier roof: the perimeter trace is a correct outline but every
+  //    interior eave (upper roof draining onto a lower roof) is missing —
+  //    those are never auto-drawn. Floor the status to "low" so a
+  //    perfectly clean perimeter can't ship as "no adjustment needed" and
+  //    silently under-bill. Never improve an already-worse verdict
+  //    (unusable stays unusable) and never touch the ok→ok happy path
+  //    when there are no tiers.
+  const tiers = args.interiorTiersDetected ?? 0;
+  const tierReasons = [...reasons];
+  if (tiers > 0 && status === "ok") {
+    status = "low";
+    tierReasons.push(
+      `${tiers} upper roof tier${tiers === 1 ? "" : "s"} detected — interior gutters weren't auto-drawn; add them with the drawing tool.`,
+    );
+  } else if (tiers > 0 && status === "low") {
+    tierReasons.push(
+      `${tiers} upper roof tier${tiers === 1 ? "" : "s"} detected — add the interior gutters with the drawing tool.`,
+    );
+  }
+
+  return {
+    status,
+    confidence,
+    reasons: status === "ok" ? [] : tierReasons,
+  };
 }

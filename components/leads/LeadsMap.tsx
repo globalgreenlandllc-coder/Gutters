@@ -5,8 +5,10 @@ import {
   APIProvider,
   Map as GoogleMap,
   AdvancedMarker,
-  InfoWindow,
+  Circle,
   useMap,
+  useMapsLibrary,
+  type MapMouseEvent,
 } from "@vis.gl/react-google-maps";
 import { InteractionStatus, LeadStatus } from "@prisma/client";
 import {
@@ -24,7 +26,16 @@ import {
   Sparkles,
   MapPin,
   Activity,
+  Crosshair,
+  Route,
+  Ruler,
 } from "lucide-react";
+import {
+  computeGutterScore,
+  doorKnockRouteUrl,
+  haversineMiles,
+  type GutterScore,
+} from "@/lib/leads/gutter-score";
 import LeadDetailsPanel, { LeadWithInteraction } from "./LeadDetailsPanel";
 import LeadsSidebar, {
   type LeadsSidebarHandle,
@@ -46,27 +57,16 @@ type Cluster = {
   lat: number;
   lng: number;
   count: number;
-  hotCount: number;
+  /** Leads scoring in the "prime" gutter band (≥70). Drives the coral
+   *  share of the cluster ring so a contractor can spot which clusters
+   *  are worth zooming into before reading a single address. */
+  primeCount: number;
 };
-
-/**
- * Translate a project value into a marker diameter (in px) on a log
- * scale. Projects span ~$5K → $5M+, so a linear scale would render
- * every residential permit the same and the big multifamily / new-build
- * projects wouldn't pop. log10($5K)≈3.7, log10($5M)≈6.7 — we map that
- * 3-decade range onto 28–52 px. Anything off the bottom (no value
- * reported) renders at the minimum so it's still visible.
- */
-function markerSizePx(value: number | null | undefined): number {
-  if (!value || value <= 0) return 28;
-  const v = Math.log10(value);
-  const norm = Math.max(0, Math.min(1, (v - 3.7) / 3));
-  return Math.round(28 + norm * 24);
-}
 
 function clusterLeads(
   leads: LeadWithInteraction[],
   zoom: number,
+  scores: Map<string, GutterScore>,
 ): { clusters: Cluster[]; unclustered: LeadWithInteraction[] } {
   if (zoom >= 14) return { clusters: [], unclustered: leads };
   // Cell size halves with each zoom level — mirrors how a single
@@ -91,18 +91,18 @@ function clusterLeads(
     if (arr.length >= 3) {
       let sumLat = 0;
       let sumLng = 0;
-      let hot = 0;
+      let prime = 0;
       for (const l of arr) {
         sumLat += l.latitude;
         sumLng += l.longitude;
-        if (l.aiRelevance === "high") hot++;
+        if ((scores.get(l.id)?.band ?? "low") === "prime") prime++;
       }
       clusters.push({
         id: `c-${key}`,
         lat: sumLat / arr.length,
         lng: sumLng / arr.length,
         count: arr.length,
-        hotCount: hot,
+        primeCount: prime,
       });
     } else {
       for (const l of arr) unclustered.push(l);
@@ -112,6 +112,13 @@ function clusterLeads(
 }
 
 const BBOX_DEBOUNCE_MS = 400;
+
+/** Marker diameter driven by GUTTER SCORE (not raw project value) — the
+ *  score already folds in value, trade fit, and timing, so pin size
+ *  reads as "how much should I care" rather than "how big is the loan". */
+function markerSizePx(score: number): number {
+  return Math.round(26 + (Math.max(0, Math.min(100, score)) / 100) * 20);
+}
 
 // Filter state shape — single object makes preset application atomic and
 // makes derivation of active chips a one-liner.
@@ -152,11 +159,11 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 type PresetId =
+  | "gutter-window"
   | "hot-builds"
   | "sfd-remodels"
   | "new-homes"
   | "commercial-builds"
-  | "townhouses-plats"
   | "unread";
 
 interface Preset {
@@ -166,7 +173,19 @@ interface Preset {
   patch: Partial<FilterState>;
 }
 
+// The job-type presets that cover the vast majority of one-click triage.
+// Everything else (Townhouses, Unread, permit stage, trade…) lives in the
+// Filters panel so the toolbar stays quiet.
 const PRESETS: Preset[] = [
+  {
+    id: "gutter-window",
+    label: "Reroofs now",
+    Icon: Ruler,
+    // Fresh roofing permits — the single highest-conversion gutter moment:
+    // gutters come off with the tear-off and the homeowner is deciding
+    // rooflines THIS week.
+    patch: { trade: "Roofing", stage: "last-90-days" },
+  },
   {
     id: "hot-builds",
     label: "Hot builds",
@@ -190,18 +209,6 @@ const PRESETS: Preset[] = [
     label: "Commercial",
     Icon: Building2,
     patch: { buildingType: "Commercial", projectKind: "New Construction" },
-  },
-  {
-    id: "townhouses-plats",
-    label: "Townhouses & plats",
-    Icon: Hammer,
-    patch: { developmentType: "Townhouse" },
-  },
-  {
-    id: "unread",
-    label: "Unread",
-    Icon: Inbox,
-    patch: { interactionStatus: InteractionStatus.UNREAD },
   },
 ];
 
@@ -353,9 +360,6 @@ function MapControls({
     <div className="absolute top-4 left-4 right-4 sm:right-auto z-10 bg-ink/95 backdrop-blur-md rounded-xl border border-white/10 shadow-2xl overflow-hidden max-w-[min(900px,calc(100vw-2rem))]">
       {/* Row 1: Presets + Search button */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-b border-white/10">
-        <span className="font-label text-[10px] text-zinc-500 mr-1">
-          Quick
-        </span>
         {PRESETS.map((p) => {
           const active = isPresetActive(p, filters);
           return (
@@ -529,6 +533,34 @@ function MapControls({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*   Prospect mode — click-to-drop radius circle for door-knock runs   */
+/* ------------------------------------------------------------------ */
+type ProspectState = {
+  center: { lat: number; lng: number };
+  radiusMi: number;
+};
+
+const RADIUS_OPTIONS = [0.5, 1, 2];
+const METERS_PER_MILE = 1609.344;
+
+/** Radius overlay — @vis.gl v1.8 ships a controlled <Circle> component,
+ *  so no imperative lifecycle management is needed. */
+function ProspectCircle({ prospect }: { prospect: ProspectState }) {
+  return (
+    <Circle
+      center={prospect.center}
+      radius={prospect.radiusMi * METERS_PER_MILE}
+      strokeColor="#5563f6"
+      strokeOpacity={0.9}
+      strokeWeight={2}
+      fillColor="#5563f6"
+      fillOpacity={0.08}
+      clickable={false}
+    />
+  );
+}
+
 export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [leads, setLeads] = useState<LeadWithInteraction[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -546,9 +578,14 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [isLoading, setIsLoading] = useState(false);
   const [resultCount, setResultCount] = useState<number | null>(null);
   const [zoom, setZoom] = useState(11);
-  const [sort, setSort] = useState<SortMode>("relevance");
+  const [sort, setSort] = useState<SortMode>("score");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [viewMode, setViewMode] = useState<"pins" | "heatmap">("pins");
+  // Prospect mode: armed → next map click drops a radius circle; the
+  // sidebar then narrows to leads inside it and the stats bar offers a
+  // door-knock route through the best ones.
+  const [prospectArmed, setProspectArmed] = useState(false);
+  const [prospect, setProspect] = useState<ProspectState | null>(null);
   // Visible diagnostic when the fetch fails. Without this the map just
   // looks empty and the user has no way to tell whether (a) no leads
   // match the filter, (b) the API errored, or (c) the session expired
@@ -556,6 +593,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const bboxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sidebarRef = useRef<LeadsSidebarHandle>(null);
+  // Abort the in-flight request when a newer one starts. Without this, the
+  // unbounded initial fetch (no bbox yet) races the first bbox-constrained
+  // fetch ~400ms later — if the slow one resolves last, stale off-viewport
+  // results clobber the fresh ones and stick until the next pan.
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
   // Single source of truth for fetching. Caller can pass a bbox override so
   // the "Search this area" button can use the LIVE map bounds without waiting
@@ -563,6 +605,9 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
   const fetchLeads = useCallback(
     async (overrideBbox?: string) => {
       const effectiveBbox = overrideBbox ?? bbox;
+      fetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      fetchAbortRef.current = controller;
       setIsLoading(true);
       try {
         const url = new URL("/api/leads", window.location.origin);
@@ -592,7 +637,10 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           url.searchParams.set("relevance", relevanceFilter);
         }
 
-        const res = await fetch(url.toString(), { redirect: "manual" });
+        const res = await fetch(url.toString(), {
+          redirect: "manual",
+          signal: controller.signal,
+        });
         // Redirect-to-sign-in (Clerk middleware) lands here when the
         // session expires mid-session. fetch with redirect:"manual"
         // surfaces this as an opaque response with type "opaqueredirect"
@@ -637,6 +685,8 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         setHasMore(Boolean(data.hasMore));
         setResultCount(data.leads?.length ?? 0);
       } catch (e) {
+        // Superseded by a newer request — its handlers own the UI now.
+        if (e instanceof DOMException && e.name === "AbortError") return;
         console.error("Failed to fetch leads", e);
         setFetchError(
           e instanceof Error
@@ -644,7 +694,10 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             : "Network error fetching leads.",
         );
       } finally {
-        setIsLoading(false);
+        // Only the LATEST request may clear the spinner — an aborted
+        // predecessor reaching finally must not end the newer one's
+        // loading state early.
+        if (fetchAbortRef.current === controller) setIsLoading(false);
       }
     },
     [bbox, tradeFilter, statusFilter, interactionFilter, buildingTypeFilter, projectKindFilter, developmentTypeFilter, stageFilter, relevanceFilter],
@@ -706,9 +759,17 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     }
   };
 
-  // Picks a marker glyph by priority: relevance first, then development /
-  // project kind. The glyph + interaction color together communicate type AND
-  // status at a glance.
+  // Gutter Score for every lead in view — the one number the whole page
+  // sorts, sizes, and colors by. Pure + cheap (regex over 500 strings).
+  const scores = useMemo(() => {
+    const m = new Map<string, GutterScore>();
+    for (const l of leads) m.set(l.id, computeGutterScore(l));
+    return m;
+  }, [leads]);
+
+  // Picks a marker glyph by priority: development / project kind first,
+  // then relevance. The glyph + interaction color together communicate
+  // type AND status at a glance.
   const pickMarkerIcon = (lead: LeadWithInteraction): typeof Home => {
     const pk = lead.projectKind ?? "";
     const dt = lead.developmentType ?? "";
@@ -723,27 +784,51 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     return Sparkles;
   };
 
+  // Interaction status → pin color. Semantic, matches the sidebar pills:
+  // coral = untouched (act!), emerald = contacted, sky = visited,
+  // amber = bidding, zinc = passed on.
   const getPinColor = (interactionStatus?: InteractionStatus) => {
     switch (interactionStatus) {
       case InteractionStatus.CONTACTED:
         return "#10b981";
       case InteractionStatus.VISITED:
-        return "#3b82f6";
+        return "#38bdf8";
       case InteractionStatus.NOT_INTERESTED:
-        return "#64748b";
+        return "#71717a";
       case InteractionStatus.BIDDING:
         return "#f59e0b";
       default:
-        return "#ef4444";
+        return "#f8717e"; // stripe-coral — brand "untouched lead"
     }
   };
+
+  // Prospect-radius filter — when a circle is down, the sidebar and the
+  // stats bar narrow to leads inside it. The map keeps rendering all pins
+  // so context isn't lost.
+  const inRadius = useMemo(() => {
+    if (!prospect) return null;
+    return leads.filter(
+      (l) =>
+        haversineMiles(prospect.center, { lat: l.latitude, lng: l.longitude }) <=
+        prospect.radiusMi,
+    );
+  }, [leads, prospect]);
 
   // Sorted view for the sidebar. The map always renders all leads; the
   // sidebar shows them in the contractor's chosen priority order.
   const sortedLeads = useMemo(() => {
-    const arr = [...leads];
+    const arr = inRadius ? [...inRadius] : [...leads];
     const relRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
-    if (sort === "relevance") {
+    if (sort === "score") {
+      arr.sort((a, b) => {
+        const sa = scores.get(a.id)?.score ?? 0;
+        const sb = scores.get(b.id)?.score ?? 0;
+        if (sb !== sa) return sb - sa;
+        const da = a.issuedDate ? new Date(a.issuedDate).getTime() : 0;
+        const db = b.issuedDate ? new Date(b.issuedDate).getTime() : 0;
+        return db - da;
+      });
+    } else if (sort === "relevance") {
       arr.sort((a, b) => {
         const ra = relRank[a.aiRelevance ?? ""] ?? 3;
         const rb = relRank[b.aiRelevance ?? ""] ?? 3;
@@ -764,14 +849,37 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
       arr.sort((a, b) => (b.projectValue ?? 0) - (a.projectValue ?? 0));
     }
     return arr;
-  }, [leads, sort]);
+  }, [leads, sort, scores, inRadius]);
+
+  // Prospect stats + door-knock route through the best in-radius leads.
+  const prospectStats = useMemo(() => {
+    if (!inRadius) return null;
+    let totalValue = 0;
+    let prime = 0;
+    for (const l of inRadius) {
+      totalValue += l.projectValue ?? 0;
+      if ((scores.get(l.id)?.band ?? "low") === "prime") prime++;
+    }
+    const top = [...inRadius]
+      .sort((a, b) => (scores.get(b.id)?.score ?? 0) - (scores.get(a.id)?.score ?? 0))
+      .slice(0, 10)
+      .map((l) => ({ lat: l.latitude, lng: l.longitude }));
+    return {
+      count: inRadius.length,
+      prime,
+      totalValue,
+      routeUrl: doorKnockRouteUrl(top),
+    };
+  }, [inRadius, scores]);
 
   // Cluster at the current zoom. Memo so we only recompute when leads or
   // zoom actually change — onBoundsChanged fires constantly during pan.
   const { clusters, unclustered } = useMemo(
-    () => clusterLeads(leads, zoom),
-    [leads, zoom],
+    () => clusterLeads(leads, zoom, scores),
+    [leads, zoom, scores],
   );
+
+  const hoveredScore = hoveredLead ? scores.get(hoveredLead.id) : undefined;
 
   return (
     // Desktop: shell header is h-16 (4rem). Mobile: sticky top bar (h-14 +
@@ -783,6 +891,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
         <LeadsSidebar
           ref={sidebarRef}
           leads={sortedLeads}
+          scores={scores}
           hoveredLeadId={hoveredLead?.id ?? null}
           selectedLeadId={selectedLead?.id ?? null}
           onHover={setHoveredLead}
@@ -793,6 +902,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
           onSortChange={setSort}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+          radiusActive={prospect != null}
         />
 
         <div className="relative flex-1">
@@ -856,7 +966,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               </button>
               <button
                 onClick={() => setViewMode("heatmap")}
-                title="Show density heatmap (weighted by project value)"
+                title="Show opportunity heatmap (weighted by Gutter Score)"
                 className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
                   viewMode === "heatmap"
                     ? "bg-stripe-coral/15 text-stripe-coral ring-1 ring-inset ring-stripe-coral/40"
@@ -866,17 +976,36 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                 <Activity size={12} />
                 Heatmap
               </button>
+              <button
+                onClick={() => {
+                  if (prospect || prospectArmed) {
+                    setProspect(null);
+                    setProspectArmed(false);
+                  } else {
+                    setProspectArmed(true);
+                  }
+                }}
+                title="Prospect a neighborhood: click the map to drop a radius, get a door-knock route"
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                  prospectArmed || prospect
+                    ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-500/40"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                <Crosshair size={12} />
+                Prospect
+              </button>
             </div>
+            {prospectArmed && !prospect && (
+              <div className="pointer-events-none rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200 shadow-xl backdrop-blur-md">
+                Click anywhere on the map to drop a prospecting radius
+              </div>
+            )}
             {resultCount !== null && isLoading && (
               <div className="pointer-events-none rounded-lg border border-white/10 bg-ink/90 px-3 py-2 text-xs text-zinc-300 shadow-xl backdrop-blur-md">
                 <span className="flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" /> Searching…
                 </span>
-              </div>
-            )}
-            {hasMore && (
-              <div className="pointer-events-none max-w-[260px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 backdrop-blur-md">
-                Showing 500 best — zoom in to see more.
               </div>
             )}
             {fetchError && (
@@ -885,6 +1014,88 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               </div>
             )}
           </div>
+
+          {/* Prospect stats bar. Mobile: full-width wrap above the bottom
+              edge; desktop: centered on the map, nudged left while the
+              400px details panel overlays the map's right side. */}
+          {prospect && prospectStats && (
+            <div
+              className={`absolute bottom-5 left-3 right-3 z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-white/10 bg-ink/95 px-4 py-2.5 shadow-2xl backdrop-blur-md sm:right-auto sm:max-w-[min(92%,640px)] ${
+                selectedLead
+                  ? "sm:left-[calc(50%-200px)] sm:-translate-x-1/2"
+                  : "sm:left-1/2 sm:-translate-x-1/2"
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-xs text-zinc-300">
+                <Crosshair size={12} className="text-emerald-300" />
+                <span className="font-semibold text-white tabular-nums">
+                  {prospectStats.count}
+                </span>
+                leads
+                {hasMore && (
+                  <span
+                    className="text-[10px] text-zinc-500"
+                    title="The map holds the top 500 leads for this view (ranked by relevance + recency) — widen filters or zoom in for full coverage."
+                  >
+                    of top 500
+                  </span>
+                )}
+                {prospectStats.prime > 0 && (
+                  <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-stripe-coral/15 px-1.5 py-0.5 text-[10px] font-semibold text-stripe-coral ring-1 ring-stripe-coral/40">
+                    {prospectStats.prime} prime
+                  </span>
+                )}
+              </div>
+              {prospectStats.totalValue >= 1000 && (
+                <div className="text-xs text-zinc-400">
+                  <span className="font-semibold text-accent-300 tabular-nums">
+                    $
+                    {prospectStats.totalValue >= 1_000_000
+                      ? `${(prospectStats.totalValue / 1_000_000).toFixed(1)}M`
+                      : `${Math.round(prospectStats.totalValue / 1000)}k`}
+                  </span>{" "}
+                  in permits
+                </div>
+              )}
+              <div className="flex items-center gap-1">
+                {RADIUS_OPTIONS.map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setProspect((p) => (p ? { ...p, radiusMi: r } : p))}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                      prospect.radiusMi === r
+                        ? "bg-accent-500/20 text-accent-200 ring-1 ring-accent-500/40"
+                        : "text-zinc-400 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    {r} mi
+                  </button>
+                ))}
+              </div>
+              {prospectStats.routeUrl && prospectStats.count > 0 && (
+                <a
+                  href={prospectStats.routeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500"
+                  title="Open a driving route through the top-scored leads in this radius"
+                >
+                  <Route size={12} />
+                  Door-knock route
+                </a>
+              )}
+              <button
+                onClick={() => {
+                  setProspect(null);
+                  setProspectArmed(false);
+                }}
+                className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                title="Clear prospecting radius"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
           {/* Center overlay when the fetch succeeded but returned no leads
               — gives the user something to act on (pan the map / widen
@@ -912,7 +1123,15 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             defaultCenter={{ lat: 47.6062, lng: -122.3321 }}
             defaultZoom={11}
             mapId="DEMO_MAP_ID"
+            colorScheme="DARK"
             disableDefaultUI={true}
+            onClick={(e: MapMouseEvent) => {
+              if (!prospectArmed) return;
+              const ll = e.detail.latLng;
+              if (!ll) return;
+              setProspect({ center: { lat: ll.lat, lng: ll.lng }, radiusMi: 1 });
+              setProspectArmed(false);
+            }}
             onBoundsChanged={(e) => {
               const bounds = e.map.getBounds();
               if (!bounds) return;
@@ -931,23 +1150,46 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             {/* Pans to selected lead — only when selection ID changes */}
             <MapPanner target={selectedLead} />
 
-            {viewMode === "heatmap" && <HeatmapLayer leads={leads} />}
+            {prospect && <ProspectCircle prospect={prospect} />}
+
+            {viewMode === "heatmap" && (
+              <HeatmapLayer leads={leads} scores={scores} />
+            )}
 
             {/* Cluster badges (zoom < 14) */}
             {viewMode === "pins" &&
-              clusters.map((c) => <ClusterMarker key={c.id} cluster={c} />)}
+              clusters.map((c) => (
+                <ClusterMarker
+                  key={c.id}
+                  cluster={c}
+                  onProspectAt={
+                    prospectArmed
+                      ? (center) => {
+                          setProspect({ center, radiusMi: 1 });
+                          setProspectArmed(false);
+                        }
+                      : undefined
+                  }
+                />
+              ))}
 
             {/* Individual markers */}
             {viewMode === "pins" &&
               unclustered.map((lead) => {
               const color = getPinColor(lead.interaction?.status);
               const Icon = pickMarkerIcon(lead);
-              const isHot = lead.aiRelevance === "high";
+              const score = scores.get(lead.id);
+              // "Act now" signals are suppressed once the user explicitly
+              // passed on the lead — a coral pulse on a NOT_INTERESTED pin
+              // nags about a decision already made.
+              const passedOn =
+                lead.interaction?.status === InteractionStatus.NOT_INTERESTED;
+              const isPrime = (score?.band ?? "low") === "prime" && !passedOn;
               const isHovered = hoveredLead?.id === lead.id;
               const isSelected = selectedLead?.id === lead.id;
-              // Value-driven base size; hover / select bump it slightly
-              // for visual feedback without overriding the value cue.
-              const baseSize = markerSizePx(lead.projectValue);
+              // Score-driven base size; hover / select bump it slightly
+              // for visual feedback without overriding the score cue.
+              const baseSize = markerSizePx(score?.score ?? 0);
               const size = isSelected
                 ? baseSize + 8
                 : isHovered
@@ -958,8 +1200,28 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                 <AdvancedMarker
                   key={lead.id}
                   position={{ lat: lead.latitude, lng: lead.longitude }}
-                  onClick={() => setSelectedLead(lead)}
-                  zIndex={isSelected ? 1000 : isHovered ? 500 : isHot ? 100 : 1}
+                  onClick={() => {
+                    // Markers sit above the map canvas and swallow its
+                    // clicks — while prospect mode is armed, a click on a
+                    // pin must drop the radius (centered on the pin, the
+                    // natural target in a dense area), not open the panel.
+                    if (prospectArmed) {
+                      setProspect({
+                        center: { lat: lead.latitude, lng: lead.longitude },
+                        radiusMi: 1,
+                      });
+                      setProspectArmed(false);
+                      return;
+                    }
+                    setSelectedLead(lead);
+                  }}
+                  zIndex={
+                    isSelected
+                      ? 1000
+                      : isHovered
+                        ? 500
+                        : Math.round(score?.score ?? 0)
+                  }
                 >
                   <div
                     className="relative cursor-pointer"
@@ -968,15 +1230,24 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                       setHoveredLead((h) => (h?.id === lead.id ? null : h))
                     }
                   >
+                    {/* Prime halo — a soft pulsing coral aura behind the
+                        pin, the map equivalent of the sidebar's Hot chip */}
+                    {isPrime && !isSelected && (
+                      <span
+                        className="absolute inset-0 -m-1.5 animate-ping rounded-full bg-stripe-coral/30"
+                        style={{ animationDuration: "2.4s" }}
+                        aria-hidden
+                      />
+                    )}
                     <div
-                      className={`flex items-center justify-center rounded-full border-2 border-white shadow-lg transition-all ${
+                      className={`relative flex items-center justify-center rounded-full shadow-lg shadow-black/40 transition-all ${
                         isSelected
-                          ? "ring-4 ring-accent-400/70"
+                          ? "ring-4 ring-accent-400/80"
                           : isHovered
-                            ? "ring-4 ring-stripe-violet/60"
-                            : isHot
-                              ? "ring-2 ring-stripe-coral/70"
-                              : ""
+                            ? "ring-4 ring-accent-500/50"
+                            : isPrime
+                              ? "ring-2 ring-stripe-coral/80"
+                              : "ring-2 ring-ink/80"
                       }`}
                       style={{
                         backgroundColor: color,
@@ -986,43 +1257,76 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                     >
                       <Icon
                         size={iconSize}
-                        className="text-white"
+                        className="text-ink"
                         strokeWidth={2.5}
                       />
                     </div>
-                    {isHot && !isSelected && (
-                      <span
-                        className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-stripe-coral ring-2 ring-white animate-pulse"
-                        aria-hidden
-                      />
-                    )}
                   </div>
                 </AdvancedMarker>
               );
             })}
 
-            {/* Hover preview (only when a marker is hovered AND it's
-                visible as an individual pin — clusters don't get a
-                preview because they represent many leads). */}
-            {hoveredLead &&
+            {/* Hover preview — a brand-dark card floated above the pin.
+                Rendered as an AdvancedMarker (not InfoWindow) so it can
+                carry ink surfaces + score UI instead of Google's white
+                bubble. pointer-events-none: it's read-only; click the pin
+                for actions. Gated to pins mode — in heatmap mode there is
+                no pin under it to anchor to. */}
+            {viewMode === "pins" &&
+              hoveredLead &&
               hoveredLead.id !== selectedLead?.id &&
               unclustered.some((l) => l.id === hoveredLead.id) && (
-                <InfoWindow
+                <AdvancedMarker
                   position={{
                     lat: hoveredLead.latitude,
                     lng: hoveredLead.longitude,
                   }}
-                  pixelOffset={[0, -28]}
-                  disableAutoPan
-                  headerDisabled
+                  zIndex={2000}
                 >
-                  <div className="text-slate-900 max-w-[280px] -m-1">
-                    <div className="font-semibold text-sm leading-tight mb-1">
-                      {hoveredLead.address}
+                  <div
+                    className="pointer-events-none w-[300px] rounded-xl border border-white/10 bg-ink/95 p-3 shadow-2xl backdrop-blur-md"
+                    style={{
+                      // Base pin size + hover bump (4) + ring (4) + gap.
+                      marginBottom:
+                        markerSizePx(hoveredScore?.score ?? 0) + 22,
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold leading-tight text-white">
+                          {hoveredLead.address}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-zinc-500">
+                          {hoveredLead.sourceCity}
+                          {hoveredLead.issuedDate &&
+                            ` · issued ${new Date(
+                              hoveredLead.issuedDate,
+                            ).toLocaleDateString()}`}
+                          {hoveredLead.projectValue
+                            ? ` · $${hoveredLead.projectValue.toLocaleString()}`
+                            : ""}
+                        </div>
+                      </div>
+                      {hoveredScore && (
+                        <ScoreRing score={hoveredScore.score} size={34} />
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1 mb-1">
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {hoveredScore &&
+                        (hoveredScore.window.state === "now" ||
+                          hoveredScore.window.state === "soon") && (
+                          <span
+                            className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ${
+                              hoveredScore.window.state === "now"
+                                ? "bg-stripe-coral/15 text-stripe-coral ring-stripe-coral/40"
+                                : "bg-amber-500/10 text-amber-300 ring-amber-500/30"
+                            }`}
+                          >
+                            {hoveredScore.window.label}
+                          </span>
+                        )}
                       {hoveredLead.developmentType && (
-                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-800 font-medium">
+                        <span className="inline-block rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300 ring-1 ring-white/10">
                           {hoveredLead.developmentType}
                           {hoveredLead.housingUnits != null &&
                             hoveredLead.housingUnits > 0 &&
@@ -1031,33 +1335,21 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                       )}
                       {hoveredLead.projectKind &&
                         hoveredLead.projectKind !== "Other" && (
-                          <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-800 font-medium">
+                          <span className="inline-block rounded bg-accent-500/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-200 ring-1 ring-accent-500/30">
                             {hoveredLead.projectKind}
                           </span>
                         )}
-                      {hoveredLead.aiRelevance === "high" && (
-                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-medium">
-                          🔥 Hot
-                        </span>
-                      )}
                     </div>
                     {hoveredLead.aiSummary && (
-                      <div className="text-[11px] text-slate-700 leading-snug mb-1">
+                      <div className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-zinc-300/80">
                         {hoveredLead.aiSummary}
                       </div>
                     )}
-                    <div className="text-[10px] text-slate-500">
-                      {hoveredLead.sourceCity}
-                      {hoveredLead.issuedDate &&
-                        ` · issued ${new Date(
-                          hoveredLead.issuedDate,
-                        ).toLocaleDateString()}`}
-                      {hoveredLead.projectValue
-                        ? ` · $${hoveredLead.projectValue.toLocaleString()}`
-                        : ""}
+                    <div className="mt-1.5 text-[10px] text-zinc-500">
+                      Click for details, roof scan &amp; contact paths
                     </div>
                   </div>
-                </InfoWindow>
+                </AdvancedMarker>
               )}
           </GoogleMap>
         </div>
@@ -1066,10 +1358,58 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
       {selectedLead && (
         <LeadDetailsPanel
           lead={selectedLead}
+          score={scores.get(selectedLead.id) ?? null}
+          mapsApiKey={apiKey}
           onClose={() => setSelectedLead(null)}
           onUpdateInteraction={handleUpdateInteraction}
         />
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*   ScoreRing — compact circular Gutter Score meter                   */
+/*   Single-hue magnitude encoding (accent), coral only for prime.     */
+/* ------------------------------------------------------------------ */
+export function ScoreRing({ score, size = 32 }: { score: number; size?: number }) {
+  const r = (size - 6) / 2;
+  const c = 2 * Math.PI * r;
+  const frac = Math.max(0, Math.min(1, score / 100));
+  const prime = score >= 70;
+  const color = prime ? "#f8717e" : "#7d8bfc";
+  return (
+    <div
+      className="relative shrink-0"
+      style={{ width: size, height: size }}
+      title={`Gutter Score ${score}/100`}
+    >
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.16)"
+          strokeWidth={3}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeDasharray={`${c * frac} ${c}`}
+        />
+      </svg>
+      <span
+        className="absolute inset-0 flex items-center justify-center font-semibold tabular-nums text-white"
+        style={{ fontSize: Math.max(9, Math.round(size * 0.32)) }}
+      >
+        {score}
+      </span>
     </div>
   );
 }
@@ -1093,19 +1433,34 @@ function MapPanner({ target }: { target: LeadWithInteraction | null }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*   ClusterMarker — circular count badge; click zooms in + pans      */
+/*   ClusterMarker — ink puck with a conic ring showing the PRIME      */
+/*   share (coral) vs the rest (accent). Click zooms in + pans.        */
 /* ------------------------------------------------------------------ */
-function ClusterMarker({ cluster }: { cluster: Cluster }) {
+function ClusterMarker({
+  cluster,
+  onProspectAt,
+}: {
+  cluster: Cluster;
+  /** Set while prospect mode is armed — a cluster click drops the radius
+   *  at the cluster center instead of zooming (markers swallow map
+   *  clicks, so the map-level handler never sees this click). */
+  onProspectAt?: (center: { lat: number; lng: number }) => void;
+}) {
   const map = useMap();
   // Visual size scales mildly with count so a 50-lead cluster reads as
   // bigger than a 5-lead one without dominating the map.
-  const size = Math.min(64, 36 + Math.log2(cluster.count) * 6);
-  const fontSize = cluster.count >= 100 ? 13 : cluster.count >= 10 ? 14 : 16;
-  const hot = cluster.hotCount > 0;
+  const size = Math.min(64, 38 + Math.log2(cluster.count) * 6);
+  const fontSize = cluster.count >= 100 ? 13 : cluster.count >= 10 ? 14 : 15;
+  const primeFrac = cluster.count > 0 ? cluster.primeCount / cluster.count : 0;
+  const primeDeg = Math.round(primeFrac * 360);
   return (
     <AdvancedMarker
       position={{ lat: cluster.lat, lng: cluster.lng }}
       onClick={() => {
+        if (onProspectAt) {
+          onProspectAt({ lat: cluster.lat, lng: cluster.lng });
+          return;
+        }
         if (!map) return;
         const z = map.getZoom() ?? 11;
         map.panTo({ lat: cluster.lat, lng: cluster.lng });
@@ -1116,21 +1471,25 @@ function ClusterMarker({ cluster }: { cluster: Cluster }) {
       zIndex={50}
     >
       <div
-        className="relative flex cursor-pointer items-center justify-center rounded-full text-white font-bold shadow-xl ring-4 ring-white/80 transition hover:scale-110"
+        className="relative cursor-pointer rounded-full p-[3px] shadow-xl shadow-black/50 transition hover:scale-110"
         style={{
           width: size,
           height: size,
-          fontSize,
-          background: hot
-            ? "radial-gradient(circle at 30% 30%, #fb923c, #ea580c 70%)"
-            : "radial-gradient(circle at 30% 30%, #34d399, #059669 70%)",
+          // Conic ring: coral arc = share of prime-scored leads inside.
+          // A cluster that's 40% coral is a neighborhood worth zooming.
+          background: `conic-gradient(#f8717e 0deg ${primeDeg}deg, #5563f6 ${primeDeg}deg 360deg)`,
         }}
-        title={`${cluster.count} leads — click to zoom in`}
+        title={`${cluster.count} leads${cluster.primeCount > 0 ? ` — ${cluster.primeCount} prime` : ""} — click to zoom in`}
       >
-        {cluster.count}
-        {hot && (
-          <span className="absolute -top-1 -right-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-orange-500 text-[8px] font-bold ring-2 ring-white">
-            {cluster.hotCount > 9 ? "9+" : cluster.hotCount}
+        <div
+          className="flex h-full w-full items-center justify-center rounded-full bg-ink font-bold text-white"
+          style={{ fontSize }}
+        >
+          {cluster.count}
+        </div>
+        {cluster.primeCount > 0 && (
+          <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-stripe-coral px-0.5 text-[8px] font-bold text-ink ring-2 ring-ink">
+            {cluster.primeCount > 9 ? "9+" : cluster.primeCount}
           </span>
         )}
       </div>
@@ -1139,37 +1498,35 @@ function ClusterMarker({ cluster }: { cluster: Cluster }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*   HeatmapLayer — density view weighted by project value            */
+/*   HeatmapLayer — opportunity view weighted by GUTTER SCORE          */
 /*                                                                    */
 /*   The Google Maps visualization library has no first-class React   */
 /*   wrapper in @vis.gl/react-google-maps, so we drive it imperatively:*/
 /*   construct google.maps.visualization.HeatmapLayer, attach it via  */
 /*   setMap, and tear down on unmount or input change.                */
 /* ------------------------------------------------------------------ */
-function HeatmapLayer({ leads }: { leads: LeadWithInteraction[] }) {
+function HeatmapLayer({
+  leads,
+  scores,
+}: {
+  leads: LeadWithInteraction[];
+  scores: Map<string, GutterScore>;
+}) {
   const map = useMap();
+  // Suspends until the visualization library is actually loaded, then
+  // re-renders — unlike probing window.google, which silently left the
+  // heatmap blank if the library finished loading after first mount.
+  const viz = useMapsLibrary("visualization");
   useEffect(() => {
-    if (!map) return;
-    // The visualization library is loaded via APIProvider's `libraries`
-    // prop; on first mount it may not have finished injecting yet so
-    // guard accordingly. Re-runs of this effect will pick it up.
-    const g = typeof window !== "undefined"
-      ? (window as unknown as { google?: typeof google }).google
-      : undefined;
-    const viz = g?.maps?.visualization;
-    if (!viz) return;
+    if (!map || !viz) return;
 
-    // Weight each point by log(value). Same log scale used for marker
-    // sizing — keeps the visual story consistent between modes. Leads
-    // without a value get weight=1 so they still register on the map.
-    const data = leads.map((lead) => {
-      const v = lead.projectValue ?? 0;
-      const weight = v > 0 ? Math.max(1, Math.log10(v)) : 1;
-      return {
-        location: new g!.maps.LatLng(lead.latitude, lead.longitude),
-        weight,
-      };
-    });
+    // Weight each point by Gutter Score — the same number that sizes the
+    // pins, so the two view modes tell one consistent story: bright =
+    // "gutter work is likely here soon", not merely "expensive permit".
+    const data = leads.map((lead) => ({
+      location: new google.maps.LatLng(lead.latitude, lead.longitude),
+      weight: Math.max(1, (scores.get(lead.id)?.score ?? 0) / 20),
+    }));
 
     const layer = new viz.HeatmapLayer({
       data,
@@ -1179,22 +1536,24 @@ function HeatmapLayer({ leads }: { leads: LeadWithInteraction[] }) {
       // over Bellevue.
       radius: 28,
       opacity: 0.75,
-      // Default gradient is blue→red. We override to a green→amber→red
-      // ramp so the heatmap visually echoes the sidebar's
-      // Cold→Warm→Hot relevance vocabulary.
+      // Single-hue coral ramp with lightness ASCENDING — on the dark
+      // basemap "hot" must be the brightest thing on screen, so the ramp
+      // runs transparent coral → saturated coral → pale rose. (A ramp
+      // that darkens toward deep red inverts the magnitude encoding on a
+      // dark map: the hottest zones would read dimmer than warm ones.)
       gradient: [
-        "rgba(16, 185, 129, 0)",
-        "rgba(16, 185, 129, 0.65)",
-        "rgba(132, 204, 22, 0.75)",
-        "rgba(234, 179, 8, 0.85)",
-        "rgba(249, 115, 22, 0.95)",
-        "rgba(239, 68, 68, 1)",
+        "rgba(248, 113, 126, 0)",
+        "rgba(244, 63, 94, 0.45)",
+        "rgba(248, 113, 126, 0.7)",
+        "rgba(253, 164, 175, 0.85)",
+        "rgba(254, 205, 211, 0.95)",
+        "rgba(255, 241, 242, 1)",
       ],
     });
 
     return () => {
       layer.setMap(null);
     };
-  }, [map, leads]);
+  }, [map, viz, leads, scores]);
   return null;
 }
