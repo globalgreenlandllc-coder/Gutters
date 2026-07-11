@@ -61,9 +61,9 @@ export const PROMPT_META: Record<
   "blueprint.elevation.system": {
     label: "Elevation face reader (per-face)",
     category: "blueprint",
-    model: "Claude Haiku 4.5",
+    model: "Claude Sonnet 5",
     description:
-      "Reads ONE exterior elevation in isolation — enumerates its gables, classifies eave vs rake, and (Correction 2) defaults gables to flush, reporting only projection CUES. One independent call per face so the front is never mirrored onto the back.",
+      "Reads ONE exterior elevation in isolation — enumerates ALL its gables (stacked/nested count separately, no upper limit), classifies eave vs rake, reports set-back and eave-in-front per gable, and defaults gables to flush. One independent call per face so the front is never mirrored onto the back. ⚠ An override saved here SHADOWS the code default — reset after engine updates.",
   },
   "blueprint.takeoff.system": {
     label: "Gutter takeoff (Stage 2)",
