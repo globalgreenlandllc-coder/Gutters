@@ -2,18 +2,35 @@ import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
 import { Container } from "./ui";
 
-const COLUMNS: { title: string; links: string[] }[] = [
+const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
     title: "Product",
-    links: ["Takeoffs", "Estimates", "Proposals", "Blueprint Engine"],
+    links: [
+      { label: "Takeoffs", href: "/sign-in" },
+      { label: "Estimates", href: "/sign-in" },
+      { label: "Proposals", href: "/sign-in" },
+      { label: "Pricing", href: "/#pricing" },
+      { label: "Blueprint Engine", href: "/sign-in" },
+    ],
   },
   {
     title: "Solutions",
-    links: ["For Contractors", "For Franchises", "FAQ"],
+    links: [
+      { label: "For Contractors", href: "/sign-in" },
+      { label: "For Franchises", href: "/sign-in" },
+      { label: "FAQ", href: "/sign-in" },
+    ],
   },
   {
     title: "Company",
-    links: ["Blog", "About Us", "Careers", "Contact", "Privacy Policy", "Terms of Service"],
+    links: [
+      { label: "Blog", href: "/sign-in" },
+      { label: "About Us", href: "/sign-in" },
+      { label: "Careers", href: "/sign-in" },
+      { label: "Contact", href: "/sign-in" },
+      { label: "Privacy Policy", href: "/sign-in" },
+      { label: "Terms of Service", href: "/sign-in" },
+    ],
   },
 ];
 
@@ -50,12 +67,12 @@ export function Footer() {
                 </p>
                 <ul className="mt-4 space-y-2.5">
                   {col.links.map((l) => (
-                    <li key={l}>
+                    <li key={l.label}>
                       <Link
-                        href="/sign-in"
+                        href={l.href}
                         className="text-[13.5px] text-zinc-600 transition hover:text-zinc-900"
                       >
-                        {l}
+                        {l.label}
                       </Link>
                     </li>
                   ))}

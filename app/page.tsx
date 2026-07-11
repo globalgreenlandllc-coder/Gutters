@@ -12,6 +12,7 @@ import { Detection } from "@/components/landing2/detection";
 import { Gap } from "@/components/landing2/gap";
 import { Dashboard } from "@/components/landing2/dashboard";
 import { Tiers } from "@/components/landing2/tiers";
+import { Pricing } from "@/components/landing2/pricing";
 import { Insights } from "@/components/landing2/insights";
 import { CTA } from "@/components/landing2/cta";
 import { Footer } from "@/components/landing2/footer";
@@ -31,6 +32,7 @@ export default function HomePage() {
       <Gap />
       <Dashboard />
       <Tiers />
+      <Pricing />
       <Insights />
       <CTA />
       <Footer />

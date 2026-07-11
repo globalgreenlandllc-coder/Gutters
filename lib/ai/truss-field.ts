@@ -48,6 +48,17 @@ const SPACING_MIN_FT = 1.2; // 16" o.c. with slack
 const SPACING_MAX_FT = 4.5; // 48" o.c. girder bays
 const MIN_MEMBERS = 3; // an array, not a wall pair
 const MIN_REGULAR_GAPS = 2;
+// Jack-fill: the SHORT perpendicular in-fill at a side eave ("END JACK 'B'
+// @ 24" O.C. — AT SIDE EAVES" on the Woodinville A9) — real bearing
+// evidence that the ≥8 ft truss floor can't see. Gated hard: the members
+// must hug the wall, and a long member running ALONG the wall right at it
+// (a gable end truss) vetoes — overhang/lookout jacks at gable ends sit
+// beyond exactly such a truss.
+const JACK_MIN_FT = 1.5;
+const JACK_MAX_FT = 10;
+const JACK_MIN_MEMBERS = 4;
+const JACK_HUG_FT = 2.5; // a jack's near end sits on the wall
+const GABLE_TRUSS_VETO_FT = 2.5; // a parallel long member at the wall vetoes
 
 function pointInPolygon(p: OverlayPt, poly: readonly OverlayPt[]): boolean {
   let inside = false;
@@ -137,16 +148,23 @@ export function deriveTrussField(opts: {
   const minLen = MIN_MEMBER_FT * ptPerFt;
   const minCross = MIN_CROSS_FT * ptPerFt;
 
-  // Long axis-aligned members only — pre-split once.
+  // Axis-aligned members, pre-split once. Long members carry the truss
+  // families; jack-length members carry the side-eave in-fill test.
+  const jackMin = JACK_MIN_FT * ptPerFt;
+  const jackMax = JACK_MAX_FT * ptPerFt;
   const hSegs: number[][] = [];
   const vSegs: number[][] = [];
+  const hJacks: number[][] = [];
+  const vJacks: number[][] = [];
   for (const s of segments) {
     if (!Array.isArray(s) || s.length < 4) continue;
     const dx = Math.abs(s[2] - s[0]);
     const dy = Math.abs(s[3] - s[1]);
     if (dx >= 1.5 && dy >= 1.5) continue;
-    if (Math.max(dx, dy) < minLen) continue;
-    (dx >= dy ? hSegs : vSegs).push(s);
+    const len = Math.max(dx, dy);
+    if (len >= minLen) (dx >= dy ? hSegs : vSegs).push(s);
+    else if (len >= jackMin && len < jackMax)
+      (dx >= dy ? hJacks : vJacks).push(s);
   }
 
   for (const e of edges) {
@@ -200,34 +218,77 @@ export function deriveTrussField(opts: {
     //   the family additionally has to SPREAD along the wall (bearing walls
     //   carry trusses over their whole length).
     const alongSpan = e.axis === "h" ? rx1 - rx0 : ry1 - ry0;
+    const wallLine = e.axis === "h" ? e.mid.y : e.mid.x; // the wall's own line
     const parCross: number[] = [];
     const perpCross: number[] = []; // cross position ALONG the edge
+    let parAtWall = false; // a full-length parallel member ON the wall line
     for (const s of hSegs) {
       const yMid = (s[1] + s[3]) / 2;
-      if (yMid < ry0 || yMid > ry1) continue;
-      const clip = overlap(s[0], s[2], rx0, rx1);
       if (e.axis === "h") {
-        if (clip >= alongSpan * 0.5) parCross.push(yMid);
-      } else if (clip >= minCross) {
-        perpCross.push(yMid);
+        if (Math.abs(yMid - wallLine) <= GABLE_TRUSS_VETO_FT * ptPerFt) {
+          if (overlap(s[0], s[2], rx0, rx1) >= alongSpan * 0.5)
+            parAtWall = true;
+        }
+        if (yMid < ry0 || yMid > ry1) continue;
+        if (overlap(s[0], s[2], rx0, rx1) >= alongSpan * 0.5)
+          parCross.push(yMid);
+      } else {
+        if (yMid < ry0 || yMid > ry1) continue;
+        if (overlap(s[0], s[2], rx0, rx1) >= minCross) perpCross.push(yMid);
       }
     }
     for (const s of vSegs) {
       const xMid = (s[0] + s[2]) / 2;
-      if (xMid < rx0 || xMid > rx1) continue;
-      const clip = overlap(s[1], s[3], ry0, ry1);
       if (e.axis === "v") {
-        if (clip >= alongSpan * 0.5) parCross.push(xMid);
-      } else if (clip >= minCross) {
-        perpCross.push(xMid);
+        if (Math.abs(xMid - wallLine) <= GABLE_TRUSS_VETO_FT * ptPerFt) {
+          if (overlap(s[1], s[3], ry0, ry1) >= alongSpan * 0.5)
+            parAtWall = true;
+        }
+        if (xMid < rx0 || xMid > rx1) continue;
+        if (overlap(s[1], s[3], ry0, ry1) >= alongSpan * 0.5)
+          parCross.push(xMid);
+      } else {
+        if (xMid < rx0 || xMid > rx1) continue;
+        if (overlap(s[1], s[3], ry0, ry1) >= minCross) perpCross.push(xMid);
+      }
+    }
+
+    // Jack-fill: short perpendicular members whose near end sits ON the wall.
+    const jackCross: number[] = [];
+    const hug = JACK_HUG_FT * ptPerFt;
+    for (const s of e.axis === "h" ? vJacks : hJacks) {
+      if (e.axis === "h") {
+        const xMid = (s[0] + s[2]) / 2;
+        if (xMid < rx0 || xMid > rx1) continue;
+        if (Math.min(Math.abs(s[1] - wallLine), Math.abs(s[3] - wallLine)) > hug)
+          continue;
+        if (overlap(s[1], s[3], ry0, ry1) < minCross) continue;
+        jackCross.push(xMid);
+      } else {
+        const yMid = (s[1] + s[3]) / 2;
+        if (yMid < ry0 || yMid > ry1) continue;
+        if (Math.min(Math.abs(s[0] - wallLine), Math.abs(s[2] - wallLine)) > hug)
+          continue;
+        if (overlap(s[0], s[2], rx0, rx1) < minCross) continue;
+        jackCross.push(yMid);
       }
     }
 
     const parFam = familyOf(parCross, ptPerFt);
     const perpFam = familyOf(perpCross, ptPerFt);
+    const jackFam = familyOf(jackCross, ptPerFt);
     const par = parFam.members;
-    const perp =
+    const perpTruss =
       perpFam.spread >= alongSpan * 0.4 ? perpFam.members : 0;
+    // A gable-end truss along the wall vetoes jack evidence (overhang /
+    // lookout jacks at gable ends hug the wall too).
+    const perpJacks =
+      !parAtWall &&
+      jackFam.members >= JACK_MIN_MEMBERS &&
+      jackFam.spread >= alongSpan * 0.4
+        ? jackFam.members
+        : 0;
+    const perp = Math.max(perpTruss, perpJacks);
 
     if (process.env.TRUSS_FIELD_DEBUG) {
       const fmt = (a: number[]) =>
@@ -236,8 +297,8 @@ export function deriveTrussField(opts: {
           .map((c) => (c / ptPerFt).toFixed(1))
           .join(" ");
       console.log(
-        `[field] ${e.id} strip x[${(rx0 / ptPerFt).toFixed(1)},${(rx1 / ptPerFt).toFixed(1)}] y[${(ry0 / ptPerFt).toFixed(1)},${(ry1 / ptPerFt).toFixed(1)}]ft  par=${par} perp=${perp} (perpSpread=${(perpFam.spread / ptPerFt).toFixed(1)}ft of ${(alongSpan / ptPerFt).toFixed(1)}ft)\n` +
-          `        par cross(ft): ${fmt(parCross)}\n        perp cross(ft): ${fmt(perpCross)}`,
+        `[field] ${e.id} strip x[${(rx0 / ptPerFt).toFixed(1)},${(rx1 / ptPerFt).toFixed(1)}] y[${(ry0 / ptPerFt).toFixed(1)},${(ry1 / ptPerFt).toFixed(1)}]ft  par=${par} perpTruss=${perpTruss} perpJacks=${perpJacks}${parAtWall ? " [par-at-wall veto]" : ""} (spread ${(perpFam.spread / ptPerFt).toFixed(1)}/${(jackFam.spread / ptPerFt).toFixed(1)} of ${(alongSpan / ptPerFt).toFixed(1)}ft)\n` +
+          `        par cross(ft): ${fmt(parCross)}\n        perp cross(ft): ${fmt(perpCross)}\n        jack cross(ft): ${fmt(jackCross)}`,
       );
     }
 

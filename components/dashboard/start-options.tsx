@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowRight,
   Clock,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getRecentAddresses } from "@/app/actions/estimate";
+import BlueprintUploader from "@/components/blueprints/BlueprintUploader";
 
 type JobType = "replacement" | "new";
 
@@ -67,13 +68,13 @@ function pushLocalRecent(addr: string) {
 
 /* ------------------------------------------------------------------ */
 /*  StartOptions — the whole body of /dashboard/proposals/new         */
+/*                                                                    */
+/*  Row 1: the two real tools, immediately usable on load.            */
+/*  Row 2: divider.                                                   */
+/*  Row 3: secondary starts (manual builder, leads, video-soon).      */
 /* ------------------------------------------------------------------ */
 export function StartOptions() {
   const reduce = useReducedMotion();
-  const [satelliteOpen, setSatelliteOpen] = useState(false);
-  // While the height animation runs the wrapper must clip; once settled
-  // it must NOT clip, or the address dropdown gets cut off.
-  const [panelSettled, setPanelSettled] = useState(false);
 
   // Fade/slide entrance (spec §3); `initial: false` renders statically
   // when the user prefers reduced motion.
@@ -84,13 +85,56 @@ export function StartOptions() {
   });
 
   return (
-    <div className="mt-8">
-      {/* 01 — dark hero card */}
-      <motion.div {...enter(0)}>
-        <div className="relative max-w-[560px] overflow-hidden rounded-3xl bg-accent-950 p-8 text-white">
+    <div className="mt-6">
+      {/* Row 1 — Satellite + Blueprint, always visible, ready to use.
+          items-start: the uploader card is taller and shouldn't
+          stretch the satellite card to match. */}
+      <motion.div
+        {...enter(0)}
+        className="grid items-start gap-4 lg:grid-cols-2"
+      >
+        <SatelliteTakeoffCard />
+
+        {/* Blueprint takeoff — uploader embedded, no navigation away. */}
+        <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+              <FileUp className="h-4 w-4" />
+            </span>
+            <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+              Blueprint takeoff
+            </h2>
+          </div>
+          <p className="mt-3 text-sm text-zinc-500">
+            Upload construction plans — AI reads the roof plan and
+            classifies every edge.
+          </p>
+          <div className="mt-4">
+            <BlueprintUploader />
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Row 2 — divider */}
+      <motion.div
+        {...enter(0.05)}
+        className="mt-8 flex items-center gap-4"
+        role="separator"
+      >
+        <span className="h-px flex-1 bg-zinc-200" />
+        <span className={cn(MICROLABEL, "text-zinc-400")}>
+          Or start from something else
+        </span>
+        <span className="h-px flex-1 bg-zinc-200" />
+      </motion.div>
+
+      {/* Row 3 — secondary starts */}
+      <motion.div {...enter(0.1)} className="mt-6 grid gap-4 md:grid-cols-3">
+        {/* a — Build it yourself (compact dark card, no sample table) */}
+        <div className="relative overflow-hidden rounded-2xl bg-accent-950 p-6 text-white">
           <div
             aria-hidden
-            className="absolute right-6 top-4 select-none text-[120px] font-semibold leading-none text-white/[0.06]"
+            className="absolute right-4 top-2 select-none text-[64px] font-semibold leading-none text-white/[0.06]"
           >
             01
           </div>
@@ -98,125 +142,46 @@ export function StartOptions() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500/20 text-accent-300">
               <PenLine className="h-4 w-4" />
             </div>
-            <div className={cn(MICROLABEL, "mt-5 text-white/40")}>
-              Start here
+            <div className={cn(MICROLABEL, "mt-4 text-white/40")}>
+              Start from scratch
             </div>
-            <h2 className="mt-2 text-[22px] font-semibold tracking-tight">
+            <h2 className="mt-1.5 text-[15px] font-semibold tracking-tight">
               Build it yourself
             </h2>
-            <p className="mt-2 text-sm leading-relaxed text-white/60">
+            <p className="mt-1.5 text-sm leading-relaxed text-white/60">
               Packages, materials, scope of work, payment schedule — the
-              full proposal canvas. Live preview shows exactly what your
-              homeowner receives.
+              full proposal canvas.
             </p>
-
-            {/* Sample estimate panel */}
-            <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <div className={cn(MICROLABEL, "text-white/40")}>
-                Sample estimate
-              </div>
-              <div className="mt-3 space-y-2 text-sm">
-                <SampleRow label="Eaves — 186 LF" value="$2,325" />
-                <SampleRow label="Downspouts — 8 drops" value="$760" />
-                <SampleRow label="Guards & misc" value="$315" />
-              </div>
-              <div className="mt-3 flex items-baseline justify-between border-t border-white/10 pt-3">
-                <span className={cn(MICROLABEL, "text-white/40")}>Total</span>
-                <span className="text-lg font-semibold text-accent-300">
-                  $3,400
-                </span>
-              </div>
-            </div>
-
             <Link
               href="/proposal?manual=1"
-              className="mt-6 inline-flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-accent-400"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent-500 px-3.5 py-2 text-[13px] font-semibold text-white transition hover:bg-accent-400"
             >
               Open the builder
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </div>
-      </motion.div>
 
-      {/* Divider */}
-      <motion.div
-        {...enter(0.05)}
-        className="mt-10 flex items-center gap-4"
-        role="separator"
-      >
-        <span className="h-px flex-1 bg-zinc-200" />
-        <span className={cn(MICROLABEL, "text-zinc-400")}>
-          Or estimate it first
-        </span>
-        <span className="h-px flex-1 bg-zinc-200" />
-      </motion.div>
-
-      {/* Option cards */}
-      <motion.div
-        {...enter(0.1)}
-        className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-      >
-        {/* 1 — Satellite takeoff (toggles the address panel below) */}
-        <button
-          type="button"
-          onClick={() => setSatelliteOpen((o) => !o)}
-          aria-expanded={satelliteOpen}
-          aria-controls="satellite-address-panel"
-          className="relative h-full rounded-2xl bg-accent-600 p-4 text-left text-white transition hover:bg-accent-700"
-        >
-          <span className="absolute right-3 top-3 rounded-md bg-white/15 px-1.5 py-0.5 text-[10px] font-bold">
-            AI
-          </span>
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15">
-            <Satellite className="h-4 w-4" />
-          </span>
-          <span className="mt-3 block text-sm font-semibold">
-            Satellite takeoff
-          </span>
-          <span className="mt-1 block text-xs leading-relaxed text-white/70">
-            Type an address — AI measures eaves, corners, and downspouts
-            from aerial imagery.
-          </span>
-        </button>
-
-        {/* 2 — Blueprint takeoff */}
-        <Link
-          href="/dashboard/blueprints/new"
-          className="block h-full rounded-2xl border border-amber-200/70 bg-amber-50 p-4 text-left transition hover:border-amber-300"
-        >
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-            <FileUp className="h-4 w-4" />
-          </span>
-          <span className="mt-3 block text-sm font-semibold text-zinc-900">
-            Blueprint takeoff
-          </span>
-          <span className="mt-1 block text-xs leading-relaxed text-zinc-600">
-            Upload construction plans — AI reads the roof plan and
-            classifies every edge.
-          </span>
-        </Link>
-
-        {/* 3 — From a lead */}
+        {/* b — From a lead */}
         <Link
           href="/dashboard/leads"
-          className="block h-full rounded-2xl border border-zinc-200 bg-white p-4 text-left transition hover:border-zinc-300"
+          className="block rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card transition hover:border-zinc-300"
         >
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
             <MapPin className="h-4 w-4" />
           </span>
-          <span className="mt-3 block text-sm font-semibold text-zinc-900">
+          <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
             From a lead
           </span>
-          <span className="mt-1 block text-xs leading-relaxed text-zinc-600">
+          <span className="mt-1.5 block text-sm leading-relaxed text-zinc-500">
             Pick a permit lead off the map and scan its address.
           </span>
         </Link>
 
-        {/* 4 — Video walkthrough (coming soon) */}
+        {/* c — Video walkthrough (coming soon) */}
         <div
           aria-disabled
-          className="relative h-full cursor-default rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-left opacity-70"
+          className="relative cursor-default rounded-2xl border border-zinc-200 bg-zinc-50 p-6 opacity-70"
         >
           <span className="absolute right-3 top-3 rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] text-zinc-500">
             Soon
@@ -224,55 +189,24 @@ export function StartOptions() {
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500">
             <Video className="h-4 w-4" />
           </span>
-          <span className="mt-3 block text-sm font-semibold text-zinc-900">
+          <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
             Video walkthrough
           </span>
-          <span className="mt-1 block text-xs leading-relaxed text-zinc-600">
+          <span className="mt-1.5 block text-sm leading-relaxed text-zinc-600">
             Walk the site on camera.
           </span>
         </div>
       </motion.div>
-
-      {/* Expanding satellite address panel */}
-      <AnimatePresence initial={false}>
-        {satelliteOpen && (
-          <motion.div
-            key="satellite-panel"
-            initial={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            animate={reduce ? { opacity: 1 } : { height: "auto", opacity: 1 }}
-            exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
-            transition={{ duration: reduce ? 0.1 : 0.4, ease: [0.22, 1, 0.36, 1] }}
-            onAnimationStart={() => setPanelSettled(false)}
-            onAnimationComplete={() => {
-              if (satelliteOpen) setPanelSettled(true);
-            }}
-            className={panelSettled ? "overflow-visible" : "overflow-hidden"}
-          >
-            <div className="pt-4">
-              <SatelliteAddressPanel />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function SampleRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4">
-      <span className="text-white/60">{label}</span>
-      <span className="tabular-nums text-white/90">{value}</span>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Satellite address panel — combobox + job-type toggle              */
+/*  Satellite takeoff card — always-visible address form              */
+/*  (combobox with recents + job-type toggle + Run AI takeoff)        */
 /* ------------------------------------------------------------------ */
-function SatelliteAddressPanel() {
+function SatelliteTakeoffCard() {
   const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const [value, setValue] = useState("");
   const [jobType, setJobType] = useState<JobType>("replacement");
@@ -285,12 +219,6 @@ function SatelliteAddressPanel() {
   const [recents, setRecents] = useState<string[]>([]);
   const [highlight, setHighlight] = useState(-1);
   const blurTimer = useRef<number | null>(null);
-
-  // Focus the input as soon as the panel mounts (preventScroll so the
-  // expand animation isn't yanked around by the browser).
-  useEffect(() => {
-    inputRef.current?.focus({ preventScroll: true });
-  }, []);
 
   // Hydrate localStorage immediately on mount, then fetch the server
   // copy in the background and merge — server wins on dedupe.
@@ -346,13 +274,23 @@ function SatelliteAddressPanel() {
   }
 
   return (
-    <div
-      id="satellite-address-panel"
-      className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card"
-    >
-      <div className={cn(MICROLABEL, "text-accent-600")}>
-        Satellite takeoff
+    <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+          <Satellite className="h-4 w-4" />
+        </span>
+        <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+          Satellite takeoff
+        </h2>
+        <span className="ml-auto rounded-md bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+          AI
+        </span>
       </div>
+      <p className="mt-3 text-sm text-zinc-500">
+        Type an address — AI measures eaves, corners, and downspouts from
+        aerial imagery.
+      </p>
+
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -364,7 +302,7 @@ function SatelliteAddressPanel() {
             goAddress();
           }
         }}
-        className="mt-3"
+        className="mt-5"
       >
         <label
           htmlFor="satellite-address-input"
@@ -377,7 +315,7 @@ function SatelliteAddressPanel() {
             className={cn(
               "flex h-11 items-center gap-2 rounded-lg border bg-white pl-3.5 pr-3 transition",
               focused
-                ? "border-accent-600 ring-2 ring-accent-600/15"
+                ? "border-accent-500 ring-2 ring-accent-500/15"
                 : "border-zinc-200",
             )}
           >
@@ -388,7 +326,6 @@ function SatelliteAddressPanel() {
               )}
             />
             <input
-              ref={inputRef}
               id="satellite-address-input"
               value={value}
               onChange={(e) => {
@@ -477,48 +414,45 @@ function SatelliteAddressPanel() {
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          {/* Job-type toggle — affects scope-of-work language downstream */}
-          <div className="inline-flex items-center gap-2">
-            <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
-            <div className="inline-flex rounded-lg border border-zinc-200 p-0.5">
-              {(
-                [
-                  { value: "replacement", label: "Replacement", Icon: Hammer },
-                  { value: "new", label: "New construction", Icon: Home },
-                ] as const
-              ).map((opt) => {
-                const active = opt.value === jobType;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setJobType(opt.value)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
-                      active
-                        ? "bg-zinc-100 text-zinc-900"
-                        : "text-zinc-500 hover:text-zinc-900",
-                    )}
-                  >
-                    <opt.Icon className="h-3.5 w-3.5" />
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
+        {/* Job-type toggle — affects scope-of-work language downstream */}
+        <div className="mt-4 flex items-center gap-2">
+          <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
+          <div className="inline-flex rounded-lg border border-zinc-200 p-0.5">
+            {(
+              [
+                { value: "replacement", label: "Replacement", Icon: Hammer },
+                { value: "new", label: "New construction", Icon: Home },
+              ] as const
+            ).map((opt) => {
+              const active = opt.value === jobType;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setJobType(opt.value)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
+                    active
+                      ? "bg-zinc-100 text-zinc-900"
+                      : "text-zinc-500 hover:text-zinc-900",
+                  )}
+                >
+                  <opt.Icon className="h-3.5 w-3.5" />
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
-
-          <button
-            type="submit"
-            disabled={!value.trim() || submitting}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Sparkles className="h-4 w-4" />
-            {submitting ? "Starting…" : "Run takeoff"}
-            <ArrowRight className="h-4 w-4" />
-          </button>
         </div>
+
+        <button
+          type="submit"
+          disabled={!value.trim() || submitting}
+          className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Sparkles className="h-4 w-4" />
+          {submitting ? "Starting…" : "Run AI takeoff"}
+        </button>
       </form>
     </div>
   );
