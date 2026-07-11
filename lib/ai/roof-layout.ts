@@ -365,6 +365,176 @@ function mainRidgesFromValleys(
   return picked.map(({ p1, p2 }) => ({ p1, p2 }));
 }
 
+/** Nearest point on segment ab to p, with its distance. */
+function nearestOnSeg(
+  p: OverlayPt,
+  a: OverlayPt,
+  b: OverlayPt,
+): { q: OverlayPt; d: number } {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  const t =
+    len2 < 1e-12
+      ? 0
+      : Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2));
+  const q = { x: a.x + abx * t, y: a.y + aby * t };
+  return { q, d: Math.hypot(p.x - q.x, p.y - q.y) };
+}
+
+/** First intersection of ray p + t·d (t in (0, tMax]) with segment ab. */
+function raySegHit(
+  p: OverlayPt,
+  d: { x: number; y: number },
+  a: OverlayPt,
+  b: OverlayPt,
+  tMax: number,
+): { q: OverlayPt; t: number } | null {
+  const rx = d.x;
+  const ry = d.y;
+  const sx = b.x - a.x;
+  const sy = b.y - a.y;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-12) return null;
+  const t = ((a.x - p.x) * sy - (a.y - p.y) * sx) / denom;
+  const u = ((a.x - p.x) * ry - (a.y - p.y) * rx) / denom;
+  if (t <= 1e-9 || t > tMax || u < -0.02 || u > 1.02) return null;
+  return { q: { x: p.x + rx * t, y: p.y + ry * t }, t };
+}
+
+/**
+ * Organize the sheet-adopted diagonals into the drawn frame. Adopted strokes
+ * are the plan's own vectors, but the plan draws them only along part of a
+ * valley's true run — so on the canvas they FLOAT: ends hanging mid-plane,
+ * meeting nothing (the "random lines" review). Physically a valley runs from
+ * a reflex eave corner up to a ridge/another valley, so each endpoint is
+ * SNAPPED to the nearest frame geometry (ridge/hip/valley/outline) within a
+ * small tolerance, else EXTENDED along its own direction until it hits the
+ * frame. A stroke that still anchors nowhere is dropped — with a note, never
+ * silently. Geometry-only: adopted strokes keep their direction; nothing is
+ * invented off-axis.
+ */
+export function organizeInterior(opts: {
+  adopted: readonly LayoutSeg[];
+  frame: readonly LayoutSeg[]; // ridges + hips + non-adopted valleys
+  outline: readonly OverlayPt[];
+  span: number;
+}): { kept: LayoutSeg[]; connected: number; dropped: number } {
+  const { adopted, frame, outline, span } = opts;
+  const snapTol = Math.max(8, span * 0.035);
+  const extendTol = span * 0.22;
+  const outlineSegs: LayoutSeg[] = outline.map((p, i) => ({
+    p1: p,
+    p2: outline[(i + 1) % outline.length],
+  }));
+  // Anchor geometry: the frame, the outline, and the OTHER adopted strokes
+  // at their ORIGINAL positions (two dormer valleys meet each other at the
+  // apex; original positions keep the pass order-independent).
+  const anchorsFor = (self: number): LayoutSeg[] => [
+    ...frame,
+    ...outlineSegs,
+    ...adopted.filter((_, i) => i !== self),
+  ];
+
+  const kept: { seg: LayoutSeg; origMid: OverlayPt }[] = [];
+  let connected = 0;
+  let dropped = 0;
+  for (let i = 0; i < adopted.length; i++) {
+    const s = adopted[i];
+    const anchors = anchorsFor(i);
+    const pts = [
+      { x: s.p1.x, y: s.p1.y },
+      { x: s.p2.x, y: s.p2.y },
+    ];
+    const anchoredFlags = [false, false];
+    let moved = false;
+    for (const end of [0, 1] as const) {
+      const p = pts[end];
+      const other = pts[1 - end];
+      // 1) snap to the nearest anchor point within tolerance
+      let best: { q: OverlayPt; d: number } | null = null;
+      for (const a of anchors) {
+        const hit = nearestOnSeg(p, a.p1, a.p2);
+        if (hit.d <= snapTol && (!best || hit.d < best.d)) best = hit;
+      }
+      if (best) {
+        if (best.d > 1e-6) moved = true;
+        pts[end] = best.q;
+        anchoredFlags[end] = true;
+        continue;
+      }
+      // 2) extend outward along the stroke's own direction until the frame
+      const len = Math.hypot(p.x - other.x, p.y - other.y) || 1;
+      const dir = { x: (p.x - other.x) / len, y: (p.y - other.y) / len };
+      let hitBest: { q: OverlayPt; t: number } | null = null;
+      for (const a of anchors) {
+        const hit = raySegHit(p, dir, a.p1, a.p2, extendTol);
+        if (hit && (!hitBest || hit.t < hitBest.t)) hitBest = hit;
+      }
+      if (hitBest) {
+        pts[end] = hitBest.q;
+        anchoredFlags[end] = true;
+        moved = true;
+      }
+    }
+    const newLen = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (!anchoredFlags[0] && !anchoredFlags[1]) {
+      dropped++; // floats free of the whole frame — a stray stroke
+      continue;
+    }
+    if (newLen < span * 0.03) {
+      dropped++; // collapsed to a dot by the snaps
+      continue;
+    }
+    if (moved) connected++;
+    kept.push({
+      seg: { p1: pts[0], p2: pts[1] },
+      origMid: { x: (s.p1.x + s.p2.x) / 2, y: (s.p1.y + s.p2.y) / 2 },
+    });
+  }
+
+  // Two valleys cannot CROSS mid-plane — where two organized strokes now
+  // properly intersect (an extension overshot), the crossing IS their real
+  // junction: trim each back to it, keeping the side that holds the sheet's
+  // original ink. The X becomes the V the plan means, and the estimate
+  // path's crossing filter no longer has to kill either stroke.
+  const paramOf = (s: LayoutSeg, p: OverlayPt): number => {
+    const dx = s.p2.x - s.p1.x;
+    const dy = s.p2.y - s.p1.y;
+    const len2 = dx * dx + dy * dy;
+    return len2 < 1e-12
+      ? 0
+      : ((p.x - s.p1.x) * dx + (p.y - s.p1.y) * dy) / len2;
+  };
+  const properCross = (a: LayoutSeg, b: LayoutSeg): OverlayPt | null => {
+    const rx = a.p2.x - a.p1.x;
+    const ry = a.p2.y - a.p1.y;
+    const sx = b.p2.x - b.p1.x;
+    const sy = b.p2.y - b.p1.y;
+    const denom = rx * sy - ry * sx;
+    if (Math.abs(denom) < 1e-12) return null;
+    const t = ((b.p1.x - a.p1.x) * sy - (b.p1.y - a.p1.y) * sx) / denom;
+    const u = ((b.p1.x - a.p1.x) * ry - (b.p1.y - a.p1.y) * rx) / denom;
+    if (t <= 0.02 || t >= 0.98 || u <= 0.02 || u >= 0.98) return null;
+    return { x: a.p1.x + rx * t, y: a.p1.y + ry * t };
+  };
+  const trimTo = (k: (typeof kept)[number], x: OverlayPt) => {
+    const tX = paramOf(k.seg, x);
+    const tM = paramOf(k.seg, k.origMid);
+    if (tM <= tX) k.seg = { p1: k.seg.p1, p2: x };
+    else k.seg = { p1: x, p2: k.seg.p2 };
+  };
+  for (let a = 0; a < kept.length; a++) {
+    for (let b = a + 1; b < kept.length; b++) {
+      const x = properCross(kept[a].seg, kept[b].seg);
+      if (!x) continue;
+      trimTo(kept[a], x);
+      trimTo(kept[b], x);
+    }
+  }
+  return { kept: kept.map((k) => k.seg), connected, dropped };
+}
+
 function segAngle(s: LayoutSeg): { slope: 1 | -1 | 0; angleDeg: number } {
   const dx = s.p2.x - s.p1.x;
   const dy = s.p2.y - s.p1.y;
@@ -614,6 +784,30 @@ export function buildRoofLayout(opts: {
         const rb = ridgeBack(e, outline, stopAt, span);
         if (rb) ridges.push(rb);
       }
+    }
+
+    // Organize the adopted sheet strokes into the frame — run AFTER ridge
+    // synthesis so ridges exist to anchor against. Adoptees are always the
+    // LAST diag.adopted entries of `valleys` (nothing appends between).
+    if (diag && diag.adopted > 0 && valleys.length >= diag.adopted) {
+      const keep = valleys.length - diag.adopted;
+      const org = organizeInterior({
+        adopted: valleys.slice(keep),
+        frame: [...valleys.slice(0, keep), ...ridges, ...hips],
+        outline,
+        span,
+      });
+      valleys = [...valleys.slice(0, keep), ...org.kept];
+      if (org.connected > 0 || org.dropped > 0) {
+        notes.push(
+          `📐 Interior tidy: ${org.connected} sheet diagonal(s) connected into the ridge/eave frame` +
+            (org.dropped > 0
+              ? `; ${org.dropped} floating stray stroke(s) dropped`
+              : "") +
+            `.`,
+        );
+      }
+      diag = { ...diag, adopted: org.kept.length };
     }
 
     const rakeEdgeIds = [...rakeIdsWanted];

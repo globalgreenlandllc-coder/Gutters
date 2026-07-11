@@ -152,6 +152,15 @@ gutter and the gable rises behind it. A base sitting ON the eave ⇒ set_back_ft
 — ALWAYS report set_back_ft explicitly (0 for a flush gable): a missing value on
 a continuous-eave face is treated as "above the eave" downstream and the gable
 will NOT consume a wall.
+
+SEPARATELY from set_back_ft, report eave_passes_in_front for EVERY gable:
+true when a horizontal eave/gutter line — at ANY height, even a lower tier's —
+runs across IN FRONT of / below this gable's base at its position (the gable
+rises BEHIND a guttered roof edge). This is the decisive gutter signal on
+STEPPED side elevations where the eave line changes height and continuous_eave
+is honestly false: the wall below such a gable still carries its gutter.
+false when the gable's base meets open wall all the way down (a true
+wall-plane gable end).
 </set_back_gable>
 
 <profile_depth>
@@ -225,6 +234,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
               type: ["number", "null"],
               description:
                 "SET-BACK / dormer gable: feet the base sits BEHIND the eave (its base reads ABOVE the eave line). 0 or omit for a normal at-the-eave gable.",
+            },
+            eave_passes_in_front: {
+              type: "boolean",
+              description:
+                "true when a horizontal eave/gutter line (any height, even a lower tier's) runs across IN FRONT of / below this gable's base — the gable rises BEHIND a guttered roof edge. false for a true wall-plane gable end (open wall all the way down).",
             },
             notes: { type: "string" },
           },

@@ -167,6 +167,9 @@ export function reconcileEdgeClasses(opts: {
     let promoted = 0;
     let demoted = 0;
     let unknowns = 0;
+    // Edges an elevation gable claimed on ANY side — pass 4 must not touch a
+    // wall that is itself disputed as a gable candidate.
+    const claimedByGable = new Set<string>();
 
     for (const side of ["front", "back", "left", "right"] as Side[]) {
       const face = faceForSide.get(side);
@@ -214,7 +217,16 @@ export function reconcileEdgeClasses(opts: {
       // of them could be the gable a conflicted label really belongs to, so
       // their presence vetoes the pass-2b recovery (the tie stands).
       let floatingGables = 0;
+      // Gables the elevation itself saw a gutter line running IN FRONT of —
+      // frame-overs on stepped faces (no single continuous line to gate on).
+      // They never consume a wall, and the wall at their position KEEPS its
+      // gutter (see the demote pass below).
+      const frameOverGables: typeof gablesAll = [];
       const flushGables = gablesAll.filter((g) => {
+        if (g.eave_passes_in_front === true) {
+          frameOverGables.push(g);
+          return false;
+        }
         const sb = typeof g.set_back_ft === "number" ? g.set_back_ft : null;
         if (sb != null) return sb <= 2;
         if (reading.continuous_eave === true) floatingGables++;
@@ -395,6 +407,27 @@ export function reconcileEdgeClasses(opts: {
           notes.push(
             `🧭 ${cls.id} rake→EAVE: the ${face} elevation shows a continuous eave/gutter line and no gable maps to this wall.`,
           );
+          continue;
+        }
+        // Stepped face (continuous read is honestly false): when the face's
+        // gable at THIS position rises BEHIND a running eave line
+        // (eave_passes_in_front), the wall under it still carries that
+        // gutter — the gable is a frame-over, not a wall plane.
+        const fo = frameOverGables.find((g) => {
+          if (g.position_frac == null) return false;
+          const u = Math.max(0, Math.min(1, g.position_frac));
+          return (
+            (u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ||
+            Math.abs((s.u0 + s.u1) / 2 - u) <= 0.25
+          );
+        });
+        if (fo) {
+          cls.edge_class = "eave";
+          cls.evidence = [...evidence, "eave_passes_in_front_of_gable"];
+          demoted++;
+          notes.push(
+            `🧭 ${cls.id} rake→EAVE: the ${face} elevation shows its gable rising BEHIND a running eave/gutter line at this position (frame-over) — the wall keeps its gutter.`,
+          );
         } else {
           cls.edge_class = "unknown";
           unknowns++;
@@ -419,7 +452,18 @@ export function reconcileEdgeClasses(opts: {
         const cls = byId.get(s.e.id)!;
         if (cls.edge_class !== "unknown") continue;
         if (!(cls.evidence ?? []).includes("truss_field_conflict")) continue;
-        if (reading.continuous_eave !== true) continue;
+        // Eave evidence from the face: one continuous line across the side,
+        // OR (stepped faces) a frame-over gable pinned at THIS wall — the
+        // elevation saw the eave running in front of it.
+        const foHere = frameOverGables.some((g) => {
+          if (g.position_frac == null) return false;
+          const u = Math.max(0, Math.min(1, g.position_frac));
+          return (
+            (u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ||
+            Math.abs((s.u0 + s.u1) / 2 - u) <= 0.25
+          );
+        });
+        if (reading.continuous_eave !== true && !foHere) continue;
         if (confirmed.has(cls.id) || gableBlockedByField.has(cls.id)) continue;
         if (floatingGables > 0) {
           notes.push(
@@ -431,7 +475,11 @@ export function reconcileEdgeClasses(opts: {
         cls.evidence = [...(cls.evidence ?? []), "elevation_continuous_eave"];
         demoted++;
         notes.push(
-          `🧭 ${cls.id} unknown→EAVE: the framing bears on this wall AND the ${face} elevation reads one continuous eave/gutter line across this side — two sheet reads outvote the stray gable label; gutter restored, verify.`,
+          `🧭 ${cls.id} unknown→EAVE: the framing bears on this wall AND the ${face} elevation ` +
+            (reading.continuous_eave === true
+              ? "reads one continuous eave/gutter line across this side"
+              : "shows the eave running in front of this wall's frame-over gable") +
+            ` — two sheet reads outvote the stray gable label; gutter restored, verify.`,
         );
       }
 
@@ -445,6 +493,39 @@ export function reconcileEdgeClasses(opts: {
           `⚠ ${face} elevation shows ${flushGables.length} gable(s) at the eave line but only ${rakeWalls} gable wall(s) placed on this side — review gable placement.`,
         );
       }
+      for (const id of confirmed) claimedByGable.add(id);
+    }
+
+    // 4) GABLE-SIDE EAVES: a gable-end roof sheds onto the walls flanking
+    // it — its side eaves. An UNKNOWN edge with no rake evidence of its own,
+    // sitting ring-adjacent and PERPENDICULAR to a final rake wall, is that
+    // gable roof's side eave and carries the gutter (the short jog returns
+    // beside the Woodinville garage/entry gables shipped UNPRICED without
+    // this). Deliberately-parked conflicts and gable-claimed edges stay put.
+    const isPerp = (a?: string | null, b?: string | null) =>
+      (a === "h" && b === "v") || (a === "v" && b === "h");
+    const ringE = edges.filter((e) => e.lenPt > 1e-6);
+    for (let i = 0; i < ringE.length; i++) {
+      const e = ringE[i];
+      const cls = byId.get(e.id);
+      if (!cls || cls.edge_class !== "unknown") continue;
+      const evidence = cls.evidence ?? [];
+      if (evidence.some((t) => STRONG_RAKE_EVIDENCE.has(t))) continue;
+      if (evidence.includes("truss_field_conflict")) continue;
+      if (claimedByGable.has(cls.id)) continue;
+      const prev = ringE[(i - 1 + ringE.length) % ringE.length];
+      const next = ringE[(i + 1) % ringE.length];
+      const rakeNb = [prev, next].find(
+        (nb) =>
+          isPerp(nb.axis, e.axis) && byId.get(nb.id)?.edge_class === "rake",
+      );
+      if (!rakeNb) continue;
+      cls.edge_class = "eave";
+      cls.evidence = [...evidence, "gable_side_eave"];
+      demoted++;
+      notes.push(
+        `🧭 ${cls.id} unknown→EAVE: it flanks the gable end ${rakeNb.id} — the gable roof sheds onto this wall, so it carries the gutter (its side eave). Verify.`,
+      );
     }
 
     if (promoted + demoted + unknowns > 0) {

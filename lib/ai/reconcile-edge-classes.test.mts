@@ -587,3 +587,96 @@ test("reconcile: gables pinned to OTHER walls do not veto the recovery", () => {
     "clean side — recovery still fires",
   );
 });
+
+test("reconcile: a gable rising BEHIND a running eave (stepped face) keeps the wall guttered", () => {
+  // Run-8 failure: the side elevations honestly read continuous_eave:false
+  // (stepped eave heights), so the hard gate never fired and the side gable
+  // tented E13/E3-style walls. eave_passes_in_front is the decisive signal.
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E6 arrives as rake (truss_direction only)
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [
+          {
+            kind: "main",
+            span_ft: 16,
+            position_frac: 0.5,
+            eave_passes_in_front: true,
+          } as never,
+        ],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "eave", "wall under the frame-over keeps gutter");
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("BEHIND a running eave")),
+  );
+});
+
+test("reconcile: an unknown edge flanking a gable end becomes its side eave", () => {
+  // E9 (porch front) is the promoted entry gable; E8 (porch right return,
+  // perpendicular ring neighbor) arrives UNKNOWN with no evidence — the
+  // gable roof sheds onto it, so it carries the gutter.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E8"
+      ? { ...c, edge_class: "unknown" as const, evidence: ["truss_direction"] }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: PER_FACE,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E9"), "rake", "entry gable still promoted");
+  assert.equal(cls.get("E8"), "eave", "flanking return priced as side eave");
+  assert.ok(
+    r.notes.some((n) => n.includes("E8") && n.includes("flanks the gable end E9")),
+  );
+});
+
+test("reconcile: gable-side rescue skips labeled and conflict-parked edges", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) => {
+    if (c.id === "E8")
+      return {
+        ...c,
+        edge_class: "unknown" as const,
+        evidence: ["gable_end_truss_label"],
+      };
+    if (c.id === "E10")
+      return {
+        ...c,
+        edge_class: "unknown" as const,
+        evidence: ["truss_field_conflict"],
+      };
+    return c;
+  });
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    // E10's face reads stepped (continuous false) so the 2b recovery cannot
+    // fire — this isolates pass 4, which must leave both edges parked.
+    perFace: {
+      ...PER_FACE,
+      east: face("east", "LEFT/EAST ELEVATION", [], { continuous_eave: false }),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E8"), "unknown", "printed label stays parked");
+  assert.equal(cls.get("E10"), "unknown", "conflict tie stays parked");
+});

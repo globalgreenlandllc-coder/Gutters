@@ -278,3 +278,64 @@ test("cross-check: matching diagonals confirm; unmatched sheet diagonals get ADO
   assert.equal(stats.matchedSkel, 2);
   assert.equal(stats.skeletonDiagonals, 4);
 });
+
+test("organizeInterior: a near-miss endpoint snaps onto the ridge", async () => {
+  const { organizeInterior } = await import("./roof-layout.ts");
+  const OUT = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 200 },
+    { x: 0, y: 200 },
+  ];
+  const frame = [{ p1: { x: 100, y: 100 }, p2: { x: 300, y: 100 } }];
+  const r = organizeInterior({
+    adopted: [{ p1: { x: 0, y: 0 }, p2: { x: 95, y: 95 } }],
+    frame,
+    outline: OUT,
+    span: 400,
+  });
+  assert.equal(r.kept.length, 1);
+  assert.equal(r.dropped, 0);
+  assert.equal(r.connected, 1);
+  assert.ok(Math.hypot(r.kept[0].p2.x - 100, r.kept[0].p2.y - 100) < 1e-6);
+});
+
+test("organizeInterior: a hanging end extends along its own direction to the frame", async () => {
+  const { organizeInterior } = await import("./roof-layout.ts");
+  const OUT = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 200 },
+    { x: 0, y: 200 },
+  ];
+  const frame = [{ p1: { x: 100, y: 100 }, p2: { x: 300, y: 100 } }];
+  const r = organizeInterior({
+    adopted: [{ p1: { x: 0, y: 0 }, p2: { x: 60, y: 60 } }],
+    frame,
+    outline: OUT,
+    span: 400,
+  });
+  assert.equal(r.kept.length, 1);
+  assert.ok(
+    Math.hypot(r.kept[0].p2.x - 100, r.kept[0].p2.y - 100) < 1e-6,
+    `extended to the ridge, got ${JSON.stringify(r.kept[0].p2)}`,
+  );
+});
+
+test("organizeInterior: a stroke floating free of the whole frame is dropped", async () => {
+  const { organizeInterior } = await import("./roof-layout.ts");
+  const OUT = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 200 },
+    { x: 0, y: 200 },
+  ];
+  const r = organizeInterior({
+    adopted: [{ p1: { x: 150, y: 50 }, p2: { x: 200, y: 50 } }],
+    frame: [{ p1: { x: 100, y: 100 }, p2: { x: 300, y: 100 } }],
+    outline: OUT,
+    span: 400,
+  });
+  assert.equal(r.kept.length, 0);
+  assert.equal(r.dropped, 1);
+});

@@ -45,6 +45,12 @@ export type FaceGableRead = {
    *  dormer — the eave keeps its gutter in front, the gable rises behind it.
    *  Optional; absent/0 ⇒ a normal at-the-eave gable. */
   set_back_ft?: number | null;
+  /** Decisive gutter signal on STEPPED faces where no single continuous eave
+   *  line exists: true when a horizontal eave/gutter line — at ANY height,
+   *  even a lower tier — runs across IN FRONT of / below this gable's base.
+   *  The gable then rises BEHIND a guttered roof edge (frame-over): it must
+   *  not consume a wall, and the wall under it keeps its gutter. */
+  eave_passes_in_front?: boolean | null;
   notes: string;
 };
 

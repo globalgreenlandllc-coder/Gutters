@@ -55,7 +55,7 @@ const PT_PER_FT = 23.27; // run 2's dimension-line solve
 // side walls (E5/E11 — run-5 shipped those UNPRICED as label-vs-field
 // conflicts; the reconcile recovery must return them to eave off the
 // east/west continuous-eave reads).
-const LABELED_SIDES = new Set(["E1", "E5", "E11", "E15"]);
+const LABELED_SIDES = new Set(["E1", "E15"]); // run-8: labels on patio sides only
 const rawClasses: EdgeClass[] = edges.map((e) => ({
   id: e.id,
   edge_class: SIMULATE_RUN2_INVERSION ? (e.axis === "h" ? "eave" : "rake") : "eave",
@@ -104,30 +104,32 @@ const face = (f: string, title: string, gables: ReturnType<typeof gable>[]) => (
 // elevations: great-room left, entry center, garage right; patio centered on
 // the rear; east/west show one frame-over gable each ABOVE the lower eave).
 const PER_FACE = {
-  // Run-4's actual reads: a 38ft "main" claim at u0.50 (landed on the garage
-  // wall), the entry at u0.35 with an over-wide 16ft span.
-  // Three wall-plane gables interrupt the front fascia → NOT continuous
-  // (what the tightened reader prompt instructs).
+  // Run-8's actual reads: main claim at u0.35 span 24 (landed on the entry
+  // wall), garage gable properly at u0.85 span 20. Three wall-plane gables
+  // interrupt the front fascia → NOT continuous.
   north: {
     ...face("north", "FRONT/NORTH ELEVATION", [
-      gable("main", 38, 0.5),
-      { ...gable("entry", 16, 0.35), supported_on: "posts" as const },
+      gable("main", 24, 0.35),
+      gable("garage", 20, 0.85),
     ]),
     continuous_eave: false,
   },
-  // Patio span didn't read (E16 went unknown before the field promoted it).
   south: face("south", "REAR/SOUTH ELEVATION", [
-    { ...gable("patio", null as unknown as number, 0.5), supported_on: "posts" as const },
+    { ...gable("patio", 18, 0.45), supported_on: "posts" as const },
   ]),
-  // Run-4's killer: the frame-over side gables came back with an EXPLICIT
-  // set-back of 0 on continuous-eave faces — the hard gate must hold.
+  // Run-8's killer: the side faces honestly read STEPPED (continuous false —
+  // eave heights change), so the continuous hard gate never fired and the
+  // side frame-over gables tented the walls. eave_passes_in_front is the
+  // decisive signal: the gable rises BEHIND a running (lower) eave line.
   east: face("east", "LEFT/EAST ELEVATION", [
-    { ...gable("main", 16, 0.4), set_back_ft: 0 },
+    { ...gable("main", 16, 0.4), set_back_ft: null as unknown as number, eave_passes_in_front: true } as never,
   ]),
   west: face("west", "RIGHT/WEST ELEVATION", [
-    { ...gable("main", 16, 0.4), set_back_ft: 0 },
+    { ...gable("main", 16, 0.4), set_back_ft: null as unknown as number, eave_passes_in_front: true } as never,
   ]),
 };
+(PER_FACE.east as { continuous_eave: boolean }).continuous_eave = false;
+(PER_FACE.west as { continuous_eave: boolean }).continuous_eave = false;
 
 const rec = reconcileEdgeClasses({
   outline, edges, classes: fieldPass.classes, perFace: PER_FACE, ptPerFt: PT_PER_FT,
@@ -237,3 +239,14 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
 writeFileSync("scripts/roof-layout.svg", svg);
 writeFileSync("scripts/roof-layout.png", await sharp(Buffer.from(svg)).png().toBuffer());
 console.log(`wrote scripts/roof-layout.png (${W}x${H})`);
+
+// Debug: which valleys did the estimate-path filter drop?
+{
+  const kept = new Set(
+    filtered.valleys.map((l) => JSON.stringify(l.points.map((p) => [Math.round(p.x), Math.round(p.y)]))),
+  );
+  for (const v of layout.valleys) {
+    const key = JSON.stringify([v.p1, v.p2].map((p) => [Math.round(p.x), Math.round(p.y)]));
+    console.log(`valley ${key} ${kept.has(key) ? "kept" : "DROPPED"}`);
+  }
+}
