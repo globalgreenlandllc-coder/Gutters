@@ -5,24 +5,25 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
-import type { LineItem } from "@/lib/types";
+import type { LineItem, Measurements } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import {
+  computeEstimateTotals,
+  type Adjustments,
+} from "@/lib/estimate-totals";
 import {
   writeEstimateHandoff,
   type EstimateHandoff,
 } from "@/lib/estimate-handoff";
 
-export type Adjustments = {
-  markupPct: number;
-  discountPct: number;
-  taxPct: number;
-};
+export type { Adjustments };
 
 export function Summary({
   items,
   adjustments,
   onAdjust,
   handoff,
+  measurements,
 }: {
   items: LineItem[];
   adjustments: Adjustments;
@@ -31,28 +32,51 @@ export function Summary({
    *  takeoff (and renders the satellite image) instead of the stock
    *  sample. */
   handoff?: Omit<EstimateHandoff, "capturedAt">;
+  /** Powers the $/LF stat — the number contractors sanity-check first. */
+  measurements?: Measurements;
 }) {
   const router = useRouter();
   const handoffAndGo = () => {
     if (handoff) writeEstimateHandoff(handoff);
     router.push("/proposal");
   };
-  const subtotal = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-  const markup = subtotal * (adjustments.markupPct / 100);
-  const afterMarkup = subtotal + markup;
-  const discount = afterMarkup * (adjustments.discountPct / 100);
-  const taxableBase = items
-    .filter((i) => i.taxable)
-    .reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-  const taxableAfterAdj =
-    taxableBase *
-    (1 + adjustments.markupPct / 100) *
-    (1 - adjustments.discountPct / 100);
-  const tax = taxableAfterAdj * (adjustments.taxPct / 100);
-  const total = afterMarkup - discount + tax;
+  const { subtotal, markup, discount, tax, total } = computeEstimateTotals(
+    items,
+    adjustments,
+  );
+  // What the contractor keeps on top of cost basis: markup minus the
+  // discount they gave back.
+  const margin = markup - discount;
+  const perLF =
+    measurements && measurements.eaveLF > 0
+      ? total / measurements.eaveLF
+      : null;
 
   return (
     <div className="space-y-4">
+      {/* The two numbers a contractor sanity-checks before sending */}
+      <div className="grid grid-cols-2 gap-2">
+        <Insight
+          label="Your margin"
+          value={formatCurrency(margin)}
+          sub={
+            subtotal > 0
+              ? `${Math.round((margin / subtotal) * 100)}% over cost basis`
+              : "—"
+          }
+          tone="emerald"
+        />
+        <Insight
+          label="Bid rate"
+          value={perLF !== null ? `${formatCurrency(perLF)}/LF` : "—"}
+          sub={
+            measurements
+              ? `${Math.round(measurements.eaveLF)} LF of eave`
+              : "no takeoff"
+          }
+        />
+      </div>
+
       <div className="grid grid-cols-3 gap-2">
         <Adj
           label="Markup"
@@ -119,18 +143,47 @@ export function Summary({
 
       <ul className="space-y-1.5 text-xs text-zinc-500">
         <li className="flex items-center gap-2">
-          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-          Auto-attaches signed warranty + T&Cs
-        </li>
-        <li className="flex items-center gap-2">
-          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-          Stripe Connect deposit + final invoice
-        </li>
-        <li className="flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-accent-600" />
-          AI-drafted scope of work included
+          Builds a Good · Better · Best proposal from this takeoff
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
+          Homeowner e-signs & picks deposit in the client portal
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
+          Payment schedule, receipts & reminders after acceptance
         </li>
       </ul>
+    </div>
+  );
+}
+
+function Insight({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "emerald";
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-2.5">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "mt-0.5 text-base font-semibold tabular-nums tracking-tight",
+          tone === "emerald" ? "text-emerald-700" : "text-zinc-900",
+        )}
+      >
+        {value}
+      </div>
+      <div className="text-[10px] text-zinc-400">{sub}</div>
     </div>
   );
 }

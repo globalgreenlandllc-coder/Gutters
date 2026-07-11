@@ -2,6 +2,7 @@
 
 import {
   ArrowDownToLine,
+  RotateCcw,
   CornerDownRight,
   CornerUpRight,
   Hammer,
@@ -73,13 +74,35 @@ function decorate(item: LineItem): {
   return { Icon: Pencil, tone: t.zinc };
 }
 
+type ItemOrigin = "ai" | "edited" | "custom";
+
 export function PricingTable({
   items,
   onChange,
+  baseline,
 }: {
   items: LineItem[];
   onChange: (items: LineItem[]) => void;
+  /** The untouched AI scope for the current config — used to badge each
+   *  row's origin and power "Reset to AI scope". */
+  baseline?: LineItem[];
 }) {
+  const baseById = new Map((baseline ?? []).map((b) => [b.id, b]));
+  function originOf(item: LineItem): ItemOrigin {
+    const base = baseById.get(item.id);
+    if (!base) return "custom";
+    const pristine =
+      base.name === item.name &&
+      base.quantity === item.quantity &&
+      base.unitPrice === item.unitPrice &&
+      base.unit === item.unit;
+    return pristine ? "ai" : "edited";
+  }
+  const dirty =
+    !!baseline &&
+    (items.length !== baseline.length ||
+      items.some((i) => originOf(i) !== "ai"));
+
   function update(id: string, patch: Partial<LineItem>) {
     onChange(items.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   }
@@ -107,9 +130,19 @@ export function PricingTable({
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-100 bg-zinc-50/50 px-3 py-2">
+        <span className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
           {items.length} line {items.length === 1 ? "item" : "items"}
+          {dirty && baseline && (
+            <button
+              onClick={() => onChange(baseline)}
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-sans text-[10px] font-medium normal-case tracking-normal text-zinc-500 transition hover:border-accent-300 hover:text-accent-700"
+              title="Discard edits and custom rows; restore the AI scope"
+            >
+              <RotateCcw className="h-2.5 w-2.5" />
+              Reset to AI scope
+            </button>
+          )}
         </span>
         <span className="font-mono text-xs tabular-nums text-zinc-700">
           {formatCurrency(subtotal)}{" "}
@@ -144,14 +177,17 @@ export function PricingTable({
                   </div>
 
                   <div className="min-w-0 flex-1 space-y-1.5">
-                    <input
-                      value={item.name}
-                      onChange={(e) =>
-                        update(item.id, { name: e.target.value })
-                      }
-                      placeholder="Line item name"
-                      className="w-full bg-transparent text-sm font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 focus:placeholder:text-zinc-300"
-                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={item.name}
+                        onChange={(e) =>
+                          update(item.id, { name: e.target.value })
+                        }
+                        placeholder="Line item name"
+                        className="w-full min-w-0 flex-1 bg-transparent text-sm font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 focus:placeholder:text-zinc-300"
+                      />
+                      <OriginBadge origin={originOf(item)} />
+                    </div>
                     {item.description && (
                       <div className="truncate text-[11px] text-zinc-500">
                         {item.description}
@@ -214,6 +250,37 @@ export function PricingTable({
         Add line item
       </button>
     </div>
+  );
+}
+
+function OriginBadge({ origin }: { origin: ItemOrigin }) {
+  if (origin === "ai") {
+    return (
+      <span
+        className="shrink-0 rounded-full bg-accent-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-accent-600"
+        title="Priced automatically from the AI takeoff"
+      >
+        AI
+      </span>
+    );
+  }
+  if (origin === "edited") {
+    return (
+      <span
+        className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-amber-600"
+        title="AI line item you've overridden"
+      >
+        Edited
+      </span>
+    );
+  }
+  return (
+    <span
+      className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-zinc-500"
+      title="Added by you"
+    >
+      Custom
+    </span>
   );
 }
 

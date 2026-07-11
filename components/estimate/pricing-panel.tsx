@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Layers, Receipt, Wallet } from "lucide-react";
+import { ArrowRight, Layers, Receipt, Wallet } from "lucide-react";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { buildLineItems } from "@/lib/pricing";
+import {
+  computeEstimateTotals,
+  formatDelta,
+  type Adjustments,
+} from "@/lib/estimate-totals";
 import type { EstimateHandoff } from "@/lib/estimate-handoff";
 import { MaterialSelector } from "./material-selector";
 import { PricingTable } from "./pricing-table";
-import { Summary, type Adjustments } from "./summary";
-import { cn } from "@/lib/utils";
+import { Summary } from "./summary";
+import { cn, formatCurrency } from "@/lib/utils";
 
 type Tab = "materials" | "pricing" | "summary";
 
@@ -63,6 +68,32 @@ export function PricingPanel({
     taxPct: 8.25,
   });
 
+  const totals = useMemo(
+    () => computeEstimateTotals(items, adjustments),
+    [items, adjustments],
+  );
+
+  /**
+   * Client-total impact of a hypothetical config change — powers the
+   * price pills on the material chips. Mirrors exactly what clicking
+   * the chip does: auto items regenerate for the new config, custom
+   * rows carry over, adjustments apply on top.
+   */
+  const deltaFor = useCallback(
+    (patch: Partial<EstimateConfig>) => {
+      const autoIds = new Set(auto.map((i) => i.id));
+      const custom = items.filter((i) => !autoIds.has(i.id));
+      const nextItems = [
+        ...buildLineItems(measurements, { ...config, ...patch }),
+        ...custom,
+      ];
+      return (
+        computeEstimateTotals(nextItems, adjustments).total - totals.total
+      );
+    },
+    [auto, items, measurements, config, adjustments, totals.total],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-zinc-200/70 px-4 pb-4 pt-4">
@@ -88,6 +119,18 @@ export function PricingPanel({
               >
                 <t.icon className="h-3.5 w-3.5" />
                 {t.label}
+                {t.id === "pricing" && (
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
+                      active
+                        ? "bg-accent-100 text-accent-700"
+                        : "bg-zinc-100 text-zinc-500",
+                    )}
+                  >
+                    {items.length}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -104,10 +147,14 @@ export function PricingPanel({
             transition={{ duration: 0.18 }}
           >
             {tab === "materials" && (
-              <MaterialSelector config={config} onChange={setConfig} />
+              <MaterialSelector
+                config={config}
+                onChange={setConfig}
+                deltaFor={deltaFor}
+              />
             )}
             {tab === "pricing" && (
-              <PricingTable items={items} onChange={setItems} />
+              <PricingTable items={items} onChange={setItems} baseline={auto} />
             )}
             {tab === "summary" && (
               <Summary
@@ -115,10 +162,110 @@ export function PricingPanel({
                 adjustments={adjustments}
                 onAdjust={setAdjustments}
                 handoff={handoff}
+                measurements={measurements}
               />
             )}
           </motion.div>
         </AnimatePresence>
+      </div>
+
+      <LiveTotalBar
+        total={totals.total}
+        itemCount={items.length}
+        perLF={
+          measurements.eaveLF > 0 ? totals.total / measurements.eaveLF : null
+        }
+        onReview={() => setTab("summary")}
+        showReview={tab !== "summary"}
+      />
+    </div>
+  );
+}
+
+/**
+ * Sticky footer visible on every tab: the client total reacts live to
+ * material picks and line-item edits, with a delta flash so the cost of
+ * a change is legible without leaving the tab.
+ */
+function LiveTotalBar({
+  total,
+  itemCount,
+  perLF,
+  onReview,
+  showReview,
+}: {
+  total: number;
+  itemCount: number;
+  perLF: number | null;
+  onReview: () => void;
+  showReview: boolean;
+}) {
+  const prev = useRef(total);
+  const [flash, setFlash] = useState<{ delta: number; key: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const delta = total - prev.current;
+    prev.current = total;
+    if (Math.abs(delta) >= 0.5) {
+      setFlash({ delta, key: Date.now() });
+      const t = setTimeout(() => setFlash(null), 1600);
+      return () => clearTimeout(t);
+    }
+  }, [total]);
+
+  return (
+    <div className="border-t border-zinc-200/70 bg-white px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+              Client total
+            </span>
+            <AnimatePresence>
+              {flash && (
+                <motion.span
+                  key={flash.key}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -3 }}
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                    flash.delta > 0
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-emerald-50 text-emerald-700",
+                  )}
+                >
+                  {formatDelta(flash.delta)}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </div>
+          <div className="flex items-baseline gap-2.5">
+            <motion.span
+              key={Math.round(total)}
+              initial={{ opacity: 0.5, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-xl font-semibold tracking-tight tabular-nums text-zinc-900"
+            >
+              {formatCurrency(total)}
+            </motion.span>
+            <span className="truncate text-[11px] text-zinc-400">
+              {itemCount} items
+              {perLF !== null && ` · ${formatCurrency(perLF)}/LF`}
+            </span>
+          </div>
+        </div>
+        {showReview && (
+          <button
+            onClick={onReview}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-700"
+          >
+            Review & send
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );

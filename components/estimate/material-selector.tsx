@@ -11,6 +11,7 @@ import type {
   DownspoutSize,
 } from "@/lib/types";
 import { COLOR_OPTIONS } from "@/lib/pricing";
+import { formatDelta } from "@/lib/estimate-totals";
 import { GutterPreview } from "./gutter-preview";
 
 const DEFAULT_ACCESSORIES: GutterAccessories = {
@@ -59,13 +60,22 @@ const DOWNSPOUTS: { id: DownspoutSize; label: string }[] = [
 export function MaterialSelector({
   config,
   onChange,
+  deltaFor,
 }: {
   config: EstimateConfig;
   onChange: (next: EstimateConfig) => void;
+  /** Client-total impact of a hypothetical config patch — rendered as
+   *  a price pill on each option so the cost of a choice is visible
+   *  before it's made. */
+  deltaFor?: (patch: Partial<EstimateConfig>) => number;
 }) {
   const accessories = config.accessories ?? DEFAULT_ACCESSORIES;
   const setAcc = (patch: Partial<GutterAccessories>) =>
     onChange({ ...config, accessories: { ...accessories, ...patch } });
+  const accDelta = (patch: Partial<GutterAccessories>) =>
+    deltaFor
+      ? formatDelta(deltaFor({ accessories: { ...accessories, ...patch } }))
+      : null;
 
   return (
     <div className="space-y-5">
@@ -76,6 +86,7 @@ export function MaterialSelector({
           options={SIZES}
           value={config.size}
           onChange={(v) => onChange({ ...config, size: v })}
+          subFor={deltaFor && ((v) => formatDelta(deltaFor({ size: v })))}
         />
       </Group>
       <Group label="Profile">
@@ -83,6 +94,7 @@ export function MaterialSelector({
           options={STYLES}
           value={config.style}
           onChange={(v) => onChange({ ...config, style: v })}
+          subFor={deltaFor && ((v) => formatDelta(deltaFor({ style: v })))}
         />
       </Group>
       <Group label="Material">
@@ -90,6 +102,7 @@ export function MaterialSelector({
           options={MATERIALS}
           value={config.material}
           onChange={(v) => onChange({ ...config, material: v })}
+          subFor={deltaFor && ((v) => formatDelta(deltaFor({ material: v })))}
         />
       </Group>
       <Group label="Downspout">
@@ -97,6 +110,9 @@ export function MaterialSelector({
           options={DOWNSPOUTS}
           value={config.downspoutSize}
           onChange={(v) => onChange({ ...config, downspoutSize: v })}
+          subFor={
+            deltaFor && ((v) => formatDelta(deltaFor({ downspoutSize: v })))
+          }
         />
       </Group>
       <Group label="Color">
@@ -153,8 +169,17 @@ export function MaterialSelector({
                 >
                   {selected && <Check className="h-2.5 w-2.5" />}
                 </span>
-                <span className="min-w-0">
-                  <div className="text-xs font-medium text-zinc-900">{g.label}</div>
+                <span className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-medium text-zinc-900">
+                      {g.label}
+                    </span>
+                    {!selected && accDelta({ guard: g.id }) && (
+                      <span className="shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
+                        {accDelta({ guard: g.id })}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] text-zinc-500">{g.sub}</div>
                 </span>
               </button>
@@ -171,6 +196,7 @@ export function MaterialSelector({
             sub="Aluminum, sealed at fascia"
             checked={accessories.dripEdge}
             onChange={(v) => setAcc({ dripEdge: v })}
+            delta={accessories.dripEdge ? null : accDelta({ dripEdge: true })}
           />
           <AccessoryRow
             Icon={Droplet}
@@ -178,6 +204,7 @@ export function MaterialSelector({
             sub="Replaces one downspout with copper chain"
             checked={accessories.rainChain}
             onChange={(v) => setAcc({ rainChain: v })}
+            delta={accessories.rainChain ? null : accDelta({ rainChain: true })}
           />
           <AccessoryRow
             Icon={Shield}
@@ -185,6 +212,7 @@ export function MaterialSelector({
             sub="Roof-edge ice dam protection"
             checked={accessories.iceGuard}
             onChange={(v) => setAcc({ iceGuard: v })}
+            delta={accessories.iceGuard ? null : accDelta({ iceGuard: true })}
           />
           <AccessoryRow
             Icon={Flame}
@@ -192,6 +220,7 @@ export function MaterialSelector({
             sub="Self-regulating cable + thermostat"
             checked={accessories.heatTape}
             onChange={(v) => setAcc({ heatTape: v })}
+            delta={accessories.heatTape ? null : accDelta({ heatTape: true })}
           />
         </div>
       </Group>
@@ -205,12 +234,15 @@ function AccessoryRow({
   sub,
   checked,
   onChange,
+  delta,
 }: {
   Icon: typeof Waves;
   label: string;
   sub: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  /** Price impact of turning this on (null when on or unknown). */
+  delta?: string | null;
 }) {
   return (
     <button
@@ -237,6 +269,11 @@ function AccessoryRow({
         <div className="text-xs font-medium text-zinc-900">{label}</div>
         <div className="text-[10px] text-zinc-500">{sub}</div>
       </span>
+      {delta && (
+        <span className="shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
+          {delta}
+        </span>
+      )}
       <span
         className={cn(
           "flex h-4 w-4 items-center justify-center rounded-full border transition",
@@ -272,28 +309,37 @@ function Pills<T extends string>({
   options,
   value,
   onChange,
+  subFor,
 }: {
   options: { id: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
+  /** Price pill under each unselected option (e.g. "+$1.2k"). */
+  subFor?: (id: T) => string | null;
 }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {options.map((o) => {
         const selected = o.id === value;
+        const sub = !selected && subFor ? subFor(o.id) : null;
         return (
           <button
             key={o.id}
             type="button"
             onClick={() => onChange(o.id)}
             className={cn(
-              "rounded-lg border px-3 py-1.5 text-sm transition",
+              "flex flex-col items-center rounded-lg border px-3 py-1.5 transition",
               selected
                 ? "border-accent-500 bg-accent-50 text-accent-800"
                 : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
             )}
           >
-            {o.label}
+            <span className="text-sm leading-5">{o.label}</span>
+            {sub && (
+              <span className="text-[10px] font-semibold leading-3 tabular-nums text-zinc-400">
+                {sub}
+              </span>
+            )}
           </button>
         );
       })}
