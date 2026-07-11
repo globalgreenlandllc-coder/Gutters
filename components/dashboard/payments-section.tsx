@@ -54,7 +54,7 @@ export function PaymentsSection() {
   }
 
   return (
-    <section className="surface p-6 shadow-card">
+    <section className="anim-enter stagger-1 surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="font-label flex items-center gap-1.5 text-[11px] text-zinc-400">
@@ -94,7 +94,7 @@ export function PaymentsSection() {
                 href="https://dashboard.stripe.com/payment-links"
                 target="_blank"
                 rel="noreferrer noopener"
-                className="inline-flex items-center gap-0.5 text-accent-700 underline-offset-2 hover:underline"
+                className="ring-focus inline-flex items-center gap-0.5 rounded-sm text-accent-700 underline-offset-2 hover:underline"
               >
                 dashboard.stripe.com/payment-links
                 <ExternalLink className="h-3 w-3" />
@@ -116,7 +116,7 @@ export function PaymentsSection() {
                 href="https://squareup.com/dashboard/items/checkout-links"
                 target="_blank"
                 rel="noreferrer noopener"
-                className="inline-flex items-center gap-0.5 text-accent-700 underline-offset-2 hover:underline"
+                className="ring-focus inline-flex items-center gap-0.5 rounded-sm text-accent-700 underline-offset-2 hover:underline"
               >
                 squareup.com
                 <ExternalLink className="h-3 w-3" />
@@ -127,7 +127,7 @@ export function PaymentsSection() {
         />
 
         {error && (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
             {error}
           </div>
         )}

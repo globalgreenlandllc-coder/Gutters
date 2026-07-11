@@ -395,9 +395,10 @@ export default function Page() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <Link
             href="/demo"
-            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
+            className="group ring-focus-dark inline-flex items-center gap-2 rounded-md text-sm text-white/60 transition-smooth hover:text-white"
           >
-            <ArrowLeft className="h-4 w-4" /> Takeoff demos
+            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />{" "}
+            Takeoff demos
           </Link>
           <div className="font-label inline-flex items-center gap-2 rounded-md border border-white/25 px-2.5 py-1 text-white">
             <Satellite className="h-4 w-4" />
@@ -407,7 +408,7 @@ export default function Page() {
       </div>
 
       <div className="mx-auto max-w-7xl px-6 py-6">
-        <header className="mb-5">
+        <header className="anim-enter mb-5">
           <h1 className="display-hero text-3xl text-white sm:text-4xl">
             Satellite Map Takeoff
           </h1>
@@ -422,7 +423,7 @@ export default function Page() {
           {/* ── Main column: address bar + canvas ── */}
           <div className="lg:col-span-2">
             {/* Address bar */}
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="anim-enter stagger-1 rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 sm:flex-row">
                 <div className="relative flex-1">
                   <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
@@ -434,7 +435,7 @@ export default function Page() {
                       if (e.key === "Enter") handleAnalyze();
                     }}
                     placeholder="Enter a property address…"
-                    className="w-full rounded-lg border border-white/15 bg-ink py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-stripe-blue focus:ring-1 focus:ring-stripe-blue"
+                    className="w-full rounded-lg border border-white/15 bg-ink py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-white/40 outline-none transition-smooth focus:border-stripe-blue focus:ring-1 focus:ring-stripe-blue"
                   />
                 </div>
                 <button
@@ -442,7 +443,7 @@ export default function Page() {
                   onClick={handleAnalyze}
                   disabled={analyzing || !address.trim()}
                   className={cn(
-                    "inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition",
+                    "press-scale ring-focus-dark inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-smooth",
                     analyzing || !address.trim()
                       ? "cursor-not-allowed bg-white/10 text-white/40"
                       : "bg-accent-600 text-white hover:bg-accent-500",
@@ -450,7 +451,8 @@ export default function Page() {
                 >
                   {analyzing ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Analyzing…
+                      <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />{" "}
+                      Analyzing…
                     </>
                   ) : (
                     <>
@@ -469,7 +471,7 @@ export default function Page() {
                     type="button"
                     onClick={() => setAddress(addr)}
                     className={cn(
-                      "rounded-md border px-3 py-1 text-xs transition",
+                      "press-scale ring-focus-dark rounded-md border px-3 py-1 text-xs transition-smooth",
                       address === addr
                         ? "border-stripe-blue/60 bg-stripe-blue/15 text-white"
                         : "border-white/15 bg-ink text-white/60 hover:border-white/30 hover:text-white",
@@ -482,7 +484,7 @@ export default function Page() {
             </div>
 
             {/* Canvas */}
-            <div className="relative mt-4">
+            <div className="anim-enter stagger-2 relative mt-4">
               <GutterCanvas
                 width={CANVAS_W}
                 height={CANVAS_H}
@@ -499,8 +501,8 @@ export default function Page() {
 
               {/* Analyzing overlay */}
               {analyzing && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-2xl bg-ink/80">
-                  <Loader2 className="h-9 w-9 animate-spin text-stripe-blue" />
+                <div className="anim-enter-fade absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-2xl bg-ink/80">
+                  <Loader2 className="h-9 w-9 animate-spin text-stripe-blue motion-reduce:animate-none" />
                   <p className="text-sm font-medium text-white/90">
                     Pulling high-res aerial + tracing roof…
                   </p>
@@ -512,7 +514,7 @@ export default function Page() {
 
               {/* Mode toolbar — only meaningful once a roof is on screen */}
               {analyzed && (
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="anim-enter mt-4 flex flex-wrap items-center gap-2">
                   {MODES.map((m) => {
                     const Icon = m.icon;
                     const active = mode === m.id;
@@ -522,7 +524,7 @@ export default function Page() {
                         type="button"
                         onClick={() => setMode(m.id)}
                         className={cn(
-                          "inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition",
+                          "press-scale ring-focus-dark inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition-smooth",
                           active
                             ? "border-stripe-blue/60 bg-stripe-blue/15 text-white"
                             : "border-white/15 bg-white/5 text-white/70 hover:border-white/30 hover:text-white",
@@ -536,7 +538,7 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={resetOutline}
-                    className="ml-auto inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-sm font-medium text-white/70 transition hover:border-white/30 hover:text-white"
+                    className="press-scale ring-focus-dark ml-auto inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3.5 py-2 text-sm font-medium text-white/70 transition-smooth hover:border-white/30 hover:text-white"
                   >
                     <RotateCcw className="h-4 w-4" /> Reset outline
                   </button>
@@ -545,7 +547,7 @@ export default function Page() {
 
               {/* Active-mode hint */}
               {analyzed && (
-                <p className="mt-2 text-xs text-white/50">
+                <p className="anim-enter-fade stagger-2 mt-2 text-xs text-white/50">
                   <span className="font-semibold text-white/70">
                     {activeMode.label}:
                   </span>{" "}
@@ -556,7 +558,7 @@ export default function Page() {
           </div>
 
           {/* ── Sidebar: readout ── */}
-          <aside className="lg:col-span-1">
+          <aside className="anim-enter-fade stagger-3 lg:col-span-1">
             <div className="space-y-4 lg:sticky lg:top-6">
               {/* Detected property */}
               <div className="rounded-xl border border-white/10 bg-white/5 p-5">
@@ -581,7 +583,7 @@ export default function Page() {
                     <select
                       value={pitch}
                       onChange={(e) => setPitch(e.target.value)}
-                      className="rounded-md border border-white/15 bg-ink px-2 py-1 text-xs text-white/80 outline-none focus:border-stripe-blue"
+                      className="ring-focus-dark rounded-md border border-white/15 bg-ink px-2 py-1 text-xs text-white/80 outline-none transition-smooth focus:border-stripe-blue"
                     >
                       {["4", "6", "8", "10", "12"].map((p) => (
                         <option key={p} value={p}>

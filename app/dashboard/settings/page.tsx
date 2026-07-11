@@ -114,8 +114,8 @@ function BillingSection() {
     return (
       <Section eyebrow="Billing" title="Plan & credits" sub={subLine}>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
-          <div className="h-48 animate-pulse rounded-lg border border-zinc-200 bg-zinc-50" />
-          <div className="h-48 animate-pulse rounded-lg border border-zinc-200 bg-zinc-50" />
+          <div className="skeleton h-48" />
+          <div className="skeleton h-48" />
         </div>
       </Section>
     );
@@ -129,12 +129,12 @@ function BillingSection() {
       badge={badge}
     >
       {banner && (
-        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        <div className="anim-enter-fade mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {banner}
         </div>
       )}
       {error && (
-        <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <div className="anim-enter-fade mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
         </div>
       )}
@@ -150,8 +150,9 @@ function BillingSection() {
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+            {/* Static width; the draw-in animates scaleX only. */}
             <div
-              className="h-full rounded-full bg-accent-600"
+              className="anim-grow-x h-full rounded-full bg-accent-600"
               style={{ width: `${isAdmin ? 100 : Math.max(0, 100 - pct)}%` }}
             />
           </div>
@@ -185,7 +186,7 @@ function BillingSection() {
                     type="button"
                     disabled={busy !== null || !billing?.configured}
                     onClick={() => go(p.id, () => createCreditsCheckout(p.id))}
-                    className="inline-flex flex-col items-start rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left transition hover:border-accent-400 hover:bg-accent-50/50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="transition-smooth ring-focus press-scale inline-flex flex-col items-start rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left hover:border-accent-400 hover:bg-accent-50/50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-900">
                       {busy === p.id ? (
@@ -319,7 +320,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="surface p-6 shadow-card">
+    <section className="anim-enter stagger-2 surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="microlabel">{eyebrow}</div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   Check,
@@ -364,7 +364,7 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        "flex flex-col rounded-xl border bg-white p-5 shadow-card transition",
+        "transition-smooth flex flex-col rounded-xl border bg-white p-5 shadow-card",
         active ? "border-zinc-200" : "border-dashed border-zinc-300",
       )}
     >
@@ -431,7 +431,7 @@ function ProviderCard({
       {active && testResult && (
         <div
           className={cn(
-            "mt-3 rounded-lg border px-3 py-2 text-xs",
+            "anim-enter-fade mt-3 rounded-lg border px-3 py-2 text-xs",
             testResult.ok
               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
               : "border-rose-200 bg-rose-50 text-rose-800",
@@ -465,7 +465,7 @@ function ProviderCard({
           {sendTestResult && (
             <div
               className={cn(
-                "rounded-lg border px-3 py-2 text-xs",
+                "anim-enter-fade rounded-lg border px-3 py-2 text-xs",
                 sendTestResult.ok
                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                   : "border-rose-200 bg-rose-50 text-rose-800",
@@ -514,7 +514,7 @@ function ProviderCard({
                 value={testEmailAddr}
                 onChange={(e) => setTestEmailAddr(e.target.value)}
                 placeholder="you@example.com"
-                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                className="transition-smooth h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
               />
               <Button
                 size="sm"
@@ -534,7 +534,7 @@ function ProviderCard({
                   setTestEmailOpen(false);
                   setSendTestResult(null);
                 }}
-                className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                className="transition-smooth ring-focus rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                 aria-label="Cancel"
               >
                 <X className="h-3.5 w-3.5" />
@@ -602,7 +602,7 @@ function ProviderCard({
             </Button>
             <button
               onClick={() => onRevoke(active)}
-              className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-rose-700 transition hover:bg-rose-50"
+              className="transition-smooth ring-focus ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
             >
               <ShieldOff className="h-3 w-3" />
               Revoke
@@ -620,7 +620,7 @@ function ProviderCard({
         <div className="mt-4 border-t border-zinc-100 pt-3">
           <button
             onClick={() => setShowHistory((v) => !v)}
-            className="flex w-full items-center justify-between text-xs text-zinc-500 hover:text-zinc-900"
+            className="transition-smooth ring-focus flex w-full items-center justify-between rounded-md text-xs text-zinc-500 hover:text-zinc-900"
           >
             <span>{inactive.length} prior {inactive.length === 1 ? "key" : "keys"}</span>
             <span className="text-[10px] uppercase tracking-wider">
@@ -628,7 +628,7 @@ function ProviderCard({
             </span>
           </button>
           {showHistory && (
-            <ul className="mt-2 space-y-1">
+            <ul className="anim-enter-fade mt-2 space-y-1">
               {inactive.map((r) => (
                 <li
                   key={r.id}
@@ -753,7 +753,7 @@ function AddDialog({
           />
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -834,7 +834,7 @@ function RotateDialog({
           />
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -1005,11 +1005,12 @@ function Dialog({
   title: string;
   children: React.ReactNode;
 }) {
+  const reduce = useReducedMotion();
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -1017,7 +1018,7 @@ function Dialog({
         >
           <div className="absolute inset-0 bg-zinc-900/30 backdrop-blur-sm" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
@@ -1026,7 +1027,7 @@ function Dialog({
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="transition-smooth ring-focus absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>

@@ -206,9 +206,10 @@ export default function Page() {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
           <Link
             href="/demo"
-            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
+            className="group ring-focus-dark inline-flex items-center gap-2 rounded-md text-sm text-white/60 transition-smooth hover:text-white"
           >
-            <ArrowLeft className="h-4 w-4" /> Takeoff demos
+            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />{" "}
+            Takeoff demos
           </Link>
           <div className="flex items-center gap-3 text-right">
             {fileName && (
@@ -225,7 +226,7 @@ export default function Page() {
       </div>
 
       <div className="mx-auto max-w-7xl px-6 py-8">
-        <header className="mb-6">
+        <header className="anim-enter mb-6">
           <h1 className="display-hero text-3xl text-white sm:text-4xl">
             Blueprint Upload Takeoff
           </h1>
@@ -255,10 +256,10 @@ export default function Page() {
           // ─── CANVAS + SIDEBAR ───────────────────────────────────────────
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Canvas column */}
-            <div className="lg:col-span-2">
+            <div className="anim-enter lg:col-span-2">
               {/* Instruction / mode banner sits above the canvas. */}
               {!calibrated ? (
-                <div className="mb-3 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                <div className="anim-enter-fade mb-3 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                   <Ruler className="h-4 w-4 shrink-0" />
                   <span>
                     <strong className="font-semibold">Calibrate:</strong> click
@@ -300,7 +301,7 @@ export default function Page() {
               )}
 
               {calibrated && (
-                <p className="mt-3 text-xs text-white/50">
+                <p className="anim-enter-fade stagger-2 mt-3 text-xs text-white/50">
                   Tip: try a wrong number in “Recalibrate” — every measurement
                   rescales, because all footage is derived from this one scale.
                 </p>
@@ -308,7 +309,7 @@ export default function Page() {
             </div>
 
             {/* Sidebar */}
-            <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+            <aside className="anim-enter-fade stagger-2 space-y-4 lg:sticky lg:top-6 lg:self-start">
               {/* Scale status */}
               <div className="rounded-xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between">
@@ -335,7 +336,7 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={recalibrate}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/70 transition hover:border-stripe-blue/60 hover:text-white"
+                  className="press-scale ring-focus-dark mt-3 inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/70 transition-smooth hover:border-stripe-blue/60 hover:text-white"
                 >
                   <RotateCcw className="h-3.5 w-3.5" /> Recalibrate
                 </button>
@@ -371,7 +372,7 @@ export default function Page() {
 
               {/* Estimated cost — only once calibrated */}
               {calibrated && (
-                <div className="rounded-xl border border-stripe-blue/40 bg-stripe-blue/10 p-5">
+                <div className="anim-enter-fade rounded-xl border border-stripe-blue/40 bg-stripe-blue/10 p-5">
                   <div className="flex items-baseline justify-between">
                     <h2 className="text-sm font-semibold text-white">
                       Estimated cost
@@ -420,14 +421,14 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={loadSampleOutline}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-accent-500"
+                    className="press-scale ring-focus-dark inline-flex items-center justify-center gap-2 rounded-lg bg-accent-600 px-3 py-2 text-sm font-semibold text-white transition-smooth hover:bg-accent-500"
                   >
                     <Layers className="h-4 w-4" /> Load sample outline
                   </button>
                   <button
                     type="button"
                     onClick={clearTrace}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition hover:border-stripe-coral/60 hover:text-stripe-coral"
+                    className="press-scale ring-focus-dark inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition-smooth hover:border-stripe-coral/60 hover:text-stripe-coral"
                   >
                     <Eraser className="h-4 w-4" /> Clear trace
                   </button>
@@ -469,14 +470,17 @@ function UploadZone({
   onFilePick: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   return (
+    // anim-enter lives on the wrapper: its fill-mode pins `transform` on the
+    // animated element, which would silently cancel the drag-over scale below.
+    <div className="anim-enter">
     <div
       onDrop={onDrop}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       className={cn(
-        "flex min-h-[420px] flex-col items-center justify-center rounded-xl border-2 border-dashed p-10 text-center transition",
+        "flex min-h-[420px] flex-col items-center justify-center rounded-xl border-2 border-dashed p-10 text-center transition-smooth",
         dragOver
-          ? "border-stripe-blue bg-stripe-blue/10"
+          ? "scale-[1.01] border-stripe-blue bg-stripe-blue/10"
           : "border-white/15 bg-white/5",
       )}
     >
@@ -489,9 +493,9 @@ function UploadZone({
       />
       <span
         className={cn(
-          "inline-flex h-16 w-16 items-center justify-center rounded-xl ring-1 transition",
+          "inline-flex h-16 w-16 items-center justify-center rounded-xl ring-1 transition-smooth",
           dragOver
-            ? "bg-stripe-blue/20 text-white ring-stripe-blue/50"
+            ? "scale-110 bg-stripe-blue/20 text-white ring-stripe-blue/50"
             : "bg-white/10 text-stripe-blue ring-white/15",
         )}
       >
@@ -511,7 +515,7 @@ function UploadZone({
           type="button"
           onClick={onBrowse}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition hover:border-stripe-blue/60 hover:text-white disabled:opacity-50"
+          className="press-scale ring-focus-dark inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white/80 transition-smooth hover:border-stripe-blue/60 hover:text-white disabled:opacity-50"
         >
           <FileText className="h-4 w-4" /> Choose file
         </button>
@@ -519,7 +523,7 @@ function UploadZone({
           type="button"
           onClick={onSample}
           disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:opacity-50"
+          className="press-scale ring-focus-dark inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition-smooth hover:bg-accent-500 disabled:opacity-50"
         >
           <Layers className="h-4 w-4" /> Use sample plan
         </button>
@@ -528,6 +532,7 @@ function UploadZone({
         Demo only — any file reveals the same procedural sample sheet. No upload
         leaves your browser.
       </p>
+    </div>
     </div>
   );
 }
@@ -550,7 +555,7 @@ function ModeToolbar({
     { id: "downspout", label: "Downspouts", icon: Droplets },
   ];
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
+    <div className="anim-enter-fade mb-3 flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
         {tools.map((t) => {
           const Icon = t.icon;
@@ -561,7 +566,7 @@ function ModeToolbar({
               type="button"
               onClick={() => setMode(t.id)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
+                "press-scale ring-focus-dark inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-smooth",
                 active
                   ? "bg-accent-600 text-white"
                   : "text-white/70 hover:bg-white/10 hover:text-white",
@@ -576,14 +581,14 @@ function ModeToolbar({
 
       {/* Eave / rake toggle — what gets drawn in trace mode. */}
       {mode === "trace" && (
-        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+        <div className="anim-enter-fade flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
           {(["eave", "rake"] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setTraceKind(k)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition",
+                "press-scale ring-focus-dark rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition-smooth",
                 traceKind === k
                   ? k === "eave"
                     ? "bg-accent-600 text-white"
@@ -620,7 +625,7 @@ function CalibrateForm({
         e.preventDefault();
         onSet();
       }}
-      className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-stripe-blue/40 bg-stripe-blue/10 px-4 py-3"
+      className="anim-enter mt-3 flex flex-wrap items-end gap-3 rounded-lg border border-stripe-blue/40 bg-stripe-blue/10 px-4 py-3"
     >
       <div>
         <label className="block text-xs font-medium text-white/60">
@@ -633,7 +638,7 @@ function CalibrateForm({
             step="any"
             value={knownFeet}
             onChange={(e) => setKnownFeet(e.target.value)}
-            className="w-24 rounded-lg border border-white/15 bg-ink px-3 py-1.5 text-sm text-white outline-none focus:border-stripe-blue"
+            className="w-24 rounded-lg border border-white/15 bg-ink px-3 py-1.5 text-sm text-white outline-none transition-smooth focus:border-stripe-blue focus:ring-1 focus:ring-stripe-blue"
           />
           <span className="text-sm text-white/60">feet</span>
         </div>
@@ -641,14 +646,14 @@ function CalibrateForm({
       <button
         type="submit"
         disabled={!valid}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="press-scale ring-focus-dark inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-2 text-sm font-semibold text-white transition-smooth hover:bg-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Ruler className="h-4 w-4" /> Set scale
       </button>
       <button
         type="button"
         onClick={onReset}
-        className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition hover:text-white"
+        className="press-scale ring-focus-dark rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm font-medium text-white/70 transition-smooth hover:border-white/30 hover:text-white"
       >
         Re-pick points
       </button>

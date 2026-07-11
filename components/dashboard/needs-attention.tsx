@@ -69,12 +69,12 @@ export function NeedsAttention({
       {loading ? (
         <div className="space-y-3 p-5">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-10 animate-pulse rounded-lg bg-zinc-100" />
+            <div key={i} className="skeleton h-10" />
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="px-5 py-8 text-center">
-          <div className="mx-auto inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+        <div className="anim-enter-fade px-5 py-8 text-center">
+          <div className="anim-pop mx-auto inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
             <CheckCircle2 className="h-5 w-5" />
           </div>
           <div className="mt-3 text-sm font-medium text-zinc-900">
@@ -86,13 +86,17 @@ export function NeedsAttention({
         </div>
       ) : (
         <ul>
-          {items.map((item) => {
+          {items.map((item, i) => {
             const Icon = KIND_ICON[item.kind] ?? ListChecks;
             return (
-              <li key={item.id} className="border-b border-zinc-100 last:border-b-0">
+              <li
+                key={item.id}
+                className="anim-enter-fade border-b border-zinc-100 last:border-b-0"
+                style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+              >
                 <Link
                   href={item.href}
-                  className="group flex items-center gap-3 px-5 py-3 transition hover:bg-zinc-50/70"
+                  className="transition-smooth ring-focus group flex items-center gap-3 px-5 py-3 hover:bg-zinc-50/70"
                 >
                   <span
                     className={cn(
@@ -110,7 +114,7 @@ export function NeedsAttention({
                       {item.detail}
                     </span>
                   </span>
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-zinc-500" />
+                  <ArrowRight className="transition-smooth h-3.5 w-3.5 shrink-0 text-zinc-300 group-hover:translate-x-0.5 group-hover:text-zinc-500" />
                 </Link>
               </li>
             );

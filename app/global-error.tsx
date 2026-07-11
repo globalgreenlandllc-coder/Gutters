@@ -39,7 +39,25 @@ export default function GlobalError({
           padding: "1.5rem",
         }}
       >
+        {/* globals.css never loads inside this boundary, so the motion
+            polish (entrance, button feedback) is inlined here. Colors are
+            the existing accent tokens: 600 #14688C, 700 #115673, 400 #5AA6C6. */}
+        <style>{`
+          @media (prefers-reduced-motion: no-preference) {
+            @keyframes ge-enter {
+              from { opacity: 0; transform: translateY(12px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+            .ge-card { animation: ge-enter 0.4s cubic-bezier(0.32, 0.72, 0, 1) both; }
+            .ge-btn { transition: background-color 150ms ease, transform 150ms ease; }
+            .ge-btn:active { transform: scale(0.98); }
+          }
+          .ge-btn { background: #14688C; }
+          .ge-btn:hover { background: #115673; }
+          .ge-btn:focus-visible { outline: 2px solid #5AA6C6; outline-offset: 2px; }
+        `}</style>
         <div
+          className="ge-card"
           style={{
             width: "100%",
             maxWidth: 560,
@@ -138,13 +156,13 @@ export default function GlobalError({
 
           <button
             onClick={reset}
+            className="ge-btn"
             style={{
               marginTop: 20,
               width: "100%",
               padding: "10px 14px",
               borderRadius: 8,
               border: "none",
-              background: "#14688C",
               color: "white",
               fontSize: 14,
               fontWeight: 600,

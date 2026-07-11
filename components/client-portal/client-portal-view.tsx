@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ShieldCheck, Phone, Mail } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
 import { PaymentHub } from "./payment-hub";
 import { packageTotal, type Proposal } from "@/lib/proposal-mock";
+import { DUR, EASE } from "@/lib/motion";
 import { acceptProposalByToken } from "@/app/actions/proposals";
 import type { PortalPaymentState } from "@/app/actions/payments";
 
@@ -46,6 +47,7 @@ export function ClientPortalView({
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [, startAccept] = useTransition();
   const [acceptPending, setAcceptPending] = useState(false);
+  const reduce = useReducedMotion();
 
   const selected =
     proposal.packages.find((p) => p.id === selectedId) ?? proposal.packages[0];
@@ -109,8 +111,9 @@ export function ClientPortalView({
 
       <main className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
+          initial={reduce ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: DUR.entrance, ease: EASE }}
           className="space-y-8"
         >
           <Header proposal={proposal} />
@@ -147,12 +150,12 @@ export function ClientPortalView({
               signerName={signerName}
               onSignerName={setSignerName}
             />
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+            <label className="transition-smooth flex cursor-pointer items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card hover:border-zinc-300">
               <input
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-zinc-300 accent-accent-600"
+                className="ring-focus mt-1 h-4 w-4 rounded border-zinc-300 accent-accent-600"
               />
               <span className="text-sm text-zinc-700">
                 I authorize {proposal.contractor.company} to perform the
@@ -296,14 +299,14 @@ function ContactCard({
         </div>
         <a
           href={`tel:${contractor.phone}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
+          className="transition-smooth ring-focus inline-flex items-center gap-2 rounded-md text-sm text-zinc-700 hover:text-accent-700"
         >
           <Phone className="h-4 w-4" />
           {contractor.phone}
         </a>
         <a
           href={`mailto:${contractor.email}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
+          className="transition-smooth ring-focus inline-flex items-center gap-2 rounded-md text-sm text-zinc-700 hover:text-accent-700"
         >
           <Mail className="h-4 w-4" />
           {contractor.email}

@@ -19,16 +19,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const base =
-  "inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all duration-150 ring-focus disabled:opacity-50 disabled:cursor-not-allowed select-none";
+  "inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all duration-150 motion-reduce:transition-none ring-focus disabled:opacity-50 disabled:cursor-not-allowed select-none";
 
 const variants: Record<Variant, string> = {
   primary:
     "bg-accent-600 text-white font-semibold shadow-sm hover:bg-accent-700 active:translate-y-px",
   secondary:
-    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300 shadow-sm",
-  ghost: "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800",
+    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300 shadow-sm active:translate-y-px",
+  ghost:
+    "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 active:translate-y-px",
   outline:
-    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300",
+    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300 active:translate-y-px",
   danger:
     "bg-rose-600 text-white font-semibold shadow-sm hover:bg-rose-700 active:translate-y-px",
   dark: "bg-accent-950 text-white font-semibold hover:bg-accent-900 active:translate-y-px",

@@ -85,13 +85,12 @@ export function Insights() {
           />
         </Reveal>
 
-        <Reveal className="mt-14" delay={0.05}>
-          <div className="grid gap-4 md:grid-cols-3">
-            {POSTS.map((p) => (
+        <div className="mt-14 grid gap-4 md:grid-cols-3">
+          {POSTS.map((p, i) => (
+            <Reveal key={p.title} delay={0.05 + i * 0.07}>
               <Link
-                key={p.title}
                 href="/sign-in"
-                className="group rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card transition hover:border-zinc-300"
+                className="ring-focus group block h-full rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card transition duration-300 will-change-transform hover:-translate-y-1 hover:border-zinc-300 hover:shadow-elevated motion-reduce:transform-none"
               >
                 {p.visual}
                 <div className="px-2 pb-2 pt-5">
@@ -103,15 +102,15 @@ export function Insights() {
                   </h3>
                   <p className="mt-4 text-[13px] font-medium text-accent-700">
                     Read Now{" "}
-                    <span className="inline-block transition group-hover:translate-x-0.5">
+                    <span className="inline-block transition group-hover:translate-x-0.5 motion-reduce:transition-none">
                       &rarr;
                     </span>
                   </p>
                 </div>
               </Link>
-            ))}
-          </div>
-        </Reveal>
+            </Reveal>
+          ))}
+        </div>
       </Container>
     </section>
   );

@@ -73,15 +73,15 @@ export function WeekStrip({ days }: { days: WeekDay[] }) {
         </div>
         <Link
           href="/dashboard/calendar"
-          className="inline-flex items-center gap-1 text-xs font-medium text-accent-700 hover:text-accent-800"
+          className="transition-smooth ring-focus group inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 hover:text-accent-800"
         >
           Calendar
-          <ArrowUpRight className="h-3 w-3" />
+          <ArrowUpRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
         </Link>
       </div>
 
       <div className="mt-4 grid grid-cols-7 gap-1.5">
-        {week.map((d) => {
+        {week.map((d, i) => {
           const date = parseUtc(d.date);
           const isToday = d.date === todayKey;
           return (
@@ -94,7 +94,7 @@ export function WeekStrip({ days }: { days: WeekDay[] }) {
                   className={cn(
                     "inline-flex h-7 w-7 items-center justify-center text-sm font-medium",
                     isToday
-                      ? "rounded-full bg-accent-700 text-white"
+                      ? "anim-pop rounded-full bg-accent-700 text-white"
                       : "text-zinc-700",
                   )}
                 >
@@ -104,7 +104,8 @@ export function WeekStrip({ days }: { days: WeekDay[] }) {
               <div className="mt-1.5 h-5">
                 {d.count > 0 && (
                   <span
-                    className="block truncate rounded-md bg-accent-100 px-1.5 py-0.5 text-[10px] font-medium text-accent-800"
+                    className="anim-enter-fade block truncate rounded-md bg-accent-100 px-1.5 py-0.5 text-[10px] font-medium text-accent-800"
+                    style={{ animationDelay: `${i * 40}ms` }}
                     title={d.firstTitle ?? undefined}
                   >
                     {d.count > 1 ? `+${d.count}` : d.firstTitle}

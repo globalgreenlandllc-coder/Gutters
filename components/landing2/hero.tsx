@@ -31,8 +31,8 @@ function PipelineTabs({
             onClick={() => onChange(t)}
             className={
               isActive
-                ? "flex items-center gap-1.5 rounded-full bg-accent-950 px-3.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-white"
-                : "rounded-full px-3.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-zinc-500 transition hover:text-zinc-800"
+                ? "ring-focus flex items-center gap-1.5 rounded-full bg-accent-950 px-3.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-white transition active:scale-[0.98] motion-reduce:transform-none"
+                : "ring-focus rounded-full px-3.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-zinc-500 transition hover:text-zinc-800 active:scale-[0.98] motion-reduce:transform-none"
             }
           >
             {isActive && (

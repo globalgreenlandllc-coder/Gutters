@@ -54,7 +54,7 @@ export default async function BlueprintsListPage() {
       actions={
         <Link
           href="/dashboard/blueprints/new"
-          className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+          className="ring-focus press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700"
         >
           <Plus size={14} /> New blueprint
         </Link>
@@ -62,7 +62,7 @@ export default async function BlueprintsListPage() {
     >
       <div className="space-y-6">
         {rows.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
+          <div className="anim-enter rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
             <div className="mx-auto mb-3 w-fit rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200">
               <FileText size={24} />
             </div>
@@ -75,14 +75,14 @@ export default async function BlueprintsListPage() {
             </p>
             <Link
               href="/dashboard/blueprints/new"
-              className="ring-focus mt-4 inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+              className="ring-focus press-scale mt-4 inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700"
             >
               <Plus size={14} /> Create one
             </Link>
           </div>
         ) : (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-card">
-            {rows.map((r) => {
+            {rows.map((r, i) => {
               const StatusIcon =
                 r.status === "SUCCEEDED"
                   ? CheckCircle2
@@ -96,14 +96,18 @@ export default async function BlueprintsListPage() {
                     ? "rose"
                     : "amber";
               return (
-                <li key={r.id}>
+                <li
+                  key={r.id}
+                  className="anim-enter-fade"
+                  style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
+                >
                   <Link
                     href={
                       r.status === "SUCCEEDED"
                         ? `/estimate?planId=${r.id}`
                         : `/dashboard/blueprints/${r.id}`
                     }
-                    className="block px-4 py-3.5 transition hover:bg-zinc-50/60"
+                    className="ring-focus block px-4 py-3.5 transition-smooth hover:bg-zinc-50/60"
                   >
                     <div className="flex items-center gap-3">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-500">

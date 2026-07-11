@@ -42,12 +42,13 @@ export default function DemoIndexPage() {
       <div className="relative mx-auto max-w-5xl px-6 py-16">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
+          className="group ring-focus-dark inline-flex items-center gap-2 rounded-md text-sm text-white/60 transition-smooth hover:text-white"
         >
-          <ArrowLeft className="h-4 w-4" /> Back home
+          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />{" "}
+          Back home
         </Link>
 
-        <header className="mt-8">
+        <header className="anim-enter mt-8">
           <p className="font-label inline-flex items-center rounded-md border border-white/25 px-2.5 py-1 text-white">
             Interactive Takeoff
           </p>
@@ -63,13 +64,13 @@ export default function DemoIndexPage() {
         </header>
 
         <div className="mt-12 grid gap-6 sm:grid-cols-2">
-          {METHODS.map((m) => {
+          {METHODS.map((m, i) => {
             const Icon = m.icon;
             return (
               <Link
                 key={m.href}
                 href={m.href}
-                className="group relative flex flex-col rounded-xl border border-white/10 bg-white/5 p-7 transition hover:border-stripe-blue/60 hover:bg-white/[0.08]"
+                className={`group anim-enter ${i === 0 ? "stagger-2" : "stagger-3"} hover-lift press-scale ring-focus-dark relative flex flex-col rounded-xl border border-white/10 bg-white/5 p-7 transition-smooth hover:border-stripe-blue/60 hover:bg-white/[0.08]`}
               >
                 <div className="flex items-center justify-between">
                   <span className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-stripe-blue/15 text-stripe-blue ring-1 ring-stripe-blue/25">
@@ -95,7 +96,7 @@ export default function DemoIndexPage() {
                 </ul>
                 <span className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-stripe-blue">
                   Open demo
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
                 </span>
               </Link>
             );

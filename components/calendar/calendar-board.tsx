@@ -13,7 +13,6 @@ import {
   CalendarRange,
   ChevronLeft,
   ChevronRight,
-  Clock,
   Columns3,
   Hammer,
   MapPin,
@@ -842,7 +841,7 @@ function Header({
           <button
             onClick={() => onView("week")}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition",
+              "transition-smooth ring-focus press-scale inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium",
               view === "week"
                 ? "bg-accent-600 text-white shadow-sm"
                 : "text-zinc-600 hover:bg-zinc-50",
@@ -854,7 +853,7 @@ function Header({
           <button
             onClick={() => onView("month")}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition",
+              "transition-smooth ring-focus press-scale inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium",
               view === "month"
                 ? "bg-accent-600 text-white shadow-sm"
                 : "text-zinc-600 hover:bg-zinc-50",
@@ -867,20 +866,20 @@ function Header({
         <div className="flex items-center rounded-lg border border-zinc-200 bg-white shadow-sm">
           <button
             onClick={onPrev}
-            className="flex h-9 w-9 items-center justify-center rounded-l-lg text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
+            className="transition-smooth ring-focus press-scale flex h-9 w-9 items-center justify-center rounded-l-lg text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
             aria-label={view === "week" ? "Previous week" : "Previous month"}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={onToday}
-            className="border-x border-zinc-200 px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+            className="transition-smooth ring-focus press-scale border-x border-zinc-200 px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
           >
             Today
           </button>
           <button
             onClick={onNext}
-            className="flex h-9 w-9 items-center justify-center rounded-r-lg text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
+            className="transition-smooth ring-focus press-scale flex h-9 w-9 items-center justify-center rounded-r-lg text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
             aria-label={view === "week" ? "Next week" : "Next month"}
           >
             <ChevronRight className="h-4 w-4" />
@@ -888,7 +887,7 @@ function Header({
         </div>
         <button
           onClick={onNew}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-700"
+          className="transition-smooth ring-focus press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-accent-700"
         >
           <Plus className="h-4 w-4" />
           New appointment
@@ -960,7 +959,7 @@ function WorkerLegend({
             onClick={() => onToggle(w.id)}
             title={off ? "Show on calendar" : "Hide from calendar"}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
+              "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
               off
                 ? "border-zinc-200 bg-white text-zinc-400"
                 : "border-zinc-200 bg-white text-zinc-700 shadow-sm hover:bg-zinc-50",
@@ -1212,8 +1211,16 @@ function WeekGrid({
         </div>
 
         {loading && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/40 text-xs text-zinc-500">
-            Loading…
+          <div
+            role="status"
+            aria-label="Loading calendar…"
+            className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/40"
+          >
+            <div className="w-40 space-y-1.5">
+              <div className="skeleton h-4 w-full" />
+              <div className="skeleton h-4 w-3/4" />
+              <div className="skeleton h-4 w-1/2" />
+            </div>
           </div>
         )}
       </div>
@@ -1458,7 +1465,7 @@ function MonthGrid({
               onDrop={(e) => onDrop(e, d)}
               onClick={() => onEmptyClick(d)}
               className={cn(
-                "relative min-h-[104px] cursor-pointer border-b border-l border-zinc-100 p-1.5 transition first:border-l-0 [&:nth-child(7n+1)]:border-l-0",
+                "transition-smooth relative min-h-[104px] cursor-pointer border-b border-l border-zinc-100 p-1.5 first:border-l-0 [&:nth-child(7n+1)]:border-l-0",
                 inMonth ? "bg-white hover:bg-accent-50/30" : "bg-zinc-50/50",
                 isToday && "bg-accent-50/50",
                 hoverDay === key && "bg-accent-100/60 ring-2 ring-inset ring-accent-400",
@@ -1473,7 +1480,7 @@ function MonthGrid({
                   }}
                   title="Open week view"
                   className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums transition hover:ring-2 hover:ring-accent-300",
+                    "transition-smooth ring-focus inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums hover:ring-2 hover:ring-accent-300",
                     isToday
                       ? "bg-accent-600 text-white"
                       : inMonth
@@ -1506,7 +1513,9 @@ function MonthGrid({
                         onApptClick(a);
                       }}
                       className={cn(
-                        "flex cursor-grab items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1 active:cursor-grabbing",
+                        // Color/ring hover only — a transform here would
+                        // distort the native drag image (see DraggableCard).
+                        "transition-smooth flex cursor-grab items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1 hover:ring-2 active:cursor-grabbing",
                         meta.bg,
                         meta.ring,
                         meta.text,
@@ -1530,7 +1539,7 @@ function MonthGrid({
                       href="/dashboard/workers"
                       onClick={(e) => e.stopPropagation()}
                       className={cn(
-                        "flex items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1",
+                        "transition-smooth ring-focus flex items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1 hover:ring-2",
                         tone.bg,
                         tone.ring,
                         tone.text,
@@ -1552,7 +1561,7 @@ function MonthGrid({
                       e.stopPropagation();
                       onDayOpen(d);
                     }}
-                    className="w-full rounded px-1 py-0.5 text-left text-[10px] font-medium text-accent-700 hover:bg-accent-50"
+                    className="transition-smooth ring-focus w-full rounded px-1 py-0.5 text-left text-[10px] font-medium text-accent-700 hover:bg-accent-50"
                   >
                     +{more} more
                   </button>
@@ -1564,8 +1573,16 @@ function MonthGrid({
       </div>
 
       {loading && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/40 text-xs text-zinc-500">
-          Loading…
+        <div
+          role="status"
+          aria-label="Loading calendar…"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/40"
+        >
+          <div className="w-40 space-y-1.5">
+            <div className="skeleton h-4 w-full" />
+            <div className="skeleton h-4 w-3/4" />
+            <div className="skeleton h-4 w-1/2" />
+          </div>
         </div>
       )}
     </div>
@@ -1696,7 +1713,9 @@ function DragItem({
       onDragStart={(e) => onDragStart(e, item)}
       onDragEnd={onDragEnd}
       className={cn(
-        "group relative cursor-grab rounded-lg border px-2.5 py-1.5 pr-9 text-xs shadow-sm transition active:cursor-grabbing",
+        // Color/shadow transitions only — a transform here would skew the
+        // native HTML5 drag image.
+        "transition-smooth group relative cursor-grab rounded-lg border px-2.5 py-1.5 pr-9 text-xs shadow-sm active:cursor-grabbing",
         color,
       )}
       title="Drag onto the calendar"
@@ -1719,7 +1738,7 @@ function DragItem({
           onSmart(item);
         }}
         title="Smart-schedule: find the best open slot"
-        className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-white/70 text-amber-500 opacity-70 shadow-sm ring-1 ring-zinc-200 transition hover:bg-amber-50 hover:opacity-100"
+        className="transition-smooth ring-focus absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md bg-white/70 text-amber-500 opacity-70 shadow-sm ring-1 ring-zinc-200 hover:bg-amber-50 hover:opacity-100"
       >
         <Zap className="h-3.5 w-3.5" />
       </button>
@@ -1791,9 +1810,11 @@ function SmartScheduleModal({
       </div>
 
       {slots === null ? (
-        <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">
-          <Clock className="h-4 w-4 animate-pulse" />
-          Checking your calendar…
+        // Skeleton slot rows shaped like the results they become.
+        <div className="space-y-1.5" role="status" aria-label="Checking your calendar…">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-[62px] rounded-lg" />
+          ))}
         </div>
       ) : slots.length === 0 ? (
         <p className="rounded-lg bg-zinc-50 p-4 text-sm text-zinc-500">
@@ -1807,7 +1828,7 @@ function SmartScheduleModal({
               key={s.start.toISOString()}
               onClick={() => onPick(s)}
               className={cn(
-                "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition",
+                "transition-smooth ring-focus press-scale flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left",
                 idx === 0
                   ? "border-accent-300 bg-accent-50 hover:bg-accent-100"
                   : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -1936,14 +1957,14 @@ function CreateModal({
       <div className="flex items-center justify-end gap-2 pt-2">
         <button
           onClick={onClose}
-          className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+          className="transition-smooth ring-focus press-scale rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
         >
           Cancel
         </button>
         <button
           onClick={onSave}
           disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:opacity-60"
+          className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-700 disabled:opacity-60"
         >
           {saving ? "Saving…" : "Schedule"}
         </button>
@@ -2039,7 +2060,7 @@ function EditModal({
       <div className="flex items-center justify-between gap-2 pt-2">
         <button
           onClick={onDelete}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50"
+          className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50"
         >
           <Trash2 className="h-3.5 w-3.5" />
           Delete
@@ -2047,14 +2068,14 @@ function EditModal({
         <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            className="transition-smooth ring-focus press-scale rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
           >
             Cancel
           </button>
           <button
             onClick={onSave}
             disabled={saving}
-            className="rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:opacity-60"
+            className="transition-smooth ring-focus press-scale rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-700 disabled:opacity-60"
           >
             {saving ? "Saving…" : "Save"}
           </button>
@@ -2085,17 +2106,17 @@ function ModalShell({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
+        className="anim-enter-fade absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="surface relative z-10 w-full max-w-lg space-y-3 p-5 shadow-elevated">
+      <div className="surface anim-pop relative z-10 w-full max-w-lg space-y-3 p-5 shadow-elevated">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
             {title}
           </h2>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900"
+            className="transition-smooth ring-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
           >
             <X className="h-4 w-4" />
           </button>
@@ -2149,7 +2170,7 @@ function Form(props: {
               type="button"
               onClick={() => props.setType(k)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
                 props.type === k
                   ? "border-accent-500 bg-accent-50 text-accent-900"
                   : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",

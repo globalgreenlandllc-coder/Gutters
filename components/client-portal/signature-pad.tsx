@@ -94,7 +94,7 @@ export function SignaturePad({
           type="button"
           onClick={clear}
           disabled={!hasInk}
-          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 transition hover:border-rose-300 hover:text-rose-600 disabled:opacity-40"
+          className="transition-smooth press-scale ring-focus inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 hover:border-rose-300 hover:text-rose-600 disabled:opacity-40"
         >
           <Eraser className="h-3 w-3" />
           Clear
@@ -102,7 +102,7 @@ export function SignaturePad({
       </div>
       <div
         className={cn(
-          "relative mt-2 overflow-hidden rounded-xl border bg-zinc-50/40 transition",
+          "transition-smooth relative mt-2 overflow-hidden rounded-xl border bg-zinc-50/40",
           hasInk ? "border-accent-300" : "border-zinc-200",
         )}
       >
@@ -113,12 +113,18 @@ export function SignaturePad({
           onPointerUp={up}
           className="block h-44 w-full touch-none cursor-crosshair"
         />
-        {!hasInk && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-zinc-400">
-            <PenLine className="h-4 w-4" />
-            <span className="text-sm">Sign here</span>
-          </div>
-        )}
+        {/* Hint stays mounted and fades — no hard cut when the first
+            stroke lands. pointer-events-none keeps drawing unaffected. */}
+        <div
+          aria-hidden={hasInk}
+          className={cn(
+            "transition-smooth pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-zinc-400",
+            hasInk ? "opacity-0" : "opacity-100",
+          )}
+        >
+          <PenLine className="h-4 w-4" />
+          <span className="text-sm">Sign here</span>
+        </div>
         <div className="pointer-events-none absolute bottom-2 left-3 right-3 border-t border-dashed border-zinc-300" />
       </div>
       <div className="mt-3 flex items-center gap-3">
@@ -129,7 +135,7 @@ export function SignaturePad({
           value={signerName}
           onChange={(e) => onSignerName(e.target.value)}
           placeholder="Your full name"
-          className="h-9 flex-1 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+          className="transition-smooth h-9 flex-1 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
         />
       </div>
     </div>

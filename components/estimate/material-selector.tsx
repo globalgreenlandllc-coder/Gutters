@@ -126,7 +126,7 @@ export function MaterialSelector({
                 onClick={() => onChange({ ...config, color: c.id })}
                 title={c.name}
                 className={cn(
-                  "flex items-center gap-2 rounded-full border px-2.5 py-1.5 transition",
+                  "ring-focus flex items-center gap-2 rounded-full border px-2.5 py-1.5 transition-smooth active:scale-[0.98]",
                   selected
                     ? "border-accent-500 bg-accent-50 text-accent-800"
                     : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
@@ -153,7 +153,7 @@ export function MaterialSelector({
                 type="button"
                 onClick={() => setAcc({ guard: g.id })}
                 className={cn(
-                  "group flex items-start gap-2 rounded-lg border p-2.5 text-left transition",
+                  "group ring-focus flex items-start gap-2 rounded-lg border p-2.5 text-left transition-smooth active:scale-[0.98]",
                   selected
                     ? "border-accent-500 bg-accent-50 ring-1 ring-accent-200"
                     : "border-zinc-200 bg-white hover:border-zinc-300",
@@ -161,13 +161,19 @@ export function MaterialSelector({
               >
                 <span
                   className={cn(
-                    "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition",
+                    "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-smooth",
                     selected
                       ? "border-accent-600 bg-accent-600 text-white"
                       : "border-zinc-300 group-hover:border-zinc-400",
                   )}
                 >
-                  {selected && <Check className="h-2.5 w-2.5" />}
+                  {/* Always mounted so the check can scale in on select */}
+                  <Check
+                    className={cn(
+                      "h-2.5 w-2.5 transition-transform duration-150 ease-out motion-reduce:transition-none",
+                      selected ? "scale-100" : "scale-0",
+                    )}
+                  />
                 </span>
                 <span className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
@@ -175,7 +181,7 @@ export function MaterialSelector({
                       {g.label}
                     </span>
                     {!selected && accDelta({ guard: g.id }) && (
-                      <span className="shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
+                      <span className="anim-enter-fade shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
                         {accDelta({ guard: g.id })}
                       </span>
                     )}
@@ -249,7 +255,7 @@ function AccessoryRow({
       type="button"
       onClick={() => onChange(!checked)}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition",
+        "ring-focus flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-smooth active:scale-[0.98]",
         checked
           ? "border-accent-500 bg-accent-50 ring-1 ring-accent-200"
           : "border-zinc-200 bg-white hover:border-zinc-300",
@@ -257,7 +263,7 @@ function AccessoryRow({
     >
       <span
         className={cn(
-          "flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset",
+          "flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset transition-smooth",
           checked
             ? "bg-accent-100 text-accent-700 ring-accent-200"
             : "bg-zinc-50 text-zinc-500 ring-zinc-200",
@@ -270,19 +276,25 @@ function AccessoryRow({
         <div className="text-[10px] text-zinc-500">{sub}</div>
       </span>
       {delta && (
-        <span className="shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
+        <span className="anim-enter-fade shrink-0 text-[10px] font-semibold tabular-nums text-zinc-400">
           {delta}
         </span>
       )}
       <span
         className={cn(
-          "flex h-4 w-4 items-center justify-center rounded-full border transition",
+          "flex h-4 w-4 items-center justify-center rounded-full border transition-smooth",
           checked
             ? "border-accent-600 bg-accent-600 text-white"
             : "border-zinc-300",
         )}
       >
-        {checked && <Check className="h-2.5 w-2.5" />}
+        {/* Always mounted so the check can scale in on toggle */}
+        <Check
+          className={cn(
+            "h-2.5 w-2.5 transition-transform duration-150 ease-out motion-reduce:transition-none",
+            checked ? "scale-100" : "scale-0",
+          )}
+        />
       </span>
     </button>
   );
@@ -297,9 +309,7 @@ function Group({
 }) {
   return (
     <div>
-      <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-        {label}
-      </div>
+      <div className="microlabel mb-2">{label}</div>
       {children}
     </div>
   );
@@ -328,7 +338,7 @@ function Pills<T extends string>({
             type="button"
             onClick={() => onChange(o.id)}
             className={cn(
-              "flex flex-col items-center rounded-lg border px-3 py-1.5 transition",
+              "ring-focus flex flex-col items-center rounded-lg border px-3 py-1.5 transition-smooth active:scale-[0.98]",
               selected
                 ? "border-accent-500 bg-accent-50 text-accent-800"
                 : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300",
@@ -336,7 +346,7 @@ function Pills<T extends string>({
           >
             <span className="text-sm leading-5">{o.label}</span>
             {sub && (
-              <span className="text-[10px] font-semibold leading-3 tabular-nums text-zinc-400">
+              <span className="anim-enter-fade text-[10px] font-semibold leading-3 tabular-nums text-zinc-400">
                 {sub}
               </span>
             )}

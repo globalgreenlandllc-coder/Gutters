@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ArrowRight, Layers, Receipt, Wallet } from "lucide-react";
+import { DUR, EASE } from "@/lib/motion";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { buildLineItems } from "@/lib/pricing";
 import {
@@ -34,6 +35,7 @@ export function PricingPanel({
    *  off to /proposal. */
   handoff?: Omit<EstimateHandoff, "capturedAt">;
 }) {
+  const reduce = useReducedMotion();
   const [tab, setTab] = useState<Tab>("materials");
   const [config, setConfig] = useState<EstimateConfig>({
     size: "6",
@@ -97,9 +99,7 @@ export function PricingPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-zinc-200/70 px-4 pb-4 pt-4">
-        <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-600">
-          Estimate builder
-        </h2>
+        <h2 className="microlabel text-accent-600">Estimate builder</h2>
         <p className="mt-1 text-xs text-zinc-500">
           AI scope auto-applies. Override anything below.
         </p>
@@ -111,25 +111,36 @@ export function PricingPanel({
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition",
-                  active
-                    ? "bg-zinc-100 text-zinc-900"
-                    : "text-zinc-500 hover:text-zinc-900",
+                  "ring-focus relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-smooth",
+                  active ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-900",
                 )}
               >
-                <t.icon className="h-3.5 w-3.5" />
-                {t.label}
+                {/* Sliding active-tab pill — one shared layoutId so the
+                    highlight glides between tabs instead of snapping. */}
+                {active && (
+                  <motion.span
+                    layoutId="estimate-tab-pill"
+                    className="absolute inset-0 rounded-md bg-zinc-100"
+                    transition={{ duration: reduce ? 0 : DUR.base, ease: EASE }}
+                  />
+                )}
+                <t.icon className="relative h-3.5 w-3.5" />
+                <span className="relative">{t.label}</span>
                 {t.id === "pricing" && (
-                  <span
+                  <motion.span
+                    key={items.length}
+                    initial={reduce ? false : { scale: 0.8, opacity: 0.5 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: DUR.fast, ease: EASE }}
                     className={cn(
-                      "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
+                      "relative rounded-full px-1.5 text-[10px] font-semibold tabular-nums transition-smooth",
                       active
                         ? "bg-accent-100 text-accent-700"
                         : "bg-zinc-100 text-zinc-500",
                     )}
                   >
                     {items.length}
-                  </span>
+                  </motion.span>
                 )}
               </button>
             );
@@ -141,10 +152,10 @@ export function PricingPanel({
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: 6 }}
+            initial={reduce ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.18 }}
+            transition={{ duration: DUR.base, ease: EASE }}
           >
             {tab === "materials" && (
               <MaterialSelector
@@ -200,6 +211,7 @@ function LiveTotalBar({
   onReview: () => void;
   showReview: boolean;
 }) {
+  const reduce = useReducedMotion();
   const prev = useRef(total);
   const [flash, setFlash] = useState<{ delta: number; key: number } | null>(
     null,
@@ -220,16 +232,15 @@ function LiveTotalBar({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-              Client total
-            </span>
+            <span className="microlabel">Client total</span>
             <AnimatePresence>
               {flash && (
                 <motion.span
                   key={flash.key}
-                  initial={{ opacity: 0, y: 3 }}
+                  initial={reduce ? false : { opacity: 0, y: 3 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -3 }}
+                  transition={{ duration: DUR.fast, ease: EASE }}
                   className={cn(
                     "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
                     flash.delta > 0
@@ -245,8 +256,9 @@ function LiveTotalBar({
           <div className="flex items-baseline gap-2.5">
             <motion.span
               key={Math.round(total)}
-              initial={{ opacity: 0.5, y: -3 }}
+              initial={reduce ? false : { opacity: 0.5, y: -3 }}
               animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: DUR.base, ease: EASE }}
               className="text-xl font-semibold tracking-tight tabular-nums text-zinc-900"
             >
               {formatCurrency(total)}
@@ -260,10 +272,10 @@ function LiveTotalBar({
         {showReview && (
           <button
             onClick={onReview}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-700"
+            className="group ring-focus inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-xs font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700 active:scale-[0.98]"
           >
             Review & send
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
           </button>
         )}
       </div>

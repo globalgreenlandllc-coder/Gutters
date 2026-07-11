@@ -42,9 +42,9 @@ export function CoverSection({
                   }
                   placeholder="123 Main St, City, ST 00000"
                   aria-label="Property address"
-                  className="w-[26rem] max-w-full rounded-lg border border-zinc-200 bg-transparent px-2 py-1 text-2xl font-semibold tracking-tight text-accent-700 outline-none transition placeholder:text-zinc-300 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15 sm:text-3xl"
+                  className="w-[26rem] max-w-full rounded-lg border border-zinc-200 bg-transparent px-2 py-1 text-2xl font-semibold tracking-tight text-accent-700 outline-none transition-smooth placeholder:text-zinc-300 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15 sm:text-3xl"
                 />
-                <Pencil className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 opacity-0 transition group-hover:opacity-100" />
+                <Pencil className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 opacity-0 transition-smooth group-focus-within:opacity-100 group-hover:opacity-100" />
               </div>
             </div>
           )}
@@ -103,9 +103,9 @@ function EditableTextarea({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={3}
-        className={`${className} w-full resize-none rounded-lg border border-transparent bg-transparent p-2 outline-none transition group-hover:border-zinc-200 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15`}
+        className={`${className} w-full resize-none rounded-lg border border-transparent bg-transparent p-2 outline-none transition-smooth group-hover:border-zinc-200 focus:border-accent-500 focus:bg-zinc-50/40 focus:ring-2 focus:ring-accent-500/15`}
       />
-      <Pencil className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-zinc-400 opacity-0 transition group-hover:opacity-100" />
+      <Pencil className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-zinc-400 opacity-0 transition-smooth group-focus-within:opacity-100 group-hover:opacity-100" />
     </div>
   );
 }

@@ -34,26 +34,27 @@ export function UpcomingJobs({
       {loading ? (
         <div className="mt-4 space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-10 animate-pulse rounded-lg bg-zinc-100" />
+            <div key={i} className="skeleton h-10" />
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="mt-4 rounded-lg border border-dashed border-zinc-300 p-6 text-center">
+        <div className="anim-enter-fade mt-4 rounded-lg border border-dashed border-zinc-300 p-6 text-center">
           <p className="text-sm text-zinc-500">Nothing scheduled yet.</p>
           <Link
             href="/dashboard/calendar"
-            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-700 hover:text-accent-800"
+            className="transition-smooth ring-focus group mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 hover:text-accent-800"
           >
             Open the calendar
-            <ArrowUpRight className="h-3 w-3" />
+            <ArrowUpRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
           </Link>
         </div>
       ) : (
         <ul className="mt-3">
-          {items.map((item) => (
+          {items.map((item, i) => (
             <li
               key={item.id}
-              className="flex items-center gap-3 border-t border-zinc-100 py-2.5 first:border-t-0"
+              className="anim-enter-fade flex items-center gap-3 border-t border-zinc-100 py-2.5 first:border-t-0"
+              style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
             >
               {/* Local day-of-month — matches the calendar board, which
                   buckets these same events by local day. */}

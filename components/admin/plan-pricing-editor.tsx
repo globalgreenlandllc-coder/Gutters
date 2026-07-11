@@ -86,7 +86,7 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
             </Badge>
           )}
           {savedAt && (
-            <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+            <span className="anim-enter-fade inline-flex items-center gap-1 text-xs text-emerald-600">
               <Check className="h-3.5 w-3.5" /> Saved
             </span>
           )}
@@ -107,7 +107,7 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
       </div>
 
       {errors.length > 0 && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           <p className="font-semibold">Fix before saving:</p>
           <ul className="mt-1 list-disc pl-5">
             {errors.map((e) => (
@@ -382,7 +382,7 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
 }
 
 const inputCls =
-  "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-accent-400 focus:ring-2 focus:ring-accent-100";
+  "transition-smooth w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15";
 
 function Field({
   label,
@@ -419,7 +419,7 @@ function IconBtn({
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+      className="transition-smooth ring-focus flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>

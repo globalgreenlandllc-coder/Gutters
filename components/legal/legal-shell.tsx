@@ -21,20 +21,24 @@ export function LegalShell({
     <main className="min-h-screen bg-paper text-ink">
       <header className="border-b border-zinc-200/70 bg-white">
         <div className="mx-auto flex h-16 w-full max-w-[860px] items-center justify-between px-5">
-          <Link href="/" aria-label="GutterScan home">
+          <Link
+            href="/"
+            aria-label="GutterScan home"
+            className="ring-focus rounded-md"
+          >
             <Logo showSubtitle={false} />
           </Link>
           <Link
             href="/"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+            className="group ring-focus inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-zinc-500 transition-smooth hover:text-zinc-900"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />
             Back to home
           </Link>
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-[860px] px-5 py-12 md:py-16">
+      <div className="anim-enter mx-auto w-full max-w-[860px] px-5 py-12 md:py-16">
         <p className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-600">
           GutterScan legal
         </p>
@@ -50,10 +54,16 @@ export function LegalShell({
         <div className="mx-auto flex w-full max-w-[860px] flex-col items-start justify-between gap-2 px-5 py-6 text-xs text-zinc-500 sm:flex-row sm:items-center">
           <p>&copy; {new Date().getFullYear()} Gutters AI, Inc. All rights reserved.</p>
           <div className="flex items-center gap-4">
-            <Link href="/privacy" className="transition hover:text-zinc-900">
+            <Link
+              href="/privacy"
+              className="ring-focus rounded-sm transition-smooth hover:text-zinc-900"
+            >
               Privacy Policy
             </Link>
-            <Link href="/terms" className="transition hover:text-zinc-900">
+            <Link
+              href="/terms"
+              className="ring-focus rounded-sm transition-smooth hover:text-zinc-900"
+            >
               Terms of Service
             </Link>
           </div>

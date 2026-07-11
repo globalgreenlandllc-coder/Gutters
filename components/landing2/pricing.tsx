@@ -66,7 +66,7 @@ export function Pricing({ pricing }: { pricing: PricingView }) {
                 </PillLink>
                 <Link
                   href="/sign-in"
-                  className="inline-flex h-11 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800"
+                  className="ring-focus inline-flex h-11 items-center justify-center rounded-lg px-4 text-[13px] font-semibold text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 active:scale-[0.98] motion-reduce:transform-none"
                 >
                   Sign in
                 </Link>

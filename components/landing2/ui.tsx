@@ -41,7 +41,7 @@ export function PillLink({
       // deterministically override the variant classes (e.g. the dark
       // CTA panel's ghost overrides on the outline variant).
       className={cn(
-        "inline-flex h-11 items-center justify-center gap-2 rounded-lg px-5 text-[13px] font-semibold transition",
+        "ring-focus inline-flex h-11 items-center justify-center gap-2 rounded-lg px-5 text-[13px] font-semibold transition active:scale-[0.98] motion-reduce:transform-none",
         variant === "dark" &&
           "bg-accent-600 text-white shadow-sm hover:bg-accent-700",
         variant === "outline" &&

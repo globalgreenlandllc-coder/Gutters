@@ -79,13 +79,17 @@ export default async function BlueprintDetailPage({
       <div className="space-y-6">
         <Link
           href="/dashboard/blueprints"
-          className="inline-flex items-center gap-1.5 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
         >
-          <ChevronLeft size={14} /> Blueprints
+          <ChevronLeft
+            size={14}
+            className="transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none"
+          />{" "}
+          Blueprints
         </Link>
 
         {row.status === "FAILED" && (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          <div className="anim-enter rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
             <div className="mb-1 flex items-center gap-2 font-semibold">
               <AlertCircle size={14} /> Analysis failed
             </div>
@@ -94,7 +98,7 @@ export default async function BlueprintDetailPage({
             </div>
             <Link
               href="/dashboard/blueprints/new"
-              className="mt-2 inline-block text-rose-700 underline underline-offset-2 hover:text-rose-900"
+              className="ring-focus mt-2 inline-block rounded text-rose-700 underline underline-offset-2 transition-smooth hover:text-rose-900"
             >
               Upload a new plan
             </Link>
@@ -102,8 +106,10 @@ export default async function BlueprintDetailPage({
         )}
 
         {row.status === "QUEUED" && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+          <div className="anim-enter-fade rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
             Analysis is still in progress. Refresh this page in a few seconds.
+            {/* Shimmer bar — signals "live / in progress" without polling. */}
+            <div className="skeleton mt-3 h-1 w-full rounded-full" />
           </div>
         )}
         {inspect &&
@@ -111,14 +117,20 @@ export default async function BlueprintDetailPage({
             <div className="space-y-3">
               <Link
                 href={`/estimate?planId=${row.id}`}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-accent-700 transition hover:text-accent-800"
+                className="anim-enter-fade ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-accent-700 transition-smooth hover:text-accent-800"
               >
-                Open the takeoff →
+                Open the takeoff{" "}
+                <span
+                  aria-hidden
+                  className="inline-block transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
+                >
+                  →
+                </span>
               </Link>
               <VectorInspector vg={vectors} />
             </div>
           ) : (
-            <div className="surface p-4 text-sm text-zinc-600">
+            <div className="anim-enter surface p-4 text-sm text-zinc-600">
               No vector data was extracted for this plan — it may be a raster /
               scanned PDF, a non-vector export, or the page had no usable text or
               line geometry. Stage 2 ran vision-only.

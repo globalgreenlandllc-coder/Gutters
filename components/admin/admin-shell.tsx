@@ -59,7 +59,7 @@ export function AdminShell({
     <div className="min-h-screen bg-white">
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-zinc-200 bg-white transition-transform lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-zinc-200 bg-white transition-transform motion-reduce:transition-none lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -69,7 +69,7 @@ export function AdminShell({
           </Link>
           <button
             onClick={() => setMobileOpen(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 lg:hidden"
+            className="transition-smooth ring-focus flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 lg:hidden"
             aria-label="Close menu"
           >
             <X className="h-4 w-4" />
@@ -98,7 +98,7 @@ export function AdminShell({
                 href={n.href}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
-                  "group relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm transition",
+                  "group relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm transition-smooth ring-focus",
                   active
                     ? "bg-accent-50 font-medium text-accent-800"
                     : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
@@ -106,7 +106,7 @@ export function AdminShell({
               >
                 <n.icon
                   className={cn(
-                    "h-4 w-4 transition",
+                    "h-4 w-4 transition-smooth",
                     active
                       ? "text-accent-700"
                       : "text-zinc-400 group-hover:text-zinc-600",
@@ -122,9 +122,9 @@ export function AdminShell({
           <Link
             href="/dashboard"
             onClick={() => setMobileOpen(false)}
-            className="group flex h-9 items-center gap-3 rounded-md px-3 text-sm text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900"
+            className="group transition-smooth ring-focus flex h-9 items-center gap-3 rounded-md px-3 text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
           >
-            <Database className="h-4 w-4 text-zinc-400 transition group-hover:text-zinc-600" />
+            <Database className="h-4 w-4 text-zinc-400 transition-smooth group-hover:text-zinc-600" />
             Switch to contractor view
           </Link>
         </div>
@@ -135,7 +135,7 @@ export function AdminShell({
           <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
             <button
               onClick={() => setMobileOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 lg:hidden"
+              className="transition-smooth ring-focus flex h-9 w-9 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 lg:hidden"
               aria-label="Open menu"
             >
               <Menu className="h-4 w-4" />
@@ -154,7 +154,7 @@ export function AdminShell({
               <div className="relative">
                 <button
                   onClick={() => setMenuOpen((v) => !v)}
-                  className="flex items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 transition hover:border-zinc-200 hover:bg-zinc-50"
+                  className="transition-smooth ring-focus flex items-center gap-2 rounded-lg border border-transparent px-1.5 py-1 hover:border-zinc-200 hover:bg-zinc-50"
                 >
                   <Avatar
                     initials={initials(me.user.name, me.user.email)}
@@ -167,7 +167,7 @@ export function AdminShell({
                       className="fixed inset-0 z-10"
                       onClick={() => setMenuOpen(false)}
                     />
-                    <div className="absolute right-0 z-20 mt-2 w-56 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
+                    <div className="anim-pop origin-top-right absolute right-0 z-20 mt-2 w-56 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
                       <div className="px-3 py-2">
                         <div className="text-sm font-medium text-zinc-900">
                           {me.user.name}
@@ -179,7 +179,7 @@ export function AdminShell({
                       <div className="my-1 h-px bg-zinc-100" />
                       <button
                         onClick={logout}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
+                        className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 hover:bg-rose-50"
                       >
                         <LogOut className="h-4 w-4" />
                         Sign out

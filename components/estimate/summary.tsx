@@ -1,8 +1,9 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Send, Sparkles } from "lucide-react";
+import { DUR, EASE, fadeInUp, staggerContainer } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
 import type { LineItem, Measurements } from "@/lib/types";
@@ -35,6 +36,7 @@ export function Summary({
   /** Powers the $/LF stat — the number contractors sanity-check first. */
   measurements?: Measurements;
 }) {
+  const reduce = useReducedMotion();
   const router = useRouter();
   const handoffAndGo = () => {
     if (handoff) writeEstimateHandoff(handoff);
@@ -53,9 +55,16 @@ export function Summary({
       : null;
 
   return (
-    <div className="space-y-4">
+    // Light stagger so the tab assembles top-down: insights → dials →
+    // totals → actions. Children carry variants only.
+    <motion.div
+      initial={reduce ? false : "hidden"}
+      animate="visible"
+      variants={staggerContainer(0.04)}
+      className="space-y-4"
+    >
       {/* The two numbers a contractor sanity-checks before sending */}
-      <div className="grid grid-cols-2 gap-2">
+      <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-2">
         <Insight
           label="Your margin"
           value={formatCurrency(margin)}
@@ -75,9 +84,9 @@ export function Summary({
               : "no takeoff"
           }
         />
-      </div>
+      </motion.div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <motion.div variants={fadeInUp} className="grid grid-cols-3 gap-2">
         <Adj
           label="Markup"
           suffix="%"
@@ -96,9 +105,12 @@ export function Summary({
           value={adjustments.taxPct}
           onChange={(v) => onAdjust({ ...adjustments, taxPct: v })}
         />
-      </div>
+      </motion.div>
 
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4">
+      <motion.div
+        variants={fadeInUp}
+        className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-4"
+      >
         <Row label="Subtotal" value={subtotal} muted />
         <Row label={`Markup (${adjustments.markupPct}%)`} value={markup} muted />
         {adjustments.discountPct > 0 && (
@@ -113,20 +125,19 @@ export function Summary({
         <div className="my-3 h-px w-full bg-zinc-200" />
         <motion.div
           key={Math.round(total)}
-          initial={{ opacity: 0.4, y: -4 }}
+          initial={reduce ? false : { opacity: 0.4, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: DUR.base, ease: EASE }}
           className="flex items-baseline justify-between"
         >
-          <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-            Client total
-          </span>
+          <span className="microlabel">Client total</span>
           <span className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900">
             {formatCurrency(total)}
           </span>
         </motion.div>
-      </div>
+      </motion.div>
 
-      <div className="flex flex-col gap-2 sm:flex-row">
+      <motion.div variants={fadeInUp} className="flex flex-col gap-2 sm:flex-row">
         <Button className="flex-1" onClick={handoffAndGo}>
           <Send className="h-4 w-4" />
           Send to client
@@ -139,9 +150,12 @@ export function Summary({
           <FileText className="h-4 w-4" />
           Preview proposal
         </Button>
-      </div>
+      </motion.div>
 
-      <ul className="space-y-1.5 text-xs text-zinc-500">
+      <motion.ul
+        variants={fadeInUp}
+        className="space-y-1.5 text-xs text-zinc-500"
+      >
         <li className="flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-accent-600" />
           Builds a Good · Better · Best proposal from this takeoff
@@ -154,8 +168,8 @@ export function Summary({
           <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
           Payment schedule, receipts & reminders after acceptance
         </li>
-      </ul>
-    </div>
+      </motion.ul>
+    </motion.div>
   );
 }
 
@@ -172,9 +186,7 @@ function Insight({
 }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-2.5">
-      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-        {label}
-      </div>
+      <div className="microlabel">{label}</div>
       <div
         className={cn(
           "mt-0.5 text-base font-semibold tabular-nums tracking-tight",
@@ -226,10 +238,8 @@ function Adj({
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-white p-2.5 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
-      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-        {label}
-      </span>
+    <label className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-white p-2.5 transition-smooth focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+      <span className="microlabel">{label}</span>
       <div className="flex items-center gap-1">
         <input
           type="number"

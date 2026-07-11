@@ -27,7 +27,10 @@ export function Logos() {
         <Reveal>
           <div className="flex flex-wrap items-center justify-center gap-x-14 gap-y-6 text-zinc-400 md:justify-between">
             {MARKS.map((m) => (
-              <div key={m.key} className="opacity-80 grayscale">
+              <div
+                key={m.key}
+                className="transition-smooth opacity-80 grayscale hover:text-zinc-500 hover:opacity-100"
+              >
                 {m}
               </div>
             ))}

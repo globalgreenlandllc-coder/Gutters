@@ -10,9 +10,12 @@ export function Banner() {
       </p>
       <Link
         href="/sign-in"
-        className="hidden shrink-0 font-mono text-[10.5px] font-bold uppercase tracking-wide text-accent-300 transition hover:text-accent-200 md:inline"
+        className="ring-focus-dark group hidden shrink-0 rounded-sm font-mono text-[10.5px] font-bold uppercase tracking-wide text-accent-300 transition hover:text-accent-200 md:inline"
       >
-        Read the announcement &rarr;
+        Read the announcement{" "}
+        <span className="inline-block transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none">
+          &rarr;
+        </span>
       </Link>
     </div>
   );

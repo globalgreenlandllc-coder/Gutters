@@ -1,18 +1,44 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { upload } from "@vercel/blob/client";
 import { Upload, FileText, Loader2, X } from "lucide-react";
+import { fadeInUp } from "@/lib/motion";
+
+/** Copy-only stage labels for the analyzing strip. Purely visual — the
+ *  upload/analyze flow doesn't report progress, so we pace expectations
+ *  on a timer and park on the last stage until the redirect. */
+const ANALYZE_STAGES = [
+  "Uploading plan",
+  "Reading the plan",
+  "Classifying edges",
+  "Drawing the layout",
+];
 
 export default function BlueprintUploader() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const reduce = useReducedMotion();
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Visual-only ticker for the analyzing strip (see ANALYZE_STAGES).
+  const [stageIdx, setStageIdx] = useState(0);
+
+  useEffect(() => {
+    if (!uploading) {
+      setStageIdx(0);
+      return;
+    }
+    const id = setInterval(
+      () => setStageIdx((s) => Math.min(s + 1, ANALYZE_STAGES.length - 1)),
+      12_000,
+    );
+    return () => clearInterval(id);
+  }, [uploading]);
 
   const pickFile = useCallback((f: File) => {
     setFile(f);
@@ -256,7 +282,7 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative cursor-pointer rounded-2xl border-2 border-dashed bg-white p-8 transition-all sm:p-12 ${
+        className={`group relative cursor-pointer rounded-2xl border-2 border-dashed bg-white p-8 transition-smooth sm:p-12 ${
           dragOver
             ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/30"
             : "border-zinc-300 hover:border-accent-400 hover:ring-2 hover:ring-accent-500/15"
@@ -273,7 +299,11 @@ export default function BlueprintUploader() {
           className="hidden"
         />
         <div className="flex flex-col items-center text-center">
-          <div className="mb-3 rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200">
+          <div
+            className={`mb-3 rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200 transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
+              dragOver ? "-translate-y-0.5 scale-110" : ""
+            }`}
+          >
             <Upload size={24} />
           </div>
           <div className="mb-1 text-lg font-semibold tracking-tight text-zinc-900">
@@ -298,8 +328,9 @@ export default function BlueprintUploader() {
 
       {file && (
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
           className="surface flex items-center gap-3 px-4 py-3"
         >
           <FileText size={20} className="text-zinc-500" />
@@ -313,7 +344,7 @@ export default function BlueprintUploader() {
           </div>
           <button
             onClick={() => setFile(null)}
-            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900"
+            className="ring-focus press-scale rounded-lg p-1.5 text-zinc-400 transition-smooth hover:bg-zinc-100 hover:text-zinc-900"
             aria-label="Remove file"
             disabled={uploading}
           >
@@ -322,7 +353,7 @@ export default function BlueprintUploader() {
           <button
             onClick={onAnalyze}
             disabled={uploading}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="ring-focus press-scale inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {uploading ? (
               <>
@@ -337,16 +368,53 @@ export default function BlueprintUploader() {
       )}
 
       {uploading && (
-        <div className="text-xs italic text-zinc-500">
-          This usually takes 30–60 seconds. Claude needs to find the roof plan,
-          classify every edge, and produce the JSON layout.
-        </div>
+        <motion.div
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
+          className="surface px-4 py-3.5"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="microlabel text-accent-700">Analyzing plan</span>
+            <span className="text-xs tabular-nums text-zinc-400">
+              usually 30–60s
+            </span>
+          </div>
+          <div className="skeleton mt-2.5 h-1.5 w-full rounded-full" />
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+            {ANALYZE_STAGES.map((stage, i) => (
+              <span key={stage} className="flex items-center gap-x-2">
+                {i > 0 && (
+                  <span aria-hidden className="text-zinc-300">
+                    →
+                  </span>
+                )}
+                <span
+                  className={`transition-smooth ${
+                    i === stageIdx
+                      ? "font-semibold text-accent-700"
+                      : i < stageIdx
+                        ? "text-zinc-500"
+                        : "text-zinc-400"
+                  }`}
+                >
+                  {stage}
+                </span>
+              </span>
+            ))}
+          </div>
+        </motion.div>
       )}
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+        <motion.div
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
+          className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+        >
           {error}
-        </div>
+        </motion.div>
       )}
     </div>
   );

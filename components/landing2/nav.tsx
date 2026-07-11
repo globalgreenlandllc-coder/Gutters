@@ -24,7 +24,7 @@ export function Nav() {
               <a
                 key={l.label}
                 href={l.href}
-                className="text-[13.5px] font-medium text-zinc-600 transition hover:text-zinc-900"
+                className="ring-focus rounded-sm text-[13.5px] font-medium text-zinc-600 transition hover:text-zinc-900"
               >
                 {l.label}
               </a>
@@ -34,13 +34,13 @@ export function Nav() {
         <div className="flex items-center gap-3">
           <Link
             href="/sign-in"
-            className="text-[13.5px] font-medium text-zinc-600 transition hover:text-zinc-900"
+            className="ring-focus rounded-sm text-[13.5px] font-medium text-zinc-600 transition hover:text-zinc-900"
           >
             Sign in
           </Link>
           <Link
             href="/sign-in"
-            className="inline-flex h-9 items-center rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+            className="ring-focus inline-flex h-9 items-center rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 active:scale-[0.98] motion-reduce:transform-none"
           >
             Get Started
           </Link>

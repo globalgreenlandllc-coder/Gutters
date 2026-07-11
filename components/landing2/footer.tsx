@@ -71,7 +71,7 @@ export function Footer() {
                     <li key={l.label}>
                       <Link
                         href={l.href}
-                        className="text-[13.5px] text-zinc-600 transition hover:text-zinc-900"
+                        className="ring-focus rounded-sm text-[13.5px] text-zinc-600 transition hover:text-zinc-900"
                       >
                         {l.label}
                       </Link>
@@ -86,16 +86,22 @@ export function Footer() {
         <div className="flex flex-col items-center justify-between gap-3 py-6 text-[12px] text-zinc-500 md:flex-row">
           <p>&copy; 2026 Gutters AI, Inc. All rights reserved.</p>
           <div className="flex items-center gap-5">
-            <Link href="/sign-in" className="transition hover:text-zinc-900">
+            <Link
+              href="/sign-in"
+              className="ring-focus rounded-sm transition hover:text-zinc-900"
+            >
               Service Status
             </Link>
-            <Link href="/sign-in" className="transition hover:text-zinc-900">
+            <Link
+              href="/sign-in"
+              className="ring-focus rounded-sm transition hover:text-zinc-900"
+            >
               Security
             </Link>
             <Link
               href="/sign-in"
               aria-label="LinkedIn"
-              className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:text-zinc-900"
+              className="ring-focus flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition hover:border-zinc-300 hover:text-zinc-900"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M4.98 3.5C4.98 4.88 3.87 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.5 8h4V24h-4V8zm7.5 0h3.8v2.2h.05c.53-1 1.83-2.2 3.77-2.2 4.03 0 4.88 2.65 4.88 6.1V24h-4v-8.5c0-2.03-.04-4.64-2.83-4.64-2.83 0-3.27 2.2-3.27 4.5V24H8V8z" />

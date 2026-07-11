@@ -11,11 +11,23 @@ const STATS = [
   { label: "Active contractors", value: "250+" },
 ];
 
-/** Counts up from 0 to the numeric part of `value` on first view. */
-function CountUp({ value }: { value: string }) {
-  const match = value.match(/^([^0-9]*)(\d+)(.*)$/);
+/**
+ * Counts up from 0 to the numeric part of `value` on first view.
+ * Shared client island — also used by the dashboard KPI tiles, which pass
+ * their own className. Grouped values ("$96,330") keep their commas.
+ */
+export function CountUp({
+  value,
+  className = "text-[42px] font-semibold leading-none tracking-tight text-zinc-900",
+}: {
+  value: string;
+  className?: string;
+}) {
+  const match = value.match(/^([^0-9]*)([\d,]+)(.*)$/);
   const prefix = match?.[1] ?? "";
-  const target = Number(match?.[2] ?? 0);
+  const digits = match?.[2] ?? "0";
+  const grouped = digits.includes(",");
+  const target = Number(digits.replace(/,/g, ""));
   const suffix = match?.[3] ?? "";
 
   const ref = useRef<HTMLParagraphElement>(null);
@@ -41,12 +53,9 @@ function CountUp({ value }: { value: string }) {
   }, [inView, reduceMotion, target]);
 
   return (
-    <p
-      ref={ref}
-      className="text-[42px] font-semibold leading-none tracking-tight text-zinc-900"
-    >
+    <p ref={ref} className={className}>
       {prefix}
-      {n}
+      {grouped ? n.toLocaleString("en-US") : n}
       {suffix}
     </p>
   );
@@ -56,9 +65,9 @@ export function Stats() {
   return (
     <section className="pb-16 pt-6 md:pb-24">
       <Container>
-        <Reveal>
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="flex min-h-[168px] flex-col justify-between rounded-2xl bg-accent-950 p-6">
+        <div className="grid gap-3 md:grid-cols-4">
+          <Reveal>
+            <div className="flex h-full min-h-[168px] flex-col justify-between rounded-2xl bg-accent-950 p-6">
               <span className="inline-block h-[7px] w-[7px] rounded-[2px] bg-accent-400" />
               <p className="text-[15px] leading-snug text-white">
                 Trusted by contractors
@@ -68,19 +77,18 @@ export function Stats() {
                 at scale
               </p>
             </div>
-            {STATS.map((s) => (
-              <div
-                key={s.label}
-                className="flex min-h-[168px] flex-col justify-between rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-              >
+          </Reveal>
+          {STATS.map((s, i) => (
+            <Reveal key={s.label} delay={(i + 1) * 0.05}>
+              <div className="flex h-full min-h-[168px] flex-col justify-between rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
                 <p className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
                   {s.label}
                 </p>
                 <CountUp value={s.value} />
               </div>
-            ))}
-          </div>
-        </Reveal>
+            </Reveal>
+          ))}
+        </div>
       </Container>
     </section>
   );

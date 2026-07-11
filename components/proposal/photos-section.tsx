@@ -61,12 +61,12 @@ export function PhotosSection({
                 <input
                   value={photo.caption}
                   onChange={(e) => setCaption(photo.id, e.target.value)}
-                  className="absolute inset-x-2 bottom-2 rounded-md border border-zinc-200 bg-white/95 px-2 py-1 text-xs text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                  className="absolute inset-x-2 bottom-2 rounded-md border border-zinc-200 bg-white/95 px-2 py-1 text-xs text-zinc-900 outline-none transition-smooth focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                 />
                 <button
                   type="button"
                   onClick={() => remove(photo.id)}
-                  className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-600 opacity-0 transition hover:border-rose-300 hover:text-rose-600 group-hover:opacity-100"
+                  className="ring-focus absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-600 opacity-0 transition-smooth hover:border-rose-300 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
                   aria-label="Remove photo"
                 >
                   <X className="h-3 w-3" />
@@ -85,9 +85,9 @@ export function PhotosSection({
               e.preventDefault();
               addPlaceholder();
             }}
-            className="group flex aspect-[4/3] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-white text-xs text-zinc-500 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+            className="group active:scale-[0.98] flex aspect-[4/3] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-white text-xs text-zinc-500 transition-smooth hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
           >
-            <Upload className="h-5 w-5" />
+            <Upload className="h-5 w-5 transition-transform group-hover:-translate-y-0.5 motion-reduce:transition-none" />
             <span>Drop or tap to add photo</span>
           </div>
         )}

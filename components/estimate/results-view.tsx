@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
+import { DUR, EASE, fadeInUp, staggerContainer } from "@/lib/motion";
 import {
   AlertTriangle,
   Building2,
@@ -41,6 +42,7 @@ export function ResultsView({
    *  the right row. */
   planId?: string;
 }) {
+  const reduce = useReducedMotion();
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
   const [viewMode, setViewMode] = useState<
@@ -215,23 +217,27 @@ export function ResultsView({
         planId={planId}
       />
 
+      {/* The payoff moment after a 30-90s wait: header → canvas → pricing
+          rail rise in with a short stagger instead of one flat fade. */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        initial={reduce ? false : "hidden"}
+        animate="visible"
+        variants={staggerContainer(0.06)}
         className="flex-1"
       >
         <div className="mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className="flex flex-col gap-4">
-            <PropertyHeader
-              address={address}
-              measurements={measurements}
-              source={initial.source}
-              reused={reused}
-              durationMs={initial.durationMs}
-              notes={initial.notes}
-              onStoriesChange={setStories}
-            />
+            <motion.div variants={fadeInUp}>
+              <PropertyHeader
+                address={address}
+                measurements={measurements}
+                source={initial.source}
+                reused={reused}
+                durationMs={initial.durationMs}
+                notes={initial.notes}
+                onStoriesChange={setStories}
+              />
+            </motion.div>
             {traceQuality && traceQuality.status !== "ok" && (
               <BadTraceBanner
                 quality={traceQuality}
@@ -243,7 +249,7 @@ export function ResultsView({
                 onKeepAndEdit={() => setDrawNonce((n) => n + 1)}
               />
             )}
-            <div className="min-h-[520px] flex-1">
+            <motion.div variants={fadeInUp} className="min-h-[520px] flex-1">
               {/* Roof plan ⇄ 3D view toggle. 3D is a read-only, decorative
                   massing — pricing/LF comes from the same live eaves either
                   way. Disabled without a real roof outline. */}
@@ -284,15 +290,27 @@ export function ResultsView({
                               : undefined
                       }
                       className={
-                        "rounded-md px-2.5 py-1 text-xs font-medium transition " +
+                        "ring-focus relative rounded-md px-2.5 py-1 text-xs font-medium transition-smooth " +
                         (active
-                          ? "bg-zinc-100 text-zinc-900"
+                          ? "text-zinc-900"
                           : disabled
                             ? "cursor-not-allowed text-zinc-300"
                             : "text-zinc-500 hover:text-zinc-900")
                       }
                     >
-                      {label}
+                      {/* Sliding highlight — same treatment as the pricing
+                          rail tabs so the two switchers read as one system. */}
+                      {active && (
+                        <motion.span
+                          layoutId="view-mode-pill"
+                          className="absolute inset-0 rounded-md bg-zinc-100"
+                          transition={{
+                            duration: reduce ? 0 : DUR.base,
+                            ease: EASE,
+                          }}
+                        />
+                      )}
+                      <span className="relative">{label}</span>
                     </button>
                   );
                 })}
@@ -347,16 +365,19 @@ export function ResultsView({
                   armDrawNonce={drawNonce}
                 />
               )}
-            </div>
+            </motion.div>
           </div>
 
-          <div className="lg:sticky lg:top-[72px] lg:self-start">
+          <motion.div
+            variants={fadeInUp}
+            className="lg:sticky lg:top-[72px] lg:self-start"
+          >
             <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
                 <PricingPanel measurements={measurements} handoff={handoff} />
               </div>
             </div>
-          </div>
+          </motion.div>
         </div>
       </motion.div>
     </div>
@@ -396,9 +417,7 @@ function PropertyHeader({
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             {onStoriesChange ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-                  Stories
-                </span>
+                <span className="microlabel">Stories</span>
                 <span className="inline-flex overflow-hidden rounded-full border border-zinc-200 bg-zinc-50/50">
                   {([1, 2, 3] as const).map((n) => {
                     const active = measurements.stories === n;
@@ -408,7 +427,9 @@ function PropertyHeader({
                         type="button"
                         onClick={() => onStoriesChange(n)}
                         className={
-                          "px-2 py-0.5 text-xs font-semibold tabular-nums transition " +
+                          // Inset focus ring — the parent pill clips
+                          // outset rings with overflow-hidden.
+                          "px-2 py-0.5 text-xs font-semibold tabular-nums transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40 " +
                           (active
                             ? "bg-accent-600 text-white"
                             : "text-zinc-600 hover:bg-white hover:text-zinc-900")
@@ -520,7 +541,11 @@ function BadTraceBanner({
 }) {
   const unusable = quality.status === "unusable";
   return (
-    <div
+    // variants only — joins the results-reveal stagger driven by the
+    // parent container in ResultsView, so the warning rises in with the
+    // rest of the page instead of popping.
+    <motion.div
+      variants={fadeInUp}
       className={cn(
         "rounded-2xl border p-4 shadow-card",
         unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200/70 bg-white",
@@ -553,7 +578,7 @@ function BadTraceBanner({
             <button
               type="button"
               onClick={onDrawFresh}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+              className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700 active:scale-[0.98]"
             >
               <PencilRuler className="h-4 w-4" />
               {unusable && hasLines
@@ -564,7 +589,7 @@ function BadTraceBanner({
               <button
                 type="button"
                 onClick={onKeepAndEdit}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 transition hover:bg-zinc-50 hover:border-zinc-300"
+                className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 transition-smooth hover:bg-zinc-50 hover:border-zinc-300 active:scale-[0.98]"
               >
                 Keep AI lines & edit
               </button>
@@ -572,6 +597,6 @@ function BadTraceBanner({
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

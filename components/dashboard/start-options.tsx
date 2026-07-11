@@ -154,18 +154,23 @@ export function StartOptions() {
             </p>
             <Link
               href="/proposal?manual=1"
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent-500 px-3.5 py-2 text-[13px] font-semibold text-white transition hover:bg-accent-400"
+              className="transition-smooth ring-focus-dark press-scale group mt-4 inline-flex items-center gap-2 rounded-lg bg-accent-500 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-accent-400"
             >
               Open the builder
-              <ArrowRight className="h-4 w-4" />
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
             </Link>
           </div>
         </div>
 
-        {/* b — From a lead */}
+        {/* b — From a lead.
+            .press-scale's `transition: transform` shorthand is declared
+            after .hover-lift in globals.css and would wipe the lift's
+            box-shadow (and the border-color) transition, so restate the
+            combined list locally; `!` is needed to out-cascade it, with a
+            motion-reduce twin so reduced motion still collapses it. */}
         <Link
           href="/dashboard/leads"
-          className="block rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card transition hover:border-zinc-300"
+          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] block rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-zinc-300"
         >
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
             <MapPin className="h-4 w-4" />
@@ -313,7 +318,7 @@ function SatelliteTakeoffCard() {
         <div className="relative mt-1.5">
           <div
             className={cn(
-              "flex h-11 items-center gap-2 rounded-lg border bg-white pl-3.5 pr-3 transition",
+              "transition-smooth flex h-11 items-center gap-2 rounded-lg border bg-white pl-3.5 pr-3",
               focused
                 ? "border-accent-500 ring-2 ring-accent-500/15"
                 : "border-zinc-200",
@@ -321,7 +326,7 @@ function SatelliteTakeoffCard() {
           >
             <MapPin
               className={cn(
-                "h-4 w-4 shrink-0 transition",
+                "transition-smooth h-4 w-4 shrink-0",
                 focused ? "text-accent-600" : "text-zinc-400",
               )}
             />
@@ -377,7 +382,7 @@ function SatelliteTakeoffCard() {
           {showDropdown && (
             <ul
               role="listbox"
-              className="absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-xl border border-zinc-200 bg-white py-1.5 shadow-card"
+              className="anim-pop origin-top absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-xl border border-zinc-200 bg-white py-1.5 shadow-card"
             >
               <li
                 className={cn(
@@ -399,7 +404,7 @@ function SatelliteTakeoffCard() {
                     }}
                     onMouseEnter={() => setHighlight(i)}
                     className={cn(
-                      "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition",
+                      "transition-smooth flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
                       i === highlight
                         ? "bg-accent-50 text-accent-900"
                         : "text-zinc-700 hover:bg-zinc-50",
@@ -431,7 +436,7 @@ function SatelliteTakeoffCard() {
                   type="button"
                   onClick={() => setJobType(opt.value)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition",
+                    "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
                     active
                       ? "bg-zinc-100 text-zinc-900"
                       : "text-zinc-500 hover:text-zinc-900",
@@ -448,7 +453,7 @@ function SatelliteTakeoffCard() {
         <button
           type="submit"
           disabled={!value.trim() || submitting}
-          className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Sparkles className="h-4 w-4" />
           {submitting ? "Starting…" : "Run AI takeoff"}

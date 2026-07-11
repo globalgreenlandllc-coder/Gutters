@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { AlertTriangle, Check, Copy, Mail, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -21,6 +21,7 @@ export function SendModal({
   onClose: () => void;
   proposal: Proposal;
 }) {
+  const reduce = useReducedMotion();
   const [phase, setPhase] = useState<"compose" | "sent">("compose");
   // Editable client info — seeded from the proposal but the contractor
   // can correct typos / fill in blanks right before sending. The send
@@ -115,7 +116,7 @@ export function SendModal({
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -123,7 +124,7 @@ export function SendModal({
         >
           <div className="absolute inset-0 bg-ink/40" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
@@ -131,8 +132,10 @@ export function SendModal({
             className="relative w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-elevated"
           >
             <button
+              type="button"
               onClick={handleClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              aria-label="Close"
+              className="ring-focus active:scale-[0.98] absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition-smooth hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>
@@ -204,20 +207,26 @@ export function SendModal({
                         type="button"
                         onClick={copy}
                         className={cn(
-                          "ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition",
+                          "ring-focus active:scale-[0.98] ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-smooth",
                           copied
                             ? "border-accent-200 bg-accent-50 text-accent-700"
                             : "border-zinc-200 text-zinc-700 hover:border-accent-400 hover:text-accent-700",
                         )}
                       >
                         {copied ? (
-                          <>
+                          <span
+                            key="copied"
+                            className="anim-enter-fade inline-flex items-center gap-1"
+                          >
                             <Check className="h-3 w-3" /> Copied
-                          </>
+                          </span>
                         ) : (
-                          <>
+                          <span
+                            key="copy"
+                            className="anim-enter-fade inline-flex items-center gap-1"
+                          >
                             <Copy className="h-3 w-3" /> Copy
-                          </>
+                          </span>
                         )}
                       </button>
                     </div>
@@ -225,7 +234,7 @@ export function SendModal({
                 </div>
 
                 {error && (
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                  <div className="anim-enter-fade mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <div>
                       <div className="font-medium">Couldn't send</div>
@@ -254,7 +263,7 @@ export function SendModal({
             ) : (
               <div className="p-8 text-center">
                 <motion.div
-                  initial={{ scale: 0.6, opacity: 0 }}
+                  initial={reduce ? false : { scale: 0.6, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ type: "spring", damping: 14, stiffness: 220 }}
                   className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"

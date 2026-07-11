@@ -98,7 +98,7 @@ export default async function AdminFinancialsPage() {
                 return (
                   <li
                     key={t.id}
-                    className="grid grid-cols-1 gap-1 border-t border-zinc-100 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_150px_120px_110px_130px] lg:items-center lg:gap-4"
+                    className="transition-smooth grid grid-cols-1 gap-1 border-t border-zinc-100 px-5 py-3 hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_150px_120px_110px_130px] lg:items-center lg:gap-4"
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-zinc-900">

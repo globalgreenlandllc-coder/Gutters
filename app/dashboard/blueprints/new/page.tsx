@@ -17,12 +17,16 @@ export default function NewBlueprintPage() {
       subtitle="Upload a roof plan (PDF or image). Claude reads it, identifies every eave vs rake, and produces a gutter layout you can include in the customer proposal."
       contentClassName="max-w-3xl"
     >
-      <div className="space-y-6">
+      <div className="anim-enter space-y-6">
         <Link
           href="/dashboard/blueprints"
-          className="inline-flex items-center gap-1.5 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
         >
-          <ChevronLeft size={14} /> Blueprints
+          <ChevronLeft
+            size={14}
+            className="transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none"
+          />{" "}
+          Blueprints
         </Link>
         <BlueprintUploader />
       </div>

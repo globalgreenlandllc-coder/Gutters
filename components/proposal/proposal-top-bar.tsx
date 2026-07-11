@@ -51,7 +51,7 @@ export function ProposalTopBar({
       <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-3 px-4">
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="ring-focus flex items-center gap-2 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
         >
           <ArrowLeft className="h-4 w-4" />
           <span className="hidden sm:inline">Dashboard</span>
@@ -82,7 +82,7 @@ export function ProposalTopBar({
             onClick={() => preview && onTogglePreview()}
             aria-pressed={!preview}
             className={cn(
-              "flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
+              "ring-focus flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-smooth",
               !preview
                 ? "bg-zinc-900 text-white shadow-sm"
                 : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
@@ -96,7 +96,7 @@ export function ProposalTopBar({
             onClick={() => !preview && onTogglePreview()}
             aria-pressed={preview}
             className={cn(
-              "flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
+              "ring-focus flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-smooth",
               preview
                 ? "bg-accent-600 text-white shadow-sm"
                 : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
@@ -115,13 +115,18 @@ export function ProposalTopBar({
             disabled={saving}
             title="Save draft — edits also auto-save"
           >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : saved ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
+            <span
+              key={saving ? "saving" : saved ? "saved" : "idle"}
+              className="anim-enter-fade inline-flex"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : saved ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+            </span>
             <span className="hidden sm:inline">
               {saving ? "Saving…" : saved ? "Saved" : "Save"}
             </span>
@@ -194,23 +199,23 @@ function OverflowMenu({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="More actions"
-        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
+        className="ring-focus active:scale-[0.98] inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition-smooth hover:bg-zinc-50 hover:text-zinc-900"
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
+        <div className="anim-pop origin-top-right absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
           {!confirming ? (
             <button
               type="button"
               onClick={() => setConfirming(true)}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+              className="ring-focus anim-enter-fade flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition-smooth hover:bg-rose-50"
             >
               <Trash2 className="h-4 w-4" />
               Delete proposal
             </button>
           ) : (
-            <div className="p-3">
+            <div className="anim-enter-fade p-3">
               <div className="text-sm font-medium text-zinc-900">
                 Delete this proposal?
               </div>
@@ -225,7 +230,7 @@ function OverflowMenu({
                     setConfirming(false);
                     setOpen(false);
                   }}
-                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                  className="ring-focus rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition-smooth hover:bg-zinc-100"
                 >
                   Cancel
                 </button>
@@ -233,7 +238,7 @@ function OverflowMenu({
                   type="button"
                   disabled={deleting}
                   onClick={() => onDelete()}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                  className="ring-focus active:scale-[0.98] inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-smooth hover:bg-rose-700 disabled:opacity-60"
                 >
                   {deleting ? (
                     <Loader2 className="h-3 w-3 animate-spin" />

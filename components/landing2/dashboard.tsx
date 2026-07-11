@@ -1,5 +1,7 @@
 import { Container, SectionHeader } from "./ui";
 import { Reveal } from "./reveal";
+import { AreaChart } from "./dashboard-chart";
+import { CountUp } from "./stats";
 
 /* Data-viz palette per the design spec: series-1..4 on an accent-950 panel. */
 const TABS = [
@@ -14,46 +16,6 @@ const KPIS = [
   { label: "Avg turnaround", value: "4 min", delta: "-92%", dot: "#E8A13B" },
   { label: "Revenue quoted (30d)", value: "$96,330", delta: "+31%", dot: "#7C5CBF" },
 ];
-
-function AreaChart() {
-  return (
-    <svg viewBox="0 0 1000 240" className="mt-8 w-full" preserveAspectRatio="none">
-      {[0, 60, 120, 180].map((y) => (
-        <line key={y} x1="0" x2="1000" y1={y} y2={y} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />
-      ))}
-      <path
-        d="M0 200 C 90 190, 140 160, 220 158 S 360 175, 450 150 S 610 90, 700 96 S 860 60, 1000 40 V 240 H 0 Z"
-        fill="rgba(20,121,184,0.10)"
-      />
-      <path
-        d="M0 200 C 90 190, 140 160, 220 158 S 360 175, 450 150 S 610 90, 700 96 S 860 60, 1000 40"
-        fill="none"
-        stroke="#1479B8"
-        strokeWidth="2"
-      />
-      <path
-        d="M0 215 C 110 208, 180 195, 260 190 S 420 196, 520 176 S 680 140, 780 138 S 920 112, 1000 100 V 240 H 0 Z"
-        fill="rgba(14,156,195,0.10)"
-      />
-      <path
-        d="M0 215 C 110 208, 180 195, 260 190 S 420 196, 520 176 S 680 140, 780 138 S 920 112, 1000 100"
-        fill="none"
-        stroke="#0E9CC3"
-        strokeWidth="2"
-      />
-      <path
-        d="M0 226 C 120 222, 200 216, 300 212 S 480 214, 580 202 S 740 182, 840 178 S 940 164, 1000 158 V 240 H 0 Z"
-        fill="rgba(232,161,59,0.10)"
-      />
-      <path
-        d="M0 226 C 120 222, 200 216, 300 212 S 480 214, 580 202 S 740 182, 840 178 S 940 164, 1000 158"
-        fill="none"
-        stroke="#E8A13B"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
 
 export function Dashboard() {
   return (
@@ -112,9 +74,10 @@ export function Dashboard() {
                       {k.delta}
                     </span>
                   </div>
-                  <p className="mt-2 text-[26px] font-semibold leading-none tracking-tight text-white md:text-[30px]">
-                    {k.value}
-                  </p>
+                  <CountUp
+                    value={k.value}
+                    className="mt-2 text-[26px] font-semibold leading-none tracking-tight text-white md:text-[30px]"
+                  />
                 </div>
               ))}
             </div>

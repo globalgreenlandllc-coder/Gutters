@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -91,7 +91,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition",
+                    "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium",
                     active
                       ? "bg-zinc-900 text-white"
                       : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
@@ -112,7 +112,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
               );
             })}
           </div>
-          <div className="relative flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+          <div className="transition-smooth relative flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
             <Search className="mr-2 h-4 w-4 text-zinc-400" />
             <input
               value={query}
@@ -144,7 +144,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           <ul>
             {filtered.map((u) => (
               <li key={u.id} className="border-b border-zinc-100 last:border-0">
-                <div className="grid grid-cols-1 gap-2 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
+                <div className="transition-smooth grid grid-cols-1 gap-2 px-4 py-3.5 hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-zinc-900">
@@ -291,7 +291,7 @@ function RowMenu({
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+        className="transition-smooth ring-focus flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
         aria-label="Actions"
       >
         <MoreHorizontal className="h-4 w-4" />
@@ -299,13 +299,13 @@ function RowMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
+          <div className="anim-pop origin-top-right absolute right-0 z-20 mt-1 w-52 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
             <button
               onClick={() => {
                 onEditCredits();
                 setOpen(false);
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-50"
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
             >
               <Sparkles className="h-3.5 w-3.5 text-accent-600" />
               Adjust credits
@@ -323,7 +323,7 @@ function RowMenu({
                   ? "Reinstate the user before impersonating"
                   : "Shadow-login as this contractor"
               }
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
               <Eye className="h-3.5 w-3.5" />
               Impersonate
@@ -336,7 +336,7 @@ function RowMenu({
                   setOpen(false);
                 }}
                 disabled={user.role === "SUPER_ADMIN"}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 <UserMinus className="h-3.5 w-3.5" />
                 Suspend account
@@ -347,7 +347,7 @@ function RowMenu({
                   onConfirmStatus("unsuspend");
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-accent-700 transition hover:bg-accent-50"
+                className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-accent-700 hover:bg-accent-50"
               >
                 <UserPlus className="h-3.5 w-3.5" />
                 Reinstate account
@@ -595,7 +595,7 @@ function ImpersonateDialog({
           </label>
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -626,11 +626,12 @@ function Dialog({
   title: string;
   children: React.ReactNode;
 }) {
+  const reduce = useReducedMotion();
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -638,7 +639,7 @@ function Dialog({
         >
           <div className="absolute inset-0 bg-zinc-900/30 backdrop-blur-sm" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
@@ -647,7 +648,7 @@ function Dialog({
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="transition-smooth ring-focus absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>

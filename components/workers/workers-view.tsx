@@ -81,11 +81,11 @@ function Modal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="surface relative z-10 w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated">
+      <div className="anim-enter-fade absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="surface anim-pop relative z-10 w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <h3 className="text-base font-semibold text-ink">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
+          <button onClick={onClose} className="transition-smooth ring-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -411,7 +411,7 @@ export function WorkersView() {
               key={t}
               onClick={() => setTab(t)}
               className={cn(
-                "rounded-lg px-4 py-1.5 text-sm font-medium capitalize transition-colors",
+                "transition-smooth ring-focus press-scale rounded-lg px-4 py-1.5 text-sm font-medium capitalize",
                 tab === t ? "bg-white text-ink shadow-sm" : "text-zinc-500 hover:text-zinc-800",
               )}
             >
@@ -430,8 +430,21 @@ export function WorkersView() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-24 text-zinc-400">
-          <Loader2 className="h-5 w-5 animate-spin" />
+        // Skeleton rows shaped like the job/crew cards they stand in for.
+        <div className="space-y-2.5">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="surface flex items-center gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+            >
+              <div className="skeleton h-9 w-9" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="skeleton h-4 w-48 max-w-full" />
+                <div className="skeleton h-3 w-72 max-w-full" />
+              </div>
+              <div className="skeleton h-4 w-16" />
+            </div>
+          ))}
         </div>
       ) : tab === "jobs" ? (
         <JobsList jobs={jobs} onChanged={refresh} onAssign={() => setModal("assign")} />
@@ -459,8 +472,12 @@ function JobsList({ jobs, onChanged, onAssign }: { jobs: OwnerJobDTO[]; onChange
     );
   return (
     <div className="space-y-2.5">
-      {jobs.map((j) => (
-        <div key={j.id} className="surface flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      {jobs.map((j, i) => (
+        <div
+          key={j.id}
+          className="surface anim-enter-fade flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+          style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+        >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="truncate font-medium text-ink">{j.title}</span>
@@ -509,8 +526,12 @@ function CrewList({ workers, onChanged, onInvite }: { workers: OwnerWorkerDTO[];
     );
   return (
     <div className="space-y-2.5">
-      {workers.map((w) => (
-        <div key={w.id} className="surface flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      {workers.map((w, i) => (
+        <div
+          key={w.id}
+          className="surface anim-enter-fade flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3"
+          style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
+        >
           <div className="grid h-9 w-9 place-items-center rounded-full bg-accent-50 text-accent-700">
             <HardHat className="h-4 w-4" />
           </div>
@@ -551,7 +572,7 @@ function CrewList({ workers, onChanged, onInvite }: { workers: OwnerWorkerDTO[];
 
 function EmptyState({ icon, title, sub, action }: { icon: React.ReactNode; title: string; sub: string; action: React.ReactNode }) {
   return (
-    <div className="surface flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-16 text-center">
+    <div className="surface anim-enter flex flex-col items-center gap-3 rounded-2xl border border-dashed border-zinc-200 bg-white px-6 py-16 text-center">
       <div className="grid h-12 w-12 place-items-center rounded-full bg-zinc-100 text-zinc-400">{icon}</div>
       <div>
         <p className="font-medium text-ink">{title}</p>

@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, Layers, Sparkles, Star } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
+import { DUR, EASE } from "@/lib/motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   markupPctForTarget,
@@ -28,6 +29,7 @@ export function PackagesSection({
    *  the contractor's editor — omitted on the read-only client portal. */
   onEditMaterials?: (id: string) => void;
 }) {
+  const reduce = useReducedMotion();
   function update(id: string, patch: Partial<Package>) {
     onChange({
       ...proposal,
@@ -58,14 +60,18 @@ export function PackagesSection({
             <motion.div
               key={p.id}
               whileHover={interactive ? { y: -2 } : undefined}
+              whileTap={interactive ? { scale: 0.99 } : undefined}
+              transition={{ duration: DUR.base, ease: EASE }}
               className={cn(
-                "relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 shadow-card transition",
+                "relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 shadow-card transition-smooth",
                 selected
                   ? "border-accent-500 ring-2 ring-accent-500/15"
                   : p.recommended
                   ? "border-accent-300"
                   : "border-zinc-200",
-                interactive && !selected && "cursor-pointer hover:border-accent-300",
+                interactive &&
+                  !selected &&
+                  "cursor-pointer hover:border-accent-300 hover:shadow-elevated",
               )}
               onClick={interactive ? () => onSelectPackage(p.id) : undefined}
             >
@@ -102,8 +108,9 @@ export function PackagesSection({
                 {readOnly ? (
                   <motion.span
                     key={Math.round(totals.total)}
-                    initial={{ opacity: 0.5, y: -2 }}
+                    initial={reduce ? false : { opacity: 0.5, y: -2 }}
                     animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: DUR.base, ease: EASE }}
                     className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
                   >
                     {formatCurrency(totals.total)}
@@ -190,7 +197,7 @@ export function PackagesSection({
                 <button
                   type="button"
                   className={cn(
-                    "mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition",
+                    "ring-focus active:scale-[0.98] mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-smooth",
                     selected
                       ? "bg-accent-600 text-white shadow-card"
                       : "border border-zinc-200 text-zinc-700 hover:border-accent-400 hover:text-accent-700",
@@ -218,7 +225,7 @@ export function PackagesSection({
                 <button
                   type="button"
                   onClick={() => onEditMaterials(p.id)}
-                  className="mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+                  className="ring-focus active:scale-[0.98] mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition-smooth hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
                 >
                   <Layers className="h-4 w-4" />
                   Edit materials & spec
@@ -232,7 +239,7 @@ export function PackagesSection({
                     onClick={() =>
                       update(p.id, { recommended: !p.recommended })
                     }
-                    className="rounded-md px-2 py-1 font-medium text-zinc-500 transition hover:text-accent-700"
+                    className="ring-focus rounded-md px-2 py-1 font-medium text-zinc-500 transition-smooth hover:text-accent-700"
                   >
                     {p.recommended ? "Unmark popular" : "Mark popular"}
                   </button>

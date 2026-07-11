@@ -146,7 +146,7 @@ function PromptCard({ row }: { row: PromptRow }) {
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
         rows={14}
-        className="mt-4 w-full resize-y rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-[13px] leading-relaxed text-zinc-800 outline-none transition focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
+        className="transition-smooth mt-4 w-full resize-y rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-[13px] leading-relaxed text-zinc-800 outline-none focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -155,7 +155,7 @@ function PromptCard({ row }: { row: PromptRow }) {
           onClick={save}
           disabled={pending || !dirty}
           className={cn(
-            "inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium shadow-sm transition disabled:opacity-50",
+            "transition-smooth press-scale ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium shadow-sm disabled:opacity-50",
             "bg-accent-600 text-white hover:bg-accent-700",
           )}
         >
@@ -177,7 +177,7 @@ function PromptCard({ row }: { row: PromptRow }) {
           type="button"
           onClick={reset}
           disabled={pending}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
+          className="transition-smooth press-scale ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-800 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
         >
           {pending && action === "reset" ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -188,10 +188,10 @@ function PromptCard({ row }: { row: PromptRow }) {
         </button>
 
         {dirty && (
-          <span className="text-xs text-amber-700">Unsaved changes</span>
+          <span className="anim-enter-fade text-xs text-amber-700">Unsaved changes</span>
         )}
         {error && (
-          <span className="inline-flex items-center gap-1 text-xs text-rose-600">
+          <span className="anim-enter-fade inline-flex items-center gap-1 text-xs text-rose-600">
             <AlertTriangle className="h-3.5 w-3.5" />
             {error}
           </span>

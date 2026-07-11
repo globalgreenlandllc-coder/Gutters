@@ -51,7 +51,7 @@ export function ActivityFeed({
       {loading ? (
         <div className="mt-4 space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-10 animate-pulse rounded-lg bg-zinc-100" />
+            <div key={i} className="skeleton h-10" />
           ))}
         </div>
       ) : events.length === 0 ? (
@@ -96,7 +96,7 @@ export function ActivityFeed({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="text-xs font-medium text-accent-700 transition hover:text-accent-800"
+            className="transition-smooth ring-focus rounded-md text-xs font-medium text-accent-700 hover:text-accent-800"
           >
             {expanded ? "Show less" : `Show ${hidden} more`}
           </button>

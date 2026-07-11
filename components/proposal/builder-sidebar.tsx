@@ -1,7 +1,8 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
+import { DUR, EASE } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
@@ -26,6 +27,7 @@ export function BuilderSidebar({
    *  contractor can rebuild materials without leaving preview. */
   onEditMaterials?: (id: string) => void;
 }) {
+  const reduce = useReducedMotion();
   const discountPct = Math.max(0, Math.min(50, proposal.discountPct ?? 0));
   const totals = proposal.packages.map((p) => {
     const noDiscount = packageTotal(p, proposal.measurements, 0);
@@ -91,10 +93,10 @@ export function BuilderSidebar({
                   type="button"
                   onClick={() => onEditMaterials(pkg.id)}
                   title="Edit this tier's materials & spec"
-                  className="group inline-flex items-center gap-1.5 text-zinc-700 transition hover:text-accent-700"
+                  className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-zinc-700 transition-smooth hover:text-accent-700"
                 >
-                  <SlidersHorizontal className="h-3 w-3 text-zinc-400 transition group-hover:text-accent-600" />
-                  <span className="border-b border-dashed border-transparent group-hover:border-accent-300">
+                  <SlidersHorizontal className="h-3 w-3 text-zinc-400 transition-smooth group-hover:text-accent-600" />
+                  <span className="border-b border-dashed border-transparent transition-smooth group-hover:border-accent-300">
                     {pkg.name}
                   </span>
                 </button>
@@ -109,8 +111,9 @@ export function BuilderSidebar({
                 )}
                 <motion.span
                   key={Math.round(total)}
-                  initial={{ opacity: 0.4 }}
-                  animate={{ opacity: 1 }}
+                  initial={reduce ? false : { opacity: 0.4, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: DUR.base, ease: EASE }}
                   className={
                     discountPct > 0
                       ? "tabular-nums font-medium text-emerald-700"
@@ -128,7 +131,7 @@ export function BuilderSidebar({
           <button
             type="button"
             onClick={() => onEditMaterials(recommended.pkg.id)}
-            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+            className="ring-focus active:scale-[0.98] mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition-smooth hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
           >
             <Layers className="h-4 w-4" />
             Edit materials & spec
@@ -257,8 +260,8 @@ function DiscountSlider({
     <div
       className={
         active
-          ? "rounded-xl border border-emerald-200 bg-emerald-50/60 p-3"
-          : "rounded-xl border border-zinc-200 bg-zinc-50/40 p-3"
+          ? "rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 transition-smooth"
+          : "rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 transition-smooth"
       }
     >
       <div className="flex items-center justify-between gap-2 text-xs">
@@ -303,7 +306,7 @@ function DiscountSlider({
         value={pct}
         onChange={(e) => onChangePct(parseFloat(e.target.value))}
         className={
-          "mt-2.5 h-2 w-full appearance-none rounded-full outline-none " +
+          "ring-focus mt-2.5 h-2 w-full appearance-none rounded-full outline-none " +
           (active
             ? "bg-emerald-200 [&::-webkit-slider-thumb]:bg-emerald-600 [&::-moz-range-thumb]:bg-emerald-600"
             : "bg-zinc-200 [&::-webkit-slider-thumb]:bg-zinc-600 [&::-moz-range-thumb]:bg-zinc-600") +
@@ -322,7 +325,7 @@ function DiscountSlider({
               type="button"
               onClick={() => onChangePct(preset)}
               className={
-                "rounded-full px-2 py-0.5 text-[10px] font-medium transition " +
+                "ring-focus active:scale-[0.98] rounded-full px-2 py-0.5 text-[10px] font-medium transition-smooth " +
                 (isActive
                   ? "bg-emerald-600 text-white shadow-sm"
                   : "bg-white text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50")
@@ -343,9 +346,9 @@ function DiscountSlider({
             value={label}
             onChange={(e) => onChangeLabel(e.target.value)}
             placeholder="e.g. Spring promo, Repeat client, Cash discount"
-            className="mt-2.5 w-full rounded-lg border border-emerald-300 bg-white/80 px-2.5 py-1.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+            className="anim-enter-fade mt-2.5 w-full rounded-lg border border-emerald-300 bg-white/80 px-2.5 py-1.5 text-xs text-zinc-900 outline-none transition-smooth placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
           />
-          <div className="mt-2 flex items-baseline justify-between text-[11px]">
+          <div className="anim-enter-fade mt-2 flex items-baseline justify-between text-[11px]">
             <span className="text-emerald-800">
               Saves{" "}
               <span className="font-semibold tabular-nums">

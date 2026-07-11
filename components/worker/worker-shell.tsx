@@ -41,7 +41,7 @@ export function WorkerShell({
                   key={href}
                   href={href}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-smooth ring-focus active:translate-y-px",
                     active ? "bg-zinc-100 text-ink" : "text-zinc-500 hover:text-zinc-800",
                   )}
                 >
@@ -52,7 +52,7 @@ export function WorkerShell({
             })}
             <button
               onClick={() => signOut({ redirectUrl: "/sign-in" })}
-              className="ml-1 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+              className="ml-1 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-zinc-500 transition-smooth ring-focus hover:bg-zinc-100 hover:text-zinc-800 active:translate-y-px"
               title={name ?? "Sign out"}
             >
               <LogOut className="h-4 w-4" />

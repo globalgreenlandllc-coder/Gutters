@@ -125,13 +125,10 @@ export function Gap() {
           />
         </Reveal>
 
-        <Reveal className="mt-14" delay={0.05}>
-          <div className="grid gap-4 md:grid-cols-3">
-            {CARDS.map((c) => (
-              <div
-                key={c.title}
-                className="rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card"
-              >
+        <div className="mt-14 grid gap-4 md:grid-cols-3">
+          {CARDS.map((c, i) => (
+            <Reveal key={c.title} delay={0.05 + i * 0.07}>
+              <div className="h-full rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card transition duration-300 will-change-transform hover:-translate-y-1 hover:shadow-elevated motion-reduce:transform-none">
                 {c.illo}
                 <div className="px-2 pb-3 pt-5">
                   <h3 className="text-[16px] font-semibold tracking-tight text-zinc-900">
@@ -142,9 +139,9 @@ export function Gap() {
                   </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </Reveal>
+            </Reveal>
+          ))}
+        </div>
       </Container>
     </section>
   );

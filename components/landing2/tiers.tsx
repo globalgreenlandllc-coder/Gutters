@@ -113,13 +113,10 @@ export function Tiers() {
           />
         </Reveal>
 
-        <Reveal className="mt-14" delay={0.05}>
-          <div className="grid gap-4 md:grid-cols-3">
-            {TIERS.map((t) => (
-              <div
-                key={t.name}
-                className="rounded-2xl border border-zinc-200/70 bg-white p-4 transition duration-300 will-change-transform hover:-translate-y-1 hover:shadow-card motion-reduce:transform-none"
-              >
+        <div className="mt-14 grid gap-4 md:grid-cols-3">
+          {TIERS.map((t, i) => (
+            <Reveal key={t.name} delay={(i + 1) * 0.05}>
+              <div className="h-full rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card hover-lift">
                 {t.visual}
                 <div className="px-2 pb-2 pt-5">
                   <h3 className="text-[16px] font-semibold tracking-tight text-zinc-900">
@@ -131,7 +128,7 @@ export function Tiers() {
                   <div className="mt-4 flex items-center justify-between">
                     <Link
                       href="/sign-in"
-                      className="inline-flex h-9 items-center rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+                      className="ring-focus transition-smooth press-scale inline-flex h-9 items-center rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
                     >
                       View Sample
                     </Link>
@@ -141,9 +138,9 @@ export function Tiers() {
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </Reveal>
+            </Reveal>
+          ))}
+        </div>
       </Container>
     </section>
   );

@@ -8,7 +8,7 @@ export default function ClientsPage() {
   return (
     <AuthGate>
       <DashboardShell title="Clients">
-        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-16 text-center">
+        <div className="anim-enter rounded-2xl border border-dashed border-zinc-300 bg-white p-16 text-center">
           <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500">
             <Users className="h-5 w-5" />
           </div>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { DUR, EASE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -77,6 +79,7 @@ export function RevenueTrend({
   const [hover, setHover] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -165,6 +168,10 @@ export function RevenueTrend({
   const hoverY = hovered ? y(hovered.cents) : 0;
   const lastIdx = data.length - 1;
 
+  // Draw-in replays only when the data window changes (range switch or a
+  // fresh payload) — never on hover re-renders, which re-render this SVG.
+  const drawKey = `${range}:${data.length}`;
+
   // Clamp the tooltip inside the plot bounds (est. half-width 58px).
   const tipLeft =
     width > 0
@@ -194,7 +201,7 @@ export function RevenueTrend({
                 setHover(null);
               }}
               className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-medium transition",
+                "transition-smooth ring-focus rounded-md px-2.5 py-1 text-xs font-medium",
                 range === r.id
                   ? "bg-zinc-100 text-zinc-900"
                   : "text-zinc-500 hover:text-zinc-800",
@@ -210,9 +217,7 @@ export function RevenueTrend({
         {/* Pulse block while the overview data is in flight — the
             "Payments you collect will chart here." copy is reserved for
             the genuinely-empty post-load case. */}
-        {loading && (
-          <div className="h-full animate-pulse rounded-lg bg-zinc-100" />
-        )}
+        {loading && <div className="skeleton h-full" />}
         {!loading && width > 0 && (
           <svg
             width={width}
@@ -275,15 +280,29 @@ export function RevenueTrend({
                   </text>
                 ))}
 
-                {/* Area wash + line */}
-                {areaPath && <path d={areaPath} fill={AREA} />}
-                <path
+                {/* Area wash + line — the line hand-draws left→right on
+                    load / range change, then the wash fades in under it. */}
+                {areaPath && (
+                  <motion.path
+                    key={`area:${drawKey}`}
+                    d={areaPath}
+                    fill={AREA}
+                    initial={reduceMotion ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: DUR.slow, ease: EASE, delay: 0.25 }}
+                  />
+                )}
+                <motion.path
+                  key={`line:${drawKey}`}
                   d={linePath}
                   fill="none"
                   stroke={SERIES}
                   strokeWidth={2}
                   strokeLinejoin="round"
                   strokeLinecap="round"
+                  initial={reduceMotion ? false : { pathLength: 0 }}
+                  animate={{ pathLength: 1 }}
+                  transition={{ duration: 0.5, ease: EASE }}
                 />
 
                 {/* Crosshair + hover point */}
@@ -308,25 +327,33 @@ export function RevenueTrend({
                   </>
                 )}
 
-                {/* Last point: dot + direct label of the final value */}
-                <circle
-                  cx={x(lastIdx)}
-                  cy={y(data[lastIdx].cents)}
-                  r={4}
-                  fill={SERIES}
-                  stroke="#fff"
-                  strokeWidth={2}
-                />
-                <text
-                  x={Math.min(x(lastIdx) + 2, width - PAD_RIGHT)}
-                  y={Math.max(y(data[lastIdx].cents) - 10, 12)}
-                  textAnchor="end"
-                  fontSize={11}
-                  fontWeight={600}
-                  fill="#18181b"
+                {/* Last point: dot + direct label — lands as the line
+                    finishes drawing. */}
+                <motion.g
+                  key={`end:${drawKey}`}
+                  initial={reduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: DUR.slow, ease: EASE, delay: 0.35 }}
                 >
-                  {fullMoney(data[lastIdx].cents)}
-                </text>
+                  <circle
+                    cx={x(lastIdx)}
+                    cy={y(data[lastIdx].cents)}
+                    r={4}
+                    fill={SERIES}
+                    stroke="#fff"
+                    strokeWidth={2}
+                  />
+                  <text
+                    x={Math.min(x(lastIdx) + 2, width - PAD_RIGHT)}
+                    y={Math.max(y(data[lastIdx].cents) - 10, 12)}
+                    textAnchor="end"
+                    fontSize={11}
+                    fontWeight={600}
+                    fill="#18181b"
+                  >
+                    {fullMoney(data[lastIdx].cents)}
+                  </text>
+                </motion.g>
 
                 {/* Full-height hit rects per x bucket (hover + tap) */}
                 {data.map((_, i) => {

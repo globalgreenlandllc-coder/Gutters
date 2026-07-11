@@ -81,8 +81,8 @@ export default async function AdminAbusePage() {
               <div
                 className={
                   pct(m.spent, m.cap) >= 80
-                    ? "h-2 rounded-full bg-red-500"
-                    : "h-2 rounded-full bg-emerald-500"
+                    ? "anim-grow-x h-2 rounded-full bg-red-500"
+                    : "anim-grow-x h-2 rounded-full bg-emerald-500"
                 }
                 style={{ width: `${pct(m.spent, m.cap)}%` }}
               />
@@ -105,7 +105,7 @@ export default async function AdminAbusePage() {
                 </tr>
               ) : (
                 o.spend.byKindDay.map((k) => (
-                  <tr key={k.kind} className="border-t border-zinc-100">
+                  <tr key={k.kind} className="transition-smooth border-t border-zinc-100 hover:bg-zinc-50/60">
                     <td className="py-2 font-medium text-zinc-900">{k.kind}</td>
                     <td className="py-2 text-right text-zinc-500">{k.count}×</td>
                     <td className="py-2 text-right font-semibold text-zinc-900">{usd(k.cents)}</td>
@@ -129,7 +129,7 @@ export default async function AdminAbusePage() {
                 </tr>
               ) : (
                 o.spend.topUsersDay.map((u) => (
-                  <tr key={u.userId} className="border-t border-zinc-100">
+                  <tr key={u.userId} className="transition-smooth border-t border-zinc-100 hover:bg-zinc-50/60">
                     <td className="py-2 font-medium text-zinc-900">{u.email ?? u.userId}</td>
                     <td className="py-2 text-right text-zinc-500">{u.count}×</td>
                     <td className="py-2 text-right font-semibold text-zinc-900">{usd(u.cents)}</td>
@@ -167,7 +167,7 @@ export default async function AdminAbusePage() {
                 </tr>
               ) : (
                 o.events.map((e) => (
-                  <tr key={e.id} className="border-t border-zinc-100 align-top">
+                  <tr key={e.id} className="transition-smooth border-t border-zinc-100 align-top hover:bg-zinc-50/60">
                     <td className="whitespace-nowrap py-2 pr-4 text-zinc-500">
                       {new Date(e.createdAt).toLocaleString()}
                     </td>
@@ -204,7 +204,7 @@ export default async function AdminAbusePage() {
             </thead>
             <tbody>
               {policies.map((p) => (
-                <tr key={p.name} className="border-t border-zinc-100">
+                <tr key={p.name} className="transition-smooth border-t border-zinc-100 hover:bg-zinc-50/60">
                   <td className="py-2 pr-4 font-medium text-zinc-900">{p.name}</td>
                   <td className="py-2 pr-4 text-zinc-600">{p.rules}</td>
                   <td className="py-2 text-zinc-600">

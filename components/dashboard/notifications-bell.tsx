@@ -55,19 +55,19 @@ export function NotificationsBell() {
     <div className="relative" ref={ref}>
       <button
         onClick={toggle}
-        className="relative flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+        className="transition-smooth ring-focus relative flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
         aria-label="Notifications"
       >
         <Bell className="h-4 w-4" />
         {unseen > 0 && (
-          <span className="absolute right-1.5 top-1.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-accent-600 px-0.5 text-[9px] font-bold leading-none text-white">
+          <span className="anim-pop absolute right-1.5 top-1.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-accent-600 px-0.5 text-[9px] font-bold leading-none text-white">
             {unseen > 9 ? "9+" : unseen}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-elevated">
+        <div className="anim-pop origin-top-right absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-elevated">
           <div className="border-b border-zinc-100 px-4 py-2.5 text-sm font-semibold tracking-tight text-zinc-900">
             Worker activity
           </div>
@@ -82,7 +82,7 @@ export function NotificationsBell() {
                   <Link
                     href="/dashboard/workers"
                     onClick={() => setOpen(false)}
-                    className="flex items-start gap-2.5 px-4 py-2.5 hover:bg-zinc-50"
+                    className="transition-smooth ring-focus flex items-start gap-2.5 px-4 py-2.5 hover:bg-zinc-50"
                   >
                     <span
                       className={cn(
@@ -117,7 +117,7 @@ export function NotificationsBell() {
           <Link
             href="/dashboard/workers"
             onClick={() => setOpen(false)}
-            className="flex items-center justify-center gap-1.5 border-t border-zinc-100 px-4 py-2 text-xs font-medium text-accent-700 hover:bg-zinc-50"
+            className="transition-smooth ring-focus flex items-center justify-center gap-1.5 border-t border-zinc-100 px-4 py-2 text-xs font-medium text-accent-700 hover:bg-zinc-50"
           >
             <HardHat className="h-3.5 w-3.5" /> Manage workers
           </Link>

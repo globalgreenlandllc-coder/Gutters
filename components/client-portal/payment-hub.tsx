@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { animate, motion, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -21,6 +21,7 @@ import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
 import { TermsSection } from "@/components/proposal/terms-section";
 import type { Proposal } from "@/lib/proposal-mock";
+import { DUR, EASE, fadeIn, staggerContainer } from "@/lib/motion";
 import {
   respondToChangeOrder,
   type PortalPaymentState,
@@ -47,6 +48,51 @@ function dateLabel(iso: string): string {
 }
 
 /**
+ * Count-up for the hero paid figure. The markup always renders the
+ * final formatted value (SSR/hydration-safe); after mount an effect
+ * animates the text node from the previous value — 0 on first reveal,
+ * the prior total on live state updates — over the same 0.5s ease the
+ * progress bar uses, so number and bar move together. Reduced motion
+ * skips the animation entirely (static value, no tree change).
+ */
+function PaidAmount({ cents }: { cents: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const fromRef = useRef(0);
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || reduce) {
+      // No animation will play; keep the baseline at the on-screen value
+      // (render always shows the final figure). Idempotent, so safe under
+      // StrictMode's double-invoked effects.
+      fromRef.current = cents;
+      return;
+    }
+    const from = fromRef.current;
+    if (from === cents) return;
+    const controls = animate(from, cents, {
+      duration: 0.5,
+      ease: EASE,
+      // Track the displayed value here (not in setup) so the effect stays
+      // idempotent and an interrupted animation resumes from what the
+      // viewer actually sees instead of jumping to the previous target.
+      onUpdate: (v) => {
+        el.textContent = fmt(v);
+        fromRef.current = v;
+      },
+      onComplete: () => {
+        el.textContent = fmt(cents);
+        fromRef.current = cents;
+      },
+    });
+    return () => controls.stop();
+  }, [cents, reduce]);
+
+  return <span ref={ref}>{fmt(cents)}</span>;
+}
+
+/**
  * Post-acceptance homeowner view: payment schedule + progress, pay
  * buttons, change-order approvals, and a collapsible copy of the
  * signed proposal. Rendered by ClientPortalView once the proposal is
@@ -63,6 +109,7 @@ export function PaymentHub({
 }) {
   const [state, setState] = useState(initialState);
   const [showProposal, setShowProposal] = useState(false);
+  const reduce = useReducedMotion();
 
   const firstNamePart =
     (state.clientName || proposal.client.name).trim().split(/\s+/)[0] ||
@@ -87,8 +134,9 @@ export function PaymentHub({
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:py-12">
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={reduce ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: DUR.entrance, ease: EASE }}
         className="space-y-6"
       >
         {/* Hero: status + progress */}
@@ -124,7 +172,7 @@ export function PaymentHub({
             <div className="flex items-end justify-between">
               <div>
                 <div className="text-[26px] font-semibold tabular-nums leading-none text-zinc-900">
-                  {fmt(state.paidCents)}
+                  <PaidAmount cents={state.paidCents} />
                   <span className="ml-1.5 text-sm font-normal text-zinc-400">
                     of {fmt(state.contractCents)} paid
                   </span>
@@ -135,10 +183,14 @@ export function PaymentHub({
               </div>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-100">
+              {/* GPU-safe: full-width bar scaled to the paid fraction, so
+                  live progress updates (mark-paid) animate, not just the
+                  mount reveal. */}
               <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${state.progressPct}%` }}
-                transition={{ duration: 0.8, ease: "easeOut" }}
+                initial={reduce ? false : { scaleX: 0 }}
+                animate={{ scaleX: state.progressPct / 100 }}
+                transition={{ duration: 0.5, ease: EASE }}
+                style={{ width: "100%", originX: 0 }}
                 className={cn(
                   "h-full rounded-full",
                   complete ? "bg-emerald-500" : "bg-accent-600",
@@ -175,12 +227,17 @@ export function PaymentHub({
               Payment schedule
             </div>
           </div>
-          <ul>
+          <motion.ul
+            initial={reduce ? false : "hidden"}
+            animate="visible"
+            variants={staggerContainer(0.04)}
+          >
             {state.installments.map((i) => {
               const isNext = nextDue?.id === i.id;
               return (
-                <li
+                <motion.li
                   key={i.id}
+                  variants={fadeIn}
                   className={cn(
                     "border-b border-zinc-100 px-5 py-4 last:border-b-0",
                     isNext && !complete && "bg-accent-50/40",
@@ -263,10 +320,10 @@ export function PaymentHub({
                       </p>
                     </div>
                   )}
-                </li>
+                </motion.li>
               );
             })}
-          </ul>
+          </motion.ul>
         </div>
 
         {/* Decided change orders (muted history) */}
@@ -313,7 +370,7 @@ export function PaymentHub({
           <button
             type="button"
             onClick={() => setShowProposal((v) => !v)}
-            className="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-zinc-50"
+            className="transition-smooth flex w-full items-center justify-between px-5 py-4 text-left hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40"
           >
             <span className="inline-flex items-center gap-2 text-sm font-medium text-zinc-900">
               <FileText className="h-4 w-4 text-zinc-400" />
@@ -321,13 +378,18 @@ export function PaymentHub({
             </span>
             <ChevronDown
               className={cn(
-                "h-4 w-4 text-zinc-400 transition-transform",
+                "h-4 w-4 text-zinc-400 transition-transform motion-reduce:transition-none",
                 showProposal && "rotate-180",
               )}
             />
           </button>
           {showProposal && (
-            <div className="space-y-8 border-t border-zinc-100 p-5">
+            <motion.div
+              initial={reduce ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: DUR.base, ease: EASE }}
+              className="space-y-8 border-t border-zinc-100 p-5"
+            >
               <AerialSection proposal={proposal} />
               <PackagesSection
                 proposal={proposal}
@@ -349,7 +411,7 @@ export function PaymentHub({
                 onChange={() => undefined}
                 readOnly
               />
-            </div>
+            </motion.div>
           )}
         </div>
 
@@ -377,7 +439,7 @@ function PayLink({
       target="_blank"
       rel="noreferrer noopener"
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm transition",
+        "transition-smooth press-scale ring-focus inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm",
         primary
           ? "bg-accent-600 text-white hover:bg-accent-700"
           : "border border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300",
@@ -472,18 +534,25 @@ function ChangeOrderCard({
               value={declineReason}
               onChange={(e) => setDeclineReason(e.target.value)}
               placeholder="Reason (optional)"
-              className="input"
+              className="input anim-enter-fade"
             />
           )}
-          {error && <p className="text-xs text-rose-600">{error}</p>}
-          <div className="flex flex-wrap items-center gap-2">
+          {error && (
+            <p className="anim-enter-fade text-xs text-rose-600">{error}</p>
+          )}
+          {/* Keyed so the approve <-> decline row swap re-mounts with a
+              short fade instead of an instant tree cut. */}
+          <div
+            key={declining ? "decline" : "approve"}
+            className="anim-enter-fade flex flex-wrap items-center gap-2"
+          >
             {!declining ? (
               <>
                 <button
                   type="button"
                   disabled={pending || name.trim().length < 2}
                   onClick={() => submit("approve")}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent-600 px-5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="transition-smooth press-scale ring-focus inline-flex h-10 items-center gap-2 rounded-lg bg-accent-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {pending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -496,7 +565,7 @@ function ChangeOrderCard({
                   type="button"
                   disabled={pending}
                   onClick={() => setDeclining(true)}
-                  className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  className="transition-smooth press-scale ring-focus inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   Decline
                 </button>
@@ -507,7 +576,7 @@ function ChangeOrderCard({
                   type="button"
                   disabled={pending}
                   onClick={() => submit("decline")}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-rose-600 px-5 text-sm font-medium text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-50"
+                  className="transition-smooth press-scale ring-focus inline-flex h-10 items-center gap-2 rounded-lg bg-rose-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-rose-700 disabled:opacity-50"
                 >
                   {pending && <Loader2 className="h-4 w-4 animate-spin" />}
                   Confirm decline
@@ -516,7 +585,7 @@ function ChangeOrderCard({
                   type="button"
                   disabled={pending}
                   onClick={() => setDeclining(false)}
-                  className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+                  className="transition-smooth press-scale ring-focus inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   Back
                 </button>

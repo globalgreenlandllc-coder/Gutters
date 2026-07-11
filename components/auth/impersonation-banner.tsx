@@ -39,7 +39,7 @@ export function ImpersonationBanner() {
       <div className="h-12" aria-hidden />
       <div
         role="alert"
-        className="fixed inset-x-0 top-0 z-[60] flex h-12 items-center gap-3 border-b border-amber-200 bg-amber-50 px-4"
+        className="anim-enter-fade fixed inset-x-0 top-0 z-[60] flex h-12 items-center gap-3 border-b border-amber-200 bg-amber-50 px-4"
       >
         <ShieldAlert className="h-4 w-4 shrink-0 text-amber-700" />
         <span className="font-label hidden rounded-md border border-amber-300 px-2 py-0.5 text-[10px] text-amber-800 md:inline">
@@ -67,7 +67,7 @@ export function ImpersonationBanner() {
         <button
           onClick={endNow}
           disabled={pending}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-900 px-3 text-xs font-semibold text-white transition hover:bg-amber-950 disabled:opacity-60"
+          className="press-scale ring-focus inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-900 px-3 text-xs font-semibold text-white transition-smooth hover:bg-amber-950 disabled:opacity-60"
         >
           <X className="h-3.5 w-3.5" />
           {pending ? "Ending…" : "End impersonation"}

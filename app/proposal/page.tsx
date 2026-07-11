@@ -2,7 +2,9 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { motion, useReducedMotion } from "framer-motion";
 import { Pencil, X } from "lucide-react";
+import { DUR, EASE, SPRING } from "@/lib/motion";
 import { blankProposal, type Proposal } from "@/lib/proposal-mock";
 import {
   clearEstimateHandoff,
@@ -40,6 +42,7 @@ export default function ProposalPage() {
 }
 
 function Inner() {
+  const reduce = useReducedMotion();
   const router = useRouter();
   const params = useSearchParams();
   const proposalId = params.get("id");
@@ -241,13 +244,13 @@ function Inner() {
       />
 
       {deleteError && (
-        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
+        <div className="anim-enter-fade border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
           Couldn&apos;t delete proposal: {deleteError}
         </div>
       )}
 
       {saveState.kind === "error" && (
-        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
+        <div className="anim-enter-fade border-b border-rose-200 bg-rose-50 px-4 py-2 text-center text-xs text-rose-700">
           Couldn&apos;t save: {saveState.message}
         </div>
       )}
@@ -264,7 +267,7 @@ function Inner() {
             <button
               type="button"
               onClick={() => setEditDrawerOpen(true)}
-              className="fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-sm font-semibold text-white shadow-elevated ring-1 ring-black/10 transition hover:bg-zinc-800 print:hidden"
+              className="anim-enter-fade hover-lift press-scale ring-focus fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2.5 text-sm font-semibold text-white shadow-elevated ring-1 ring-black/10 hover:bg-zinc-800 print:hidden"
             >
               <Pencil className="h-4 w-4" />
               Edit price & details
@@ -276,13 +279,21 @@ function Inner() {
               time. Backdrop click + ESC close. */}
           {editDrawerOpen && (
             <div className="fixed inset-0 z-40 print:hidden">
-              <button
+              <motion.button
                 type="button"
                 aria-label="Close editor"
                 onClick={() => setEditDrawerOpen(false)}
-                className="absolute inset-0 bg-ink/40"
+                initial={reduce ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: DUR.base, ease: EASE }}
+                className="absolute inset-0 bg-ink/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40"
               />
-              <aside className="absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-zinc-200 bg-zinc-50 p-4 shadow-elevated">
+              <motion.aside
+                initial={reduce ? false : { x: "100%" }}
+                animate={{ x: 0 }}
+                transition={SPRING}
+                className="absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col gap-3 overflow-y-auto border-l border-zinc-200 bg-zinc-50 p-4 shadow-elevated"
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-label text-[10px] text-zinc-500">
@@ -295,7 +306,7 @@ function Inner() {
                   <button
                     type="button"
                     onClick={() => setEditDrawerOpen(false)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50"
+                    className="ring-focus active:scale-[0.98] inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition-smooth hover:bg-zinc-50"
                     aria-label="Close"
                   >
                     <X className="h-4 w-4" />
@@ -310,7 +321,7 @@ function Inner() {
                   }}
                   onEditMaterials={setMaterialsEditId}
                 />
-              </aside>
+              </motion.aside>
             </div>
           )}
         </>

@@ -242,3 +242,166 @@ body {
     background: none !important;
   }
 }
+
+/* ================================================================
+   Motion utility layer — app-wide UI polish (append-only)
+   Rules: animate transform/opacity only · core UI 150–300ms ·
+   ease-out, no overshoot · everything in this section is neutralized
+   by the prefers-reduced-motion block at its end.
+   ================================================================ */
+
+/* Standard smooth transition for interactive elements (buttons, rows,
+   chips, nav items). Covers color swaps + transform + shadow. */
+.transition-smooth {
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    opacity 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+/* Hover lift for interactive cards / tiles / tappable rows.
+   Transform + shadow only — safe on server components. */
+.hover-lift {
+  transition:
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.hover-lift:hover {
+  @apply shadow-elevated;
+  transform: translateY(-2px);
+}
+
+/* Press feedback for buttons/cards. Declared after .hover-lift so the
+   press wins over the lift while active. */
+.press-scale {
+  transition: transform 150ms ease;
+}
+.press-scale:active {
+  transform: scale(0.98);
+}
+
+/* ---- Entrance animations (one-shot, fill both) ---- */
+@keyframes m-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes m-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes m-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes m-grow-x {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Section/card entrance: fade + 12px rise */
+.anim-enter {
+  animation: m-fade-in-up 0.4s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+/* Opacity-only entrance for dense rows/lists */
+.anim-enter-fade {
+  animation: m-fade-in 0.3s ease-out both;
+}
+/* Popover/dropdown pop-in — pair with an origin-* class
+   (e.g. origin-top-right) to anchor the scale */
+.anim-pop {
+  animation: m-scale-in 0.15s ease-out both;
+}
+/* Progress/meter bar draw-in — scaleX, never animate width */
+.anim-grow-x {
+  animation: m-grow-x 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+  transform-origin: left;
+}
+
+/* Stagger helpers for .anim-enter / .anim-enter-fade lists (50ms steps).
+   For dynamic lists use style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }} */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+.stagger-6 { animation-delay: 300ms; }
+.stagger-7 { animation-delay: 350ms; }
+.stagger-8 { animation-delay: 400ms; }
+
+/* ---- Skeleton shimmer (the one permitted infinite animation) ----
+   Gray placeholder block with a translateX gradient sweep.
+   Size/shape it with normal Tailwind classes (h-4 w-32 rounded-md …). */
+@keyframes m-shimmer-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  @apply relative overflow-hidden rounded-lg bg-zinc-200/60;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  animation: m-shimmer-sweep 1.6s ease-in-out infinite;
+}
+
+/* Focus-visible ring for dark panels (accent-950 surfaces, topbars).
+   Light-surface standard remains the existing .ring-focus utility. */
+.ring-focus-dark {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-accent-950;
+}
+
+/* ---- Reduced motion: transitions collapse, entrances render final
+   state (animation removed → natural styles = end state) ---- */
+@media (prefers-reduced-motion: reduce) {
+  .transition-smooth,
+  .hover-lift,
+  .press-scale {
+    transition: none;
+  }
+  .hover-lift:hover,
+  .press-scale:active {
+    transform: none;
+  }
+  .anim-enter,
+  .anim-enter-fade,
+  .anim-pop,
+  .anim-grow-x,
+  .skeleton::after {
+    animation: none;
+  }
+}

@@ -45,7 +45,7 @@ export default async function SignUpPage() {
           <Logo />
         </Link>
 
-        <div className="mx-auto flex w-full max-w-sm flex-col">
+        <div className="anim-enter mx-auto flex w-full max-w-sm flex-col">
           <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
             Create your account
           </h1>
@@ -66,12 +66,13 @@ export default async function SignUpPage() {
                 headerTitle: "hidden",
                 headerSubtitle: "hidden",
                 socialButtonsBlockButton:
-                  "border border-zinc-200 rounded-lg hover:bg-zinc-50",
+                  "border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-smooth press-scale ring-focus",
                 formFieldInput:
-                  "rounded-lg border-zinc-200 focus:border-accent-500 focus:ring-accent-500/15",
+                  "rounded-lg border-zinc-200 transition-smooth focus:border-accent-500 focus:ring-accent-500/15",
                 formButtonPrimary:
-                  "bg-accent-600 hover:bg-accent-700 text-white rounded-lg font-semibold",
-                footerActionLink: "text-accent-700 hover:text-accent-800",
+                  "bg-accent-600 hover:bg-accent-700 text-white rounded-lg font-semibold transition-smooth press-scale ring-focus",
+                footerActionLink:
+                  "text-accent-700 hover:text-accent-800 transition-smooth",
               },
             }}
           />
@@ -109,7 +110,7 @@ export default async function SignUpPage() {
           </g>
         </svg>
         <div className="relative flex h-full flex-col justify-between p-12">
-          <div>
+          <div className="anim-enter stagger-1">
             <div className="inline-flex items-center rounded-md border border-white/15 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">
               {pricing.pro.badge || "Free to start"}
             </div>
@@ -125,7 +126,7 @@ export default async function SignUpPage() {
               . Re-run the same address up to 10× in 24h — free.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="anim-enter stagger-3 grid gap-3 sm:grid-cols-2">
             <Stat
               n={`${usd(pricing.pro.priceCents)}/mo`}
               l={`${included} takeoffs included`}

@@ -31,8 +31,8 @@ export function CircuitToggle({ open }: { open: boolean }) {
         disabled={pending}
         className={
           open
-            ? "rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-            : "rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+            ? "transition-smooth press-scale ring-focus rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            : "transition-smooth press-scale ring-focus rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
         }
       >
         {pending ? "Working…" : open ? "Close circuit — resume AI" : "Open circuit — pause all AI"}

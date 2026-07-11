@@ -202,11 +202,11 @@ function ActionLink({
   return (
     <Link
       href={href}
-      className="group flex flex-col gap-1 rounded-lg border border-zinc-200 bg-white p-4 transition hover:border-accent-300 hover:bg-zinc-50/60"
+      className="group transition-smooth hover-lift press-scale ring-focus flex flex-col gap-1 rounded-lg border border-zinc-200 bg-white p-4 hover:border-accent-300 hover:bg-zinc-50/60"
     >
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-zinc-900">{title}</span>
-        <ArrowUpRight className="h-3.5 w-3.5 text-zinc-400 transition group-hover:text-accent-700" />
+        <ArrowUpRight className="transition-smooth h-3.5 w-3.5 text-zinc-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-accent-700 motion-reduce:transition-none" />
       </div>
       <span className="text-xs text-zinc-500">{body}</span>
     </Link>

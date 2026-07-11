@@ -127,13 +127,13 @@ export function AerialSection({
             />
           )}
           {hasRealTakeoff && (
-            <div className="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-accent-600/90 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-inset ring-white/20">
+            <div className="anim-enter-fade pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-accent-600/90 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-inset ring-white/20">
               <Sparkles className="h-3 w-3" />
               Live from AI takeoff
             </div>
           )}
           {editable && (
-            <div className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-medium text-white/85 ring-1 ring-inset ring-white/15">
+            <div className="anim-enter-fade stagger-2 pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-medium text-white/85 ring-1 ring-inset ring-white/15">
               <Pencil className="h-3 w-3" />
               Hover an eave to drag a corner — totals re-price live
             </div>

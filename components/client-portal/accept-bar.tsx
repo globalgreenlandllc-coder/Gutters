@@ -1,10 +1,11 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { Lock, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
+import { DUR, EASE } from "@/lib/motion";
 
 export function AcceptBar({
   packageName,
@@ -27,12 +28,13 @@ export function AcceptBar({
 }) {
   const deposit = total * (depositPct / 100);
   const due = paymentChoice === "deposit" ? deposit : total;
+  const reduce = useReducedMotion();
 
   return (
     <motion.div
-      initial={{ y: 60, opacity: 0 }}
+      initial={reduce ? false : { y: 24, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ type: "spring", damping: 22, stiffness: 240 }}
+      transition={{ duration: DUR.slow, ease: EASE }}
       className="sticky bottom-0 z-30 border-t border-zinc-200 bg-white print:hidden"
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center">
@@ -55,7 +57,7 @@ export function AcceptBar({
             <button
               onClick={() => onPaymentChoice("deposit")}
               className={
-                "rounded-lg px-3 py-1.5 transition " +
+                "transition-smooth press-scale ring-focus rounded-lg px-3 py-1.5 " +
                 (paymentChoice === "deposit"
                   ? "bg-zinc-100 text-zinc-900"
                   : "text-zinc-600 hover:text-zinc-900")
@@ -66,7 +68,7 @@ export function AcceptBar({
             <button
               onClick={() => onPaymentChoice("full")}
               className={
-                "rounded-lg px-3 py-1.5 transition " +
+                "transition-smooth press-scale ring-focus rounded-lg px-3 py-1.5 " +
                 (paymentChoice === "full"
                   ? "bg-zinc-100 text-zinc-900"
                   : "text-zinc-600 hover:text-zinc-900")
@@ -87,10 +89,15 @@ export function AcceptBar({
               Accept & pay {formatCurrency(due)}
             </Button>
             {!canAccept && reason && (
-              <span className="text-xs text-zinc-500">{reason}</span>
+              <span className="anim-enter-fade text-xs text-zinc-500">
+                {reason}
+              </span>
             )}
             {canAccept && (
-              <Badge tone="neutral" className="self-stretch sm:self-end">
+              <Badge
+                tone="neutral"
+                className="anim-enter-fade self-stretch sm:self-end"
+              >
                 <ShieldCheck className="h-3 w-3" />
                 Secured by Stripe
               </Badge>

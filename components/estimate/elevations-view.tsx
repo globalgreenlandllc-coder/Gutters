@@ -149,15 +149,16 @@ export function ElevationsView({
 
         {anySideData && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {perSide.map((p) => {
+            {perSide.map((p, i) => {
               // A side that the takeoff marks as a gable (rake) and gutters
               // is the suspicious case — flag it so the eye lands there.
               const conflicted = p.hasGutter && p.hasGable;
               return (
                 <div
                   key={p.side}
+                  style={{ animationDelay: `${i * 50}ms` }}
                   className={
-                    "rounded-lg border p-2 " +
+                    "anim-enter-fade rounded-lg border p-2 " +
                     (conflicted
                       ? "border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/30"
                       : p.hasGutter
@@ -196,7 +197,7 @@ export function ElevationsView({
 
       {/* The real side-elevation drawings */}
       {elevationSheets.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="anim-enter-fade rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
           <Layers className="mx-auto mb-2 h-5 w-5 text-zinc-400" />
           No elevation sheets were identified in this plan set. Open the{" "}
           <span className="font-medium">Plan sheet</span> tab and pick the
@@ -204,12 +205,13 @@ export function ElevationsView({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {elevationSheets.map((s) => {
+          {elevationSheets.map((s, i) => {
             const side = sideOfSheet(s);
             return (
               <div
                 key={s.pageIndex}
-                className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+                style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
+                className="anim-enter overflow-hidden rounded-xl border border-zinc-200 bg-white transition-smooth hover:border-zinc-300 hover:shadow-card dark:border-zinc-700 dark:bg-zinc-900"
               >
                 <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
                   <div className="flex items-center gap-2 text-xs">
@@ -223,7 +225,7 @@ export function ElevationsView({
                   <button
                     type="button"
                     onClick={() => onTraceSheet(s.pageIndex)}
-                    className="inline-flex items-center gap-1 rounded-md border border-accent-300 bg-accent-50 px-2 py-1 text-[11px] font-semibold text-accent-700 transition hover:bg-accent-100 dark:border-accent-800 dark:bg-accent-900/40 dark:text-accent-300"
+                    className="ring-focus inline-flex items-center gap-1 rounded-md border border-accent-300 bg-accent-50 px-2 py-1 text-[11px] font-semibold text-accent-700 transition-smooth hover:border-accent-400 hover:bg-accent-100 active:scale-[0.98] dark:border-accent-800 dark:bg-accent-900/40 dark:text-accent-300"
                     title="Open this elevation in the trace tool — set scale, then draw the gutter eaves on the real drawing"
                   >
                     <PencilRuler className="h-3 w-3" />

@@ -72,14 +72,14 @@ export function SyncLeadsButton() {
           </p>
 
           {state.kind === "loading" && (
-            <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-zinc-600">
+            <p className="anim-enter-fade mt-2 inline-flex items-center gap-1.5 text-xs text-zinc-600">
               <Loader2 className="h-3 w-3 animate-spin" />
               Syncing — usually 60–90s on a cold prod DB…
             </p>
           )}
 
           {state.kind === "done" && (
-            <div className="mt-2 space-y-1">
+            <div className="anim-enter-fade mt-2 space-y-1">
               <p className="text-xs text-zinc-700">
                 <span className="font-semibold tabular-nums">
                   +{state.result.added}
@@ -91,7 +91,7 @@ export function SyncLeadsButton() {
                 updated across {state.result.cities.length} cities
               </p>
               <details className="text-xs text-zinc-500">
-                <summary className="cursor-pointer hover:text-zinc-700">
+                <summary className="transition-smooth ring-focus cursor-pointer rounded-md hover:text-zinc-700">
                   Per-city breakdown
                 </summary>
                 <ul className="mt-1.5 space-y-0.5 pl-2">
@@ -107,7 +107,7 @@ export function SyncLeadsButton() {
           )}
 
           {state.kind === "error" && (
-            <p className="mt-2 break-words text-xs text-rose-700">
+            <p className="anim-enter-fade mt-2 break-words text-xs text-rose-700">
               {state.message}
             </p>
           )}
@@ -115,7 +115,7 @@ export function SyncLeadsButton() {
           <button
             onClick={trigger}
             disabled={state.kind === "loading"}
-            className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-medium text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="transition-smooth press-scale ring-focus mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-medium text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {state.kind === "loading" ? (
               <>

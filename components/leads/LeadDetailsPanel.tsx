@@ -1,8 +1,9 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { LeadStatus, InteractionStatus } from "@prisma/client";
 import { useEffect, useMemo, useState } from "react";
+import { SPRING, fadeInUp, staggerContainer } from "@/lib/motion";
 import {
   X,
   MapPin,
@@ -109,7 +110,10 @@ function StreetViewPeek({
   return (
     <div className="relative overflow-hidden rounded-xl border border-white/10 bg-zinc-900/60">
       {available === null ? (
-        <div className="h-[150px] animate-pulse bg-zinc-900" />
+        <div
+          className="skeleton h-[150px] rounded-none"
+          style={{ backgroundColor: "rgba(255,255,255,0.05)" }}
+        />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element -- external Google API image, next/image gains nothing
         <img
@@ -206,6 +210,7 @@ function ownerLookupUrl(sourceCity: string, address: string): string | null {
 }
 
 export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onUpdateInteraction }: LeadDetailsPanelProps) {
+  const reduce = useReducedMotion();
   const [notes, setNotes] = useState(lead?.interaction?.notes ?? "");
   const [savedFlash, setSavedFlash] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -280,10 +285,10 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
     <AnimatePresence>
       <motion.div
         key={lead.id}
-        initial={{ x: "100%", opacity: 0.6 }}
+        initial={reduce ? false : { x: "100%", opacity: 0.6 }}
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: "100%", opacity: 0 }}
-        transition={{ type: "spring", damping: 26, stiffness: 220 }}
+        transition={SPRING}
         className="absolute top-0 right-0 w-[400px] max-w-[100vw] h-full bg-ink/90 backdrop-blur-xl border-l border-white/10 shadow-2xl flex flex-col z-50 text-zinc-200"
       >
         {/* Hero header */}
@@ -291,7 +296,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="absolute top-3 right-3 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition"
+            className="ring-focus-dark press-scale absolute top-3 right-3 p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10 transition-smooth"
           >
             <X size={18} />
           </button>
@@ -367,36 +372,49 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
           </div>
         </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+        {/* Scrollable body — sections cascade in after the drawer settles
+            (40ms steps, opacity+y only; reduced motion renders final state
+            via `initial` — the tree itself never branches). */}
+        <motion.div
+          variants={staggerContainer(0.04, 0.08)}
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          className="flex-1 overflow-y-auto px-5 py-5 space-y-5"
+        >
           {/* See the house before you call */}
           {mapsApiKey && (
-            <StreetViewPeek
-              lat={lead.latitude}
-              lng={lead.longitude}
-              apiKey={mapsApiKey}
-            />
+            <motion.div variants={fadeInUp}>
+              <StreetViewPeek
+                lat={lead.latitude}
+                lng={lead.longitude}
+                apiKey={mapsApiKey}
+              />
+            </motion.div>
           )}
 
           {/* Lead → takeoff in one click. The single highest-leverage
               action on this panel: walk into the first call with the
               eave footage already measured. */}
-          <a
+          <motion.a
+            variants={fadeInUp}
             href={scanUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-accent-600 px-3 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-700"
+            className="ring-focus-dark press-scale flex items-center justify-center gap-2 rounded-xl bg-accent-600 px-3 py-3 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700"
           >
             <Ruler size={16} />
             Scan this roof with AI
             <span className="text-[10px] font-normal opacity-80">
               — instant gutter takeoff
             </span>
-          </a>
+          </motion.a>
 
           {/* Gutter Score — the "why should I care" breakdown */}
           {score && (
-            <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
+            <motion.div
+              variants={fadeInUp}
+              className="rounded-xl border border-white/10 bg-zinc-900/60 p-3"
+            >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Gauge size={14} className="text-accent-300" />
@@ -419,10 +437,11 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                   <span className="text-[10px] text-zinc-500">/100</span>
                 </div>
               </div>
-              {/* Meter — single-hue magnitude bar */}
+              {/* Meter — single-hue magnitude bar. Width is STATIC; the
+                  draw-in is a scaleX animation (.anim-grow-x). */}
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
                 <div
-                  className={`h-full rounded-full ${
+                  className={`anim-grow-x h-full rounded-full ${
                     score.band === "prime" ? "bg-stripe-coral" : "bg-accent-500"
                   }`}
                   style={{ width: `${score.score}%` }}
@@ -465,11 +484,11 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                   </li>
                 ))}
               </ul>
-            </div>
+            </motion.div>
           )}
 
           {/* Stat cards */}
-          <div className="grid grid-cols-2 gap-2">
+          <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-2">
             <div className="bg-zinc-900/60 p-3 rounded-xl border border-white/10">
               <div className="font-label text-[10px] text-zinc-500 flex items-center gap-1 mb-1">
                 <DollarSign size={11} /> Est. Value
@@ -504,11 +523,11 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                 {lead.workClass ?? lead.projectKind ?? lead.categorizedTrade ?? "—"}
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* Parsed fixtures / items involved */}
           {lead.fixtures && (
-            <div>
+            <motion.div variants={fadeInUp}>
               <h4 className="font-label text-[10px] text-zinc-500 mb-2 flex items-center gap-1.5">
                 <Wrench size={11} /> Items in this permit
               </h4>
@@ -526,52 +545,55 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                     </span>
                   ))}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Quick actions */}
-          <div className="grid grid-cols-2 gap-2">
+          <motion.div variants={fadeInUp} className="grid grid-cols-2 gap-2">
             <a
               href={directionsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition"
+              className="ring-focus-dark press-scale flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition-smooth"
             >
               <Navigation size={14} />
               Directions
             </a>
             <button
               onClick={handleCopyAddress}
-              className="flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition"
+              className="ring-focus-dark press-scale flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-sm text-zinc-200 px-3 py-2.5 rounded-xl transition-smooth"
             >
               {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy address"}
             </button>
-          </div>
+          </motion.div>
 
           {/* AI summary callout */}
           {lead.aiSummary && (
-            <div className="bg-accent-500/10 border border-accent-500/30 p-3 rounded-xl">
+            <motion.div
+              variants={fadeInUp}
+              className="bg-accent-500/10 border border-accent-500/30 p-3 rounded-xl"
+            >
               <div className="flex items-center gap-1.5 font-label text-[10px] text-accent-300 mb-1">
                 <Sparkles size={11} /> AI Summary
               </div>
               <p className="text-sm text-zinc-200 leading-relaxed">{lead.aiSummary}</p>
-            </div>
+            </motion.div>
           )}
 
           {/* Permit description */}
-          <div>
+          <motion.div variants={fadeInUp}>
             <h4 className="font-label text-[10px] text-zinc-500 mb-2">
               Original Permit Description
             </h4>
             <div className="bg-zinc-900/60 border border-white/10 p-3 rounded-xl text-sm text-zinc-300 leading-relaxed">
               {lead.originalDescription}
             </div>
-          </div>
+          </motion.div>
 
           {/* Contact paths — owner, contractor, parcel viewer */}
           {(lead.ownerName || lead.contractorName || ownerUrl) && (
-            <div>
+            <motion.div variants={fadeInUp}>
               <h4 className="font-label text-[10px] text-zinc-500 mb-2">
                 Contact Paths
               </h4>
@@ -581,7 +603,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                     href={ownerSearchUrl ?? "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
+                    className="ring-focus-dark flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition-smooth group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <User size={14} className="text-accent-300 shrink-0" />
@@ -590,7 +612,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                         <span className="truncate">{lead.ownerName}</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
                   </a>
                 )}
                 {lead.contractorName && (
@@ -598,7 +620,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                     href={contractorSearchUrl ?? "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
+                    className="ring-focus-dark flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition-smooth group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <HardHat size={14} className="text-amber-300 shrink-0" />
@@ -607,7 +629,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                         <span className="truncate">{lead.contractorName}</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
                   </a>
                 )}
                 {ownerUrl && (
@@ -615,7 +637,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                     href={ownerUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition group"
+                    className="ring-focus-dark flex items-center justify-between gap-2 bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 px-3 py-2.5 rounded-xl text-sm text-zinc-200 transition-smooth group"
                   >
                     <span className="flex items-center gap-2 min-w-0">
                       <Building2 size={14} className="text-sky-300 shrink-0" />
@@ -624,15 +646,15 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                         <span className="truncate">County parcel viewer</span>
                       </span>
                     </span>
-                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0" />
+                    <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300 shrink-0 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
                   </a>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* CRM status segmented control */}
-          <div>
+          <motion.div variants={fadeInUp}>
             <h4 className="font-label text-[10px] text-zinc-500 mb-2">
               Your Status
             </h4>
@@ -644,7 +666,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                   <button
                     key={s}
                     onClick={() => handleStatusChange(s)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ring-1 ${
+                    className={`ring-focus-dark press-scale flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-smooth ring-1 ${
                       active
                         ? `${m.bg} ${m.text} ${m.ring}`
                         : "bg-zinc-900 text-zinc-400 ring-white/10 hover:bg-zinc-800 hover:text-zinc-200"
@@ -656,10 +678,10 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
                 );
               })}
             </div>
-          </div>
+          </motion.div>
 
           {/* Notes */}
-          <div>
+          <motion.div variants={fadeInUp}>
             <div className="flex items-center justify-between mb-2">
               <h4 className="font-label text-[10px] text-zinc-500">
                 Private Notes
@@ -674,17 +696,17 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add notes about this lead..."
-              className="w-full bg-zinc-900/60 border border-white/10 rounded-xl p-3 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-transparent transition resize-none"
+              className="w-full bg-zinc-900/60 border border-white/10 rounded-xl p-3 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-transparent transition-smooth resize-none"
               rows={4}
             />
             <button
               onClick={handleSaveNotes}
-              className="mt-2 w-full bg-accent-600 hover:bg-accent-500 text-white text-sm font-medium py-2 rounded-lg transition"
+              className="ring-focus-dark press-scale mt-2 w-full bg-accent-600 hover:bg-accent-500 text-white text-sm font-medium py-2 rounded-lg transition-smooth"
             >
               Save Notes
             </button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       </motion.div>
     </AnimatePresence>
   );

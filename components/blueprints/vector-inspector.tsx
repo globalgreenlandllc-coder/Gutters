@@ -122,26 +122,32 @@ function PagePanel({
 export function VectorInspector({ vg }: { vg: ExtractedVectors }) {
   return (
     <div className="space-y-4">
+      {/* Server component — entrance is CSS-only (.anim-enter + stagger),
+          matching the banners on the blueprint detail page. */}
       {vg.footprint ? (
-        <PagePanel
-          title="Building outline (authoritative footprint)"
-          subtitle="Cyan = drawn outline from the foundation/floor plan — the outermost loop should be the building footprint. Amber dots = dimension labels. This is what Stage 2 snaps the footprint to."
-          accent="#2dd4bf"
-          v={vg.footprint}
-        />
+        <div className="anim-enter">
+          <PagePanel
+            title="Building outline (authoritative footprint)"
+            subtitle="Cyan = drawn outline from the foundation/floor plan — the outermost loop should be the building footprint. Amber dots = dimension labels. This is what Stage 2 snaps the footprint to."
+            accent="#2dd4bf"
+            v={vg.footprint}
+          />
+        </div>
       ) : (
-        <div className="rounded-xl border border-white/10 bg-zinc-950 p-4 text-sm text-zinc-300">
+        <div className="anim-enter rounded-xl border border-white/10 bg-zinc-950 p-4 text-sm text-zinc-300">
           No building-outline vectors were extracted (no readable foundation /
           floor-plan vector layer). Stage 2 ran without a footprint outline.
         </div>
       )}
       {vg.roof && (
-        <PagePanel
-          title="Roof-plan lines (edge cross-reference)"
-          subtitle="Violet = roof-plan strokes (ridges/hips/valleys + edges). Used only to classify eave-vs-rake — the footprint is NOT snapped to these (may be a dense framing/truss sheet)."
-          accent="#a78bfa"
-          v={vg.roof}
-        />
+        <div className="anim-enter stagger-2">
+          <PagePanel
+            title="Roof-plan lines (edge cross-reference)"
+            subtitle="Violet = roof-plan strokes (ridges/hips/valleys + edges). Used only to classify eave-vs-rake — the footprint is NOT snapped to these (may be a dense framing/truss sheet)."
+            accent="#a78bfa"
+            v={vg.roof}
+          />
+        </div>
       )}
     </div>
   );

@@ -35,7 +35,9 @@ export default function EstimateError({
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
-      <div className="relative w-full max-w-xl">
+      {/* Same entrance as the in-page ErrorScreen/LoadingState cards so a
+          crash lands with the surface's one motion language. */}
+      <div className="anim-enter relative w-full max-w-xl">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
@@ -57,18 +59,14 @@ export default function EstimateError({
 
           <dl className="mt-5 space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm">
             <div>
-              <dt className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-                Message
-              </dt>
+              <dt className="microlabel">Message</dt>
               <dd className="mt-1 break-words font-mono text-[13px] text-zinc-800">
                 {error.message || "(empty)"}
               </dd>
             </div>
             {error.digest && (
               <div>
-                <dt className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-                  Digest
-                </dt>
+                <dt className="microlabel">Digest</dt>
                 <dd className="mt-1 font-mono text-[13px] text-zinc-800">
                   {error.digest}
                 </dd>

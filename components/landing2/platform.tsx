@@ -65,14 +65,11 @@ export function Platform() {
           />
         </Reveal>
 
-        <Reveal className="mt-14" delay={0.05}>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div
-                key={f.title}
-                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50">
+        <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map((f, i) => (
+            <Reveal key={f.title} delay={0.05 + i * 0.05}>
+              <div className="group h-full rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card transition duration-300 will-change-transform hover:-translate-y-1 hover:shadow-elevated motion-reduce:transform-none">
+                <div className="transition-smooth flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 group-hover:bg-accent-100">
                   <f.icon className="h-5 w-5 text-accent-600" />
                 </div>
                 <h3 className="mt-4 text-[16px] font-semibold tracking-tight text-zinc-900">
@@ -82,9 +79,9 @@ export function Platform() {
                   {f.body}
                 </p>
               </div>
-            ))}
-          </div>
-        </Reveal>
+            </Reveal>
+          ))}
+        </div>
       </Container>
     </section>
   );

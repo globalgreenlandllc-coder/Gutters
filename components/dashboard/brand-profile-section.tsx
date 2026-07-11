@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Building2,
   Check,
@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Button } from "@/components/ui/button";
+import { DUR, EASE } from "@/lib/motion";
 import {
   defaultProfile,
   useUpdateProfile,
@@ -129,7 +130,7 @@ export function BrandProfileSection() {
   }
 
   return (
-    <section className="surface p-6 shadow-card">
+    <section className="anim-enter surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="font-label flex items-center gap-1.5 text-[11px] text-zinc-400">
@@ -201,7 +202,7 @@ export function BrandProfileSection() {
               onChange={(e) => update("tagline", e.target.value)}
               rows={2}
               maxLength={120}
-              className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="transition-smooth w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
             />
             <div className="mt-1 text-right text-[11px] text-zinc-400">
               {draft.tagline.length}/120
@@ -251,7 +252,7 @@ export function BrandProfileSection() {
                   <button
                     type="button"
                     onClick={removeLogo}
-                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 transition hover:border-rose-300 hover:text-rose-600"
+                    className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 hover:border-rose-300 hover:text-rose-600"
                   >
                     <Trash2 className="h-3 w-3" />
                     Remove
@@ -260,7 +261,7 @@ export function BrandProfileSection() {
               </div>
             </div>
             {uploadError && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <div className="anim-enter-fade mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 <ImageIcon className="h-3.5 w-3.5" />
                 {uploadError}
               </div>
@@ -280,7 +281,7 @@ export function BrandProfileSection() {
                     type="button"
                     onClick={() => setLogo("tone", t.id)}
                     className={cn(
-                      "flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs transition",
+                      "transition-smooth ring-focus press-scale flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs",
                       selected
                         ? "border-zinc-300 bg-zinc-50 text-zinc-900"
                         : "border-zinc-200 text-zinc-600 hover:border-zinc-300",
@@ -312,10 +313,12 @@ export function BrandProfileSection() {
 }
 
 function ProposalPreview({ draft }: { draft: ContractorProfile }) {
+  const reduceMotion = useReducedMotion();
   return (
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={reduceMotion ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
+      transition={{ duration: DUR.slow, ease: EASE }}
       className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-4"
     >
       <div className="flex items-center justify-between text-xs">

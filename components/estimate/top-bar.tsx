@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Check,
   ChevronLeft,
@@ -11,6 +12,7 @@ import {
   Save,
   Send,
 } from "lucide-react";
+import { DUR, EASE } from "@/lib/motion";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +51,7 @@ export function TopBar({
   planId?: string;
 }) {
   const router = useRouter();
+  const reduce = useReducedMotion();
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const [, startTransition] = useTransition();
   const [reanalyzing, setReanalyzing] = useState(false);
@@ -119,31 +122,46 @@ export function TopBar({
 
   // Status badge on the address line. Reflects what the contractor sees
   // when they navigate to /dashboard/proposals: nothing → Draft → Saved.
-  const statusBadge =
-    save.kind === "saved" ? (
-      <Badge tone="accent" className="hidden sm:inline-flex">
-        <Check className="h-3 w-3" />
-        Saved · Draft
-      </Badge>
-    ) : save.kind === "saving" ? (
-      <Badge tone="neutral" className="hidden sm:inline-flex">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        Saving…
-      </Badge>
-    ) : (
-      <Badge tone="neutral" className="hidden sm:inline-flex">
-        Draft
-      </Badge>
-    );
+  // Keyed by state so the swap crossfades (Draft → Saving… → Saved)
+  // instead of snapping — this is the confirmation of the user's most
+  // anxious action, so the transition should feel deliberate.
+  const statusKey =
+    save.kind === "saved" ? "saved" : save.kind === "saving" ? "saving" : "draft";
+  const statusBadge = (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.span
+        key={statusKey}
+        initial={reduce ? false : { opacity: 0, y: 2 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -2 }}
+        transition={{ duration: DUR.fast, ease: EASE }}
+        className="hidden sm:inline-flex"
+      >
+        {save.kind === "saved" ? (
+          <Badge tone="accent">
+            <Check className="h-3 w-3" />
+            Saved · Draft
+          </Badge>
+        ) : save.kind === "saving" ? (
+          <Badge tone="neutral">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Saving…
+          </Badge>
+        ) : (
+          <Badge tone="neutral">Draft</Badge>
+        )}
+      </motion.span>
+    </AnimatePresence>
+  );
 
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-200/70 bg-white">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4">
         <Link
           href="/dashboard"
-          className="flex items-center gap-1 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="group ring-focus flex items-center gap-1 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />
           <span className="hidden sm:inline">Dashboard</span>
         </Link>
         <div className="hidden h-6 w-px bg-zinc-200 md:block" />
@@ -172,11 +190,11 @@ export function TopBar({
           </span>
           {statusBadge}
           {save.kind === "saved" && (
-            <span className="hidden whitespace-nowrap text-xs text-zinc-500 lg:inline">
+            <span className="anim-enter-fade hidden whitespace-nowrap text-xs text-zinc-500 lg:inline">
               Saved to{" "}
               <Link
                 href="/dashboard/proposals"
-                className="text-accent-700 underline-offset-2 hover:underline"
+                className="ring-focus rounded-sm text-accent-700 underline-offset-2 transition-smooth hover:underline"
               >
                 Proposals
               </Link>
@@ -185,7 +203,7 @@ export function TopBar({
             </span>
           )}
           {save.kind === "error" && (
-            <span className="hidden truncate text-xs text-rose-600 lg:inline">
+            <span className="anim-enter-fade hidden truncate text-xs text-rose-600 lg:inline">
               {save.message}
             </span>
           )}

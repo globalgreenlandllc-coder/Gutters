@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   CheckCircle2,
   Plus,
@@ -67,6 +67,7 @@ export function MaterialDefaultsEditor({
   const [pending, startTransition] = useTransition();
   const [resetting, setResetting] = useState(false);
   const [deleting, setDeleting] = useState<DraftRow | null>(null);
+  const reduce = useReducedMotion();
 
   const dirtyRows = useMemo(
     () => rows.filter((r) => r._dirty || r._new),
@@ -162,8 +163,8 @@ export function MaterialDefaultsEditor({
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-3">
           <div className="flex-1">
             {dirtyRows.length > 0 ? (
-              <div className="flex items-center gap-2 text-sm text-zinc-700">
-                <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+              <div className="anim-enter-fade flex items-center gap-2 text-sm text-zinc-700">
+                <span className="inline-flex h-2 w-2 rounded-full bg-amber-500" />
                 <span className="font-medium tabular-nums">
                   {dirtyRows.length}{" "}
                   {dirtyRows.length === 1 ? "change" : "changes"}
@@ -171,7 +172,7 @@ export function MaterialDefaultsEditor({
                 <span className="text-zinc-500">unsaved</span>
               </div>
             ) : savedAt ? (
-              <div className="flex items-center gap-2 text-sm text-emerald-600">
+              <div className="anim-enter-fade flex items-center gap-2 text-sm text-emerald-600">
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Saved at {savedAt.toLocaleTimeString()}</span>
               </div>
@@ -255,11 +256,11 @@ export function MaterialDefaultsEditor({
                         <motion.li
                           key={row.id}
                           layout
-                          initial={{ opacity: 0, y: -4 }}
+                          initial={reduce ? false : { opacity: 0, y: -4 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, height: 0 }}
                           className={cn(
-                            "border-b border-zinc-100 transition last:border-0",
+                            "transition-smooth border-b border-zinc-100 last:border-0",
                             row._dirty && "bg-amber-50/40",
                             row._new && "bg-accent-50/30",
                             !row._dirty && !row._new && "hover:bg-zinc-50/60",
@@ -271,7 +272,7 @@ export function MaterialDefaultsEditor({
                               onChange={(e) =>
                                 update(row.id, { label: e.target.value })
                               }
-                              className="h-9 w-full rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-zinc-900 outline-none transition focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
+                              className="transition-smooth h-9 w-full rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-zinc-900 outline-none focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
                             />
 
                             <select
@@ -279,7 +280,7 @@ export function MaterialDefaultsEditor({
                               onChange={(e) =>
                                 update(row.id, { unit: e.target.value as Unit })
                               }
-                              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                              className="transition-smooth h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-700 outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                             >
                               {UNITS.map((u) => (
                                 <option key={u} value={u}>
@@ -303,12 +304,12 @@ export function MaterialDefaultsEditor({
                                 })
                               }
                               placeholder="Optional note shown on the takeoff"
-                              className="h-9 w-full rounded-md border border-transparent bg-transparent px-2 text-sm text-zinc-600 outline-none transition focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
+                              className="transition-smooth h-9 w-full rounded-md border border-transparent bg-transparent px-2 text-sm text-zinc-600 outline-none focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
                             />
 
                             <button
                               onClick={() => setDeleting(row)}
-                              className="ml-auto flex h-9 w-9 items-center justify-center rounded-md text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600"
+                              className="transition-smooth ring-focus ml-auto flex h-9 w-9 items-center justify-center rounded-md text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
                               aria-label="Remove row"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -350,7 +351,7 @@ function PriceInput({
 }) {
   const [text, setText] = useState((cents / 100).toFixed(2));
   return (
-    <div className="flex h-9 items-center rounded-md border border-zinc-200 bg-white px-2 text-sm transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+    <div className="transition-smooth flex h-9 items-center rounded-md border border-zinc-200 bg-white px-2 text-sm focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
       <span className="mr-1 text-zinc-400">$</span>
       <input
         type="number"
@@ -382,11 +383,12 @@ function DeleteDialog({
   onConfirm: (r: DraftRow) => void;
   pending: boolean;
 }) {
+  const reduce = useReducedMotion();
   return (
     <AnimatePresence>
       {row && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -394,7 +396,7 @@ function DeleteDialog({
         >
           <div className="absolute inset-0 bg-zinc-900/30 backdrop-blur-sm" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
@@ -403,7 +405,7 @@ function DeleteDialog({
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="transition-smooth ring-focus absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>

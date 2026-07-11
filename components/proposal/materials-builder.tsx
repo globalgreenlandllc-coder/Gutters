@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Layers,
   Plus,
@@ -11,6 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { DUR, EASE, SPRING } from "@/lib/motion";
 import { buildLineItems } from "@/lib/pricing";
 import {
   markupPctForTarget,
@@ -22,7 +24,7 @@ import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
 const NUM_INPUT =
-  "w-14 shrink-0 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-xs tabular-nums outline-none transition focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+  "w-14 shrink-0 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-xs tabular-nums outline-none transition-smooth focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 import { MaterialSelector } from "@/components/estimate/material-selector";
 import { EditablePrice } from "./editable-price";
 
@@ -94,6 +96,7 @@ export function MaterialsBuilder({
   onChange: (next: Package) => void;
   onClose: () => void;
 }) {
+  const reduce = useReducedMotion();
   const totals = useMemo(
     () => packageTotal(pkg, measurements, discountPct),
     [pkg, measurements, discountPct],
@@ -133,13 +136,21 @@ export function MaterialsBuilder({
 
   return (
     <div className="fixed inset-0 z-50 print:hidden">
-      <button
+      <motion.button
         type="button"
         aria-label="Close materials builder"
         onClick={onClose}
-        className="absolute inset-0 bg-ink/40"
+        initial={reduce ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: DUR.base, ease: EASE }}
+        className="absolute inset-0 bg-ink/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40"
       />
-      <aside className="absolute right-0 top-0 flex h-full w-[600px] max-w-[96vw] flex-col border-l border-zinc-200 bg-zinc-50 shadow-elevated">
+      <motion.aside
+        initial={reduce ? false : { x: "100%" }}
+        animate={{ x: 0 }}
+        transition={SPRING}
+        className="absolute right-0 top-0 flex h-full w-[600px] max-w-[96vw] flex-col border-l border-zinc-200 bg-zinc-50 shadow-elevated"
+      >
         <div className="flex items-center justify-between gap-3 border-b border-zinc-200 bg-white px-5 py-4">
           <div className="min-w-0 flex-1">
             <div className="font-label text-[10px] text-accent-700">
@@ -153,9 +164,15 @@ export function MaterialsBuilder({
             />
           </div>
           <div className="text-right">
-            <div className="text-xl font-semibold tracking-tight tabular-nums text-zinc-900">
+            <motion.div
+              key={Math.round(totals.total)}
+              initial={reduce ? false : { opacity: 0.4, y: -2 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: DUR.base, ease: EASE }}
+              className="text-xl font-semibold tracking-tight tabular-nums text-zinc-900"
+            >
               {formatCurrency(totals.total)}
-            </div>
+            </motion.div>
             <div className="text-[11px] text-zinc-500">
               {pkg.markupPct.toFixed(1)}% markup
             </div>
@@ -164,7 +181,7 @@ export function MaterialsBuilder({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-50"
+            className="ring-focus active:scale-[0.98] inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 transition-smooth hover:bg-zinc-50"
           >
             <X className="h-4 w-4" />
           </button>
@@ -199,7 +216,7 @@ export function MaterialsBuilder({
                         ),
                       )
                     }
-                    className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                    className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 outline-none transition-smooth focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                   />
                   <button
                     type="button"
@@ -207,7 +224,7 @@ export function MaterialsBuilder({
                     onClick={() =>
                       setHighlights(pkg.highlights.filter((_, j) => j !== i))
                     }
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 transition hover:border-rose-300 hover:text-rose-600"
+                    className="ring-focus active:scale-[0.98] inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 transition-smooth hover:border-rose-300 hover:text-rose-600"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -217,7 +234,7 @@ export function MaterialsBuilder({
             <button
               type="button"
               onClick={() => setHighlights([...pkg.highlights, ""])}
-              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-700 transition hover:text-accent-900"
+              className="ring-focus mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 transition-smooth hover:text-accent-900"
             >
               <Plus className="h-3.5 w-3.5" />
               Add line
@@ -233,7 +250,7 @@ export function MaterialsBuilder({
                       key={s}
                       type="button"
                       onClick={() => setHighlights([...pkg.highlights, s])}
-                      className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition hover:border-accent-400 hover:text-accent-700"
+                      className="ring-focus active:scale-[0.98] rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition-smooth hover:border-accent-400 hover:text-accent-700"
                     >
                       + {s}
                     </button>
@@ -270,7 +287,7 @@ export function MaterialsBuilder({
                         ),
                       )
                     }
-                    className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                    className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-800 outline-none transition-smooth focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                   />
                   <div className="flex items-center gap-1 text-sm text-zinc-600">
                     <span className="text-zinc-400">$</span>
@@ -287,7 +304,7 @@ export function MaterialsBuilder({
                           ),
                         )
                       }
-                      className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                      className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none transition-smooth focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
                     />
                   </div>
                   <button
@@ -296,7 +313,7 @@ export function MaterialsBuilder({
                     onClick={() =>
                       setAddOns(pkg.addOns.filter((x) => x.id !== a.id))
                     }
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 transition hover:border-rose-300 hover:text-rose-600"
+                    className="ring-focus active:scale-[0.98] inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 transition-smooth hover:border-rose-300 hover:text-rose-600"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -316,7 +333,7 @@ export function MaterialsBuilder({
                   },
                 ])
               }
-              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-700 transition hover:text-accent-900"
+              className="ring-focus mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 transition-smooth hover:text-accent-900"
             >
               <Plus className="h-3.5 w-3.5" />
               Add add-on
@@ -395,7 +412,7 @@ export function MaterialsBuilder({
                       disabled={!overridden}
                       onClick={() => clearOverride(it.id)}
                       className={cn(
-                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-300 transition",
+                        "ring-focus inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-300 transition-smooth",
                         overridden
                           ? "hover:bg-zinc-100 hover:text-zinc-600"
                           : "opacity-30",
@@ -422,7 +439,7 @@ export function MaterialsBuilder({
                         ),
                       )
                     }
-                    className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-800 outline-none transition focus:border-accent-500"
+                    className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-800 outline-none transition-smooth focus:border-accent-500"
                   />
                   <input
                     type="number"
@@ -455,7 +472,7 @@ export function MaterialsBuilder({
                         ),
                       )
                     }
-                    className="w-8 shrink-0 rounded-md border border-zinc-200 bg-white px-1 py-1 text-center text-[11px] outline-none transition focus:border-accent-500"
+                    className="w-8 shrink-0 rounded-md border border-zinc-200 bg-white px-1 py-1 text-center text-[11px] outline-none transition-smooth focus:border-accent-500"
                   />
                   <span className="text-zinc-400">$</span>
                   <input
@@ -487,7 +504,7 @@ export function MaterialsBuilder({
                     type="button"
                     aria-label="Remove custom line"
                     onClick={() => setCustom(custom.filter((_, j) => j !== i))}
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    className="ring-focus inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-smooth hover:bg-rose-50 hover:text-rose-600"
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -517,7 +534,7 @@ export function MaterialsBuilder({
                   },
                 ])
               }
-              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-700 transition hover:text-accent-900"
+              className="ring-focus mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 transition-smooth hover:text-accent-900"
             >
               <Plus className="h-3.5 w-3.5" />
               Add custom line
@@ -535,7 +552,7 @@ export function MaterialsBuilder({
                   onChange={(e) =>
                     set({ markupPct: parseFloat(e.target.value) || 0 })
                   }
-                  className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                  className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none transition-smooth focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
                 />
                 %
               </label>
@@ -563,12 +580,12 @@ export function MaterialsBuilder({
           <button
             type="button"
             onClick={onClose}
-            className="w-full rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white shadow-card transition hover:bg-accent-500"
+            className="ring-focus active:scale-[0.98] w-full rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white shadow-card transition-smooth hover:bg-accent-500"
           >
             Done
           </button>
         </div>
-      </aside>
+      </motion.aside>
     </div>
   );
 }

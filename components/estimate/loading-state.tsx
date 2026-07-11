@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Check, Loader2, MapPin } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { DUR, EASE } from "@/lib/motion";
 
 const AERIAL_STEPS = [
   { id: "geocode", label: "Geocoding property" },
@@ -36,6 +37,7 @@ export function LoadingState({
   mode?: "aerial" | "plan";
 }) {
   const steps = mode === "plan" ? PLAN_STEPS : AERIAL_STEPS;
+  const reduce = useReducedMotion();
   const [stepIndex, setStepIndex] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
 
@@ -64,9 +66,9 @@ export function LoadingState({
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
       <motion.div
-        initial={{ opacity: 0, y: 16 }}
+        initial={reduce ? false : { opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: DUR.entrance, ease: EASE }}
         className="relative w-full max-w-xl"
       >
         <div className="mb-8 flex justify-center">
@@ -77,21 +79,23 @@ export function LoadingState({
           <div className="flex items-start gap-3">
             <MapPin className="mt-0.5 h-5 w-5 text-accent-600" />
             <div className="min-w-0 flex-1">
-              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
-                Running takeoff
-              </div>
+              <div className="microlabel">Running takeoff</div>
               <div className="mt-1 truncate text-[15px] font-semibold tracking-tight text-zinc-900">
                 {address}
               </div>
             </div>
           </div>
 
-          <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-zinc-100">
+          {/* Track carries the skeleton shimmer (the one permitted infinite
+              animation) so the bar still reads "working" while the fill sits
+              on the long final step. Fill animates scaleX — never width. */}
+          <div className="skeleton mt-6 h-1 w-full rounded-full">
             <motion.div
-              className="h-full bg-accent-600"
-              initial={{ width: 0 }}
-              animate={{ width: `${progress * 100}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="h-full w-full bg-accent-600"
+              style={{ originX: 0 }}
+              initial={reduce ? false : { scaleX: 0 }}
+              animate={{ scaleX: progress }}
+              transition={{ duration: 0.5, ease: EASE }}
             />
           </div>
 
@@ -102,9 +106,9 @@ export function LoadingState({
               return (
                 <motion.li
                   key={s.id}
-                  initial={{ opacity: 0, x: -8 }}
+                  initial={reduce ? false : { opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
+                  transition={{ duration: DUR.slow, ease: EASE, delay: i * 0.05 }}
                   className="flex items-center gap-3 rounded-lg px-2 py-1.5"
                 >
                   <span className="flex h-6 w-6 items-center justify-center">
@@ -112,8 +116,9 @@ export function LoadingState({
                       {state === "done" && (
                         <motion.span
                           key="done"
-                          initial={{ scale: 0.6, opacity: 0 }}
+                          initial={reduce ? false : { scale: 0.6, opacity: 0 }}
                           animate={{ scale: 1, opacity: 1 }}
+                          transition={{ duration: DUR.fast, ease: EASE }}
                           className="flex h-5 w-5 items-center justify-center rounded-full bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200"
                         >
                           <Check className="h-3 w-3" />
@@ -122,8 +127,9 @@ export function LoadingState({
                       {state === "active" && (
                         <motion.span
                           key="active"
-                          initial={{ opacity: 0 }}
+                          initial={reduce ? false : { opacity: 0 }}
                           animate={{ opacity: 1 }}
+                          transition={{ duration: DUR.fast, ease: EASE }}
                           className="text-accent-600"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -132,8 +138,9 @@ export function LoadingState({
                       {state === "pending" && (
                         <motion.span
                           key="pending"
-                          initial={{ opacity: 0 }}
+                          initial={reduce ? false : { opacity: 0 }}
                           animate={{ opacity: 1 }}
+                          transition={{ duration: DUR.fast, ease: EASE }}
                           className="h-2 w-2 rounded-full bg-zinc-300"
                         />
                       )}
@@ -141,16 +148,19 @@ export function LoadingState({
                   </span>
                   <span
                     className={
-                      state === "done"
+                      "transition-smooth " +
+                      (state === "done"
                         ? "text-zinc-700"
                         : state === "active"
                         ? "font-medium text-zinc-900"
-                        : "text-zinc-400"
+                        : "text-zinc-400")
                     }
                   >
                     {s.label}
                     {state === "active" && (
-                      <span className="ml-1 animate-pulse">…</span>
+                      <span className="ml-1 animate-pulse motion-reduce:animate-none">
+                        …
+                      </span>
                     )}
                   </span>
                 </motion.li>
@@ -172,7 +182,7 @@ export function LoadingState({
         <div className="mt-3 flex items-center justify-center gap-2 text-center text-[11px] text-zinc-400">
           <span className="tabular-nums">{elapsedSec}s elapsed</span>
           {mode === "plan" && onLastStep && (
-            <span className="text-zinc-500">
+            <span className="anim-enter-fade text-zinc-500">
               · Sonnet is tracing — typically 30-60s on the final step
             </span>
           )}

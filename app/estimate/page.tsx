@@ -143,7 +143,9 @@ function EstimateContent() {
     // loading screen that would imply a takeoff is running.
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper">
-        <p className="text-sm text-zinc-500">Taking you to the start page…</p>
+        <p className="anim-enter-fade text-sm text-zinc-500">
+          Taking you to the start page…
+        </p>
       </div>
     );
   }
@@ -188,7 +190,9 @@ function ErrorScreen({
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
       <div className="pointer-events-none absolute inset-0 hl-grid" />
-      <div className="relative w-full max-w-lg">
+      {/* Entrance mirrors LoadingState's card rise so the loading→error
+          hand-off (often after a 95s watchdog) doesn't pop. */}
+      <div className="anim-enter relative w-full max-w-lg">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
