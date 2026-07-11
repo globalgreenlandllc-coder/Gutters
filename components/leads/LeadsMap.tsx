@@ -120,6 +120,17 @@ function markerSizePx(score: number): number {
   return Math.round(26 + (Math.max(0, Math.min(100, score)) / 100) * 20);
 }
 
+const PING_PERIOD_MS = 2400;
+
+/** Stable per-lead phase offset for the prime-halo pulse. Without it every
+ *  halo animates from the same timeline origin and the whole map strobes
+ *  in unison; a hash of the id spreads the pulses evenly instead. */
+function pingPhaseMs(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % PING_PERIOD_MS;
+  return h;
+}
+
 // Filter state shape — single object makes preset application atomic and
 // makes derivation of active chips a one-liner.
 interface FilterState {
@@ -358,7 +369,7 @@ function MapControls({
   const activeCount = chips.length;
 
   const selectBase =
-    "bg-zinc-900 text-sm text-white rounded-lg px-3 py-2 border border-white/10 outline-none focus:border-accent-500";
+    "bg-zinc-900 text-sm text-white rounded-lg px-3 py-2 border border-white/10 outline-none transition-smooth focus:border-accent-500 ring-focus-dark";
 
   return (
     <div
@@ -379,7 +390,7 @@ function MapControls({
             <button
               key={p.id}
               onClick={() => (active ? clearAll() : applyPreset(p))}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition ring-1 ${
+              className={`ring-focus-dark press-scale inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-smooth ring-1 ${
                 active
                   ? "bg-accent-500/15 text-accent-200 ring-accent-500/50"
                   : "bg-white/5 text-zinc-300 ring-white/10 hover:bg-white/10 hover:text-white"
@@ -393,7 +404,7 @@ function MapControls({
         <div className="flex-1" />
         <button
           onClick={() => setAdvancedOpen((v) => !v)}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition ring-1 ${
+          className={`ring-focus-dark press-scale inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-smooth ring-1 ${
             advancedOpen
               ? "bg-white/10 text-white ring-white/15"
               : "bg-white/5 text-zinc-300 ring-white/10 hover:text-white"
@@ -405,7 +416,7 @@ function MapControls({
         <button
           onClick={handleSearchClick}
           disabled={isLoading}
-          className="bg-accent-600 hover:bg-accent-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"
+          className="ring-focus-dark press-scale bg-accent-600 hover:bg-accent-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-smooth inline-flex items-center gap-1.5"
         >
           {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
           Search this area
@@ -414,7 +425,7 @@ function MapControls({
 
       {/* Row 2: Advanced filters (collapsible) */}
       {advancedOpen && (
-        <div className="flex flex-wrap gap-2 px-3 py-2.5 border-b border-white/10">
+        <div className="anim-enter-fade flex flex-wrap gap-2 px-3 py-2.5 border-b border-white/10">
           <select
             className={selectBase}
             value={filters.projectKind}
@@ -520,7 +531,7 @@ function MapControls({
 
       {/* Row 3: Active filter chips */}
       {activeCount > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 bg-white/[0.03]">
+        <div className="anim-enter-fade flex flex-wrap items-center gap-1.5 px-3 py-2 bg-white/[0.03]">
           <span className="font-label text-[10px] text-zinc-500 mr-1">
             Active
           </span>
@@ -528,7 +539,7 @@ function MapControls({
             <button
               key={c.key}
               onClick={c.clear}
-              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-accent-500/15 text-accent-200 ring-1 ring-accent-500/40 hover:bg-accent-500/25 transition"
+              className="ring-focus-dark press-scale inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-accent-500/15 text-accent-200 ring-1 ring-accent-500/40 hover:bg-accent-500/25 transition-smooth"
             >
               {c.label}
               <X size={10} />
@@ -536,7 +547,7 @@ function MapControls({
           ))}
           <button
             onClick={clearAll}
-            className="ml-1 text-[11px] text-zinc-400 hover:text-white underline-offset-2 hover:underline"
+            className="ring-focus-dark ml-1 rounded text-[11px] text-zinc-400 transition-smooth hover:text-white underline-offset-2 hover:underline"
           >
             Clear all
           </button>
@@ -980,7 +991,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               <button
                 onClick={() => setViewMode("pins")}
                 title="Show individual leads"
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                className={`ring-focus-dark press-scale inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-smooth ${
                   viewMode === "pins"
                     ? "bg-accent-500/15 text-accent-200 ring-1 ring-inset ring-accent-500/40"
                     : "text-zinc-400 hover:text-white"
@@ -992,7 +1003,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               <button
                 onClick={() => setViewMode("heatmap")}
                 title="Show opportunity heatmap (weighted by Gutter Score)"
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                className={`ring-focus-dark press-scale inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-smooth ${
                   viewMode === "heatmap"
                     ? "bg-stripe-coral/15 text-stripe-coral ring-1 ring-inset ring-stripe-coral/40"
                     : "text-zinc-400 hover:text-white"
@@ -1011,7 +1022,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                   }
                 }}
                 title="Prospect a neighborhood: click the map to drop a radius, get a door-knock route"
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                className={`ring-focus-dark press-scale inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-smooth ${
                   prospectArmed || prospect
                     ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-500/40"
                     : "text-zinc-400 hover:text-white"
@@ -1022,19 +1033,19 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               </button>
             </div>
             {prospectArmed && !prospect && (
-              <div className="pointer-events-none rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200 shadow-xl backdrop-blur-md">
+              <div className="anim-enter-fade pointer-events-none rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200 shadow-xl backdrop-blur-md">
                 Click anywhere on the map to drop a prospecting radius
               </div>
             )}
             {resultCount !== null && isLoading && (
-              <div className="pointer-events-none rounded-lg border border-white/10 bg-ink/90 px-3 py-2 text-xs text-zinc-300 shadow-xl backdrop-blur-md">
+              <div className="anim-enter-fade pointer-events-none rounded-lg border border-white/10 bg-ink/90 px-3 py-2 text-xs text-zinc-300 shadow-xl backdrop-blur-md">
                 <span className="flex items-center gap-1.5">
                   <Loader2 size={12} className="animate-spin" /> Searching…
                 </span>
               </div>
             )}
             {fetchError && (
-              <div className="pointer-events-none max-w-[320px] rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200 backdrop-blur-md">
+              <div className="anim-enter-fade pointer-events-none max-w-[320px] rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200 backdrop-blur-md">
                 {fetchError}
               </div>
             )}
@@ -1044,8 +1055,11 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               edge; desktop: centered on the map, nudged left while the
               400px details panel overlays the map's right side. */}
           {prospect && prospectStats && (
+            // anim-enter-fade (opacity only): the bar centers itself with
+            // sm:-translate-x-1/2, so a transform-keyframe entrance would
+            // override the centering mid-animation and cause a jump.
             <div
-              className={`absolute bottom-5 left-3 right-3 z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-white/10 bg-ink/95 px-4 py-2.5 shadow-2xl backdrop-blur-md sm:right-auto sm:max-w-[min(92%,640px)] ${
+              className={`anim-enter-fade absolute bottom-5 left-3 right-3 z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-white/10 bg-ink/95 px-4 py-2.5 shadow-2xl backdrop-blur-md sm:right-auto sm:max-w-[min(92%,640px)] ${
                 selectedLead
                   ? "sm:left-[calc(50%-200px)] sm:-translate-x-1/2"
                   : "sm:left-1/2 sm:-translate-x-1/2"
@@ -1087,7 +1101,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                   <button
                     key={r}
                     onClick={() => setProspect((p) => (p ? { ...p, radiusMi: r } : p))}
-                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition ${
+                    className={`ring-focus-dark press-scale rounded-md px-2 py-1 text-[11px] font-medium transition-smooth ${
                       prospect.radiusMi === r
                         ? "bg-accent-500/20 text-accent-200 ring-1 ring-accent-500/40"
                         : "text-zinc-400 hover:bg-white/10 hover:text-white"
@@ -1102,7 +1116,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                   href={prospectStats.routeUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-500"
+                  className="ring-focus-dark press-scale inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-smooth hover:bg-emerald-500"
                   title="Open a driving route through the top-scored leads in this radius"
                 >
                   <Route size={12} />
@@ -1114,7 +1128,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                   setProspect(null);
                   setProspectArmed(false);
                 }}
-                className="rounded-md p-1 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                className="ring-focus-dark press-scale rounded-md p-1 text-zinc-400 transition-smooth hover:bg-white/10 hover:text-white"
                 title="Clear prospecting radius"
               >
                 <X size={14} />
@@ -1130,7 +1144,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
             resultCount === 0 &&
             leads.length === 0 && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
-                <div className="pointer-events-auto max-w-sm rounded-xl border border-white/10 bg-ink/95 px-5 py-4 text-center shadow-2xl backdrop-blur">
+                <div className="anim-enter pointer-events-auto max-w-sm rounded-xl border border-white/10 bg-ink/95 px-5 py-4 text-center shadow-2xl backdrop-blur">
                   <Inbox className="mx-auto h-7 w-7 text-zinc-500" />
                   <div className="mt-2 text-sm font-medium text-white">
                     No leads in this view
@@ -1161,15 +1175,18 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
               const bounds = e.map.getBounds();
               if (!bounds) return;
               const z = e.map.getZoom();
-              if (typeof z === "number") setZoom(z);
               const ne = bounds.getNorthEast();
               const sw = bounds.getSouthWest();
               const next = `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`;
               if (bboxDebounceRef.current) clearTimeout(bboxDebounceRef.current);
-              bboxDebounceRef.current = setTimeout(
-                () => setBbox(next),
-                BBOX_DEBOUNCE_MS,
-              );
+              // Zoom settles WITH the bbox, once, after the gesture ends.
+              // Vector maps report fractional zoom on every animation
+              // frame; updating zoom state per frame re-binned the cluster
+              // grid 60×/s, remounting badges mid-gesture (flash + jump).
+              bboxDebounceRef.current = setTimeout(() => {
+                if (typeof z === "number") setZoom(z);
+                setBbox(next);
+              }, BBOX_DEBOUNCE_MS);
             }}
           >
             {/* Pans to selected lead — only when selection ID changes */}
@@ -1259,13 +1276,21 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                         pin, the map equivalent of the sidebar's Hot chip */}
                     {isPrime && !isSelected && (
                       <span
-                        className="absolute inset-0 -m-1.5 animate-ping rounded-full bg-stripe-coral/30"
-                        style={{ animationDuration: "2.4s" }}
+                        className="absolute inset-0 -m-1.5 animate-ping rounded-full bg-stripe-coral/30 motion-reduce:animate-none"
+                        style={{
+                          animationDuration: `${PING_PERIOD_MS}ms`,
+                          // Negative = start mid-cycle, so pulses are
+                          // spread out from the first frame.
+                          animationDelay: `-${pingPhaseMs(lead.id)}ms`,
+                        }}
                         aria-hidden
                       />
                     )}
+                    {/* transition-smooth (not -all): the hover/select size
+                        bump changes width/height inline styles — layout
+                        props must snap, only ring/color/shadow animate. */}
                     <div
-                      className={`relative flex items-center justify-center rounded-full shadow-lg shadow-black/40 transition-all ${
+                      className={`relative flex items-center justify-center rounded-full shadow-lg shadow-black/40 transition-smooth ${
                         isSelected
                           ? "ring-4 ring-accent-400/80"
                           : isHovered
@@ -1309,7 +1334,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
                   zIndex={2000}
                 >
                   <div
-                    className="pointer-events-none w-[300px] rounded-xl border border-white/10 bg-ink/95 p-3 shadow-2xl backdrop-blur-md"
+                    className="anim-enter-fade pointer-events-none w-[300px] rounded-xl border border-white/10 bg-ink/95 p-3 shadow-2xl backdrop-blur-md"
                     style={{
                       // Base pin size + hover bump (4) + ring (4) + gap.
                       marginBottom:
@@ -1520,7 +1545,7 @@ function ClusterMarker({
       zIndex={50}
     >
       <div
-        className="relative cursor-pointer rounded-full p-[3px] shadow-xl shadow-black/50 transition hover:scale-110"
+        className="relative cursor-pointer rounded-full p-[3px] shadow-xl shadow-black/50 transition-smooth hover:scale-110"
         style={{
           width: size,
           height: size,
