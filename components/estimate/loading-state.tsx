@@ -60,8 +60,30 @@ export function LoadingState({
     return () => clearInterval(t);
   }, []);
 
-  const progress = Math.min((stepIndex + 1) / steps.length, 1);
   const onLastStep = stepIndex >= steps.length - 1;
+
+  // Record the wall-clock second the final step began, so the percentage
+  // can creep against real elapsed time (not the fake step cascade).
+  const [finalStartSec, setFinalStartSec] = useState<number | null>(null);
+  useEffect(() => {
+    if (onLastStep && finalStartSec === null) setFinalStartSec(elapsedSec);
+  }, [onLastStep, elapsedSec, finalStartSec]);
+
+  // ONE monotonic percent that never freezes. The step cascade fills to
+  // 88%; the long final step then creeps 88 → ~99 asymptotically (quick
+  // at first, always advancing, never quite 100 until the real result
+  // swaps this screen out). The old bar hit a full 100% on the final
+  // step and sat there — exactly the "is it frozen?" read this removes.
+  const CASCADE_CAP = 88;
+  const nonFinal = Math.max(1, steps.length - 1);
+  const finalElapsed =
+    finalStartSec === null ? 0 : Math.max(0, elapsedSec - finalStartSec);
+  const tau = mode === "plan" ? 28 : 8;
+  const pct = onLastStep
+    ? Math.min(99, CASCADE_CAP + (99 - CASCADE_CAP) * (1 - Math.exp(-finalElapsed / tau)))
+    : Math.min(CASCADE_CAP, ((stepIndex + 1) / nonFinal) * CASCADE_CAP);
+  const pctInt = Math.round(pct);
+  const progress = pct / 100;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
@@ -86,16 +108,28 @@ export function LoadingState({
             </div>
           </div>
 
+          {/* Percent + bar. The number ticks every second on the long
+              final step (asymptotic creep), so the screen visibly advances
+              instead of reading as frozen. */}
+          <div className="mt-6 flex items-baseline justify-between">
+            <span className="microlabel">
+              {onLastStep ? "Finishing up" : "Working"}
+            </span>
+            <span className="text-sm font-semibold tabular-nums text-accent-700">
+              {pctInt}%
+            </span>
+          </div>
           {/* Track carries the skeleton shimmer (the one permitted infinite
-              animation) so the bar still reads "working" while the fill sits
-              on the long final step. Fill animates scaleX — never width. */}
-          <div className="skeleton mt-6 h-1 w-full rounded-full">
+              animation) so the bar still reads "working" while the fill
+              creeps on the long final step. Fill animates scaleX — never
+              width. */}
+          <div className="skeleton mt-2 h-1.5 w-full rounded-full">
             <motion.div
-              className="h-full w-full bg-accent-600"
+              className="h-full w-full rounded-full bg-accent-600"
               style={{ originX: 0 }}
               initial={reduce ? false : { scaleX: 0 }}
               animate={{ scaleX: progress }}
-              transition={{ duration: 0.5, ease: EASE }}
+              transition={{ duration: 0.9, ease: EASE }}
             />
           </div>
 
