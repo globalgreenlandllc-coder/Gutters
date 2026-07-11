@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getPlanPricing } from "@/lib/plan-pricing";
 import {
   clearImpersonationCookie,
   setImpersonationCookie,
@@ -234,6 +235,11 @@ export async function getAdminKpis(): Promise<AdminKpis> {
     db.subscription.count({ where: { status: "ACTIVE" } }),
   ]);
 
+  // Estimate: subscribers who joined at older price points keep their
+  // original inline Stripe amount, so subs x current price is an
+  // approximation until everyone is on the current price.
+  const proPriceCents = (await getPlanPricing()).pro.priceCents;
+
   return {
     contractorsActive,
     contractorsSuspended,
@@ -242,7 +248,7 @@ export async function getAdminKpis(): Promise<AdminKpis> {
     proposalsAccepted,
     revenueProcessedCents: revenueAgg._sum.paidCents ?? 0,
     platformFeesCents: feesAgg._sum.platformFeeCents ?? 0,
-    mrrCents: activeSubs * 5000,
+    mrrCents: activeSubs * proPriceCents,
   };
 }
 
@@ -308,9 +314,10 @@ export async function getAdminFinancials(): Promise<AdminFinancials> {
 
   const subscriptionRevenue30dCents = sub30._sum.grossCents ?? 0;
   const creditRevenue30dCents = credit30._sum.grossCents ?? 0;
+  const proPriceCents = (await getPlanPricing()).pro.priceCents;
 
   return {
-    mrrCents: activeSubs * 5000,
+    mrrCents: activeSubs * proPriceCents,
     activeSubs,
     pastDueSubs,
     revenue30dCents: subscriptionRevenue30dCents + creditRevenue30dCents,

@@ -47,7 +47,8 @@ export function Footer() {
               </span>
             </div>
             <p className="mt-3 max-w-xs text-[13.5px] leading-relaxed text-zinc-500">
-              The AI takeoff and proposal platform for gutter contractors.
+              The platform gutter contractors run their business on &mdash;
+              takeoffs, proposals, scheduling, and payments.
             </p>
             <div className="mt-5 flex items-center gap-2">
               <span className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500">

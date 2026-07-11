@@ -13,9 +13,10 @@ export function Manifesto() {
             <span className="text-zinc-400">
               and lost by whoever is still driving out with a tape measure.
               GutterScan makes every roof measurable, priceable, and quotable
-              from your desk. Because the future of contracting belongs to the
-              crew that sends the proposal before the competition rings the
-              doorbell.
+              from your desk &mdash; then runs the job that follows: the
+              proposal, the signature, the schedule, and every payment. Because
+              the future of contracting belongs to the crew that sends the
+              proposal before the competition rings the doorbell.
             </span>
           </p>
         </Reveal>

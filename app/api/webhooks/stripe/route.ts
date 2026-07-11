@@ -9,6 +9,7 @@ import {
   mapStripeSubStatus,
   subscriptionPeriodEnd,
 } from "@/lib/stripe";
+import { getPlanPricing } from "@/lib/plan-pricing";
 
 export const maxDuration = 30;
 
@@ -125,6 +126,7 @@ async function grantCredits(session: Stripe.Checkout.Session) {
       ? session.payment_intent
       : (session.payment_intent?.id ?? `cs_${session.id}`);
 
+  const included = (await getPlanPricing()).pro.includedCredits;
   try {
     await db.$transaction(async (tx) => {
       await tx.transaction.create({
@@ -143,7 +145,7 @@ async function grantCredits(session: Stripe.Checkout.Session) {
         where: { userId },
         create: {
           userId,
-          included: 12,
+          included,
           used: 0,
           bonus: credits,
           resetsAt: nextMonthBoundary(),
@@ -185,6 +187,7 @@ async function handleInvoicePaid(stripe: Stripe, inv: Stripe.Invoice) {
   }
 
   const periodEnd = subscriptionPeriodEnd(sub) ?? nextMonthBoundary();
+  const pricing = await getPlanPricing();
 
   await db.subscription.upsert({
     where: { userId },
@@ -212,13 +215,13 @@ async function handleInvoicePaid(stripe: Stripe, inv: Stripe.Invoice) {
     where: { userId },
     create: {
       userId,
-      included: PRO_PLAN.includedCredits,
+      included: pricing.pro.includedCredits,
       used: 0,
       bonus: 0,
       resetsAt: periodEnd,
     },
     update: {
-      included: PRO_PLAN.includedCredits,
+      included: pricing.pro.includedCredits,
       used: 0,
       resetsAt: periodEnd,
     },
@@ -238,7 +241,7 @@ async function handleInvoicePaid(stripe: Stripe, inv: Stripe.Invoice) {
         grossCents: inv.amount_paid ?? 0,
         netCents: inv.amount_paid ?? 0,
         stripeInvoiceId: inv.id,
-        description: `${PRO_PLAN.name} — monthly`,
+        description: `${pricing.pro.name} — monthly`,
         settledAt: new Date(),
       },
     });

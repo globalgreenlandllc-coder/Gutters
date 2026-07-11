@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { SignUp } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
+import { getPlanPricing, packBlurb, usd } from "@/lib/plan-pricing";
+
+// Pricing copy comes from the admin-editable config so this page can
+// never promise a different number than checkout charges. Re-rendered
+// every 5 min and immediately on /admin/pricing publish.
+export const revalidate = 300;
 
 const RAIN_DROPS: { x: number; y: number; d: string }[] = [
   { x: 40, y: 60, d: "0s" },
@@ -23,7 +29,15 @@ const RAIN_DROPS: { x: number; y: number; d: string }[] = [
   { x: 520, y: 580, d: "0.4s" },
 ];
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
+  const pricing = await getPlanPricing();
+  const included = pricing.pro.includedCredits;
+  // Cheapest per-takeoff top-up rate, for the "per extra" stat.
+  const cheapestPack = pricing.packs.length
+    ? pricing.packs.reduce((a, b) =>
+        a.amountCents / a.credits <= b.amountCents / b.credits ? a : b,
+      )
+    : null;
   return (
     <div className="relative grid min-h-screen bg-white lg:grid-cols-2">
       <div className="relative flex flex-col justify-between p-8 sm:p-12">
@@ -36,7 +50,7 @@ export default function SignUpPage() {
             Create your account
           </h1>
           <p className="mt-2 mb-6 text-zinc-600">
-            Start free with 12 AI estimates a month. No card required.
+            Start free with {included} AI takeoffs a month. No card required.
           </p>
 
           <SignUp
@@ -97,20 +111,33 @@ export default function SignUpPage() {
         <div className="relative flex h-full flex-col justify-between p-12">
           <div>
             <div className="inline-flex items-center rounded-md border border-white/15 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">
-              Free for 14 days
+              {pricing.pro.badge || "Free to start"}
             </div>
             <h2 className="mt-8 text-balance text-4xl font-semibold tracking-tight text-white xl:text-5xl">
               <span className="text-accent-300">Quote a job</span>{" "}
               <span className="text-white">in under a minute.</span>
             </h2>
             <p className="mt-4 max-w-md text-white/60">
-              12 AI takeoffs included every month, $5 each after that. Re-run
-              the same address up to 10× in 24h — free.
+              {included} AI takeoffs included every month
+              {cheapestPack
+                ? `, top-ups from ${packBlurb(cheapestPack)}`
+                : ""}
+              . Re-run the same address up to 10× in 24h — free.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Stat n="$50/mo" l="12 estimates included" />
-            <Stat n="$5" l="per extra address" />
+            <Stat
+              n={`${usd(pricing.pro.priceCents)}/mo`}
+              l={`${included} takeoffs included`}
+            />
+            {cheapestPack ? (
+              <Stat
+                n={`$${(cheapestPack.amountCents / cheapestPack.credits / 100).toFixed(2)}`}
+                l="per extra takeoff"
+              />
+            ) : (
+              <Stat n="Top-ups" l="buy credits anytime" />
+            )}
             <Stat n="10× / 24h" l="free re-runs" />
             <Stat n="Cancel" l="anytime" />
           </div>

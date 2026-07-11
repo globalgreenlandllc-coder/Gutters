@@ -165,7 +165,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   </div>
 
                   <div className="text-xs text-zinc-600">
-                    Pro · $50/mo
+                    Pro
                     <div className="text-zinc-400">
                       Joined{" "}
                       {new Date(u.createdAt).toLocaleDateString("en-US", {

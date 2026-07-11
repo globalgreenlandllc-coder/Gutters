@@ -10,6 +10,11 @@ import { getActiveApiKey } from "@/lib/api-keys";
 //
 // Prices are defined inline (price_data) on each Checkout session, so
 // no products need to be pre-created in the Stripe dashboard.
+//
+// PRO_PLAN and CREDIT_PACKS are the CODE DEFAULTS only — the effective
+// values are resolved through lib/plan-pricing.ts getPlanPricing()
+// (admin-editable at /admin/pricing). Checkout, the webhook, and every
+// pricing display read from there; don't consume these directly.
 
 export const PRO_PLAN = {
   id: "pro_monthly",
@@ -30,10 +35,6 @@ export const CREDIT_PACKS: CreditPack[] = [
   { id: "pack10", credits: 10, amountCents: 4500, blurb: "$4.50 / estimate" },
   { id: "pack25", credits: 25, amountCents: 10000, blurb: "$4.00 / estimate" },
 ];
-
-export function creditPack(id: string): CreditPack | null {
-  return CREDIT_PACKS.find((p) => p.id === id) ?? null;
-}
 
 let cached: { key: string; client: Stripe } | null = null;
 

@@ -25,9 +25,9 @@ const mono = Space_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GutterScan — Instant AI Gutter Takeoff",
+  title: "GutterScan — AI Takeoffs, Proposals & Payments for Gutter Contractors",
   description:
-    "Type one address. Get an AI-measured estimate, professional proposal, and accept payment in under a minute.",
+    "Type one address. Get an AI-measured takeoff, a three-tier proposal your client e-signs, then run the schedule, crew, and payments — all in one platform.",
   metadataBase: new URL("https://gutters.app"),
 };
 

@@ -42,8 +42,9 @@ export function CTA() {
               Ready to activate your AI takeoffs?
             </h2>
             <p className="mx-auto mt-5 max-w-md text-[15px] leading-relaxed text-white/60">
-              Join contractors winning measured, three-tier bids from the
-              fastest-growing estimating engine in exteriors.
+              Join contractors winning measured, three-tier bids &mdash; then
+              running the signature, the schedule, and every payment in one
+              place.
             </p>
             <div className="mt-8 flex items-center justify-center gap-3">
               <PillLink href="/sign-in" variant="accent">

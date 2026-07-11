@@ -136,9 +136,9 @@ export function Hero() {
             </h1>
             <div className="max-w-sm md:justify-self-end md:pt-3">
               <p className="text-[15px] leading-relaxed text-zinc-600">
-                The measurement intelligence layer for gutter contractors.
-                Delivering accurate takeoffs and winning proposals from aerial
-                imagery and blueprints &mdash; no ladder required.
+                The operating system for gutter contractors. AI takeoffs from
+                aerial imagery and blueprints, three-tier proposals, e-sign,
+                scheduling, and payment tracking &mdash; no ladder required.
               </p>
               <div className="mt-6 flex items-center gap-3">
                 <PillLink href="/sign-in">Get Started</PillLink>

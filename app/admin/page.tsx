@@ -53,7 +53,7 @@ export default async function AdminOverviewPage() {
           icon={TrendingUp}
           label="MRR"
           value={formatCurrency(kpis.mrrCents / 100)}
-          sub="Active SaaS subs × $50"
+          sub="Active SaaS subs × current price"
         />
         <Kpi
           icon={Receipt}

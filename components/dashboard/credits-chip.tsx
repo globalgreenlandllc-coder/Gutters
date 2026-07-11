@@ -98,7 +98,10 @@ export function CreditsChip() {
                     { month: "short", day: "numeric" },
                   )}
                 />
-                <Row label="Add-on rate" value="$5 / address" />
+                <Row
+                  label="Bonus credits"
+                  value={String(session.credits.bonus)}
+                />
                 <Row label="Same address" value="10× / 24h · free" />
               </div>
 

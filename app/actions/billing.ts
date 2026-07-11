@@ -1,18 +1,20 @@
 "use server";
 
 import { db } from "@/lib/db";
-import {
-  CREDIT_PACKS,
-  PRO_PLAN,
-  creditPack,
-  getStripe,
-  type CreditPack,
-} from "@/lib/stripe";
+import { PRO_PLAN, getStripe } from "@/lib/stripe";
+import { getPlanPricing, packBlurb } from "@/lib/plan-pricing";
 import { getMe } from "./me";
 
 /* ------------------------------------------------------------------ */
 /*  Read: billing state for the settings page                          */
 /* ------------------------------------------------------------------ */
+
+export type BillingPack = {
+  id: string;
+  credits: number;
+  amountCents: number;
+  blurb: string;
+};
 
 export type MyBilling = {
   /** False until an admin adds STRIPE_SECRET to the key vault. */
@@ -22,16 +24,20 @@ export type MyBilling = {
     renewsAt: string | null;
     cancelAtPeriodEnd: boolean;
   } | null;
-  packs: CreditPack[];
+  packs: BillingPack[];
+  proName: string;
   proPriceCents: number;
+  includedCredits: number;
+  features: string[];
   recentTopups: Array<{ id: string; description: string; amountCents: number; at: string }>;
 };
 
 export async function getMyBilling(): Promise<MyBilling | null> {
   const me = await getMe();
   if (!me) return null;
-  const [stripe, sub, topups] = await Promise.all([
+  const [stripe, pricing, sub, topups] = await Promise.all([
     getStripe(),
+    getPlanPricing(),
     db.subscription.findUnique({ where: { userId: me.user.id } }),
     db.transaction.findMany({
       where: { userId: me.user.id, type: "CREDIT_TOPUP", status: "SUCCEEDED" },
@@ -49,8 +55,11 @@ export async function getMyBilling(): Promise<MyBilling | null> {
           cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
         }
       : null,
-    packs: CREDIT_PACKS,
-    proPriceCents: PRO_PLAN.priceCents,
+    packs: pricing.packs.map((p) => ({ ...p, blurb: packBlurb(p) })),
+    proName: pricing.pro.name,
+    proPriceCents: pricing.pro.priceCents,
+    includedCredits: pricing.pro.includedCredits,
+    features: pricing.pro.features,
     recentTopups: topups.map((t) => ({
       id: t.id,
       description: t.description ?? "Credit top-up",
@@ -133,6 +142,7 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
       me.user.email,
       me.profile.contractorName || me.user.name,
     );
+    const pricing = await getPlanPricing();
     const base = appBaseUrl();
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -143,11 +153,12 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
           quantity: 1,
           price_data: {
             currency: "usd",
-            unit_amount: PRO_PLAN.priceCents,
+            unit_amount: pricing.pro.priceCents,
             recurring: { interval: "month" },
             product_data: {
-              name: PRO_PLAN.name,
-              description: `${PRO_PLAN.includedCredits} AI estimates per month · client portals · payment tracking`,
+              name: pricing.pro.name,
+              description:
+                "Monthly AI takeoffs · proposals, e-sign, scheduling & payment tracking",
             },
           },
         },
@@ -175,7 +186,8 @@ export async function createCreditsCheckout(
   try {
     const me = await getMe();
     if (!me) return { ok: false, reason: "Not signed in" };
-    const pack = creditPack(packId);
+    const pricing = await getPlanPricing();
+    const pack = pricing.packs.find((p) => p.id === packId) ?? null;
     if (!pack) return { ok: false, reason: "Unknown credit pack" };
     const stripe = await getStripe();
     if (!stripe) {
@@ -204,7 +216,7 @@ export async function createCreditsCheckout(
             unit_amount: pack.amountCents,
             product_data: {
               name: `${pack.credits} estimate credits`,
-              description: `${pack.blurb} · credits never expire`,
+              description: `${packBlurb(pack)} · credits never expire`,
             },
           },
         },

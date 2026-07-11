@@ -2,30 +2,17 @@ import Link from "next/link";
 import { Check } from "lucide-react";
 import { Container, SectionHeader, PillLink } from "./ui";
 import { Reveal } from "./reveal";
+// Type-only import — erased at compile time, so the server-only guard
+// in lib/plan-pricing.ts is not tripped by this shared component.
+import type { PricingView } from "@/lib/plan-pricing";
 
 /**
- * Plan values are hardcoded from lib/stripe.ts (server-only module — the
- * landing can't import it): Pro $50/mo with 12 takeoffs, credit packs
- * 5/$25 · 10/$45 · 25/$100, free 10× re-runs per address in 24h.
+ * Plan values arrive as a prop from app/page.tsx (buildPricingView over
+ * the admin-editable config in lib/plan-pricing.ts) — nothing here is
+ * hardcoded, so /admin/pricing edits land on this card at next
+ * revalidation.
  */
-const FEATURES = [
-  "12 AI takeoffs every month",
-  "Satellite + blueprint takeoffs",
-  "Re-run the same address 10× in 24h — free",
-  "Drag-to-edit takeoff canvas + downspout placement",
-  "Good · Better · Best proposal builder",
-  "Payment schedules, receipts & reminders",
-  "Branded client portal + e-sign",
-  "Crew scheduling & worker portal",
-];
-
-const PACKS = [
-  { qty: "5 takeoffs", price: "$25", per: "$5.00 / estimate" },
-  { qty: "10 takeoffs", price: "$45", per: "$4.50 / estimate" },
-  { qty: "25 takeoffs", price: "$100", per: "$4.00 / estimate" },
-];
-
-export function Pricing() {
+export function Pricing({ pricing }: { pricing: PricingView }) {
   return (
     <section id="pricing" className="bg-paper py-24 md:py-32">
       <Container>
@@ -34,12 +21,12 @@ export function Pricing() {
             eyebrow="Pricing"
             title={
               <>
-                One plan that pays for itself
+                One plan that runs
                 <br />
-                on the first job.
+                the whole job.
               </>
             }
-            copy="Every takeoff is a measured, sendable proposal — twelve of them are included every month."
+            copy="Every takeoff becomes a proposal, a signature, a schedule, and a tracked payment — the entire platform is included."
           />
         </Reveal>
 
@@ -47,20 +34,22 @@ export function Pricing() {
           <div className="mx-auto grid max-w-[980px] gap-6 lg:grid-cols-[1fr_360px]">
             <div className="rounded-3xl border border-zinc-200/70 bg-white p-8 shadow-card">
               <p className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-600">
-                GutterScan Pro
+                {pricing.planName}
               </p>
               <div className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-2">
                 <span className="text-[44px] font-semibold leading-none tracking-tight text-zinc-900">
-                  $50
+                  {pricing.priceLabel}
                 </span>
                 <span className="text-[15px] text-zinc-500">/ month</span>
-                <span className="ml-2 self-center rounded-full bg-accent-50 px-2.5 py-1 text-[11px] font-semibold text-accent-700">
-                  14 days free
-                </span>
+                {pricing.badge && (
+                  <span className="ml-2 self-center rounded-full bg-accent-50 px-2.5 py-1 text-[11px] font-semibold text-accent-700">
+                    {pricing.badge}
+                  </span>
+                )}
               </div>
 
               <ul className="mt-7 grid grid-cols-1 sm:grid-cols-2 sm:gap-x-8">
-                {FEATURES.map((f) => (
+                {pricing.features.map((f) => (
                   <li
                     key={f}
                     className="flex items-start gap-2 border-t border-zinc-200/70 py-2.5 text-sm text-zinc-700"
@@ -73,7 +62,7 @@ export function Pricing() {
 
               <div className="mt-8 flex flex-wrap items-center gap-3 border-t border-zinc-200/70 pt-6">
                 <PillLink href="/sign-up" variant="dark">
-                  Start free trial
+                  Start free
                 </PillLink>
                 <Link
                   href="/sign-in"
@@ -95,7 +84,7 @@ export function Pricing() {
                 Top up anytime
               </h3>
               <ul className="mt-4 divide-y divide-white/10">
-                {PACKS.map((p) => (
+                {pricing.packs.map((p) => (
                   <li key={p.qty} className="py-3.5 first:pt-1">
                     <div className="flex items-baseline justify-between gap-3">
                       <p className="text-sm font-semibold">{p.qty}</p>

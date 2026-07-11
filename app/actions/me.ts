@@ -3,6 +3,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getPlanPricing } from "@/lib/plan-pricing";
 import {
   IMPERSONATION_MAX_AGE_MS,
   clearImpersonationCookie,
@@ -111,6 +112,7 @@ async function findOrCreateUser(
     const contractorName = deriveContractorName(fullName, email);
     const initials = deriveInitials(contractorName);
     const tone = pickTone(clerkId);
+    const included = (await getPlanPricing()).pro.includedCredits;
     user = await db.user.create({
       data: {
         clerkId,
@@ -132,7 +134,7 @@ async function findOrCreateUser(
         },
         creditWallet: {
           create: {
-            included: 12,
+            included,
             used: 0,
             bonus: 0,
             resetsAt: nextMonthBoundary(),
@@ -181,7 +183,7 @@ async function findOrCreateUser(
     await db.creditWallet.create({
       data: {
         userId: user.id,
-        included: 12,
+        included: (await getPlanPricing()).pro.includedCredits,
         used: 0,
         bonus: 0,
         resetsAt: nextMonthBoundary(),
@@ -189,15 +191,19 @@ async function findOrCreateUser(
     });
   } else if (user.creditWallet.resetsAt.getTime() < Date.now()) {
     // Lazy monthly rollover — without this, wallets brick at 12 lifetime
-    // estimates. Monthly `included` refreshes (used → 0); purchased
-    // `bonus` credits carry over minus whatever the user already burned
-    // beyond the monthly allowance. The updateMany guard on resetsAt
-    // makes concurrent requests idempotent (only one resets).
+    // estimates. Monthly `included` refreshes (used → 0) and re-syncs to
+    // the current admin-configured allowance (otherwise a /admin/pricing
+    // edit would never reach existing free users); purchased `bonus`
+    // credits carry over minus whatever the user already burned beyond
+    // the monthly allowance. The updateMany guard on resetsAt makes
+    // concurrent requests idempotent (only one resets).
     const cw = user.creditWallet;
+    const included = (await getPlanPricing()).pro.includedCredits;
     const overflowUsed = Math.max(0, cw.used - cw.included);
     await db.creditWallet.updateMany({
       where: { userId: user.id, resetsAt: cw.resetsAt },
       data: {
+        included,
         used: 0,
         bonus: Math.max(0, cw.bonus - overflowUsed),
         resetsAt: nextMonthBoundary(),

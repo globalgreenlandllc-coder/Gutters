@@ -23,7 +23,7 @@ export default function SettingsPage() {
     <AuthGate>
       <DashboardShell
         title="Settings"
-        subtitle="Configure your brand, payments, and pricing baselines."
+        subtitle="Configure your brand, payments, and plan."
         contentClassName="max-w-4xl"
       >
         <div className="space-y-6">
@@ -32,22 +32,6 @@ export default function SettingsPage() {
           <PaymentsSection />
 
           <BillingSection />
-
-          <Section
-            eyebrow="Pricing"
-            title="Baseline pricing"
-            sub="Per-LF prices, labor minimums, and tax rates flow into every estimate."
-            badge={{ label: "Configured", tone: "emerald" }}
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label={'6" K-style aluminum'} value="$12.00 / LF" />
-              <Field label="3×4 downspout" value="$9.00 / LF" />
-              <Field label="Hidden hangers" value="$3.25 / ea" />
-              <Field label="Default markup" value="15%" />
-              <Field label="Sales tax (TX)" value="8.25%" />
-              <Field label="Labor minimum" value="$250" />
-            </div>
-          </Section>
         </div>
       </DashboardShell>
     </AuthGate>
@@ -58,9 +42,6 @@ function BillingSection() {
   const { session } = useSession();
   const credits = session?.credits;
   const used = credits?.used ?? 0;
-  const total = (credits?.included ?? 12) + (credits?.bonus ?? 0);
-  const remaining = Math.max(total - used, 0);
-  const pct = Math.round((used / total) * 100);
   const isAdmin = session?.user.role === "SUPER_ADMIN";
 
   const [billing, setBilling] = useState<MyBilling | null>(null);
@@ -108,20 +89,43 @@ function BillingSection() {
     }
   }
 
+  // The wallet is the source of truth once loaded; the config-driven
+  // billing payload fills the gap before the session hydrates.
+  const total =
+    (credits?.included ?? billing?.includedCredits ?? 12) +
+    (credits?.bonus ?? 0);
+  const remaining = Math.max(total - used, 0);
+  const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+
   const plan = billing?.plan ?? null;
   const planActive = plan?.status === "ACTIVE";
   const planPastDue = plan?.status === "PAST_DUE";
   const badge = planActive
-    ? { label: "Pro · Active", tone: "emerald" as const }
+    ? { label: `${billing?.proName ?? "Pro"} · Active`, tone: "emerald" as const }
     : planPastDue
       ? { label: "Payment failed", tone: "amber" as const }
-      : { label: "Free trial", tone: "amber" as const };
+      : { label: "Free plan", tone: "accent" as const };
+
+  const subLine = billing
+    ? `${formatCurrency(billing.proPriceCents / 100)}/month · ${billing.includedCredits} takeoffs included · top up extra credits anytime.`
+    : "Pro plan + credit top-ups.";
+
+  if (!billing) {
+    return (
+      <Section eyebrow="Billing" title="Plan & credits" sub={subLine}>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+          <div className="h-48 animate-pulse rounded-lg border border-zinc-200 bg-zinc-50" />
+          <div className="h-48 animate-pulse rounded-lg border border-zinc-200 bg-zinc-50" />
+        </div>
+      </Section>
+    );
+  }
 
   return (
     <Section
       eyebrow="Billing"
       title="Plan & credits"
-      sub="$50/month · 12 estimates included · top up extra credits anytime."
+      sub={subLine}
       badge={badge}
     >
       {banner && (
@@ -205,28 +209,51 @@ function BillingSection() {
               )}
             </div>
           )}
+
+          {/* Recent top-ups — receipts for purchased bonus credits */}
+          {billing.recentTopups.length > 0 && (
+            <div className="mt-4 border-t border-zinc-200 pt-4">
+              <div className="microlabel">Recent top-ups</div>
+              <ul className="mt-2 space-y-1.5">
+                {billing.recentTopups.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex items-baseline justify-between gap-3 text-xs"
+                  >
+                    <span className="text-zinc-600">{t.description}</span>
+                    <span className="shrink-0 tabular-nums text-zinc-500">
+                      {formatCurrency(t.amountCents / 100)} ·{" "}
+                      {new Date(t.at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4">
           <div>
-            <div className="text-sm font-semibold text-zinc-900">Pro plan</div>
+            <div className="text-sm font-semibold text-zinc-900">
+              {billing?.proName ?? "Pro plan"}
+            </div>
             <div className="mt-1 text-xs text-zinc-500">
               {formatCurrency((billing?.proPriceCents ?? 5000) / 100)}/month ·
               billed monthly
             </div>
             <ul className="mt-3 space-y-1.5 text-xs text-zinc-600">
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-3 w-3 text-accent-600" />
-                12 estimates / month
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-3 w-3 text-accent-600" />
-                Re-run any address 10× / 24h
-              </li>
-              <li className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-3 w-3 text-accent-600" />
-                Client portals, receipts &amp; change orders
-              </li>
+              {[
+                `${billing.includedCredits} takeoffs / month`,
+                ...billing.features.slice(0, 6),
+              ].map((f) => (
+                <li key={f} className="flex items-start gap-1.5">
+                  <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-accent-600" />
+                  <span>{f}</span>
+                </li>
+              ))}
             </ul>
             {planActive && plan?.renewsAt && (
               <p className="mt-3 text-[11px] text-zinc-500">
@@ -310,15 +337,6 @@ function Section({
       </div>
       <div className="mt-5">{children}</div>
     </section>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 px-3 py-2.5">
-      <div className="microlabel">{label}</div>
-      <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
-    </div>
   );
 }
 

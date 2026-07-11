@@ -6,6 +6,7 @@ const LINKS = [
   { label: "Product", href: "#engine" },
   { label: "Contractors", href: "#takeoffs" },
   { label: "Proposals", href: "#proposals" },
+  { label: "Platform", href: "#platform" },
   { label: "Pricing", href: "/#pricing" },
   { label: "Insights", href: "#insights" },
 ];
