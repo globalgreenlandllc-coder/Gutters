@@ -418,9 +418,22 @@ export async function runEstimateFromPlan(
           );
         }
       } else if (stash) {
-        vecTrace.push(
-          `edge takeoff stored but not applied (${stash.ok ? "no scale/eaves" : stash.reason ?? "failed"})`,
-        );
+        const reason = stash.ok ? "no scale/eaves" : (stash.reason ?? "failed");
+        vecTrace.push(`edge takeoff stored but not applied (${reason})`);
+        // The classifier NEVER SAW this plan (API failure at analyze time) —
+        // everything shown is the freehand fallback. That's a quoting hazard
+        // the owner must see FIRST, not buried in a trace note: the 2026-07-10
+        // run shipped wrong gable spots + unguttered sides this way when the
+        // Anthropic account ran out of credits.
+        if (!stash.ok) {
+          const hint = /credit balance/i.test(reason)
+            ? "the Anthropic API account is out of credits — add credits, then Re-analyze"
+            : "fix the cause shown in the trace note, then Re-analyze";
+          analysis.notes = [
+            `🚨 TAKEOFF DEGRADED — the AI edge classifier never ran on this plan (${hint}). Runs, gable spots and downspouts below come from the freehand fallback and are NOT evidence-checked against the framing sheet or elevations.`,
+            ...(analysis.notes ?? []),
+          ];
+        }
       }
     } catch (e) {
       vecTrace.push(
