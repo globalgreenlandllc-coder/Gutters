@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   LogOut,
   MapPin,
+  PartyPopper,
   Plus,
   Search,
   Settings,
@@ -38,6 +39,8 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     items: [
       { href: "/dashboard", label: "Overview", Icon: LayoutGrid },
       { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
+      // Fully-paid jobs — the proposals list pre-filtered to Done.
+      { href: "/dashboard/proposals?filter=done", label: "Done jobs", Icon: PartyPopper },
       { href: "/dashboard/leads", label: "Leads", Icon: MapPin },
       { href: "/dashboard/clients", label: "Clients", Icon: Users },
     ],
@@ -82,7 +85,7 @@ function NavItem({
     <Link
       href={href}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium transition",
+        "transition-smooth ring-focus flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium",
         active
           ? "bg-accent-50 text-accent-800"
           : "text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900",
@@ -90,7 +93,7 @@ function NavItem({
     >
       <Icon
         className={cn(
-          "h-4 w-4 transition",
+          "transition-smooth h-4 w-4",
           active ? "text-accent-700" : "text-zinc-400",
         )}
       />
@@ -116,7 +119,7 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
         // Compact trigger for the topbar: avatar only.
         <button
           onClick={() => setOpen((v) => !v)}
-          className="ring-focus flex items-center rounded-md transition hover:opacity-90"
+          className="ring-focus transition-smooth flex items-center rounded-md hover:opacity-90"
           aria-label="Account menu"
         >
           <Avatar initials={session?.user.initials ?? "?"} />
@@ -124,7 +127,7 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
       ) : (
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:border-zinc-200 hover:bg-zinc-50"
+          className="ring-focus transition-smooth flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 text-left hover:border-zinc-200 hover:bg-zinc-50"
         >
           <Avatar initials={session?.user.initials ?? "?"} />
           <div className="min-w-0 flex-1">
@@ -143,10 +146,10 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div
             className={cn(
-              "absolute z-20 w-56 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated",
+              "anim-pop absolute z-20 w-56 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated",
               align === "up"
-                ? "bottom-full left-0 mb-2"
-                : "right-0 top-full mt-2",
+                ? "origin-bottom-left bottom-full left-0 mb-2"
+                : "origin-top-right right-0 top-full mt-2",
             )}
           >
             <MenuItem icon={User} label="Profile" href="/dashboard/settings" />
@@ -160,7 +163,7 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
                 <div className="my-1 h-px bg-zinc-100" />
                 <Link
                   href="/admin"
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
+                  className="transition-smooth ring-focus flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 hover:bg-rose-50"
                 >
                   <ShieldAlert className="h-4 w-4" />
                   Admin console
@@ -170,7 +173,7 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
             <div className="my-1 h-px bg-zinc-100" />
             <button
               onClick={logout}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50"
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 hover:bg-rose-50"
             >
               <LogOut className="h-4 w-4" />
               Sign out
@@ -282,7 +285,7 @@ export function DashboardShell({
                   key={n.href}
                   href={n.href}
                   className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition",
+                    "transition-smooth ring-focus inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium",
                     active
                       ? "bg-accent-50 text-accent-800"
                       : "text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900",
@@ -318,7 +321,7 @@ export function DashboardShell({
             <CompanyChip />
             <Link
               href="/dashboard/proposals/new"
-              className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+              className="ring-focus transition-smooth press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
             >
               <Plus className="h-4 w-4" />
               New Proposal
@@ -397,7 +400,7 @@ function MenuItem({
   return (
     <Link
       href={href}
-      className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-50"
+      className="transition-smooth ring-focus flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
     >
       <Icon className="h-4 w-4 text-zinc-500" />
       {label}

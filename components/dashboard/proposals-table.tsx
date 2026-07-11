@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { useSearchParams } from "next/navigation";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -86,14 +87,20 @@ export function ProposalsTable({
 }) {
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
+  const reduceMotion = useReducedMotion();
   // Payments drawer for accepted jobs (schedule, mark-paid, reminders,
   // change orders). Auto-opens when the URL carries ?pay=<proposalId> —
   // the Overview needs-attention feed links here.
   const [payFor, setPayFor] = useState<string | null>(null);
+  // Reactive to soft navigations too — the sidebar "Done jobs" link
+  // lands on this same route with ?filter=done, without a remount.
+  const searchParams = useSearchParams();
   useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get("pay");
+    const id = searchParams.get("pay");
     if (id) setPayFor(id);
-  }, []);
+    const f = searchParams.get("filter");
+    if (f && FILTERS.some((x) => x.id === f)) setFilter(f as FilterId);
+  }, [searchParams]);
   // Send-from-list: when the row's Send button is clicked, we load the
   // full Proposal blob from the DB and pop the same SendModal the
   // /proposal editor uses. Loading state is per-row so multiple rows
@@ -174,7 +181,7 @@ export function ProposalsTable({
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition",
+                    "transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm",
                     active
                       ? isAlert
                         ? "border-rose-200 bg-rose-50 font-medium text-rose-700"
@@ -233,9 +240,9 @@ export function ProposalsTable({
         {loading &&
           [0, 1, 2, 3].map((i) => (
             <li key={i} className="border-t border-zinc-100 px-4 py-4">
-              <div className="animate-pulse space-y-2">
-                <div className="h-4 w-2/5 rounded bg-zinc-100" />
-                <div className="h-3 w-1/4 rounded bg-zinc-100" />
+              <div className="space-y-2">
+                <div className="skeleton h-4 w-2/5" />
+                <div className="skeleton h-3 w-1/4" />
               </div>
             </li>
           ))}
@@ -276,7 +283,7 @@ export function ProposalsTable({
             return (
               <motion.li
                 key={p.id}
-                initial={{ opacity: 0 }}
+                initial={reduceMotion ? false : { opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: Math.min(i, 8) * 0.02 }}
                 className="relative border-t border-zinc-100"
@@ -291,7 +298,7 @@ export function ProposalsTable({
                 )}
                 <div
                   className={cn(
-                    "group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60",
+                    "transition-smooth group grid grid-cols-1 gap-1 px-4 py-3.5 hover:bg-zinc-50/60",
                     GRID_LG,
                     GRID_XL,
                   )}
@@ -386,9 +393,10 @@ export function ProposalsTable({
                       </div>
                       <div className="mt-1 flex items-center gap-1.5 lg:justify-end">
                         <span className="h-1 w-12 overflow-hidden rounded-full bg-zinc-100">
+                          {/* Static width; entrance draws via scaleX. */}
                           <span
                             className={cn(
-                              "block h-full rounded-full",
+                              "anim-grow-x block h-full rounded-full",
                               pct >= 100 ? "bg-emerald-500" : "bg-accent-600",
                             )}
                             style={{ width: `${pct}%` }}
@@ -456,7 +464,7 @@ export function ProposalsTable({
                           e.stopPropagation();
                           setPayFor(p.id);
                         }}
-                        className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:bg-rose-700"
+                        className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-rose-700"
                         title="Payment overdue — open the schedule and send a reminder"
                       >
                         <Bell className="h-3 w-3" />
@@ -471,7 +479,7 @@ export function ProposalsTable({
                             e.stopPropagation();
                             setPayFor(p.id);
                           }}
-                          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700"
+                          className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700"
                           title="Payment schedule, receipts & change orders"
                         >
                           <Wallet className="h-3 w-3" />
@@ -488,7 +496,7 @@ export function ProposalsTable({
                           openSendFor(p.id);
                         }}
                         disabled={loadingSendId === p.id}
-                        className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700 disabled:opacity-60"
+                        className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700 disabled:opacity-60"
                         title={
                           p.status === "draft"
                             ? "Send proposal to client"
@@ -521,10 +529,10 @@ export function ProposalsTable({
         <div className="border-t border-zinc-100 p-3 text-center">
           <Link
             href="/dashboard/proposals"
-            className="inline-flex items-center gap-1 text-sm font-medium text-accent-700 hover:text-accent-800"
+            className="transition-smooth ring-focus group inline-flex items-center gap-1 rounded-md text-sm font-medium text-accent-700 hover:text-accent-800"
           >
             View all proposals
-            <ArrowUpRight className="h-3.5 w-3.5" />
+            <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
           </Link>
         </div>
       )}
@@ -594,13 +602,13 @@ function RowMenu({
           setOpen((v) => !v);
         }}
         aria-label="More actions"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-zinc-500 transition hover:border-zinc-200 hover:bg-white hover:text-zinc-900"
+        className="transition-smooth ring-focus inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-zinc-500 hover:border-zinc-200 hover:bg-white hover:text-zinc-900"
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
       {open && (
         <div
-          className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated"
+          className="anim-pop origin-top-right absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated"
           onClick={(e) => e.stopPropagation()}
         >
           {!confirming ? (
@@ -614,7 +622,7 @@ function RowMenu({
                     setOpen(false);
                     onPayments();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-50"
+                  className="transition-smooth ring-focus flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-50"
                 >
                   <Wallet className="h-4 w-4 text-zinc-400" />
                   Payments, receipts & reminders
@@ -627,14 +635,14 @@ function RowMenu({
                   e.stopPropagation();
                   setConfirming(true);
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+                className="transition-smooth ring-focus flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 hover:bg-rose-50"
               >
                 <Trash2 className="h-4 w-4" />
                 Delete proposal
               </button>
             </>
           ) : (
-            <div className="p-3">
+            <div className="anim-enter-fade p-3">
               <div className="text-sm font-medium text-zinc-900">
                 Delete this proposal?
               </div>
@@ -658,7 +666,7 @@ function RowMenu({
                     setConfirming(false);
                     setOpen(false);
                   }}
-                  className="rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100"
+                  className="transition-smooth ring-focus press-scale rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
                 >
                   Cancel
                 </button>
@@ -670,7 +678,7 @@ function RowMenu({
                     e.stopPropagation();
                     onDelete();
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                  className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
                 >
                   {deleting ? (
                     <Loader2 className="h-3 w-3 animate-spin" />

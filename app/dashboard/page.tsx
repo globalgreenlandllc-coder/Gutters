@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
@@ -169,16 +169,15 @@ function Inner() {
             {loading ? (
               <div className="space-y-3 rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
                 {[0, 1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="h-10 animate-pulse rounded-lg bg-zinc-100"
-                  />
+                  <div key={i} className="skeleton h-10" />
                 ))}
               </div>
             ) : isEmpty ? (
               <EmptyProposals />
             ) : (
-              <ProposalsTable items={recent} compact showFilters={false} />
+              <Suspense fallback={null}>
+                <ProposalsTable items={recent} compact showFilters={false} />
+              </Suspense>
             )}
             <NeedsAttention items={attention} loading={loading} />
           </div>
@@ -190,7 +189,7 @@ function Inner() {
 
 function EmptyProposals() {
   return (
-    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center">
+    <div className="anim-enter rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center">
       <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-600 text-white">
         <Sparkles className="h-5 w-5" />
       </div>

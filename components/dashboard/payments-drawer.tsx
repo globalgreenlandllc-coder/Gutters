@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   Banknote,
@@ -38,6 +38,7 @@ import {
   type PaymentOverview,
 } from "@/app/actions/payments";
 import { timeAgo } from "@/lib/dashboard-mock";
+import { SPRING } from "@/lib/motion";
 
 const METHODS: { id: PaymentMethodId; label: string }[] = [
   { id: "CASH", label: "Cash" },
@@ -80,6 +81,7 @@ export function PaymentsDrawer({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
   const [overview, setOverview] = useState<PaymentOverview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -139,7 +141,14 @@ export function PaymentsDrawer({
         setTimeout(() => setFlash(null), 4000);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed");
+      const msg = e instanceof Error ? e.message : "Action failed";
+      // A tab left open across a deploy POSTs to server-action ids that
+      // no longer exist — surface that as "refresh", not a dead button.
+      setError(
+        /server action|failed to fetch|unexpected response|connection closed/i.test(msg)
+          ? "This page is from an older version of the app — refresh the page and try again."
+          : msg,
+      );
     } finally {
       setBusyId(null);
     }
@@ -151,7 +160,7 @@ export function PaymentsDrawer({
     <AnimatePresence>
       <motion.div
         key="backdrop"
-        initial={{ opacity: 0 }}
+        initial={reduceMotion ? false : { opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 bg-zinc-900/30 backdrop-blur-sm"
@@ -159,10 +168,10 @@ export function PaymentsDrawer({
       />
       <motion.aside
         key="panel"
-        initial={{ x: 480 }}
+        initial={reduceMotion ? false : { x: 480 }}
         animate={{ x: 0 }}
         exit={{ x: 480 }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
+        transition={SPRING}
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[460px] flex-col border-l border-zinc-200 bg-white shadow-elevated"
         role="dialog"
         aria-label="Payments"
@@ -192,7 +201,7 @@ export function PaymentsDrawer({
           <button
             onClick={handleClose}
             aria-label="Close"
-            className="rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-900"
+            className="transition-smooth ring-focus rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
           >
             <X className="h-4 w-4" />
           </button>
@@ -205,8 +214,10 @@ export function PaymentsDrawer({
             </div>
           )}
           {!overview && !loadError && (
-            <div className="flex h-40 items-center justify-center text-zinc-400">
-              <Loader2 className="h-5 w-5 animate-spin" />
+            <div className="space-y-4 p-5">
+              <div className="skeleton h-28" />
+              <div className="skeleton h-10 w-2/3" />
+              <div className="skeleton h-40" />
             </div>
           )}
 
@@ -235,9 +246,10 @@ export function PaymentsDrawer({
                   </div>
                 </div>
                 <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-100">
+                  {/* Static width; the draw-in animates scaleX only. */}
                   <div
                     className={cn(
-                      "h-full rounded-full transition-all",
+                      "anim-grow-x h-full rounded-full",
                       complete ? "bg-emerald-500" : "bg-accent-600",
                     )}
                     style={{ width: `${overview.progressPct}%` }}
@@ -395,7 +407,7 @@ export function PaymentsDrawer({
                                   : "Change order re-sent.",
                               )
                             }
-                            className="inline-flex items-center gap-1.5 rounded-md bg-accent-600 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-accent-700 disabled:opacity-60"
+                            className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md bg-accent-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-700 disabled:opacity-60"
                           >
                             {busyId === co.id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -414,7 +426,7 @@ export function PaymentsDrawer({
                                 deleteChangeOrder({ changeOrderId: co.id }),
                               )
                             }
-                            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition hover:bg-rose-50 hover:text-rose-700"
+                            className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-700"
                           >
                             <Trash2 className="h-3 w-3" />
                             Delete
@@ -534,7 +546,7 @@ function InstallmentRow({
                 type="button"
                 disabled={busy}
                 onClick={() => setPickerOpen((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
               >
                 {busy ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -550,7 +562,7 @@ function InstallmentRow({
                     className="fixed inset-0 z-10"
                     onClick={() => setPickerOpen(false)}
                   />
-                  <div className="absolute left-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-elevated">
+                  <div className="anim-pop origin-top-left absolute left-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-elevated">
                     {METHODS.map((m) => (
                       <button
                         key={m.id}
@@ -559,7 +571,7 @@ function InstallmentRow({
                           setPickerOpen(false);
                           onMarkPaid(m.id);
                         }}
-                        className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-zinc-700 transition hover:bg-zinc-50"
+                        className="transition-smooth ring-focus flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-zinc-700 hover:bg-zinc-50"
                       >
                         {m.label}
                       </button>
@@ -573,7 +585,7 @@ function InstallmentRow({
               disabled={busy}
               onClick={onRemind}
               title="Email a payment reminder"
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-accent-300 hover:text-accent-700 disabled:opacity-60"
+              className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:border-accent-300 hover:text-accent-700 disabled:opacity-60"
             >
               <Bell className="h-3 w-3" />
               Remind
@@ -584,7 +596,7 @@ function InstallmentRow({
                 disabled={busy}
                 onClick={onDelete}
                 title="Remove this scheduled payment"
-                className="inline-flex items-center rounded-md px-2 py-1.5 text-xs text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600"
+                className="transition-smooth ring-focus press-scale inline-flex items-center rounded-md px-2 py-1.5 text-xs text-zinc-400 hover:bg-rose-50 hover:text-rose-600"
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -596,7 +608,7 @@ function InstallmentRow({
               type="button"
               disabled={busy}
               onClick={onResendReceipt}
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-accent-300 hover:text-accent-700 disabled:opacity-60"
+              className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:border-accent-300 hover:text-accent-700 disabled:opacity-60"
             >
               <Mail className="h-3 w-3" />
               {inst.receiptSentAt ? "Re-send receipt" : "Send receipt"}
@@ -606,7 +618,7 @@ function InstallmentRow({
               disabled={busy}
               onClick={onUndo}
               title="Undo — mark as unpaid"
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+              className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
             >
               <RotateCcw className="h-3 w-3" />
               Undo
@@ -638,7 +650,7 @@ function AddInstallmentForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-700 transition hover:text-accent-800"
+        className="transition-smooth ring-focus mt-2 inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-accent-700 hover:text-accent-800"
       >
         <Plus className="h-3.5 w-3.5" />
         Add a payment
@@ -704,7 +716,7 @@ function AddInstallmentForm({
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="text-xs text-zinc-500 hover:text-zinc-900"
+          className="transition-smooth ring-focus rounded-md text-xs text-zinc-500 hover:text-zinc-900"
         >
           Cancel
         </button>
@@ -733,7 +745,7 @@ function NewChangeOrderForm({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent-700 transition hover:text-accent-800"
+        className="transition-smooth ring-focus mt-2 inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-accent-700 hover:text-accent-800"
       >
         <Plus className="h-3.5 w-3.5" />
         New change order
@@ -811,7 +823,7 @@ function NewChangeOrderForm({
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="text-xs text-zinc-500 hover:text-zinc-900"
+          className="transition-smooth ring-focus rounded-md text-xs text-zinc-500 hover:text-zinc-900"
         >
           Cancel
         </button>

@@ -484,8 +484,12 @@ export async function recordInstallmentPayment(args: {
         },
       },
     });
-    if (!inst) return { ok: false, reason: "Payment not found" };
+    if (!inst) {
+      console.warn("[recordInstallmentPayment] not found / not owned", args.installmentId);
+      return { ok: false, reason: "Payment not found" };
+    }
     if (inst.status === "PAID") {
+      console.warn("[recordInstallmentPayment] already paid", args.installmentId);
       return { ok: false, reason: "Already marked paid" };
     }
 
@@ -763,7 +767,10 @@ export async function sendInstallmentReminder(args: {
     const me = await getMe();
     if (!me) return { ok: false, reason: "Not signed in" };
     const emailBudget = await checkUserEmailBudget(me.user.id, "sendInstallmentReminder");
-    if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
+    if (!emailBudget.ok) {
+      console.warn("[sendInstallmentReminder] email budget blocked:", emailBudget.reason);
+      return { ok: false, reason: emailBudget.reason };
+    }
     const inst = await db.paymentInstallment.findFirst({
       where: { id: args.installmentId, proposal: { userId: me.user.id } },
       include: {
@@ -809,7 +816,10 @@ export async function sendInstallmentReminder(args: {
       html: reminder.html,
       text: reminder.text,
     });
-    if (!res.ok) return { ok: false, reason: res.reason };
+    if (!res.ok) {
+      console.warn("[sendInstallmentReminder] send failed:", res.reason);
+      return { ok: false, reason: res.reason };
+    }
 
     await db.paymentInstallment.update({
       where: { id: inst.id },

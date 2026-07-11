@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
@@ -20,7 +20,10 @@ import {
 export default function ProposalsListPage() {
   return (
     <AuthGate>
-      <Inner />
+      {/* Suspense: ProposalsTable reads useSearchParams (?filter, ?pay). */}
+      <Suspense fallback={null}>
+        <Inner />
+      </Suspense>
     </AuthGate>
   );
 }
@@ -59,7 +62,7 @@ function Inner() {
       actions={
         <Link
           href="/dashboard/proposals/new"
-          className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+          className="ring-focus active:scale-[0.98] inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700"
         >
           <Plus className="h-4 w-4" />
           New proposal
@@ -67,7 +70,7 @@ function Inner() {
       }
     >
       {!loading && rows.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
+        <div className="anim-enter rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
           <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
             <Sparkles className="h-5 w-5" />
           </div>
@@ -81,7 +84,7 @@ function Inner() {
           </p>
           <Link
             href="/dashboard/proposals/new"
-            className="mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+            className="ring-focus active:scale-[0.98] mt-5 inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700"
           >
             <Sparkles className="h-4 w-4" />
             Start your first estimate
