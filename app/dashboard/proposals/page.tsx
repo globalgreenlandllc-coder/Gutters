@@ -46,15 +46,11 @@ function Inner() {
     };
   }, []);
 
-  // The money strip only earns its space once at least one job is
-  // accepted (or something was ever collected) — a brand-new account
-  // shouldn't open on four zero-dollar tiles.
-  const hasMoney =
+  const noAcceptedYet =
     !!money &&
-    (money.jobsInProgress > 0 ||
-      money.jobsDone > 0 ||
-      money.collectedMtdCents > 0 ||
-      money.outstandingCents > 0);
+    money.jobsInProgress === 0 &&
+    money.jobsDone === 0 &&
+    money.collectedMtdCents === 0;
 
   return (
     <DashboardShell
@@ -93,54 +89,56 @@ function Inner() {
         </div>
       ) : (
         <div className="space-y-4">
-          {(loading || hasMoney) && (
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <StatTile
-                index={0}
-                loading={loading}
-                label="Collected · this month"
-                value={formatCurrency((money?.collectedMtdCents ?? 0) / 100)}
-                footnote="across all accepted jobs"
-              />
-              <StatTile
-                index={1}
-                loading={loading}
-                label="Outstanding"
-                value={formatCurrency((money?.outstandingCents ?? 0) / 100)}
-                footnote={
-                  (money?.jobsInProgress ?? 0) > 0
-                    ? `${money!.jobsInProgress} job${money!.jobsInProgress === 1 ? "" : "s"} in progress`
-                    : "no open balances"
-                }
-              />
-              <StatTile
-                index={2}
-                loading={loading}
-                label="Overdue"
-                value={formatCurrency((money?.overdueCents ?? 0) / 100)}
-                delta={
-                  (money?.overdueCount ?? 0) > 0
-                    ? {
-                        text: `${money!.overdueCount} payment${money!.overdueCount === 1 ? "" : "s"} late`,
-                        positive: false,
-                      }
-                    : undefined
-                }
-                footnote={
-                  (money?.overdueCount ?? 0) === 0
-                    ? "nothing late"
-                    : "filter the list below"
-                }
-              />
-              <StatTile
-                index={3}
-                loading={loading}
-                label="Awaiting client"
-                value={String(money?.pendingChangeOrders ?? 0)}
-                footnote="change orders pending approval"
-              />
-            </section>
-          )}
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatTile
+              index={0}
+              loading={loading}
+              label="Collected · this month"
+              value={formatCurrency((money?.collectedMtdCents ?? 0) / 100)}
+              footnote={
+                noAcceptedYet
+                  ? "fills in once a client accepts"
+                  : "across all accepted jobs"
+              }
+            />
+            <StatTile
+              index={1}
+              loading={loading}
+              label="Outstanding"
+              value={formatCurrency((money?.outstandingCents ?? 0) / 100)}
+              footnote={
+                (money?.jobsInProgress ?? 0) > 0
+                  ? `${money!.jobsInProgress} job${money!.jobsInProgress === 1 ? "" : "s"} in progress`
+                  : "no open balances yet"
+              }
+            />
+            <StatTile
+              index={2}
+              loading={loading}
+              label="Overdue"
+              value={formatCurrency((money?.overdueCents ?? 0) / 100)}
+              delta={
+                (money?.overdueCount ?? 0) > 0
+                  ? {
+                      text: `${money!.overdueCount} payment${money!.overdueCount === 1 ? "" : "s"} late`,
+                      positive: false,
+                    }
+                  : undefined
+              }
+              footnote={
+                (money?.overdueCount ?? 0) === 0
+                  ? "nothing late"
+                  : "filter the list below"
+              }
+            />
+            <StatTile
+              index={3}
+              loading={loading}
+              label="Awaiting client"
+              value={String(money?.pendingChangeOrders ?? 0)}
+              footnote="change orders pending approval"
+            />
+          </section>
           <ProposalsTable items={rows} loading={loading} />
         </div>
       )}
