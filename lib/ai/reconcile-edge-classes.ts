@@ -283,6 +283,17 @@ export function reconcileEdgeClasses(opts: {
           `🧭 ${face} elevation: ${skipped} gable(s) sit above the continuous eave line (frame-over/dormer) — the gutter below them stays.`,
         );
       }
+      // Diagnostic: the frame-over defense needs the eave_passes_in_front
+      // read. When EVERY gable on the face lacks it, the reads ran on an
+      // old prompt — most likely a stale /admin/prompts override.
+      if (
+        gablesAll.length > 0 &&
+        gablesAll.every((g) => g.eave_passes_in_front == null)
+      ) {
+        notes.push(
+          `⚠ ${face} face read carries no eave-in-front data — the elevation prompt may be outdated or overridden at /admin/prompts; frame-over gables can tent guttered walls without it.`,
+        );
+      }
 
       // 1) PROMOTE: map each elevation gable onto its wall segment.
       const confirmed = new Set<string>();
@@ -353,6 +364,13 @@ export function reconcileEdgeClasses(opts: {
           g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
         if (cls.edge_class === "rake") {
           confirmed.add(cls.id);
+          // Say WHY the tent stands — the depth fields are the reviewable
+          // part (a frame-over misread as flush lands exactly here).
+          notes.push(
+            `🧭 ${cls.id} stays RAKE: the ${face} elevation's ${g.kind ?? "gable"} gable maps onto this wall ` +
+              `(u≈${u.toFixed(2)}${g.span_ft != null ? `, span ${Math.round(g.span_ft)}ft` : ""}, ` +
+              `set-back ${g.set_back_ft ?? "unread"}, eave-in-front ${g.eave_passes_in_front ?? "unread"}) — verify against the section sheets (a FRAME-OVER keeps its gutter).`,
+          );
           continue;
         }
         if (spanPt != null && hit.e.lenPt > spanPt * 1.6) {
