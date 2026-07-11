@@ -11,7 +11,8 @@ import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
 
 import { classifyEdgeWithAzimuth, ringCentroid } from "./edge-classifier";
-import { cropSatImageToBox } from "./crop";
+import { cropSatImageToBox, upscaleSatImage } from "./crop";
+import { rectifyOutline } from "./rectify-outline";
 import { segmentEavesViaVision } from "./vision";
 import {
   detectRoofStructureViaVision,
@@ -529,7 +530,46 @@ export async function runAIEstimatePipeline(
         samBox = { x_min: bx1, y_min: by1, x_max: bx2, y_max: by2 };
       }
     }
-    const samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
+    // Trace at 2× resolution: SAM's mask is quantized to input pixels, so
+    // upscaling the crop halves the vertex quantization error on eave
+    // corners. Prompts scale UP into the enlarged frame; the returned
+    // outline scales back DOWN so every downstream coordinate (translate,
+    // simplify epsilon, Mercator LF math) stays in original tile pixels.
+    const { image: samImage, scale: samScale } = upscaleSatImage(workImage);
+    const samPointUp = samPoint
+      ? { x: Math.round(samPoint.x * samScale), y: Math.round(samPoint.y * samScale) }
+      : undefined;
+    const samBoxUp = samBox
+      ? {
+          x_min: samBox.x_min * samScale,
+          y_min: samBox.y_min * samScale,
+          x_max: samBox.x_max * samScale,
+          y_max: samBox.y_max * samScale,
+        }
+      : undefined;
+    const samOutcomeRaw = await segmentRoofViaSam(samImage, samPointUp, samBoxUp);
+    const samOutcome =
+      samOutcomeRaw.ok && samScale !== 1
+        ? {
+            ok: true as const,
+            polygon: {
+              points: samOutcomeRaw.polygon.points.map((p) => ({
+                x: p.x / samScale,
+                y: p.y / samScale,
+              })),
+              bbox: {
+                x: Math.round(samOutcomeRaw.polygon.bbox.x / samScale),
+                y: Math.round(samOutcomeRaw.polygon.bbox.y / samScale),
+                width: Math.round(samOutcomeRaw.polygon.bbox.width / samScale),
+                height: Math.round(samOutcomeRaw.polygon.bbox.height / samScale),
+              },
+              areaFraction: samOutcomeRaw.polygon.areaFraction,
+            },
+          }
+        : samOutcomeRaw;
+    if (samScale !== 1) {
+      notes.push(`SAM traced at ${samScale.toFixed(2)}× upscale (${samImage.width}×${samImage.height})`);
+    }
     // Gate SAM acceptance on areaFraction. A real residential roof, tightly
     // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
     // locked onto a sub-region (one gable, a high-contrast plane, a
@@ -553,8 +593,26 @@ export async function runAIEstimatePipeline(
       // epsilon ≈ 8 px @ zoom-20 ≈ 4 ft — anything tighter is mask noise.
       const rawCount = translatedPoints.length;
       const simplifiedPoints = simplify(translatedPoints, 8);
-      const finalPoints =
+      let finalPoints =
         simplifiedPoints.length >= 4 ? simplifiedPoints : translatedPoints;
+      // Manhattan-snap the simplified trace onto its guessed true wall
+      // lines ("a little off? guess it"): forces clean 90° corners and
+      // merges residual stair-steps. Tolerance ≈ 2.5 ft at this tile's
+      // scale — derived through pixelLengthToFeet so it uses the exact
+      // same Mercator convention as the LF math (no double-scale trap).
+      // Non-rectilinear roofs and area-changing snaps bail internally.
+      const ftPerPx = pixelLengthToFeet(1, geocoded.lat, image.zoom);
+      if (ftPerPx > 0) {
+        const rect = rectifyOutline(finalPoints, { snapTolPx: 2.5 / ftPerPx });
+        if (rect.applied) {
+          finalPoints = rect.points;
+          notes.push(
+            `Rectified outline: snapped to ${rect.points.length} right-angle corners (grid at ${rect.angleDeg.toFixed(1)}°)`,
+          );
+        } else {
+          notes.push(`Rectify skipped: ${rect.reason}`);
+        }
+      }
       roofPolygon = {
         points: finalPoints,
         bbox: {

@@ -26,6 +26,60 @@ export type CropResult = {
  *   - GPT-4o sees more pixel detail per inch of roof
  *   - The building fills the frame, eliminating "wrong building" picks
  */
+
+/**
+ * Upscale a satellite crop with bilinear resampling before handing it to SAM.
+ * SAM's mask is quantized to input pixels, so tracing at 2× halves the vertex
+ * quantization error on eave corners — real accuracy from the same tile.
+ * The long side is CAPPED (default 1024) because fal.ai chokes on ~2MB+
+ * payloads (the all-black-mask failure); below a 1.25× gain it's not worth
+ * re-encoding and returns the input unchanged (scale 1).
+ */
+export function upscaleSatImage(
+  image: SatImage,
+  maxLongSide = 1024,
+): { image: SatImage; scale: number } {
+  try {
+    const long = Math.max(image.width, image.height);
+    const scale = Math.min(2, maxLongSide / long);
+    if (!(scale >= 1.25)) return { image, scale: 1 };
+
+    const src = PNG.sync.read(Buffer.from(image.base64, "base64"));
+    const w = Math.round(src.width * scale);
+    const h = Math.round(src.height * scale);
+    const dst = new PNG({ width: w, height: h });
+    for (let y = 0; y < h; y++) {
+      const sy = Math.min(src.height - 1, y / scale);
+      const y0 = Math.floor(sy);
+      const y1 = Math.min(src.height - 1, y0 + 1);
+      const fy = sy - y0;
+      for (let x = 0; x < w; x++) {
+        const sx = Math.min(src.width - 1, x / scale);
+        const x0 = Math.floor(sx);
+        const x1 = Math.min(src.width - 1, x0 + 1);
+        const fx = sx - x0;
+        const di = (y * w + x) * 4;
+        for (let c = 0; c < 4; c++) {
+          const p00 = src.data[(y0 * src.width + x0) * 4 + c];
+          const p10 = src.data[(y0 * src.width + x1) * 4 + c];
+          const p01 = src.data[(y1 * src.width + x0) * 4 + c];
+          const p11 = src.data[(y1 * src.width + x1) * 4 + c];
+          dst.data[di + c] = Math.round(
+            p00 * (1 - fx) * (1 - fy) + p10 * fx * (1 - fy) + p01 * (1 - fx) * fy + p11 * fx * fy,
+          );
+        }
+      }
+    }
+    const out = PNG.sync.write(dst);
+    return {
+      image: { ...image, base64: out.toString("base64"), mimeType: "image/png", width: w, height: h },
+      scale,
+    };
+  } catch {
+    return { image, scale: 1 };
+  }
+}
+
 export function cropSatImageToBox(
   image: SatImage,
   box: { x1: number; y1: number; x2: number; y2: number },
