@@ -297,8 +297,10 @@ export async function readElevationFace(
       model: MODEL,
       // Sized for the WORST face, not the typical one: a 20-gable elevation
       // is ~2k tokens of tool JSON, and a truncated tool call loses the whole
-      // face (the old 1500 cap silently limited gable counts).
-      max_tokens: 8000,
+      // face (the old 1500 cap silently limited gable counts). Non-haiku
+      // models spend adaptive-thinking tokens from this same budget; haiku's
+      // hard output ceiling is 8192.
+      max_tokens: /haiku/.test(MODEL) ? 8000 : 16000,
       // Opus 4.7+/Sonnet 5 reject `temperature`. Positive allowlist: pin 0
       // only on models KNOWN to accept it; unknown models get no sampling params.
       ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),
@@ -329,6 +331,12 @@ export async function readElevationFace(
 
     const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     const usage = { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens };
+    // A truncated tool call parses as a PLAUSIBLE face (defaults fill the
+    // lost tail: readable:true, continuous_eave:true, gables cut short) —
+    // poison for the reconciler. An honest "unreadable" degrades safely.
+    if (response.stop_reason === "max_tokens") {
+      return { reading: emptyFace(spec.face, "tool output truncated at max_tokens — face discarded"), usage };
+    }
     if (!toolUse) return { reading: emptyFace(spec.face, "model returned no structured reading"), usage };
 
     const raw = toolUse.input as Partial<FaceReadingRaw>;

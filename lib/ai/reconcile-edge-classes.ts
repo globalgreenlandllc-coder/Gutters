@@ -208,9 +208,16 @@ export function reconcileEdgeClasses(opts: {
       // impossible unless the read explicitly places it at the eave — treat
       // set-back-unknown gables on such faces as frame-overs/dormers.
       const gablesAll = reading.gables ?? [];
+      // FLOATING gables — reported on this side but never pinned to a wall:
+      // a null set-back dropped by the continuous-eave filter (a guess, not a
+      // read), a null position, or a position that maps to no edge. Any one
+      // of them could be the gable a conflicted label really belongs to, so
+      // their presence vetoes the pass-2b recovery (the tie stands).
+      let floatingGables = 0;
       const flushGables = gablesAll.filter((g) => {
         const sb = typeof g.set_back_ft === "number" ? g.set_back_ft : null;
         if (sb != null) return sb <= 2;
+        if (reading.continuous_eave === true) floatingGables++;
         return reading.continuous_eave !== true;
       });
       if (gablesAll.length > flushGables.length) {
@@ -226,7 +233,10 @@ export function reconcileEdgeClasses(opts: {
       // a label-conflict on such an edge stays a genuine tie (see 2b).
       const gableBlockedByField = new Set<string>();
       for (const g of flushGables) {
-        if (g.position_frac == null) continue;
+        if (g.position_frac == null) {
+          floatingGables++;
+          continue;
+        }
         const u = Math.max(0, Math.min(1, g.position_frac));
         const hit =
           spans.find((s) => u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ??
@@ -238,14 +248,20 @@ export function reconcileEdgeClasses(opts: {
             },
             { d: Infinity, s: null as (typeof spans)[number] | null },
           ).s;
-        if (!hit || Math.abs((hit.u0 + hit.u1) / 2 - u) > 0.25) continue;
+        if (!hit || Math.abs((hit.u0 + hit.u1) / 2 - u) > 0.25) {
+          floatingGables++;
+          continue;
+        }
         const cls = byId.get(hit.e.id)!;
         // The framing field says this wall BEARS trusses — the gable the
         // elevation sees here is a frame-over above the eave, not the wall.
         if (fieldEave.has(cls.id)) {
           gableBlockedByField.add(cls.id);
           notes.push(
-            `🧭 ${cls.id}: the ${face} elevation shows a gable here, but the framing bears on this wall — frame-over above the eave; the gutter stays.`,
+            `🧭 ${cls.id}: the ${face} elevation shows a gable here, but the framing bears on this wall — frame-over above the eave; ` +
+              (byId.get(cls.id)!.edge_class === "eave"
+                ? "the gutter stays."
+                : "the wall stays under review (UNPRICED)."),
           );
           continue;
         }
@@ -395,13 +411,22 @@ export function reconcileEdgeClasses(opts: {
       // claimed the edge, that's TWO sheet reads (framing bears + unbroken
       // fascia) against ONE stray label — the wall gets its gutter back.
       // An edge a gable tried to claim (gableBlockedByField) stays a tie:
-      // UNPRICED, human review.
+      // UNPRICED, human review. So does the whole side while ANY reported
+      // gable floats unpinned (null position / null set-back / bad map) —
+      // the floater could be the label's gable, and a wrong eave BILLS
+      // gutter across a rake.
       for (const s of spans) {
         const cls = byId.get(s.e.id)!;
         if (cls.edge_class !== "unknown") continue;
         if (!(cls.evidence ?? []).includes("truss_field_conflict")) continue;
         if (reading.continuous_eave !== true) continue;
         if (confirmed.has(cls.id) || gableBlockedByField.has(cls.id)) continue;
+        if (floatingGables > 0) {
+          notes.push(
+            `🧭 ${cls.id} stays UNPRICED: the framing and the ${face} elevation's continuous eave line both dispute its printed gable label, but ${floatingGables} reported gable(s) on this side couldn't be pinned to a wall — one of them may be this label's gable. Review.`,
+          );
+          continue;
+        }
         cls.edge_class = "eave";
         cls.evidence = [...(cls.evidence ?? []), "elevation_continuous_eave"];
         demoted++;

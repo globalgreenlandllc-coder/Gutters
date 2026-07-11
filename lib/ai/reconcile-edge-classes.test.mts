@@ -483,3 +483,107 @@ test("reconcile: a conflict edge a gable also claims stays a tie (UNPRICED)", ()
     "the blocked gable is noted",
   );
 });
+
+test("reconcile: a FLOATING gable on the side vetoes the conflict recovery (null position)", () => {
+  // Adversarial-review variant A: the elevation DID report a gable on this
+  // side but its position didn't read — it never claims any wall, so it
+  // could be the conflicted label's gable. The tie must stand.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      west: face("west", "RIGHT/WEST ELEVATION", [
+        { kind: "other", span_ft: 12, position_frac: null },
+      ]),
+    },
+    ptPerFt: PT_PER_FT,
+    fieldEave: new Set(["E6"]),
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "unknown",
+    "unpinned gable could be the label's gable — stays UNPRICED",
+  );
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("couldn't be pinned")),
+  );
+});
+
+test("reconcile: a FLOATING gable vetoes the recovery (null set-back on a continuous face)", () => {
+  // Adversarial-review variant B: set_back_ft:null on a continuous-eave face
+  // drops the gable to frame-over BEFORE mapping — it must still veto.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      west: face("west", "RIGHT/WEST ELEVATION", [
+        {
+          kind: "other",
+          span_ft: 20,
+          position_frac: 0.5,
+          set_back_ft: null as unknown as number,
+        },
+      ]),
+    },
+    ptPerFt: PT_PER_FT,
+    fieldEave: new Set(["E6"]),
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "unknown",
+    "a full-width gable guess must not be priced away",
+  );
+});
+
+test("reconcile: gables pinned to OTHER walls do not veto the recovery", () => {
+  // The Woodinville run-5 shape: the side's one gable maps onto a different
+  // wall (frame-over there) — nothing floats, so the conflicted side wall
+  // still gets its gutter back.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: PER_FACE, // west face: no gables at all
+    ptPerFt: PT_PER_FT,
+    fieldEave: new Set(["E6"]),
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "eave",
+    "clean side — recovery still fires",
+  );
+});
