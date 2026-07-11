@@ -8,6 +8,21 @@
  * text for anything unrecognized (never hide a real error). Pure + directive-free
  * so it runs on the server AND in the browser bundle.
  */
+/**
+ * True when the failure means EVERY subsequent Anthropic call in this run
+ * will fail the same way (account out of credits, dead/unauthorized key).
+ * An analysis should ABORT on these instead of assembling a degraded
+ * takeoff from whatever other providers survive — the 2026-07-11 outage
+ * produced a stored gemini-only estimate (122 LF, 0 gables, unreadable
+ * elevations) that looked like a real takeoff.
+ */
+export function isFatalAiOutage(raw: string | null | undefined): boolean {
+  const s = String(raw ?? "");
+  return /credit balance is too low|insufficient\s+cred|authentication_error|invalid.*api.?key|unauthorized|\b401\b/i.test(
+    s,
+  );
+}
+
 export function humanizeAiError(raw: string | null | undefined): string {
   const s = String(raw ?? "").trim();
   if (!s) return "Analysis failed — please retry.";

@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
-import { humanizeAiError } from "@/lib/ai/humanize-error";
+import { humanizeAiError, isFatalAiOutage } from "@/lib/ai/humanize-error";
 import {
   blueprintFromPlanSourcesBestOf,
   type PlanSource,
@@ -231,6 +231,16 @@ export async function POST(
       console.log(`[/api/blueprints/${id}/reanalyze] starting re-analysis`);
       const stage1 = isPdf ? await classifyPlanSheets(finalSource) : null;
       if (stage1 && !stage1.ok) {
+        // Dead key/account = every downstream Anthropic call fails too.
+        // Abort with the plain billing/auth message instead of overwriting
+        // a good stored analysis with a degraded one (see /api/blueprints).
+        if (isFatalAiOutage(stage1.reason)) {
+          await db.planAnalysis.update({
+            where: { id },
+            data: { status: "FAILED", errorMessage: humanizeAiError(stage1.reason) },
+          });
+          return;
+        }
         console.warn(
           `[/api/blueprints/${id}/reanalyze] classifier failed (continuing): ${stage1.reason}`,
         );

@@ -8,7 +8,7 @@ import {
   blueprintFromPlanSourcesBestOf,
   type PlanSource,
 } from "@/lib/ai/blueprint-from-plans";
-import { humanizeAiError } from "@/lib/ai/humanize-error";
+import { humanizeAiError, isFatalAiOutage } from "@/lib/ai/humanize-error";
 import {
   geminiAvailable,
   geminiBlueprintFromPlan,
@@ -400,6 +400,18 @@ export async function POST(request: Request) {
       const useTwoStage = isPdf;
       const stage1 = useTwoStage ? await classifyPlanSheets(source) : null;
       if (stage1 && !stage1.ok) {
+        // A dead key/account fails EVERY Anthropic call downstream — the run
+        // would assemble a garbage takeoff from whatever providers survive
+        // (the 2026-07-11 outage stored a gemini-only 122 LF / 0-gable
+        // estimate). Abort loudly; the FAILED message tells the owner what
+        // to fix. Transient classifier errors still fall through.
+        if (isFatalAiOutage(stage1.reason)) {
+          await db.planAnalysis.update({
+            where: { id: analysis.id },
+            data: { status: "FAILED", errorMessage: humanizeAiError(stage1.reason) },
+          });
+          return;
+        }
         // Don't fail the whole run on classifier error — fall through
         // to the legacy single-call path so the contractor still gets
         // something to edit. Surface the classifier error in notes.
