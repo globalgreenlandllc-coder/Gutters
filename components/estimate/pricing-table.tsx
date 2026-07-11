@@ -107,13 +107,13 @@ export function PricingTable({
 
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2 font-label text-[11px] text-zinc-500">
-        <span>
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/50 px-3 py-2">
+        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
           {items.length} line {items.length === 1 ? "item" : "items"}
         </span>
-        <span className="font-mono normal-case text-zinc-700">
+        <span className="font-mono text-xs tabular-nums text-zinc-700">
           {formatCurrency(subtotal)}{" "}
-          <span className="font-medium tracking-normal text-zinc-400">subtotal</span>
+          <span className="font-medium text-zinc-400">subtotal</span>
         </span>
       </div>
 
@@ -182,7 +182,7 @@ export function PricingTable({
                         widthClass="w-20"
                       />
                       <span className="ml-auto inline-flex items-center gap-1.5">
-                        <span className="font-label text-[10px] text-zinc-400">
+                        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
                           Total
                         </span>
                         <span className="text-sm font-semibold tabular-nums text-zinc-900">

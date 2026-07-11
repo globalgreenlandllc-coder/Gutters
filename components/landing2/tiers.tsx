@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Container, SectionHeader } from "./ui";
+import { Reveal } from "./reveal";
 
 /** Small K-style / half-round profile strokes drawn per tier. */
 function KStyleGlyph({ stroke, guard }: { stroke: string; guard?: string }) {
@@ -47,12 +48,12 @@ const TIERS = [
   {
     name: "good",
     visual: (
-      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-[#f5d93f] p-5">
-        <span className="absolute right-4 top-4 font-mono text-[9px] font-bold uppercase tracking-wide text-[#1c1a17]/60">
+      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-accent-100 p-5">
+        <span className="absolute right-4 top-4 font-mono text-[9px] font-bold uppercase tracking-wide text-accent-800/60">
           5&quot; K-Style
         </span>
-        <KStyleGlyph stroke="#1c1a17" />
-        <p className="absolute bottom-4 left-5 font-display text-[26px] uppercase tracking-tight text-[#1c1a17]">
+        <KStyleGlyph stroke="#0C1B24" />
+        <p className="absolute bottom-4 left-5 text-[24px] font-semibold tracking-tight text-accent-900">
           Good
         </p>
       </div>
@@ -63,13 +64,13 @@ const TIERS = [
   {
     name: "better",
     visual: (
-      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-[radial-gradient(120%_130%_at_20%_0%,#5b4ee8,#2a1a6e_70%)] p-5">
+      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-[radial-gradient(120%_130%_at_20%_0%,#2E86AD,#0E3A4D_70%)] p-5">
         <span className="absolute right-4 top-4 font-mono text-[9px] font-bold uppercase tracking-wide text-white/60">
           6&quot; Seamless + Guard
         </span>
-        <KStyleGlyph stroke="#ffffff" guard="#a5b4fc" />
-        <p className="absolute bottom-4 left-5 font-display text-[26px] uppercase tracking-tight text-white">
-          Better<span className="text-[#a5b4fc]">+</span>
+        <KStyleGlyph stroke="#ffffff" guard="#93C6DC" />
+        <p className="absolute bottom-4 left-5 text-[24px] font-semibold tracking-tight text-white">
+          Better<span className="text-accent-300">+</span>
         </p>
       </div>
     ),
@@ -79,12 +80,12 @@ const TIERS = [
   {
     name: "best",
     visual: (
-      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-[radial-gradient(120%_130%_at_80%_0%,#7f1d1d,#1c1a17_75%)] p-5">
-        <span className="absolute right-4 top-4 font-mono text-[9px] font-bold uppercase tracking-wide text-[#fda374]/70">
+      <div className="relative flex h-[190px] items-center justify-center rounded-xl bg-[radial-gradient(120%_130%_at_80%_0%,#8a4f2d,#082733_75%)] p-5">
+        <span className="absolute right-4 top-4 font-mono text-[9px] font-bold uppercase tracking-wide text-[#e0955e]/70">
           Copper Half-Round
         </span>
         <HalfRoundGlyph />
-        <p className="absolute bottom-4 left-5 font-display text-[26px] uppercase tracking-tight text-[#fda374]">
+        <p className="absolute bottom-4 left-5 text-[24px] font-semibold tracking-tight text-[#e0955e]">
           Best
         </p>
       </div>
@@ -98,47 +99,51 @@ export function Tiers() {
   return (
     <section id="proposals" className="bg-white py-24 md:py-32">
       <Container>
-        <SectionHeader
-          eyebrow="Premium Proposals"
-          title={
-            <>
-              Curated tiers for
-              <br />
-              high-intent homeowners
-            </>
-          }
-          copy="Measured roofs command confident pricing. Every proposal ships with three tiers built from your own materials and margins — no guesswork, no race to the bottom."
-        />
+        <Reveal>
+          <SectionHeader
+            eyebrow="Premium Proposals"
+            title={
+              <>
+                Curated tiers for
+                <br />
+                high-intent homeowners
+              </>
+            }
+            copy="Measured roofs command confident pricing. Every proposal ships with three tiers built from your own materials and margins — no guesswork, no race to the bottom."
+          />
+        </Reveal>
 
-        <div className="mt-14 grid gap-4 md:grid-cols-3">
-          {TIERS.map((t) => (
-            <div
-              key={t.name}
-              className="rounded-[20px] border border-[#e9e5dd] bg-white p-4"
-            >
-              {t.visual}
-              <div className="px-2 pb-2 pt-5">
-                <h3 className="text-[16px] font-semibold text-[#1c1a17]">
-                  {t.title}
-                </h3>
-                <p className="mt-2 min-h-[60px] text-[13.5px] leading-relaxed text-[#8a857c]">
-                  {t.body}
-                </p>
-                <div className="mt-4 flex items-center justify-between">
-                  <Link
-                    href="/sign-in"
-                    className="inline-flex h-9 items-center rounded-full bg-[#1c1a17] px-4 text-[12.5px] font-medium text-white transition hover:bg-[#33302b]"
-                  >
-                    View Sample
-                  </Link>
-                  <span className="text-[12px] text-[#b3ada2]">
-                    Why this tier?
-                  </span>
+        <Reveal className="mt-14" delay={0.05}>
+          <div className="grid gap-4 md:grid-cols-3">
+            {TIERS.map((t) => (
+              <div
+                key={t.name}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-4 transition duration-300 will-change-transform hover:-translate-y-1 hover:shadow-card motion-reduce:transform-none"
+              >
+                {t.visual}
+                <div className="px-2 pb-2 pt-5">
+                  <h3 className="text-[16px] font-semibold tracking-tight text-zinc-900">
+                    {t.title}
+                  </h3>
+                  <p className="mt-2 min-h-[60px] text-[13.5px] leading-relaxed text-zinc-500">
+                    {t.body}
+                  </p>
+                  <div className="mt-4 flex items-center justify-between">
+                    <Link
+                      href="/sign-in"
+                      className="inline-flex h-9 items-center rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+                    >
+                      View Sample
+                    </Link>
+                    <span className="text-[12px] text-zinc-400">
+                      Why this tier?
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </Reveal>
       </Container>
     </section>
   );

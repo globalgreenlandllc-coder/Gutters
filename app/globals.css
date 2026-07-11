@@ -4,16 +4,16 @@
 
 :root {
   color-scheme: light;
-  --bg: #f7f8fb;
-  --paper: #edf0f6;
+  --bg: #f7f6f2;
+  --paper: #f7f6f2;
   --surface: #ffffff;
   --surface-soft: #f4f5f8;
   --border: #e4e5ea;
   --border-subtle: #f0f1f4;
-  --text: #0d0d12;
+  --text: #0c1b24;
   --text-muted: #4b4e57;
   --text-subtle: #6f7280;
-  --blue: #2e40e8;
+  --blue: #14688c;
 }
 
 html,
@@ -29,8 +29,8 @@ body {
 }
 
 ::selection {
-  background: rgba(46, 64, 232, 0.16);
-  color: #1f2a7e;
+  background: rgba(20, 104, 140, 0.16);
+  color: #0e3a4d;
 }
 
 ::-webkit-scrollbar {
@@ -41,16 +41,16 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(13, 13, 18, 0.08);
+  background: rgba(12, 27, 36, 0.08);
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(13, 13, 18, 0.18);
+  background: rgba(12, 27, 36, 0.18);
 }
 
 @layer components {
   .surface {
-    @apply bg-white border border-zinc-200 rounded-xl;
+    @apply bg-white border border-zinc-200/70 rounded-2xl shadow-card;
   }
   .surface-soft {
     @apply bg-zinc-50 border border-zinc-200 rounded-xl;
@@ -62,15 +62,19 @@ body {
     @apply bg-white/85 backdrop-blur-2xl border border-zinc-200/80;
   }
   .text-gradient {
-    background: linear-gradient(100deg, #3d4eff 0%, #8a53f9 55%, #f9655b 100%);
+    background: linear-gradient(135deg, #14688c 0%, #0e9cc3 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
   }
+  /* Tiny uppercase microlabel — section eyebrows, nav groups, card labels */
+  .microlabel {
+    @apply font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400;
+  }
   .bg-grid {
     background-image:
-      linear-gradient(rgba(13, 13, 18, 0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(13, 13, 18, 0.05) 1px, transparent 1px);
+      linear-gradient(rgba(12, 27, 36, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(12, 27, 36, 0.05) 1px, transparent 1px);
     background-size: 44px 44px;
   }
   .ring-focus {
@@ -90,9 +94,9 @@ body {
   .display-hero {
     @apply font-display uppercase leading-[0.95] tracking-[-0.01em];
   }
-  /* Gradient CTA button background (blue → violet → coral) */
+  /* Gradient CTA button background (deep water blue) */
   .btn-gradient {
-    background-image: linear-gradient(100deg, #3d4eff 0%, #8a53f9 48%, #f9655b 100%);
+    background-image: linear-gradient(135deg, #14688c 0%, #0e9cc3 100%);
   }
 }
 
@@ -233,7 +237,7 @@ body {
     display: none !important;
   }
   .text-gradient {
-    color: #2e40e8 !important;
+    color: #14688c !important;
     -webkit-text-fill-color: initial !important;
     background: none !important;
   }

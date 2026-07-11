@@ -212,7 +212,7 @@ export function PresentationCanvas({
           className={
             planMode
               ? "inline-block h-1.5 w-3 rounded-full bg-accent-700"
-              : "inline-block h-1.5 w-3 rounded-full bg-stripe-blue shadow-[0_0_6px_rgba(67,83,255,0.9)]"
+              : "inline-block h-1.5 w-3 rounded-full bg-[#1479B8] shadow-[0_0_6px_rgba(20,121,184,0.9)]"
           }
         />
         <span className="tabular-nums">
@@ -346,11 +346,11 @@ export function PresentationCanvas({
                       // blue still reads as "gutter" but no glow —
                       // glows clip on print and look fake on paper.
                       active
-                      ? "#2e40e8"
-                      : "#2434c6"
+                      ? "#14688C"
+                      : "#115673"
                     : active
-                      ? "#a3b1ff"
-                      : "#4353ff"
+                      ? "#93C6DC"
+                      : "#1479B8"
                 }
                 strokeWidth={(active ? 3.5 : 2.5) * vs}
                 strokeLinecap="round"
@@ -363,8 +363,8 @@ export function PresentationCanvas({
                   filter: planMode
                     ? undefined
                     : active
-                      ? "drop-shadow(0 0 6px rgba(67,83,255,0.85))"
-                      : "drop-shadow(0 0 3px rgba(67,83,255,0.55))",
+                      ? "drop-shadow(0 0 6px rgba(20,121,184,0.85))"
+                      : "drop-shadow(0 0 3px rgba(20,121,184,0.55))",
                 }}
               />
 
@@ -378,7 +378,7 @@ export function PresentationCanvas({
                     cy={pt.y}
                     r={5 * vs}
                     fill="#0b1220"
-                    stroke="#a3b1ff"
+                    stroke="#93C6DC"
                     strokeWidth={2 * vs}
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -455,7 +455,7 @@ export function PresentationCanvas({
                     height={14 * vs}
                     rx={3 * vs}
                     fill="#f7f4ee"
-                    stroke="#2434c6"
+                    stroke="#115673"
                     strokeWidth={0.6 * vs}
                   />
                   <text
@@ -463,7 +463,7 @@ export function PresentationCanvas({
                     y={d.y + 2 * vs}
                     fontSize={9 * vs}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                    fill="#2434c6"
+                    fill="#115673"
                     textAnchor="middle"
                   >
                     {Math.round(d.heightFt)}′
@@ -546,11 +546,11 @@ function SegmentLabel({
         stroke={
           planMode
             ? emphasized
-              ? "#2434c6"
-              : "rgba(36, 52, 198, 0.55)"
+              ? "#115673"
+              : "rgba(17, 86, 115, 0.55)"
             : emphasized
-              ? "#a3b1ff"
-              : "rgba(163,177,255,0.45)"
+              ? "#93C6DC"
+              : "rgba(147,198,220,0.45)"
         }
         strokeWidth={(emphasized ? 1.2 : 0.8) * scale}
       />
@@ -561,11 +561,11 @@ function SegmentLabel({
         fill={
           planMode
             ? emphasized
-              ? "#202da0"
-              : "#2434c6"
+              ? "#10475E"
+              : "#115673"
             : emphasized
-              ? "#c7d0ff"
-              : "#a3b1ff"
+              ? "#BFDEEA"
+              : "#93C6DC"
         }
         fontSize={fontSize}
         fontWeight={600}

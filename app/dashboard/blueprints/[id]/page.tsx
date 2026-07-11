@@ -58,8 +58,24 @@ export default async function BlueprintDetailPage({
     redirect(`/estimate?planId=${row.id}`);
   }
 
+  const metaLine = [
+    row.pageCount
+      ? `${row.pageCount} page${row.pageCount === 1 ? "" : "s"}`
+      : null,
+    `uploaded ${new Date(row.createdAt).toLocaleString()}`,
+    row.modelUsed,
+    row.durationMs ? `${(row.durationMs / 1000).toFixed(1)}s` : null,
+    row.cacheHit ? "cache hit" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <DashboardShell title="Blueprints" contentClassName="max-w-6xl">
+    <DashboardShell
+      title={row.filename}
+      subtitle={metaLine}
+      contentClassName="max-w-6xl"
+    >
       <div className="space-y-6">
         <Link
           href="/dashboard/blueprints"
@@ -68,23 +84,8 @@ export default async function BlueprintDetailPage({
           <ChevronLeft size={14} /> Blueprints
         </Link>
 
-        <header>
-          <h1 className="truncate text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl">
-            {row.filename}
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">
-            {row.pageCount
-              ? `${row.pageCount} page${row.pageCount === 1 ? "" : "s"} · `
-              : ""}
-            uploaded {new Date(row.createdAt).toLocaleString()}
-            {row.modelUsed && ` · ${row.modelUsed}`}
-            {row.durationMs && ` · ${(row.durationMs / 1000).toFixed(1)}s`}
-            {row.cacheHit && " · cache hit"}
-          </p>
-        </header>
-
         {row.status === "FAILED" && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
             <div className="mb-1 flex items-center gap-2 font-semibold">
               <AlertCircle size={14} /> Analysis failed
             </div>
@@ -101,7 +102,7 @@ export default async function BlueprintDetailPage({
         )}
 
         {row.status === "QUEUED" && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
             Analysis is still in progress. Refresh this page in a few seconds.
           </div>
         )}
@@ -110,14 +111,14 @@ export default async function BlueprintDetailPage({
             <div className="space-y-3">
               <Link
                 href={`/estimate?planId=${row.id}`}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-accent-600 transition hover:text-accent-700"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-accent-700 transition hover:text-accent-800"
               >
                 Open the takeoff →
               </Link>
               <VectorInspector vg={vectors} />
             </div>
           ) : (
-            <div className="surface p-4 text-sm text-zinc-600 shadow-card">
+            <div className="surface p-4 text-sm text-zinc-600">
               No vector data was extracted for this plan — it may be a raster /
               scanned PDF, a non-vector export, or the page had no usable text or
               line geometry. Stage 2 ran vision-only.

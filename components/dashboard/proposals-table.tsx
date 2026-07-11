@@ -138,7 +138,7 @@ export function ProposalsTable({
   });
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-card">
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-card">
       {showFilters && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
           <div className="flex flex-wrap gap-1.5">
@@ -186,7 +186,7 @@ export function ProposalsTable({
       {/* Column template must leave the flexible first column real room on
           the Overview's narrower main pane (lg) — the wide template only
           engages at xl. Keep in sync with the row grid below. */}
-      <div className="font-label hidden grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] gap-3 px-4 py-2.5 text-[11px] text-zinc-400 lg:grid xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
+      <div className="hidden grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] gap-3 px-4 py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400 lg:grid xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
         <div className="truncate">Property · Client</div>
         <div>Status</div>
         <div className="text-right">Total</div>

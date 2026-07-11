@@ -490,7 +490,7 @@ function MiniScoreRing({ score }: { score: number }) {
   const c = 2 * Math.PI * r;
   const frac = Math.max(0, Math.min(1, score / 100));
   const prime = score >= 70;
-  const color = prime ? "#f8717e" : "#7d8bfc";
+  const color = prime ? "#f8717e" : "#5AA6C6";
   return (
     <div
       className="relative"

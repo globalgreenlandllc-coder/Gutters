@@ -1,142 +1,71 @@
 "use client";
 
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-type IconCmp = React.ComponentType<{ className?: string }>;
-
-export type StatTone =
-  | "zinc"
-  | "accent"
-  | "emerald"
-  | "violet"
-  | "amber"
-  | "rose"
-  | "coral";
-
-/* Muted 50-bg / 600-text pairs — enough hue to tell metrics apart at a
- * glance without turning the summary row into a rainbow. */
-const TONE_CHIP: Record<StatTone, string> = {
-  zinc: "bg-zinc-50 text-zinc-400",
-  accent: "bg-accent-50 text-accent-600",
-  emerald: "bg-emerald-50 text-emerald-600",
-  violet: "bg-violet-50 text-violet-600",
-  amber: "bg-amber-50 text-amber-600",
-  rose: "bg-rose-50 text-rose-600",
-  coral: "bg-rose-50 text-stripe-coral",
-};
-
 /**
- * Hyperline KPI cell. Renders borderless — pages compose 2–4 of these
- * inside a single bordered row (see the Overview page: a grid with
- * `gap-px bg-zinc-100` produces the divide-x hairlines at every breakpoint).
+ * KPI tile — each tile is its own white card. Pages compose them in a
+ * `grid gap-4 sm:grid-cols-2 xl:grid-cols-4` row (see the Overview page).
  */
 export function StatTile({
   label,
   value,
+  footnote,
   delta,
-  positive = true,
-  spark,
   index = 0,
-  Icon,
-  tone = "zinc",
+  loading = false,
 }: {
   label: string;
   value: string;
-  delta?: string;
-  positive?: boolean;
-  spark?: number[];
+  footnote?: string;
+  delta?: { text: string; positive: boolean };
   index?: number;
-  Icon?: IconCmp;
-  tone?: StatTone;
+  /** Pulse-skeleton state while the overview data is in flight. */
+  loading?: boolean;
 }) {
+  const reduceMotion = useReducedMotion();
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
+        <div className="animate-pulse">
+          <div className="h-3 w-20 rounded bg-zinc-100" />
+          <div className="mt-2 h-8 w-28 rounded-lg bg-zinc-100" />
+        </div>
+      </div>
+    );
+  }
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.3, delay: index * 0.04 }}
-      className="bg-white p-6"
+      initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.05 }}
+      className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card"
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="text-sm text-zinc-500">{label}</div>
-        {Icon && (
-          <div
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-md",
-              TONE_CHIP[tone],
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </div>
-        )}
-      </div>
-      <div className="mt-3 flex items-end justify-between gap-3">
-        <div className="text-[28px] font-semibold tracking-tight tabular-nums text-zinc-900">
-          {value}
+        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+          {label}
         </div>
-        {spark && <Sparkline data={spark} positive={positive} />}
-      </div>
-      {delta && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+        {delta && (
           <span
             className={cn(
-              "inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-medium",
-              positive
-                ? "bg-emerald-50 text-emerald-600"
-                : "bg-rose-50 text-rose-600",
+              "inline-flex items-center gap-0.5 text-[11px] font-semibold",
+              delta.positive ? "text-emerald-700" : "text-rose-600",
             )}
           >
-            {positive ? (
+            {delta.positive ? (
               <ArrowUpRight className="h-3 w-3" />
             ) : (
               <ArrowDownRight className="h-3 w-3" />
             )}
-            {delta}
+            {delta.text}
           </span>
-        </div>
-      )}
+        )}
+      </div>
+      <div className="mt-2 text-[30px] font-semibold tracking-tight text-zinc-900">
+        {value}
+      </div>
+      {footnote && <div className="mt-1 text-xs text-zinc-400">{footnote}</div>}
     </motion.div>
-  );
-}
-
-function Sparkline({ data, positive }: { data: number[]; positive: boolean }) {
-  const w = 90;
-  const h = 32;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const step = data.length > 1 ? w / (data.length - 1) : w;
-  const pts = data
-    .map((v, i) => {
-      const x = i * step;
-      const y = h - ((v - min) / range) * h;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const stroke = positive ? "#4353ff" : "#f8717e";
-  const fill = positive ? "rgba(67,83,255,0.16)" : "rgba(248,113,126,0.14)";
-
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>
-      <defs>
-        <linearGradient id={`sg-${positive ? "p" : "n"}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={fill} />
-          <stop offset="100%" stopColor="transparent" />
-        </linearGradient>
-      </defs>
-      <polyline
-        fill="none"
-        stroke={stroke}
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={pts}
-      />
-      <polygon
-        fill={`url(#sg-${positive ? "p" : "n"})`}
-        points={`0,${h} ${pts} ${w},${h}`}
-      />
-    </svg>
   );
 }

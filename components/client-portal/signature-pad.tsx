@@ -29,7 +29,7 @@ export function SignaturePad({
     const ctx = c.getContext("2d");
     if (!ctx) return;
     ctx.scale(dpr, dpr);
-    ctx.strokeStyle = "#2e40e8";
+    ctx.strokeStyle = "#14688C";
     ctx.lineWidth = 2.4;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";

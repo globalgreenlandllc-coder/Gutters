@@ -46,14 +46,19 @@ export function NeedsAttention({
   loading?: boolean;
 }) {
   return (
-    <div className="surface shadow-card">
+    <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
       <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-        <h3 className="inline-flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900">
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-50 text-amber-500">
-            <Bell className="h-3.5 w-3.5" />
-          </span>
-          Needs attention
-        </h3>
+        <div className="min-w-0">
+          <h3 className="inline-flex items-center gap-2 text-[15px] font-semibold tracking-tight text-zinc-900">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-50 text-amber-500">
+              <Bell className="h-3.5 w-3.5" />
+            </span>
+            Needs attention
+          </h3>
+          <div className="mt-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+            Ranked by urgency
+          </div>
+        </div>
         {items.length > 0 && (
           <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-amber-700 ring-1 ring-inset ring-amber-200/70">
             {items.length}

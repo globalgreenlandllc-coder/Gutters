@@ -1113,8 +1113,8 @@ export function AerialCanvas({
                     ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
                     : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
                   : isSelected
-                    ? "drop-shadow(0 1px 6px rgba(46,64,232,0.55))"
-                    : "drop-shadow(0 1px 4px rgba(67,83,255,0.45))";
+                    ? "drop-shadow(0 1px 6px rgba(20,104,140,0.55))"
+                    : "drop-shadow(0 1px 4px rgba(20,121,184,0.45))";
           return (
             <g key={line.id}>
               {/* Plain <path> (not motion.path) — framer-motion's path
@@ -1423,7 +1423,7 @@ export function AerialCanvas({
                 x={lx}
                 y={ly + 4 * renderScale}
                 textAnchor="middle"
-                fill={theme === "tactical" ? "#5eead4" : "#2e40e8"}
+                fill={theme === "tactical" ? "#5eead4" : "#14688C"}
                 fontSize={10 * renderScale}
                 fontWeight={700}
                 fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -1999,7 +1999,7 @@ function Legend({
             "h-2 w-4 rounded-full",
             tactical
               ? "bg-cyan-400 shadow-[0_0_8px_rgba(0,229,255,0.95)]"
-              : "bg-accent-500 shadow-[0_1px_3px_rgba(46,64,232,0.5)]",
+              : "bg-accent-500 shadow-[0_1px_3px_rgba(20,104,140,0.5)]",
           )}
         />
         Eaves
@@ -2240,7 +2240,7 @@ function LineLabel({
               ? emphasized
                 ? "#67e8f9"
                 : "rgba(103,232,249,0.6)"
-              : "#2e40e8"
+              : "#14688C"
         }
         strokeWidth={1}
         style={{
@@ -2253,7 +2253,7 @@ function LineLabel({
         x={labelCx}
         y={labelCy + (tierLabel ? -2 : emphasized ? 4 : 3.5) * renderScale}
         textAnchor="middle"
-        fill={tactical ? "#a5f3fc" : "#2e40e8"}
+        fill={tactical ? "#a5f3fc" : "#14688C"}
         fontSize={fontSize}
         fontWeight={600}
         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -2265,7 +2265,7 @@ function LineLabel({
           x={labelCx}
           y={labelCy + 8 * renderScale}
           textAnchor="middle"
-          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#2e40e8"}
+          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#14688C"}
           fontSize={fontSize * 0.72}
           fontWeight={700}
           letterSpacing={0.5 * renderScale}

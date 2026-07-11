@@ -2,43 +2,31 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  DollarSign,
-  HandCoins,
-  Hammer,
-  Send,
-  Sparkles,
-  TrendingUp,
-  Wallet,
-} from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { StatTile } from "@/components/dashboard/stat-tile";
 import { ProposalsTable } from "@/components/dashboard/proposals-table";
 import { ActivityFeed } from "@/components/dashboard/activity-feed";
-import { QuickStart } from "@/components/dashboard/quick-start";
+import { RevenueTrend } from "@/components/dashboard/revenue-trend";
+import { WeekStrip } from "@/components/dashboard/week-strip";
+import { UpcomingJobs } from "@/components/dashboard/upcoming-jobs";
 import { OnboardingStrip } from "@/components/dashboard/onboarding-strip";
 import { NeedsAttention } from "@/components/dashboard/needs-attention";
 import { Button } from "@/components/ui/button";
 import {
+  getOverviewData,
   listMyActivity,
   listMyProposals,
-  getMyKpis,
   type MyActivityEvent,
-  type MyKpis,
   type MyProposalRow,
+  type OverviewData,
 } from "@/app/actions/dashboard";
 import {
   getNeedsAttention,
-  getPaymentStats,
   type AttentionItem,
-  type PaymentStats,
 } from "@/app/actions/payments";
 import { formatCurrency } from "@/lib/utils";
-import { useSession } from "@/lib/auth-mock";
 
 export default function DashboardPage() {
   return (
@@ -49,30 +37,29 @@ export default function DashboardPage() {
 }
 
 function Inner() {
-  const { session } = useSession();
   const [proposals, setProposals] = useState<MyProposalRow[]>([]);
-  const [kpis, setKpis] = useState<MyKpis | null>(null);
   const [activity, setActivity] = useState<MyActivityEvent[]>([]);
   const [attention, setAttention] = useState<AttentionItem[]>([]);
-  const [money, setMoney] = useState<PaymentStats | null>(null);
+  const [overview, setOverview] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       listMyProposals(),
-      getMyKpis(),
       listMyActivity(),
       getNeedsAttention(),
-      getPaymentStats(),
+      // Pass the browser timezone so "This week" / "Upcoming jobs"
+      // bucket by the contractor's wall-clock day, matching the
+      // calendar page (revenue stays UTC-bucketed by design).
+      getOverviewData(Intl.DateTimeFormat().resolvedOptions().timeZone),
     ])
-      .then(([p, k, a, att, m]) => {
+      .then(([p, a, att, o]) => {
         if (cancelled) return;
         setProposals(p);
-        setKpis(k);
         setActivity(a);
         setAttention(att);
-        setMoney(m);
+        setOverview(o);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -82,144 +69,118 @@ function Inner() {
     };
   }, []);
 
-  const k = kpis ?? {
-    sent: 0,
-    accepted: 0,
-    revenueMtd: 0,
-    conversion: 0,
-    pipelineValue: 0,
-    avgDeal: 0,
-  };
-  const recent = proposals.slice(0, 5);
+  const recent = proposals.slice(0, 6);
   const isEmpty = !loading && proposals.length === 0;
 
-  return (
-    <DashboardShell title="Overview">
-      <div className="space-y-8">
-        <p className="text-sm text-zinc-500">
-          {greetingTime()}, {session?.user.name.split(" ")[0]} —{" "}
-          {isEmpty
-            ? "your dashboard is ready. Run your first estimate to start filling it in."
-            : "here's what's happening across your proposals today."}
-        </p>
+  // KPI derivations off the overview payload.
+  const revenue30dCents = overview?.revenue30dCents ?? 0;
+  const revenuePrev30dCents = overview?.revenuePrev30dCents ?? 0;
+  let revenueDelta: { text: string; positive: boolean } | undefined;
+  if (revenuePrev30dCents > 0) {
+    const pct = Math.round(
+      ((revenue30dCents - revenuePrev30dCents) / revenuePrev30dCents) * 100,
+    );
+    revenueDelta = {
+      text: `${pct >= 0 ? "+" : ""}${pct}%`,
+      positive: pct >= 0,
+    };
+  }
+  const activeProposals = overview?.activeProposals ?? 0;
+  const wonMtd = overview?.wonMtd ?? 0;
 
+  return (
+    <DashboardShell
+      title="Overview"
+      eyebrow={eyebrowLine()}
+      subtitle="Everything that needs your attention today — revenue, pipeline, and the next moves."
+      actions={
+        <>
+          <Link href="/dashboard/proposals/new">
+            <Button size="sm">
+              <Sparkles className="h-4 w-4" />
+              New proposal
+            </Button>
+          </Link>
+          <Link href="/proposal?manual=1">
+            <Button size="sm" variant="outline">
+              Manual proposal
+            </Button>
+          </Link>
+        </>
+      }
+    >
+      <div className="space-y-6">
         <OnboardingStrip />
 
-        <section className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 shadow-card sm:grid-cols-2 lg:grid-cols-4">
+        {/* KPI row */}
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
             index={0}
-            label="Sent this month"
-            value={String(k.sent)}
-            Icon={Send}
-            tone="accent"
+            label="Revenue · 30d"
+            value={formatCurrency(revenue30dCents / 100)}
+            delta={revenueDelta}
+            footnote="Collected across all jobs"
+            loading={loading}
           />
           <StatTile
             index={1}
-            label="Accepted"
-            value={String(k.accepted)}
-            Icon={CheckCircle2}
-            tone="emerald"
+            label="Pipeline value"
+            value={formatCurrency((overview?.pipelineValueCents ?? 0) / 100)}
+            footnote={`${activeProposals} active proposal${activeProposals === 1 ? "" : "s"}`}
+            loading={loading}
           />
           <StatTile
             index={2}
-            label="Revenue MTD"
-            value={formatCurrency(k.revenueMtd)}
-            Icon={DollarSign}
-            tone="violet"
+            label="Open proposals"
+            value={String(overview?.openProposals ?? 0)}
+            delta={
+              wonMtd > 0 ? { text: `${wonMtd} won`, positive: true } : undefined
+            }
+            footnote="awaiting a decision"
+            loading={loading}
           />
           <StatTile
             index={3}
-            label="Pipeline"
-            value={formatCurrency(k.pipelineValue)}
-            Icon={TrendingUp}
-            tone="coral"
-            delta={
-              k.pipelineValue > 0
-                ? `${Math.round(k.conversion * 100)}% close rate`
-                : undefined
-            }
+            label="AI takeoffs · 30d"
+            value={String(overview?.takeoffs30d ?? 0)}
+            footnote="satellite + blueprint"
+            loading={loading}
           />
         </section>
 
-        {/* Money row — collections across accepted jobs */}
-        {money &&
-          (money.jobsInProgress > 0 ||
-            money.jobsDone > 0 ||
-            money.collectedMtdCents > 0) && (
-            <section className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 shadow-card sm:grid-cols-2 lg:grid-cols-4">
-              <StatTile
-                index={0}
-                label="Collected this month"
-                value={formatCurrency(money.collectedMtdCents / 100)}
-                Icon={HandCoins}
-                tone="emerald"
-              />
-              <StatTile
-                index={1}
-                label="Outstanding"
-                value={formatCurrency(money.outstandingCents / 100)}
-                Icon={Wallet}
-                tone="accent"
-                delta={
-                  money.jobsInProgress > 0
-                    ? `${money.jobsInProgress} job${money.jobsInProgress === 1 ? "" : "s"} in progress`
-                    : undefined
-                }
-              />
-              <StatTile
-                index={2}
-                label="Overdue"
-                value={formatCurrency(money.overdueCents / 100)}
-                Icon={AlertTriangle}
-                tone={money.overdueCount > 0 ? "rose" : "amber"}
-                positive={money.overdueCount === 0}
-                delta={
-                  money.overdueCount > 0
-                    ? `${money.overdueCount} payment${money.overdueCount === 1 ? "" : "s"} late`
-                    : "nothing late"
-                }
-              />
-              <StatTile
-                index={3}
-                label="Done jobs"
-                value={String(money.jobsDone)}
-                Icon={Hammer}
-                tone="violet"
-                delta={
-                  money.pendingChangeOrders > 0
-                    ? `${money.pendingChangeOrders} change order${money.pendingChangeOrders === 1 ? "" : "s"} pending`
-                    : undefined
-                }
-              />
-            </section>
-          )}
+        {/* Revenue trend + recent activity */}
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <RevenueTrend daily={overview?.revenueDaily ?? []} loading={loading} />
+          <ActivityFeed events={activity} loading={loading} />
+        </section>
 
-        <section className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-6">
-            <QuickStart />
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="inline-flex items-center gap-2 text-lg font-semibold tracking-tight text-zinc-900">
-                  <span className="h-4 w-1 rounded-full bg-cta-gradient" aria-hidden />
-                  Recent proposals
-                </h2>
-              </div>
-              {isEmpty ? (
-                <EmptyProposals />
-              ) : (
-                <ProposalsTable
-                  items={recent}
-                  compact={proposals.length > 5}
-                  showFilters={false}
-                />
-              )}
-            </div>
+        {/* This week + upcoming jobs */}
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <WeekStrip days={overview?.week ?? []} />
+          <UpcomingJobs items={overview?.upcoming ?? []} loading={loading} />
+        </section>
+
+        {/* Pipeline */}
+        <section>
+          <div className="mb-3 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+            Pipeline
           </div>
-
-          <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            {loading ? (
+              <div className="space-y-3 rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
+                {[0, 1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="h-10 animate-pulse rounded-lg bg-zinc-100"
+                  />
+                ))}
+              </div>
+            ) : isEmpty ? (
+              <EmptyProposals />
+            ) : (
+              <ProposalsTable items={recent} compact showFilters={false} />
+            )}
             <NeedsAttention items={attention} loading={loading} />
-            <ActivityFeed events={activity} />
-            {k.sent > 0 && <ConversionCard kpis={k} />}
           </div>
         </section>
       </div>
@@ -229,8 +190,8 @@ function Inner() {
 
 function EmptyProposals() {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-10 text-center">
-      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-cta-gradient text-white shadow-glow">
+    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-10 text-center">
+      <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent-600 text-white">
         <Sparkles className="h-5 w-5" />
       </div>
       <h3 className="mt-4 text-lg font-semibold tracking-tight text-zinc-900">
@@ -238,9 +199,9 @@ function EmptyProposals() {
       </h3>
       <p className="mx-auto mt-1 max-w-md text-sm text-zinc-500">
         Run an AI takeoff for any address — your draft, the proposal you send,
-        and the homeowner's response will all land here.
+        and the homeowner&apos;s response will all land here.
       </p>
-      <Link href="/estimate" className="mt-5 inline-block">
+      <Link href="/dashboard/proposals/new" className="mt-5 inline-block">
         <Button>
           <Sparkles className="h-4 w-4" />
           Start your first estimate
@@ -251,37 +212,13 @@ function EmptyProposals() {
   );
 }
 
-function ConversionCard({ kpis }: { kpis: MyKpis }) {
-  const conv = Math.round(kpis.conversion * 100);
-  return (
-    <div className="surface p-5 shadow-card">
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold tracking-tight text-zinc-900">
-          Win rate
-        </h3>
-        <span className="text-xs text-zinc-400">All time</span>
-      </div>
-      <div className="mt-4 flex items-end gap-4">
-        <div className="text-[26px] font-semibold tracking-tight tabular-nums text-zinc-900">
-          {conv}%
-        </div>
-        <div className="pb-1.5 text-xs text-zinc-500">
-          {kpis.accepted + (kpis.sent - kpis.accepted) > 0
-            ? "of decided proposals"
-            : "no decided proposals yet"}
-        </div>
-      </div>
-      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
-        <div
-          className="h-full rounded-full bg-cta-gradient"
-          style={{ width: `${conv}%` }}
-        />
-      </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-        <span>Avg deal · {formatCurrency(kpis.avgDeal || 0)}</span>
-      </div>
-    </div>
-  );
+/** "GOOD EVENING · JUL 10" — greeting + short date, uppercased. */
+function eyebrowLine(): string {
+  const date = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date());
+  return `${greetingTime()} · ${date}`.toUpperCase();
 }
 
 function greetingTime(): string {

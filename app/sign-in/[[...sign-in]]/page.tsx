@@ -2,6 +2,27 @@ import Link from "next/link";
 import { SignIn } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
 
+const RAIN_DROPS: { x: number; y: number; d: string }[] = [
+  { x: 40, y: 60, d: "0s" },
+  { x: 120, y: 210, d: "0.35s" },
+  { x: 200, y: 90, d: "0.7s" },
+  { x: 270, y: 320, d: "0.15s" },
+  { x: 340, y: 150, d: "0.55s" },
+  { x: 410, y: 40, d: "0.9s" },
+  { x: 480, y: 260, d: "0.25s" },
+  { x: 550, y: 120, d: "0.65s" },
+  { x: 80, y: 430, d: "0.45s" },
+  { x: 160, y: 560, d: "0.1s" },
+  { x: 240, y: 480, d: "0.8s" },
+  { x: 320, y: 620, d: "0.3s" },
+  { x: 400, y: 520, d: "0.6s" },
+  { x: 470, y: 680, d: "0.05s" },
+  { x: 540, y: 440, d: "0.75s" },
+  { x: 60, y: 700, d: "0.5s" },
+  { x: 300, y: 740, d: "0.95s" },
+  { x: 520, y: 580, d: "0.4s" },
+];
+
 export default function SignInPage() {
   return (
     <div className="relative grid min-h-screen bg-white lg:grid-cols-2">
@@ -27,7 +48,7 @@ export default function SignInPage() {
               elements: {
                 rootBox: "w-full",
                 card:
-                  "shadow-none border border-zinc-200 rounded-xl bg-white p-6",
+                  "shadow-none border border-zinc-200/70 rounded-2xl bg-white p-6",
                 headerTitle: "hidden",
                 headerSubtitle: "hidden",
                 socialButtonsBlockButton:
@@ -35,7 +56,7 @@ export default function SignInPage() {
                 formFieldInput:
                   "rounded-lg border-zinc-200 focus:border-accent-500 focus:ring-accent-500/15",
                 formButtonPrimary:
-                  "bg-accent-600 hover:bg-accent-700 text-white rounded-lg font-medium",
+                  "bg-accent-600 hover:bg-accent-700 text-white rounded-lg font-semibold",
                 footerActionLink: "text-accent-700 hover:text-accent-800",
                 identityPreviewEditButton: "text-accent-700",
               },
@@ -48,25 +69,42 @@ export default function SignInPage() {
         </div>
       </div>
 
-      <div className="relative hidden overflow-hidden bg-ink lg:block">
-        <div
+      <div className="relative hidden overflow-hidden bg-accent-950 lg:block">
+        <svg
           aria-hidden
-          className="hl-stripes absolute inset-y-0 right-0 w-14 opacity-90"
-        />
-        <div
-          aria-hidden
-          className="hl-stripes absolute inset-y-0 left-0 w-3 opacity-50"
-        />
+          className="absolute inset-0 h-full w-full"
+          viewBox="0 0 600 800"
+          preserveAspectRatio="xMidYMid slice"
+        >
+          <g
+            stroke="#5AA6C6"
+            strokeOpacity="0.3"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            {RAIN_DROPS.map((r) => (
+              <line
+                key={`${r.x}-${r.y}`}
+                x1={r.x}
+                y1={r.y}
+                x2={r.x - 5}
+                y2={r.y + 16}
+                className="anim-rain"
+                style={{ animationDelay: r.d }}
+              />
+            ))}
+          </g>
+        </svg>
         <div className="relative flex h-full flex-col justify-between p-12">
           <div>
-            <div className="font-label inline-flex items-center rounded-md border border-white/25 px-2.5 py-1 text-white">
+            <div className="inline-flex items-center rounded-md border border-white/15 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">
               Built for gutter contractors
             </div>
-            <h2 className="display-hero mt-8 text-balance text-4xl text-white xl:text-5xl">
-              <span className="text-stripe-blue">Address-to-accepted</span>{" "}
+            <h2 className="mt-8 text-balance text-4xl font-semibold tracking-tight text-white xl:text-5xl">
+              <span className="text-accent-300">Address-to-accepted</span>{" "}
               <span className="text-white">in under a minute.</span>
             </h2>
-            <p className="mt-4 max-w-md text-white/70">
+            <p className="mt-4 max-w-md text-white/60">
               AI measures the roof, packages a proposal, and collects the
               deposit — all from your truck.
             </p>
@@ -86,11 +124,11 @@ export default function SignInPage() {
 
 function Stat({ n, l }: { n: string; l: string }) {
   return (
-    <div className="rounded-lg border border-white/15 bg-white/5 p-3">
-      <div className="text-lg font-semibold tracking-tight text-white tabular-nums">
+    <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+      <div className="text-lg font-semibold tracking-tight text-white">
         {n}
       </div>
-      <div className="text-xs text-white/70">{l}</div>
+      <div className="text-xs text-accent-300">{l}</div>
     </div>
   );
 }

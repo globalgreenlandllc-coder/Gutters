@@ -65,14 +65,14 @@ export function PricingPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-zinc-200 px-4 pt-4">
-        <h2 className="text-base font-semibold tracking-tight text-zinc-900">
+      <div className="border-b border-zinc-200/70 px-4 pb-4 pt-4">
+        <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-accent-600">
           Estimate builder
         </h2>
-        <p className="text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-zinc-500">
           AI scope auto-applies. Override anything below.
         </p>
-        <div className="mt-3 flex gap-1">
+        <div className="mt-3 flex rounded-lg border border-zinc-200 bg-white p-0.5">
           {TABS.map((t) => {
             const active = tab === t.id;
             return (
@@ -80,13 +80,13 @@ export function PricingPanel({
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2.5 text-sm transition",
+                  "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition",
                   active
-                    ? "border-accent-600 text-zinc-900"
-                    : "border-transparent text-zinc-500 hover:text-zinc-900",
+                    ? "bg-zinc-100 text-zinc-900"
+                    : "text-zinc-500 hover:text-zinc-900",
                 )}
               >
-                <t.icon className="h-4 w-4" />
+                <t.icon className="h-3.5 w-3.5" />
                 {t.label}
               </button>
             );

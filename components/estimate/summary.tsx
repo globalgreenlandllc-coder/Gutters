@@ -93,7 +93,7 @@ export function Summary({
           animate={{ opacity: 1, y: 0 }}
           className="flex items-baseline justify-between"
         >
-          <span className="font-label text-[11px] text-zinc-500">
+          <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
             Client total
           </span>
           <span className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900">
@@ -152,7 +152,7 @@ function Row({
       <span
         className={cn(
           "tabular-nums",
-          tone === "discount" ? "text-accent-700" : "text-zinc-900",
+          tone === "discount" ? "text-emerald-700" : "text-zinc-900",
         )}
       >
         {formatCurrency(value)}
@@ -174,7 +174,7 @@ function Adj({
 }) {
   return (
     <label className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-white p-2.5 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
-      <span className="font-label text-[10px] text-zinc-500">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
         {label}
       </span>
       <div className="flex items-center gap-1">

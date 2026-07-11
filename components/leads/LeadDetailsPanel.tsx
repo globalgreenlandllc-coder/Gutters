@@ -385,7 +385,7 @@ export default function LeadDetailsPanel({ lead, score, mapsApiKey, onClose, onU
             href={scanUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-cta-gradient px-3 py-3 text-sm font-semibold text-white shadow-glow transition hover:opacity-95"
+            className="flex items-center justify-center gap-2 rounded-xl bg-accent-600 px-3 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-accent-700"
           >
             <Ruler size={16} />
             Scan this roof with AI

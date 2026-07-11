@@ -3,9 +3,9 @@ import "server-only";
 // Client-facing payment emails: receipts, payment reminders, and change
 // order approval requests. Inline styles only — Gmail/Outlook strip
 // <style> blocks. Visual language matches proposal-template.ts (white
-// card on #f4f4f5, royal-blue #2e40e8 CTAs).
+// card on #f4f4f5, water-blue #14688C CTAs).
 
-const BLUE = "#2e40e8";
+const BLUE = "#14688C";
 
 function money(cents: number): string {
   return (cents / 100).toLocaleString("en-US", {

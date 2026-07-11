@@ -257,9 +257,9 @@ function Header({ proposal }: { proposal: Proposal }) {
         />
         <div className="min-w-0 flex-1">
           <Badge>For {proposal.client.name}</Badge>
-          <h1 className="display-hero mt-3 text-balance text-3xl text-zinc-900 sm:text-4xl">
+          <h1 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Your gutter quote from{" "}
-            <span className="text-gradient">
+            <span className="text-accent-700">
               {proposal.contractor.company}
             </span>
           </h1>

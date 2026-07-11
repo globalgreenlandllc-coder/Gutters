@@ -62,9 +62,7 @@ export function LoadingState({
   const onLastStep = stepIndex >= steps.length - 1;
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="pointer-events-none absolute inset-0 bg-grid opacity-40 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-
+    <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -75,14 +73,14 @@ export function LoadingState({
           <Logo />
         </div>
 
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-elevated">
+        <div className="rounded-2xl border border-zinc-200/70 bg-white p-8 shadow-card">
           <div className="flex items-start gap-3">
             <MapPin className="mt-0.5 h-5 w-5 text-accent-600" />
             <div className="min-w-0 flex-1">
-              <div className="font-label text-[11px] text-zinc-500">
-                Analyzing
+              <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+                Running takeoff
               </div>
-              <div className="mt-1 truncate font-medium text-zinc-900">
+              <div className="mt-1 truncate text-[15px] font-semibold tracking-tight text-zinc-900">
                 {address}
               </div>
             </div>

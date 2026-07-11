@@ -98,20 +98,17 @@ export function AdminShell({
                 href={n.href}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
-                  "group relative flex h-9 items-center gap-3 rounded-md px-3 text-sm transition",
+                  "group relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm transition",
                   active
-                    ? "bg-zinc-100 font-medium text-zinc-900"
+                    ? "bg-accent-50 font-medium text-accent-800"
                     : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
                 )}
               >
-                {active && (
-                  <span className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-orange-400 to-rose-500" />
-                )}
                 <n.icon
                   className={cn(
                     "h-4 w-4 transition",
                     active
-                      ? "text-zinc-900"
+                      ? "text-accent-700"
                       : "text-zinc-400 group-hover:text-zinc-600",
                   )}
                 />

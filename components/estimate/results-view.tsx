@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   Building2,
-  Camera,
   PencilRuler,
   RefreshCcw,
   Ruler,
@@ -208,7 +207,7 @@ export function ResultsView({
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-paper">
       <TopBar
         address={address}
         handoff={handoff}
@@ -248,7 +247,7 @@ export function ResultsView({
               {/* Roof plan ⇄ 3D view toggle. 3D is a read-only, decorative
                   massing — pricing/LF comes from the same live eaves either
                   way. Disabled without a real roof outline. */}
-              <div className="mb-2 inline-flex rounded-full border border-zinc-200 p-0.5 text-xs dark:border-zinc-700">
+              <div className="mb-2 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                 {(
                   [
                     "plan",
@@ -285,12 +284,12 @@ export function ResultsView({
                               : undefined
                       }
                       className={
-                        "rounded-full px-3 py-1 font-medium transition " +
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition " +
                         (active
-                          ? "bg-accent-600 text-white"
+                          ? "bg-zinc-100 text-zinc-900"
                           : disabled
-                            ? "cursor-not-allowed text-zinc-400"
-                            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
+                            ? "cursor-not-allowed text-zinc-300"
+                            : "text-zinc-500 hover:text-zinc-900")
                       }
                     >
                       {label}
@@ -349,11 +348,10 @@ export function ResultsView({
                 />
               )}
             </div>
-            <SiteContext />
           </div>
 
           <div className="lg:sticky lg:top-[72px] lg:self-start">
-            <div className="rounded-2xl border border-zinc-200 bg-white shadow-card">
+            <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
                 <PricingPanel measurements={measurements} handoff={handoff} />
               </div>
@@ -386,7 +384,7 @@ function PropertyHeader({
   onStoriesChange?: (n: 1 | 2 | 3) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+    <div className="rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -398,7 +396,7 @@ function PropertyHeader({
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             {onStoriesChange ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-400">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
                   Stories
                 </span>
                 <span className="inline-flex overflow-hidden rounded-full border border-zinc-200 bg-zinc-50/50">
@@ -502,35 +500,6 @@ function SourceBadge({ source }: { source: EstimateResult["source"] }) {
   );
 }
 
-function SiteContext() {
-  const items = [
-    { label: "Front facade", note: "Exposure: South" },
-    { label: "Driveway side", note: "Easy ladder access" },
-    { label: "Backyard", note: "Tree overhang — gutter guards rec." },
-  ];
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
-      <div className="flex items-center gap-2">
-        <Camera className="h-4 w-4 text-zinc-400" />
-        <span className="font-label text-[11px] text-zinc-500">
-          Site context
-        </span>
-      </div>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {items.map((it) => (
-          <div
-            key={it.label}
-            className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3"
-          >
-            <div className="text-sm font-medium text-zinc-900">{it.label}</div>
-            <div className="mt-0.5 text-xs text-zinc-500">{it.note}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /**
  * "Bad satellite pic — draw it yourself" banner. Shown above the canvas
  * when the server flags the auto-trace as low/unusable (blurry tile, lines
@@ -554,7 +523,7 @@ function BadTraceBanner({
     <div
       className={cn(
         "rounded-2xl border p-4 shadow-card",
-        unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-white",
+        unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200/70 bg-white",
       )}
     >
       <div className="flex items-start gap-3">
@@ -584,7 +553,7 @@ function BadTraceBanner({
             <button
               type="button"
               onClick={onDrawFresh}
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-zinc-900 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
             >
               <PencilRuler className="h-4 w-4" />
               {unusable && hasLines
@@ -595,7 +564,7 @@ function BadTraceBanner({
               <button
                 type="button"
                 onClick={onKeepAndEdit}
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 transition hover:bg-zinc-50 hover:border-zinc-300"
               >
                 Keep AI lines & edit
               </button>

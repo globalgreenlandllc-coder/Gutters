@@ -825,9 +825,9 @@ function Header({
           <CalendarDays className="h-4 w-4" />
         </div>
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
+          <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
             Schedule
-          </h1>
+          </h2>
           <p className="text-xs text-zinc-500">
             Drag leads + proposals onto the calendar — or hit ⚡ for a smart slot.
           </p>

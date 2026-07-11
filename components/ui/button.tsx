@@ -23,20 +23,21 @@ const base =
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-accent-600 text-white shadow-sm hover:bg-accent-700 active:translate-y-px",
+    "bg-accent-600 text-white font-semibold shadow-sm hover:bg-accent-700 active:translate-y-px",
   secondary:
-    "bg-white text-zinc-800 border border-zinc-200 hover:bg-zinc-50 hover:border-zinc-300 shadow-sm",
-  ghost: "text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100",
+    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300 shadow-sm",
+  ghost: "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800",
   outline:
-    "border border-zinc-300 text-zinc-800 hover:border-zinc-400 hover:text-ink hover:bg-zinc-50",
-  danger: "bg-rose-600 text-white hover:bg-rose-700 shadow-sm",
-  dark: "bg-ink text-white hover:bg-zinc-900 active:translate-y-px font-mono font-bold uppercase tracking-[0.12em]",
+    "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 hover:border-zinc-300",
+  danger:
+    "bg-rose-600 text-white font-semibold shadow-sm hover:bg-rose-700 active:translate-y-px",
+  dark: "bg-accent-950 text-white font-semibold hover:bg-accent-900 active:translate-y-px",
   gradient:
-    "btn-gradient text-white hover:opacity-95 active:translate-y-px font-mono font-bold uppercase tracking-[0.12em]",
+    "bg-accent-600 text-white font-semibold shadow-sm hover:bg-accent-700 active:translate-y-px",
 };
 
 const sizes: Record<Size, string> = {
-  sm: "h-9 px-3 text-sm",
+  sm: "h-9 px-3.5 text-[13px]",
   md: "h-11 px-5 text-sm",
   lg: "h-14 px-7 text-base",
 };

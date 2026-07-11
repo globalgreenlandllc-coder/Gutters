@@ -256,7 +256,7 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative cursor-pointer rounded-xl border-2 border-dashed bg-white p-8 transition-all sm:p-12 ${
+        className={`relative cursor-pointer rounded-2xl border-2 border-dashed bg-white p-8 transition-all sm:p-12 ${
           dragOver
             ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/30"
             : "border-zinc-300 hover:border-accent-400 hover:ring-2 hover:ring-accent-500/15"
@@ -273,7 +273,7 @@ export default function BlueprintUploader() {
           className="hidden"
         />
         <div className="flex flex-col items-center text-center">
-          <div className="mb-3 rounded-full bg-accent-50 p-3 text-accent-600 ring-1 ring-accent-200">
+          <div className="mb-3 rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200">
             <Upload size={24} />
           </div>
           <div className="mb-1 text-lg font-semibold tracking-tight text-zinc-900">
@@ -300,7 +300,7 @@ export default function BlueprintUploader() {
         <motion.div
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="surface flex items-center gap-3 px-4 py-3 shadow-card"
+          className="surface flex items-center gap-3 px-4 py-3"
         >
           <FileText size={20} className="text-zinc-500" />
           <div className="flex-1 min-w-0">
@@ -322,7 +322,7 @@ export default function BlueprintUploader() {
           <button
             onClick={onAnalyze}
             disabled={uploading}
-            className="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {uploading ? (
               <>
@@ -344,7 +344,7 @@ export default function BlueprintUploader() {
       )}
 
       {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
           {error}
         </div>
       )}

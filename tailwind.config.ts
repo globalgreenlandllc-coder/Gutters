@@ -11,19 +11,20 @@ const config: Config = {
       },
       colors: {
         accent: {
-          50: "#eef1ff",
-          100: "#e0e6ff",
-          200: "#c7d0ff",
-          300: "#a3b1ff",
-          400: "#7d8bfc",
-          500: "#5563f6",
-          600: "#2e40e8",
-          700: "#2434c6",
-          800: "#202da0",
-          900: "#1f2a7e",
+          50: "#EFF7FA",
+          100: "#DFEEF5",
+          200: "#BFDEEA",
+          300: "#93C6DC",
+          400: "#5AA6C6",
+          500: "#2E86AD",
+          600: "#14688C",
+          700: "#115673",
+          800: "#10475E",
+          900: "#0E3A4D",
+          950: "#082733",
         },
-        ink: "#0d0d12",
-        paper: "#edf0f6",
+        ink: "#0C1B24",
+        paper: "#F7F6F2",
         stripe: {
           violet: "#9d5cf6",
           blue: "#4353ff",
@@ -33,21 +34,20 @@ const config: Config = {
       },
       backgroundImage: {
         "grid-light":
-          "linear-gradient(rgba(13,13,18,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(13,13,18,0.05) 1px, transparent 1px)",
-        "cta-gradient":
-          "linear-gradient(100deg, #3d4eff 0%, #8a53f9 48%, #f9655b 100%)",
+          "linear-gradient(rgba(12,27,36,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(12,27,36,0.05) 1px, transparent 1px)",
+        "cta-gradient": "linear-gradient(135deg, #14688C, #0E9CC3)",
       },
       backgroundSize: {
         grid: "44px 44px",
       },
       boxShadow: {
-        card: "0 1px 2px rgba(13, 13, 18, 0.05)",
+        card: "0 1px 2px 0 rgba(12,27,36,0.05)",
         elevated:
-          "0 2px 8px rgba(13,13,18,0.06), 0 16px 40px -12px rgba(13,13,18,0.10)",
-        glow: "0 0 0 1px rgba(46,64,232,0.16), 0 8px 24px -4px rgba(46,64,232,0.28)",
+          "0 2px 8px rgba(12,27,36,0.06), 0 16px 40px -12px rgba(12,27,36,0.10)",
+        glow: "0 0 0 1px rgba(20,104,140,0.16), 0 8px 24px -4px rgba(20,104,140,0.28)",
         "glow-lg":
-          "0 0 0 1px rgba(46,64,232,0.20), 0 14px 40px -6px rgba(46,64,232,0.32)",
-        "ring-soft": "0 0 0 4px rgba(46,64,232,0.10)",
+          "0 0 0 1px rgba(20,104,140,0.20), 0 14px 40px -6px rgba(20,104,140,0.32)",
+        "ring-soft": "0 0 0 4px rgba(20,104,140,0.10)",
       },
       animation: {
         "fade-in": "fade-in 0.6s ease-out both",

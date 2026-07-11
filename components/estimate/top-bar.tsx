@@ -4,9 +4,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Check,
-  Download,
+  ChevronLeft,
   Loader2,
   RefreshCw,
   Save,
@@ -138,13 +137,13 @@ export function TopBar({
     );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-4 px-4">
+    <header className="sticky top-0 z-40 border-b border-zinc-200/70 bg-white">
+      <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4">
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="flex items-center gap-1 text-sm text-zinc-500 transition hover:text-zinc-900"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" />
           <span className="hidden sm:inline">Dashboard</span>
         </Link>
         <div className="hidden h-6 w-px bg-zinc-200 md:block" />
@@ -153,52 +152,49 @@ export function TopBar({
         </div>
         <div className="hidden h-6 w-px bg-zinc-200 md:block" />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-900">
-              {address}
-            </span>
-            <span
-              title={
-                jobType === "new"
-                  ? "New construction — no tear-off line items by default"
-                  : "Replacement — includes tear-off + disposal"
-              }
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-sm font-semibold text-zinc-900">
+            {address}
+          </span>
+          <span
+            title={
+              jobType === "new"
+                ? "New construction — no tear-off line items by default"
+                : "Replacement — includes tear-off + disposal"
+            }
+          >
+            <Badge
+              tone={jobType === "new" ? "accent" : "neutral"}
+              className="hidden sm:inline-flex"
             >
-              <Badge
-                tone={jobType === "new" ? "accent" : "neutral"}
-                className="hidden sm:inline-flex"
+              {jobType === "new" ? "New construction" : "Replacement"}
+            </Badge>
+          </span>
+          {statusBadge}
+          {save.kind === "saved" && (
+            <span className="hidden whitespace-nowrap text-xs text-zinc-500 lg:inline">
+              Saved to{" "}
+              <Link
+                href="/dashboard/proposals"
+                className="text-accent-700 underline-offset-2 hover:underline"
               >
-                {jobType === "new" ? "New construction" : "Replacement"}
-              </Badge>
+                Proposals
+              </Link>
+              {" · "}
+              {timeAgo(save.at)}
             </span>
-            {statusBadge}
-          </div>
-          <div className="text-xs text-zinc-500">
-            {save.kind === "saved" ? (
-              <>
-                Saved to{" "}
-                <Link
-                  href="/dashboard/proposals"
-                  className="text-accent-700 underline-offset-2 hover:underline"
-                >
-                  Proposals
-                </Link>
-                {" · "}
-                {timeAgo(save.at)} · AI confidence 96%
-              </>
-            ) : save.kind === "error" ? (
-              <span className="text-rose-600">{save.message}</span>
-            ) : (
-              "AI confidence 96% · 2 corrections suggested"
-            )}
-          </div>
+          )}
+          {save.kind === "error" && (
+            <span className="hidden truncate text-xs text-rose-600 lg:inline">
+              {save.message}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
           {planId && (
             <Button
-              variant="secondary"
+              variant="ghost"
               size="sm"
               onClick={onReanalyze}
               disabled={reanalyzing}
@@ -213,16 +209,7 @@ export function TopBar({
             </Button>
           )}
           <Button
-            variant="secondary"
-            size="sm"
-            className="hidden sm:inline-flex"
-            onClick={handoffAndGo}
-          >
-            <Download className="h-4 w-4" />
-            PDF
-          </Button>
-          <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
             onClick={onSaveDraft}
             disabled={!handoff || save.kind === "saving"}
@@ -243,7 +230,7 @@ export function TopBar({
               ? "Saving…"
               : save.kind === "saved"
                 ? "Saved"
-                : "Save proposal"}
+                : "Save draft"}
           </Button>
           <Button size="sm" onClick={handoffAndGo}>
             <Send className="h-4 w-4" />

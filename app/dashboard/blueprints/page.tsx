@@ -50,23 +50,20 @@ export default async function BlueprintsListPage() {
   return (
     <DashboardShell
       title="Blueprints"
+      subtitle="AI-generated gutter layouts from construction plans."
       actions={
         <Link
           href="/dashboard/blueprints/new"
-          className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700"
+          className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
         >
           <Plus size={14} /> New blueprint
         </Link>
       }
     >
       <div className="space-y-6">
-        <p className="text-sm text-zinc-500">
-          AI-generated gutter layouts from construction plans.
-        </p>
-
         {rows.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-12 text-center">
-            <div className="mx-auto mb-3 w-fit rounded-full bg-accent-50 p-3 text-accent-600 ring-1 ring-accent-200">
+          <div className="rounded-2xl border border-dashed border-zinc-300 bg-white p-12 text-center">
+            <div className="mx-auto mb-3 w-fit rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200">
               <FileText size={24} />
             </div>
             <div className="mb-1 font-semibold tracking-tight text-zinc-900">
@@ -78,13 +75,13 @@ export default async function BlueprintsListPage() {
             </p>
             <Link
               href="/dashboard/blueprints/new"
-              className="ring-focus mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-accent-700"
+              className="ring-focus mt-4 inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
             >
               <Plus size={14} /> Create one
             </Link>
           </div>
         ) : (
-          <ul className="surface divide-y divide-zinc-100 shadow-card">
+          <ul className="divide-y divide-zinc-100 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-card">
             {rows.map((r) => {
               const StatusIcon =
                 r.status === "SUCCEEDED"

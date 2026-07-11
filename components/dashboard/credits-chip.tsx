@@ -45,7 +45,7 @@ export function CreditsChip() {
               : "text-accent-600",
           )}
         />
-        <span className="font-label text-[11px] tabular-nums">
+        <span className="text-[12px] font-semibold tabular-nums">
           {isAdmin ? "∞" : `${remaining} / ${total}`}
         </span>
         <span className="hidden sm:inline text-zinc-400">
@@ -65,9 +65,10 @@ export function CreditsChip() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: 0.14 }}
-              className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-4 shadow-elevated"
+              className="absolute right-0 z-20 mt-2 w-72 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-elevated"
             >
-              <div className="flex items-baseline justify-between">
+              <div className="microlabel">Takeoff credits</div>
+              <div className="mt-1 flex items-baseline justify-between">
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
                   {isAdmin ? "Unlimited" : remaining}
                 </span>
@@ -111,11 +112,11 @@ export function CreditsChip() {
                   Manage plan
                 </Link>
                 <Link
-                  href="/estimate"
+                  href="/dashboard/proposals/new"
                   onClick={() => setOpen(false)}
-                  className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:text-zinc-900"
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
                 >
-                  New estimate
+                  New proposal
                 </Link>
               </div>
             </motion.div>

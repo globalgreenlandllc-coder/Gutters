@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { clsx } from "clsx";
+import { cn } from "@/lib/utils";
 
-/** Tiny uppercase section eyebrow with a leading tick mark. */
+/** Tiny mono microlabel section eyebrow with a leading tick mark. */
 export function Eyebrow({
   children,
   className,
@@ -11,12 +12,12 @@ export function Eyebrow({
 }) {
   return (
     <p
-      className={clsx(
-        "flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[#8a857c]",
+      className={cn(
+        "flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400",
         className,
       )}
     >
-      <span className="inline-block h-[7px] w-[7px] rounded-[2px] bg-[#1c1a17]" />
+      <span className="inline-block h-[7px] w-[7px] rounded-[2px] bg-accent-600" />
       {children}
     </p>
   );
@@ -30,19 +31,23 @@ export function PillLink({
 }: {
   href: string;
   children: React.ReactNode;
-  variant?: "dark" | "outline" | "light";
+  variant?: "dark" | "outline" | "light" | "accent";
   className?: string;
 }) {
   return (
     <Link
       href={href}
-      className={clsx(
-        "inline-flex h-11 items-center justify-center gap-2 rounded-full px-6 text-[14px] font-medium transition",
+      // cn (clsx + twMerge), not bare clsx — caller classNames must
+      // deterministically override the variant classes (e.g. the dark
+      // CTA panel's ghost overrides on the outline variant).
+      className={cn(
+        "inline-flex h-11 items-center justify-center gap-2 rounded-lg px-5 text-[13px] font-semibold transition",
         variant === "dark" &&
-          "bg-[#1c1a17] text-[#faf8f4] hover:bg-[#33302b]",
+          "bg-accent-600 text-white shadow-sm hover:bg-accent-700",
         variant === "outline" &&
-          "border border-[#d8d3ca] bg-transparent text-[#1c1a17] hover:border-[#1c1a17]",
-        variant === "light" && "bg-white text-[#1c1a17] hover:bg-[#f1ede6]",
+          "border border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50",
+        variant === "light" && "bg-white text-zinc-900 hover:bg-zinc-100",
+        variant === "accent" && "bg-accent-500 text-white hover:bg-accent-400",
         className,
       )}
     >
@@ -67,29 +72,43 @@ export function Container({
 }
 
 /**
- * Split section header used across the page: eyebrow on top, big serif
- * heading on the left, supporting paragraph (and optional action) on the right.
+ * Split section header used across the page: eyebrow on top, big heading on
+ * the left, supporting paragraph (and optional action) on the right.
  */
 export function SectionHeader({
   eyebrow,
   title,
   copy,
   action,
+  dark,
 }: {
   eyebrow: string;
   title: React.ReactNode;
   copy: React.ReactNode;
   action?: React.ReactNode;
+  dark?: boolean;
 }) {
   return (
     <div>
-      <Eyebrow>{eyebrow}</Eyebrow>
+      <Eyebrow className={dark ? "text-white/40" : undefined}>{eyebrow}</Eyebrow>
       <div className="mt-6 grid gap-8 md:grid-cols-[1.15fr_0.85fr] md:items-end md:gap-16">
-        <h2 className="font-display text-[30px] uppercase leading-[0.98] tracking-[-0.01em] text-[#1c1a17] md:text-[42px]">
+        <h2
+          className={clsx(
+            "text-[30px] font-semibold leading-[1.05] tracking-tight md:text-[40px]",
+            dark ? "text-white" : "text-zinc-900",
+          )}
+        >
           {title}
         </h2>
         <div className="max-w-md md:justify-self-end">
-          <p className="text-[15px] leading-relaxed text-[#6e6a62]">{copy}</p>
+          <p
+            className={clsx(
+              "text-[15px] leading-relaxed",
+              dark ? "text-white/60" : "text-zinc-600",
+            )}
+          >
+            {copy}
+          </p>
           {action ? <div className="mt-6">{action}</div> : null}
         </div>
       </div>

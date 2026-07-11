@@ -2,29 +2,33 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { LoadingState } from "@/components/estimate/loading-state";
 import { ResultsView } from "@/components/estimate/results-view";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
-import { SAMPLE_ADDRESS } from "@/lib/mock-estimate";
 import { runEstimate, runEstimateFromPlan } from "@/app/actions/estimate";
 import type { EstimateResult } from "@/lib/ai";
 
 const MIN_LOADING_MS = 2400;
 
 function EstimateContent() {
+  const router = useRouter();
   const params = useSearchParams();
   // Two entry modes:
   //   ?planId=<id>   — read a previously analyzed construction plan
   //   ?address=<str> — run the address pipeline (satellite + Solar + SAM-2)
-  // planId wins when both are present.
+  // planId wins when both are present. With NEITHER present there is
+  // nothing to run — a takeoff costs a credit and real API spend, so we
+  // never fall back to a sample address; we redirect to the start page
+  // (which collects address + job type) instead.
   const planId = params.get("planId");
   const addressParam = params.get("address");
-  const address = addressParam || SAMPLE_ADDRESS;
-  // Job-type passed in from the QuickStart card; defaults to replacement
+  const address = addressParam;
+  const missingParams = !planId && !address;
+  // Job-type passed in from the new-proposal start page; defaults to replacement
   // (the dominant case). Threaded into ResultsView → proposal so the
   // contractor's saved draft remembers whether this is new vs replacement.
   const jobTypeParam = params.get("jobType");
@@ -36,7 +40,19 @@ function EstimateContent() {
   const [reused, setReused] = useState(false);
   const [tick, setTick] = useState(0);
 
+  // Bare /estimate (sidebar "Gutter estimator", old bookmarks): hand
+  // off to the start page, which collects an address before anything
+  // is spent.
   useEffect(() => {
+    if (missingParams) router.replace("/dashboard/proposals/new");
+  }, [missingParams, router]);
+
+  useEffect(() => {
+    // Nothing to run without a plan or an address — the redirect effect
+    // above takes over. Bail before arming the watchdog or calling the
+    // (credit-consuming) pipeline.
+    if (missingParams) return;
+
     setPhase("loading");
     setError(null);
     setResult(null);
@@ -60,9 +76,11 @@ function EstimateContent() {
       setPhase("error");
     }, WATCHDOG_MS);
 
+    // address is guaranteed non-null when planId is absent — the
+    // missingParams guard above already returned otherwise.
     const run = planId
       ? runEstimateFromPlan(planId)
-      : runEstimate(address);
+      : runEstimate(address!);
 
     run
       .then(async (r) => {
@@ -110,7 +128,7 @@ function EstimateContent() {
       cancelled = true;
       clearTimeout(watchdog);
     };
-  }, [planId, address, tick]);
+  }, [planId, address, missingParams, tick]);
 
   // In plan mode the "address" label is the filename — surfaced by the
   // server action's geocoded.formatted. Until the result lands we show
@@ -118,7 +136,17 @@ function EstimateContent() {
   // real address that doesn't match what the contractor uploaded.
   const headerLabel = planId
     ? "Analyzing construction plans…"
-    : address;
+    : (address ?? "");
+
+  if (missingParams) {
+    // Redirecting (effect above) — a quiet placeholder instead of a
+    // loading screen that would imply a takeoff is running.
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper">
+        <p className="text-sm text-zinc-500">Taking you to the start page…</p>
+      </div>
+    );
+  }
 
   if (phase === "loading") {
     return (

@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  BookOpen,
   CalendarDays,
   ChevronsUpDown,
   FileSpreadsheet,
@@ -13,30 +12,57 @@ import {
   LayoutGrid,
   LogOut,
   MapPin,
+  Plus,
   Search,
   Settings,
   ShieldAlert,
+  Sparkles,
   User,
   Users,
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
 import { Avatar } from "@/components/ui/avatar";
+import { BrandMark } from "@/components/ui/brand-mark";
 import { CreditsChip } from "./credits-chip";
 import { NotificationsBell } from "./notifications-bell";
 import { useSession } from "@/lib/auth-mock";
 import { cn } from "@/lib/utils";
 
 type NavIcon = typeof LayoutGrid;
-const NAV: { href: string; label: string; Icon: NavIcon }[] = [
-  { href: "/dashboard", label: "Overview", Icon: LayoutGrid },
-  { href: "/dashboard/leads", label: "Leads", Icon: MapPin },
-  { href: "/dashboard/calendar", label: "Calendar", Icon: CalendarDays },
-  { href: "/dashboard/blueprints", label: "Blueprints", Icon: FileSpreadsheet },
-  { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
-  { href: "/dashboard/workers", label: "Workers", Icon: HardHat },
-  { href: "/dashboard/clients", label: "Clients", Icon: Users },
+type NavEntry = { href: string; label: string; Icon: NavIcon };
+
+const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
+  {
+    label: "Work",
+    items: [
+      { href: "/dashboard", label: "Overview", Icon: LayoutGrid },
+      { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
+      { href: "/dashboard/leads", label: "Leads", Icon: MapPin },
+      { href: "/dashboard/clients", label: "Clients", Icon: Users },
+    ],
+  },
+  {
+    label: "Delivery",
+    items: [
+      { href: "/dashboard/calendar", label: "Calendar", Icon: CalendarDays },
+      { href: "/dashboard/workers", label: "Workers", Icon: HardHat },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { href: "/estimate", label: "Gutter estimator", Icon: Sparkles },
+      { href: "/dashboard/blueprints", label: "Blueprints", Icon: FileSpreadsheet },
+    ],
+  },
+  {
+    label: "Account",
+    items: [{ href: "/dashboard/settings", label: "Settings", Icon: Settings }],
+  },
 ];
+
+const NAV_FLAT: NavEntry[] = NAV_GROUPS.flatMap((g) => g.items);
 
 function isActive(pathname: string | null, href: string) {
   return href === "/dashboard"
@@ -49,29 +75,23 @@ function NavItem({
   label,
   Icon,
   active,
-}: {
-  href: string;
-  label: string;
-  Icon: NavIcon;
+}: NavEntry & {
   active: boolean;
 }) {
   return (
     <Link
       href={href}
       className={cn(
-        "group relative flex h-9 items-center gap-3 rounded-md px-3 text-sm transition",
+        "flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium transition",
         active
-          ? "bg-zinc-100 font-medium text-zinc-900"
-          : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
+          ? "bg-accent-50 text-accent-800"
+          : "text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900",
       )}
     >
-      {active && (
-        <span className="absolute -left-3 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-orange-400 to-rose-500" />
-      )}
       <Icon
         className={cn(
           "h-4 w-4 transition",
-          active ? "text-zinc-900" : "text-zinc-400 group-hover:text-zinc-600",
+          active ? "text-accent-700" : "text-zinc-400",
         )}
       />
       {label}
@@ -92,21 +112,32 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:border-zinc-200 hover:bg-zinc-50"
-      >
-        <Avatar initials={session?.user.initials ?? "?"} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium text-zinc-900">
-            {session?.user.name ?? "—"}
+      {align === "down" ? (
+        // Compact trigger for the topbar: avatar only.
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="ring-focus flex items-center rounded-md transition hover:opacity-90"
+          aria-label="Account menu"
+        >
+          <Avatar initials={session?.user.initials ?? "?"} />
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2.5 rounded-lg border border-transparent px-2 py-1.5 text-left transition hover:border-zinc-200 hover:bg-zinc-50"
+        >
+          <Avatar initials={session?.user.initials ?? "?"} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-medium text-zinc-900">
+              {session?.user.name ?? "—"}
+            </div>
+            <div className="truncate text-[11px] text-zinc-500">
+              {session?.profile.company ?? ""}
+            </div>
           </div>
-          <div className="truncate text-[11px] text-zinc-500">
-            {session?.profile.company ?? ""}
-          </div>
-        </div>
-        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-      </button>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+        </button>
+      )}
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
@@ -151,22 +182,47 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
   );
 }
 
+function CompanyChip() {
+  const { session } = useSession();
+  const company = session?.profile.company;
+  if (!company) return null;
+  const logo = session.profile.logo;
+  return (
+    <div className="hidden items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-zinc-700 xl:flex">
+      <BrandMark
+        initials={logo.initials}
+        tone={logo.tone}
+        logoUrl={logo.url}
+        size="sm"
+        className="h-5 w-5 rounded-md text-[8px] shadow-none"
+      />
+      <span className="max-w-[160px] truncate">{company}</span>
+    </div>
+  );
+}
+
 /**
- * Hyperline-style app shell: fixed white sidebar on the left (logo, nav,
- * documentation/settings, account block) + a bordered page header on top of
- * the scrolling content column.
+ * Contractor-OS app shell: fixed white sidebar with grouped nav (WORK /
+ * DELIVERY / TOOLS / ACCOUNT), a slim white topbar (search, company chip,
+ * new-proposal CTA, credits, notifications, account), and page content on
+ * the warm paper canvas.
  *
  * Pages render everything inside <DashboardShell title="…" actions={…}>.
- * `fullBleed` drops the padded max-width container (maps, canvases).
+ * `eyebrow` renders a microlabel above the title; `subtitle` a muted line
+ * below it. `fullBleed` drops the padded max-width container (maps, canvases).
  */
 export function DashboardShell({
   title,
+  eyebrow,
+  subtitle,
   actions,
   children,
   fullBleed = false,
   contentClassName,
 }: {
-  title?: React.ReactNode;
+  title?: string;
+  eyebrow?: string;
+  subtitle?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
   fullBleed?: boolean;
@@ -175,61 +231,69 @@ export function DashboardShell({
   const pathname = usePathname();
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-paper">
       {/* Sidebar (desktop) */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-zinc-200 bg-white lg:flex">
-        <div className="flex h-16 shrink-0 items-center px-5">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[224px] flex-col border-r border-zinc-200/70 bg-white lg:flex">
+        <div className="flex h-16 shrink-0 items-center border-b border-zinc-200/70 px-5">
           <Link href="/dashboard" className="ring-focus rounded-md">
             <Logo showSubtitle={false} />
           </Link>
         </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pt-2">
-          {NAV.map((n) => (
-            <NavItem key={n.href} {...n} active={isActive(pathname, n.href)} />
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="mt-5 first:mt-0">
+              <div className="microlabel mb-1.5 px-2.5">{group.label}</div>
+              <div className="space-y-0.5">
+                {group.items.map((n) => (
+                  <NavItem
+                    key={n.href}
+                    {...n}
+                    active={isActive(pathname, n.href)}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
-        <div className="space-y-0.5 border-t border-zinc-100 px-3 py-3">
-          <NavItem href="#" label="Documentation" Icon={BookOpen} active={false} />
-          <NavItem
-            href="/dashboard/settings"
-            label="Settings"
-            Icon={Settings}
-            active={isActive(pathname, "/dashboard/settings")}
-          />
-          <div className="pt-2">
-            <AccountMenu align="up" />
-          </div>
+        <div className="border-t border-zinc-200/70 p-3">
+          <AccountMenu align="up" />
         </div>
       </aside>
 
       {/* Content column */}
-      <div className="flex min-h-screen flex-col lg:pl-60">
+      <div className="flex min-h-screen flex-col lg:pl-[224px]">
         {/* Mobile top bar */}
-        <div className="sticky top-0 z-30 border-b border-zinc-200 bg-white lg:hidden">
+        <div className="sticky top-0 z-30 border-b border-zinc-200/70 bg-white lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Link href="/dashboard">
               <Logo showSubtitle={false} />
             </Link>
             <div className="flex items-center gap-2">
               <CreditsChip />
+              <NotificationsBell />
               <AccountMenu align="down" />
             </div>
           </div>
           <div className="flex gap-1 overflow-x-auto px-3 pb-2">
-            {NAV.map((n) => {
+            {NAV_FLAT.map((n) => {
               const active = isActive(pathname, n.href);
               return (
                 <Link
                   key={n.href}
                   href={n.href}
                   className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition",
                     active
-                      ? "bg-zinc-100 text-zinc-900"
-                      : "text-zinc-500 hover:bg-zinc-50",
+                      ? "bg-accent-50 text-accent-800"
+                      : "text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900",
                   )}
                 >
-                  <n.Icon className="h-3.5 w-3.5" />
+                  <n.Icon
+                    className={cn(
+                      "h-3.5 w-3.5",
+                      active ? "text-accent-700" : "text-zinc-400",
+                    )}
+                  />
                   {n.label}
                 </Link>
               );
@@ -237,52 +301,84 @@ export function DashboardShell({
           </div>
         </div>
 
-        {/* Page header (desktop) */}
-        <header className="sticky top-0 z-30 hidden border-b border-zinc-200 bg-white lg:block">
-          <div className="flex h-16 items-center gap-3 px-6">
-            <h1 className="text-[22px] font-semibold tracking-tight text-zinc-900">
-              {title}
-            </h1>
-            <div className="flex flex-1 items-center justify-end gap-2">
-              <div className="relative hidden h-9 w-64 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-500 transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15 xl:flex">
-                <Search className="mr-2 h-4 w-4 text-zinc-400" />
-                <input
-                  type="search"
-                  placeholder="Search proposals, clients…"
-                  className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-400"
-                />
-                <kbd className="ml-2 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
-                  ⌘K
-                </kbd>
-              </div>
-              <CreditsChip />
-              <NotificationsBell />
-              {actions}
-            </div>
+        {/* Topbar (desktop) */}
+        <header className="sticky top-0 z-30 hidden h-14 shrink-0 items-center gap-3 border-b border-zinc-200/70 bg-white px-4 sm:px-6 lg:flex">
+          {/* Decorative search chip per the shell spec — not a live
+              input, so it can't silently swallow typed queries. */}
+          <div className="flex h-9 w-72 items-center rounded-lg bg-zinc-100/80 px-3 text-[13px] text-zinc-500">
+            <Search className="mr-2 h-4 w-4 shrink-0 text-zinc-400" />
+            <span className="w-full select-none text-zinc-400">
+              Search proposals, clients…
+            </span>
+            <kbd className="ml-2 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+              ⌘K
+            </kbd>
+          </div>
+          <div className="flex flex-1 items-center justify-end gap-2">
+            <CompanyChip />
+            <Link
+              href="/dashboard/proposals/new"
+              className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition hover:bg-accent-700"
+            >
+              <Plus className="h-4 w-4" />
+              New Proposal
+            </Link>
+            <CreditsChip />
+            <NotificationsBell />
+            <AccountMenu align="down" />
           </div>
         </header>
 
         {/* Mobile page title + actions */}
         {(title || actions) && (
-          <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3 lg:hidden">
-            <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-              {title}
-            </h1>
-            <div className="flex items-center gap-2">{actions}</div>
+          <div className="flex items-center justify-between gap-3 border-b border-zinc-200/70 bg-paper px-4 py-3 lg:hidden">
+            <div className="min-w-0">
+              {eyebrow && <div className="microlabel">{eyebrow}</div>}
+              <h1 className="truncate text-lg font-semibold tracking-tight text-zinc-900">
+                {title}
+              </h1>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">{actions}</div>
           </div>
         )}
 
         {fullBleed ? (
-          <div className={cn("flex-1", contentClassName)}>{children}</div>
-        ) : (
-          <main
-            className={cn(
-              "mx-auto w-full max-w-[1200px] flex-1 px-4 py-6 sm:px-6",
-              contentClassName,
-            )}
-          >
+          <div className={cn("flex-1 bg-paper", contentClassName)}>
             {children}
-          </main>
+          </div>
+        ) : (
+          <div className="flex-1 bg-paper lg:min-h-[calc(100vh-3.5rem)]">
+            <main
+              className={cn(
+                "mx-auto w-full max-w-[1200px] px-4 py-8 sm:px-6",
+                contentClassName,
+              )}
+            >
+              {title ? (
+                <>
+                  <div className="hidden lg:block">
+                    {eyebrow && <div className="microlabel mb-2">{eyebrow}</div>}
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div>
+                        <h1 className="text-[28px] font-semibold tracking-tight text-zinc-900 sm:text-[32px]">
+                          {title}
+                        </h1>
+                        {subtitle && (
+                          <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
+                        )}
+                      </div>
+                      {actions && (
+                        <div className="flex items-center gap-2">{actions}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="lg:mt-6">{children}</div>
+                </>
+              ) : (
+                children
+              )}
+            </main>
+          </div>
         )}
       </div>
     </div>

@@ -21,12 +21,12 @@ import { formatCurrency } from "@/lib/utils";
 export default function SettingsPage() {
   return (
     <AuthGate>
-      <DashboardShell title="Settings" contentClassName="max-w-4xl">
+      <DashboardShell
+        title="Settings"
+        subtitle="Configure your brand, payments, and pricing baselines."
+        contentClassName="max-w-4xl"
+      >
         <div className="space-y-6">
-          <p className="text-sm text-zinc-500">
-            Configure your brand, payments, and pricing baselines.
-          </p>
-
           <BrandProfileSection />
 
           <PaymentsSection />
@@ -171,7 +171,7 @@ function BillingSection() {
           {/* Credit packs — bonus credits never expire */}
           {!isAdmin && (
             <div className="mt-4 border-t border-zinc-200 pt-4">
-              <div className="font-label text-[10px] text-zinc-400">
+              <div className="microlabel">
                 Need more estimates? Buy credits
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -295,7 +295,7 @@ function Section({
     <section className="surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="font-label text-[11px] text-zinc-400">{eyebrow}</div>
+          <div className="microlabel">{eyebrow}</div>
           <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
             {title}
           </h2>
@@ -316,7 +316,7 @@ function Section({
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50/50 px-3 py-2.5">
-      <div className="font-label text-[10px] text-zinc-400">{label}</div>
+      <div className="microlabel">{label}</div>
       <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
     </div>
   );
@@ -325,7 +325,7 @@ function Field({ label, value }: { label: string; value: string }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-2">
-      <div className="font-label text-[10px] text-zinc-400">{label}</div>
+      <div className="microlabel">{label}</div>
       <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
     </div>
   );

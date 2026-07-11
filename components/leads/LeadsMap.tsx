@@ -564,10 +564,10 @@ function ProspectCircle({ prospect }: { prospect: ProspectState }) {
     <Circle
       center={prospect.center}
       radius={prospect.radiusMi * METERS_PER_MILE}
-      strokeColor="#5563f6"
+      strokeColor="#1479B8"
       strokeOpacity={0.9}
       strokeWeight={2}
-      fillColor="#5563f6"
+      fillColor="#1479B8"
       fillOpacity={0.08}
       clickable={false}
     />
@@ -927,7 +927,7 @@ export default function LeadsMap({ apiKey }: { apiKey: string }) {
     //
     // The map is FULL-BLEED; the leads list and detail panel float over it
     // as translucent glass overlays, so panels never steal map width.
-    <div className="relative h-[calc(100dvh-9.25rem)] min-h-[420px] w-full overflow-hidden bg-ink lg:h-[calc(100vh-4rem)]">
+    <div className="relative h-[calc(100dvh-9.25rem)] min-h-[420px] w-full overflow-hidden bg-ink lg:h-[calc(100vh-3.5rem)]">
       <APIProvider apiKey={apiKey} libraries={["visualization"]}>
         <div className="absolute inset-0">
           <MapControls
@@ -1426,7 +1426,7 @@ export function ScoreRing({ score, size = 32 }: { score: number; size?: number }
   const c = 2 * Math.PI * r;
   const frac = Math.max(0, Math.min(1, score / 100));
   const prime = score >= 70;
-  const color = prime ? "#f8717e" : "#7d8bfc";
+  const color = prime ? "#f8717e" : "#5AA6C6";
   return (
     <div
       className="relative shrink-0"
@@ -1526,7 +1526,7 @@ function ClusterMarker({
           height: size,
           // Conic ring: coral arc = share of prime-scored leads inside.
           // A cluster that's 40% coral is a neighborhood worth zooming.
-          background: `conic-gradient(#f8717e 0deg ${primeDeg}deg, #5563f6 ${primeDeg}deg 360deg)`,
+          background: `conic-gradient(#f8717e 0deg ${primeDeg}deg, #1479B8 ${primeDeg}deg 360deg)`,
         }}
         title={`${cluster.count} leads${cluster.primeCount > 0 ? ` — ${cluster.primeCount} prime` : ""} — click to zoom in`}
       >

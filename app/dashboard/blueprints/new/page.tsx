@@ -12,7 +12,11 @@ export const metadata: Metadata = {
 
 export default function NewBlueprintPage() {
   return (
-    <DashboardShell title="Blueprints" contentClassName="max-w-3xl">
+    <DashboardShell
+      title="New blueprint"
+      subtitle="Upload a roof plan (PDF or image). Claude reads it, identifies every eave vs rake, and produces a gutter layout you can include in the customer proposal."
+      contentClassName="max-w-3xl"
+    >
       <div className="space-y-6">
         <Link
           href="/dashboard/blueprints"
@@ -20,16 +24,6 @@ export default function NewBlueprintPage() {
         >
           <ChevronLeft size={14} /> Blueprints
         </Link>
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-            New blueprint
-          </h1>
-          <p className="mt-1 max-w-xl text-sm text-zinc-500">
-            Upload a roof plan (PDF or image). Claude reads it, identifies every
-            eave vs rake, and produces a gutter layout you can include in the
-            customer proposal.
-          </p>
-        </header>
         <BlueprintUploader />
       </div>
     </DashboardShell>

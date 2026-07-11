@@ -35,12 +35,11 @@ export default function EstimateError({
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
-      <div className="pointer-events-none absolute inset-0 hl-grid" />
       <div className="relative w-full max-w-xl">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
-        <div className="rounded-xl border border-rose-200 bg-white p-8 shadow-card">
+        <div className="rounded-2xl border border-rose-200 bg-white p-8 shadow-card">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-rose-700">
               <AlertTriangle className="h-5 w-5" />
@@ -58,7 +57,7 @@ export default function EstimateError({
 
           <dl className="mt-5 space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm">
             <div>
-              <dt className="font-label text-[11px] text-zinc-400">
+              <dt className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
                 Message
               </dt>
               <dd className="mt-1 break-words font-mono text-[13px] text-zinc-800">
@@ -67,7 +66,7 @@ export default function EstimateError({
             </div>
             {error.digest && (
               <div>
-                <dt className="font-label text-[11px] text-zinc-400">
+                <dt className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
                   Digest
                 </dt>
                 <dd className="mt-1 font-mono text-[13px] text-zinc-800">

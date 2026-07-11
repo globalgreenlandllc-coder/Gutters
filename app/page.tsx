@@ -1,6 +1,9 @@
+import "@/components/landing2/landing.css";
+
 import { Banner } from "@/components/landing2/banner";
 import { Nav } from "@/components/landing2/nav";
 import { Hero } from "@/components/landing2/hero";
+import { FlowDivider } from "@/components/landing2/flow-divider";
 import { Stats } from "@/components/landing2/stats";
 import { Logos } from "@/components/landing2/logos";
 import { Manifesto } from "@/components/landing2/manifesto";
@@ -15,10 +18,11 @@ import { Footer } from "@/components/landing2/footer";
 
 export default function HomePage() {
   return (
-    <main className="relative bg-[#faf8f4] text-[#1c1a17]">
+    <main className="relative bg-paper text-ink">
       <Banner />
       <Nav />
       <Hero />
+      <FlowDivider />
       <Stats />
       <Logos />
       <Manifesto />

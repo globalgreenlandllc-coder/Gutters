@@ -585,7 +585,7 @@ export function PdfPlanView({
             <g>
               <polygon
                 points={outline.map((p) => `${p.x},${p.y}`).join(" ")}
-                fill="rgba(67,83,255,0.08)"
+                fill="rgba(20,121,184,0.08)"
                 stroke="none"
               />
               {outline.map((p, i) => {
@@ -598,7 +598,7 @@ export function PdfPlanView({
                     y1={p.y}
                     x2={q.x}
                     y2={q.y}
-                    stroke={isGable ? "#f59e0b" : "#4353ff"}
+                    stroke={isGable ? "#f59e0b" : "#1479B8"}
                     strokeWidth={sw * 1.5}
                     strokeDasharray={isGable ? `${sw * 2.5} ${sw * 2}` : undefined}
                     strokeLinecap="round"
@@ -606,7 +606,7 @@ export function PdfPlanView({
                 );
               })}
               {outline.map((p, i) => (
-                <circle key={`ov-${i}`} cx={p.x} cy={p.y} r={dot * 0.55} fill="#4353ff" />
+                <circle key={`ov-${i}`} cx={p.x} cy={p.y} r={dot * 0.55} fill="#1479B8" />
               ))}
             </g>
           )}
@@ -619,7 +619,7 @@ export function PdfPlanView({
                   .map((p) => `${p.x},${p.y}`)
                   .join(" ")}
                 fill="none"
-                stroke="#4353ff"
+                stroke="#1479B8"
                 strokeWidth={sw * 1.3}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -631,7 +631,7 @@ export function PdfPlanView({
                   y1={cursor.y}
                   x2={draftOutline[0].x}
                   y2={draftOutline[0].y}
-                  stroke="#4353ff"
+                  stroke="#1479B8"
                   strokeWidth={sw}
                   strokeDasharray={`${sw * 2} ${sw * 2}`}
                   opacity={0.5}
@@ -643,7 +643,7 @@ export function PdfPlanView({
                   cx={p.x}
                   cy={p.y}
                   r={dot * (i === 0 ? 0.85 : 0.55)}
-                  fill={i === 0 ? "#7d8bfc" : "#4353ff"}
+                  fill={i === 0 ? "#5AA6C6" : "#1479B8"}
                   stroke={i === 0 ? "#ffffff" : undefined}
                   strokeWidth={i === 0 ? dot * 0.2 : 0}
                 />
@@ -659,7 +659,7 @@ export function PdfPlanView({
                 y1={r[0].y}
                 x2={r[1].x}
                 y2={r[1].y}
-                stroke={i === selected ? "#f43f5e" : "#4353ff"}
+                stroke={i === selected ? "#f43f5e" : "#1479B8"}
                 strokeWidth={sw * (i === selected ? 1.6 : 1.2)}
                 strokeLinecap="round"
               />
@@ -669,7 +669,7 @@ export function PdfPlanView({
                   y={mid(r[0], r[1]).y - dot * 0.8}
                   fontSize={dot * 1.5}
                   textAnchor="middle"
-                  fill="#2e40e8"
+                  fill="#14688C"
                   stroke="#ffffff"
                   strokeWidth={dot * 0.18}
                   paintOrder="stroke"
@@ -689,18 +689,18 @@ export function PdfPlanView({
                 y1={pendingStart.y}
                 x2={cursor.x}
                 y2={cursor.y}
-                stroke="#4353ff"
+                stroke="#1479B8"
                 strokeWidth={sw * 1.2}
                 strokeDasharray={`${sw * 2} ${sw * 2}`}
                 strokeLinecap="round"
               />
-              <circle cx={pendingStart.x} cy={pendingStart.y} r={dot * 0.6} fill="#4353ff" />
+              <circle cx={pendingStart.x} cy={pendingStart.y} r={dot * 0.6} fill="#1479B8" />
               {scalePxPerFt && (
                 <text
                   x={cursor.x + dot}
                   y={cursor.y - dot}
                   fontSize={dot * 1.6}
-                  fill="#2e40e8"
+                  fill="#14688C"
                   stroke="#ffffff"
                   strokeWidth={dot * 0.18}
                   paintOrder="stroke"

@@ -15,7 +15,7 @@ const WRAP = (inner: string) =>
   </td></tr></table></body></html>`;
 
 const BTN = (href: string, label: string) =>
-  `<a href="${href}" style="display:inline-block;background:#2e40e8;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px">${label}</a>`;
+  `<a href="${href}" style="display:inline-block;background:#14688C;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px">${label}</a>`;
 
 export type RenderedEmail = { subject: string; html: string; text: string };
 
@@ -32,7 +32,7 @@ export function renderWorkerInviteEmail(args: {
     `<p style="margin:0 0 14px;font-size:16px">${hi}</p>
      <p style="margin:0 0 16px;font-size:15px;line-height:1.55;color:#3a3f4a"><strong>${who}</strong> invited you to join their crew on GutterScan. Accept to set up your account and see the jobs they assign you — schedule, address, what to do, and your pay.</p>
      <p style="margin:0 0 22px">${BTN(args.acceptUrl, "Accept invite &amp; set up account")}</p>
-     <p style="margin:0;font-size:13px;color:#9aa0ac">If the button doesn't work, paste this link:<br><span style="color:#2e40e8">${args.acceptUrl}</span></p>`,
+     <p style="margin:0;font-size:13px;color:#9aa0ac">If the button doesn't work, paste this link:<br><span style="color:#14688C">${args.acceptUrl}</span></p>`,
   );
   const text = `${hi}\n\n${who} invited you to join their crew on GutterScan. Accept to set up your account and see your assigned jobs.\n\nAccept: ${args.acceptUrl}\n`;
   return { subject, html, text };

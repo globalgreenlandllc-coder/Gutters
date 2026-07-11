@@ -25,9 +25,9 @@ export function CoverSection({
         <div className="min-w-0">
           <Badge>Proposal</Badge>
           {readOnly ? (
-            <h1 className="display-hero mt-3 text-balance text-3xl text-zinc-900 sm:text-4xl">
+            <h1 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
               Gutter replacement at <br className="hidden sm:block" />
-              <span className="text-gradient">{proposal.address || "—"}</span>
+              <span className="text-accent-700">{proposal.address || "—"}</span>
             </h1>
           ) : (
             <div className="mt-3">

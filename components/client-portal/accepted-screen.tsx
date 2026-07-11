@@ -54,7 +54,7 @@ export function AcceptedScreen({
           className="mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
         >
           You're all set,{" "}
-          <span className="text-gradient">
+          <span className="text-accent-700">
             {signerName.split(" ")[0]}
           </span>
           .

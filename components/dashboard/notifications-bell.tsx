@@ -67,8 +67,8 @@ export function NotificationsBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
-          <div className="border-b border-zinc-100 px-4 py-2.5 text-sm font-semibold text-ink">
+        <div className="absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-elevated">
+          <div className="border-b border-zinc-100 px-4 py-2.5 text-sm font-semibold tracking-tight text-zinc-900">
             Worker activity
           </div>
           {items.length === 0 ? (
@@ -89,7 +89,7 @@ export function NotificationsBell() {
                         "mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full",
                         i.event === "ACCEPTED" && "bg-emerald-50 text-emerald-600",
                         i.event === "DECLINED" && "bg-rose-50 text-rose-600",
-                        i.event === "COMPLETED" && "bg-sky-50 text-sky-600",
+                        i.event === "COMPLETED" && "bg-accent-50 text-accent-700",
                       )}
                     >
                       {i.event === "ACCEPTED" && <Check className="h-3.5 w-3.5" />}
