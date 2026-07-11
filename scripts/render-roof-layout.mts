@@ -22,13 +22,13 @@ import type { EdgeClass } from "../lib/ai/edge-takeoff.ts";
 const PDF = `${process.env.HOME}/Downloads/05.13.26 DA HOMES - WOODINVILLE PLAN SET.pdf`;
 const ROOF_PAGE = 11;
 
-// Hand-read from A9's own labels (see edge-map.png for the E-ids), matching
-// the elevations' own count — north (front) 3 gables + south (patio) 1:
-//   E16 patio stub end   — GABLE END TRUSS (rear/south gable)
-//   E8  entry porch front — gable end (front/north elevation, center)
-//   E6  garage front      — gable end (front/north elevation, right)
-//   E10 great-room front  — gable end (front/north elevation, left)
-const RAKE_IDS = new Set(["E16", "E8", "E6", "E10"]);
+// REPLAY OF PRODUCTION RUN 2 (2026-07-10): the classifier applied one global
+// truss direction — every horizontal edge eave, every vertical edge rake —
+// inverting half the perimeter (front gables priced, guttered sides tented).
+// The reconciler corrects it using the per-face elevation reads below (the
+// values the production run itself reported: north 3 gables, south 1,
+// east/west 1 set-back frame-over each, continuous eaves everywhere).
+const SIMULATE_RUN2_INVERSION = true;
 
 const bytes = new Uint8Array(readFileSync(PDF));
 const pdf = await getDocumentProxy(bytes);
@@ -44,13 +44,52 @@ if (!roof || roof.perimeter.length <= 4) {
 }
 const outline = roof.perimeter;
 const edges = outlineEdges(outline);
-const classes: EdgeClass[] = edges.map((e) => ({
+const { reconcileEdgeClasses } = await import("../lib/ai/reconcile-edge-classes.ts");
+const PT_PER_FT = 23.27; // run 2's dimension-line solve
+
+const rawClasses: EdgeClass[] = edges.map((e) => ({
   id: e.id,
-  edge_class: RAKE_IDS.has(e.id) ? "rake" : "eave",
+  edge_class: SIMULATE_RUN2_INVERSION ? (e.axis === "h" ? "eave" : "rake") : "eave",
   tier: null,
   feature: null,
-  evidence: [],
+  evidence: ["truss_direction"],
 }));
+
+const gable = (kind: string, span_ft: number, position_frac: number, set_back_ft = 0) => ({
+  id: kind, kind: kind as never, span_ft, pitch: 6, position_frac,
+  eave_condition_guess: "flush" as const, supported_on: "unknown" as const,
+  shows_projection_cue: false, set_back_ft, notes: "",
+});
+const face = (f: string, title: string, gables: ReturnType<typeof gable>[]) => ({
+  face: f as never, sheet_title: title, readable: true, unreadable_reason: null,
+  gable_count: gables.length, continuous_eave: true, gables,
+  projections: [], projection_cues: [], confidence: "high" as const,
+});
+// Per-face reads as production reported them (positions estimated from the
+// elevations: great-room left, entry center, garage right; patio centered on
+// the rear; east/west show one frame-over gable each ABOVE the lower eave).
+const PER_FACE = {
+  north: face("north", "FRONT/NORTH ELEVATION", [
+    gable("main", 21, 0.16), gable("entry", 23, 0.5), gable("garage", 21, 0.85),
+  ]),
+  south: face("south", "REAR/SOUTH ELEVATION", [gable("patio", 8, 0.54)]),
+  east: face("east", "LEFT/EAST ELEVATION", [gable("main", 16, 0.5, 4)]),
+  west: face("west", "RIGHT/WEST ELEVATION", [gable("main", 16, 0.5, 4)]),
+};
+
+const rec = reconcileEdgeClasses({
+  outline, edges, classes: rawClasses, perFace: PER_FACE, ptPerFt: PT_PER_FT,
+});
+for (const n of rec.notes) console.log(n);
+const classes = rec.classes;
+const RAKE_IDS = new Set(classes.filter((c) => c.edge_class === "rake").map((c) => c.id));
+console.log(
+  `reconciled: rakes=[${[...RAKE_IDS].join(",")}] eaves=${classes.filter((c) => c.edge_class === "eave").length} unknown=${classes.filter((c) => c.edge_class === "unknown").length}`,
+);
+const eaveLF = edges
+  .filter((e) => classes.find((c) => c.id === e.id)?.edge_class === "eave")
+  .reduce((s, e) => s + e.lenPt / PT_PER_FT, 0);
+console.log(`eave LF at ${PT_PER_FT} pt/ft: ${Math.round(eaveLF)} (run 2 shipped 129)`);
 
 const layout = buildRoofLayout({ outline, edges, classes, segments: segs });
 console.log(`ok=${layout.ok} reason=${layout.reason ?? "-"}`);

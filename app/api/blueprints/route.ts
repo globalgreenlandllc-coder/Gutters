@@ -576,6 +576,10 @@ export async function POST(request: Request) {
                 heightPt: vectorGeometry?.roof?.heightPt,
               },
               footprint: vectorGeometry?.footprint ?? null,
+              // Per-face elevation reads: the code-enforced gable budget —
+              // every rake call is reconciled against the elevation the wall
+              // actually faces (reconcile-edge-classes.ts).
+              perFace: elevations?.per_face ?? null,
             });
             if (edgeTakeoff.notes.length > 0) {
               finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];

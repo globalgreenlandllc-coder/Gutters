@@ -14,6 +14,8 @@ import { findDimSpanCandidates, solvePtPerFt } from "./dim-scale";
 import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
 import { buildRoofLayout, type RoofLayout } from "./roof-layout";
+import { reconcileEdgeClasses } from "./reconcile-edge-classes";
+import type { FaceReadingRaw } from "./face-merge";
 
 /**
  * classify-edges.ts — the ONE expensive vision call of the v2 takeoff.
@@ -84,6 +86,23 @@ Work from the DRAWINGS' OWN WORDS and construction logic, strongest first:
 - TRUSS DIRECTION on the framing plan: truss lines drawn PERPENDICULAR to an
   edge bear ON it ⇒ that edge is an EAVE. Truss lines PARALLEL to an edge,
   arrayed toward it, end at a gable-end ⇒ RAKE (tag: truss_direction).
+  ⚠ TRUSS DIRECTION IS PER-MASS, NEVER GLOBAL: a real house has several roof
+  masses (main body, garage, porch, patio) and EACH has its own truss array,
+  often rotated 90° from its neighbor. Judge every edge ONLY from the trusses
+  in the mass that touches THAT edge. Applying one direction to the whole
+  outline inverts half the perimeter — the exact failure this warning exists
+  to prevent.
+- FLOOR-PLAN SLOPE ARROWS ("9:12 SLOPE" with an arrow) point DOWNHILL toward
+  the eave; the walls the arrows point AT are eaves, the walls parallel to
+  the arrows are rakes (tag: slope_arrow).
+- THE ELEVATIONS ARE THE GABLE BUDGET: count the gable triangles on each of
+  the four elevation faces first. A side whose elevation shows one continuous
+  fascia/gutter line and N gable(s) has AT MOST N rake edges — never call
+  more. If the framing sheet seems to disagree with a clearly drawn
+  elevation, prefer the elevation and tag the edge unknown.
+- The UPPER FLOOR PLAN (when present) is the cleanest footprint sheet: its
+  exterior walls are the upper-roof eave walls and its "LINE OF ROOF BELOW"
+  dashes show where lower porch/patio/garage roofs attach (lower tier).
 - ELEVATIONS: match each elevation face to the edges facing that compass
   direction. A horizontal fascia/gutter line across a wall ⇒ EAVE
   (tag: elevation_eave). A triangular gable face on that wall ⇒ the edge
@@ -263,6 +282,11 @@ export async function classifyPerimeterEdges(opts: {
     widthPt?: number;
     heightPt?: number;
   } | null;
+  /** Independent per-face elevation reads — the binding gable budget. Every
+   *  rake call is reconciled against the elevation its wall faces; elevation
+   *  gables are mapped back onto their wall segments (promote/demote/unknown,
+   *  see reconcile-edge-classes.ts). */
+  perFace?: Partial<Record<string, FaceReadingRaw>> | null;
 }): Promise<EdgeClassification> {
   const empty = (reason: string): EdgeClassification => ({
     ok: false,
@@ -408,7 +432,7 @@ export async function classifyPerimeterEdges(opts: {
     };
     const idSet = new Set(edgeIds);
 
-    const classes: EdgeClass[] = (Array.isArray(raw.edges) ? raw.edges : [])
+    let classes: EdgeClass[] = (Array.isArray(raw.edges) ? raw.edges : [])
       .filter(
         (e): e is EdgeClass =>
           !!e &&
@@ -462,6 +486,19 @@ export async function classifyPerimeterEdges(opts: {
       )
       .map((h) => ({ direction: h.direction, near_edge_id: h.near_edge_id }));
 
+    // Elevation reconcile — code-enforced, runs BEFORE the layout so gable
+    // ridges land on the walls the elevations actually show gables on. The
+    // production failure this guards: one global truss direction inverted
+    // eave/rake on half the perimeter (front gables priced, sides tented).
+    const reconcile = reconcileEdgeClasses({
+      outline: opts.outline,
+      edges,
+      classes,
+      perFace: opts.perFace ?? null,
+      ptPerFt: solved?.ptPerFt ?? null,
+    });
+    classes = reconcile.classes;
+
     // Interior geometry — computed, never traced. Stored alongside the
     // classes so the estimate path draws the same layout the evidence built.
     const layout = buildRoofLayout({
@@ -480,6 +517,7 @@ export async function classifyPerimeterEdges(opts: {
         (solved
           ? `; scale ${Math.round(solved.ptPerFt * 100) / 100} pt/ft from dimension line(s) ${solved.used.join(", ")}.`
           : `; no dimension value read — scale unsolved.`),
+      ...reconcile.notes,
       ...layout.notes,
     ];
 
