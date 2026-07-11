@@ -6,10 +6,16 @@ import { Plus, Sparkles } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { ProposalsTable } from "@/components/dashboard/proposals-table";
+import { StatTile } from "@/components/dashboard/stat-tile";
+import { formatCurrency } from "@/lib/utils";
 import {
   listMyProposals,
   type MyProposalRow,
 } from "@/app/actions/dashboard";
+import {
+  getPaymentStats,
+  type PaymentStats,
+} from "@/app/actions/payments";
 
 export default function ProposalsListPage() {
   return (
@@ -21,13 +27,16 @@ export default function ProposalsListPage() {
 
 function Inner() {
   const [rows, setRows] = useState<MyProposalRow[]>([]);
+  const [money, setMoney] = useState<PaymentStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    listMyProposals()
-      .then((r) => {
-        if (!cancelled) setRows(r);
+    Promise.all([listMyProposals(), getPaymentStats()])
+      .then(([r, m]) => {
+        if (cancelled) return;
+        setRows(r);
+        setMoney(m);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -37,10 +46,20 @@ function Inner() {
     };
   }, []);
 
+  // The money strip only earns its space once at least one job is
+  // accepted (or something was ever collected) — a brand-new account
+  // shouldn't open on four zero-dollar tiles.
+  const hasMoney =
+    !!money &&
+    (money.jobsInProgress > 0 ||
+      money.jobsDone > 0 ||
+      money.collectedMtdCents > 0 ||
+      money.outstandingCents > 0);
+
   return (
     <DashboardShell
       title="Proposals"
-      subtitle="Every estimate and proposal you've drafted, sent, or closed."
+      subtitle="Every estimate and proposal you've drafted, sent, or closed — with the money state of each job."
       actions={
         <Link
           href="/dashboard/proposals/new"
@@ -73,7 +92,57 @@ function Inner() {
           </Link>
         </div>
       ) : (
-        <ProposalsTable items={rows} />
+        <div className="space-y-4">
+          {(loading || hasMoney) && (
+            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatTile
+                index={0}
+                loading={loading}
+                label="Collected · this month"
+                value={formatCurrency((money?.collectedMtdCents ?? 0) / 100)}
+                footnote="across all accepted jobs"
+              />
+              <StatTile
+                index={1}
+                loading={loading}
+                label="Outstanding"
+                value={formatCurrency((money?.outstandingCents ?? 0) / 100)}
+                footnote={
+                  (money?.jobsInProgress ?? 0) > 0
+                    ? `${money!.jobsInProgress} job${money!.jobsInProgress === 1 ? "" : "s"} in progress`
+                    : "no open balances"
+                }
+              />
+              <StatTile
+                index={2}
+                loading={loading}
+                label="Overdue"
+                value={formatCurrency((money?.overdueCents ?? 0) / 100)}
+                delta={
+                  (money?.overdueCount ?? 0) > 0
+                    ? {
+                        text: `${money!.overdueCount} payment${money!.overdueCount === 1 ? "" : "s"} late`,
+                        positive: false,
+                      }
+                    : undefined
+                }
+                footnote={
+                  (money?.overdueCount ?? 0) === 0
+                    ? "nothing late"
+                    : "filter the list below"
+                }
+              />
+              <StatTile
+                index={3}
+                loading={loading}
+                label="Awaiting client"
+                value={String(money?.pendingChangeOrders ?? 0)}
+                footnote="change orders pending approval"
+              />
+            </section>
+          )}
+          <ProposalsTable items={rows} loading={loading} />
+        </div>
       )}
     </DashboardShell>
   );

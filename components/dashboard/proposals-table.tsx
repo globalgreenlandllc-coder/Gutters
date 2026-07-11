@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Bell,
   ChevronRight,
   Eye,
   FileDiff,
@@ -42,7 +43,7 @@ const STATUS_TONE: Record<
   expired: { tone: "amber", label: "Expired" },
 };
 
-type FilterId = "all" | ProposalStatus | "in_progress" | "done";
+type FilterId = "all" | ProposalStatus | "in_progress" | "done" | "overdue";
 
 const FILTERS: { id: FilterId; label: string }[] = [
   { id: "all", label: "All" },
@@ -50,6 +51,7 @@ const FILTERS: { id: FilterId; label: string }[] = [
   { id: "sent", label: "Sent" },
   { id: "viewed", label: "Viewed" },
   { id: "in_progress", label: "In progress" },
+  { id: "overdue", label: "Overdue" },
   { id: "done", label: "Done" },
   { id: "expired", label: "Expired" },
 ];
@@ -58,23 +60,35 @@ function matchesFilter(p: ProposalListItem, filter: FilterId): boolean {
   if (filter === "all") return true;
   if (filter === "in_progress") return jobStage(p) === "in_progress";
   if (filter === "done") return jobStage(p) === "done";
+  if (filter === "overdue") return (p.overdueInstallments ?? 0) > 0;
   return p.status === filter;
 }
+
+/* Shared grid templates — header row and body rows must stay in sync.
+   Column order: Property·Client | Status | Total·collected | Views |
+   Updated | Actions. Actions is wide enough for Remind + menu. */
+const GRID_LG =
+  "lg:grid-cols-[minmax(0,1fr)_132px_112px_104px_80px_104px] lg:items-center lg:gap-3";
+const GRID_XL =
+  "xl:grid-cols-[minmax(0,1fr)_170px_150px_140px_110px_116px] xl:gap-4";
 
 export function ProposalsTable({
   items,
   compact = false,
   showFilters = true,
+  loading = false,
 }: {
   items: ProposalListItem[];
   compact?: boolean;
   showFilters?: boolean;
+  /** Pulse-skeleton rows while the list is in flight. */
+  loading?: boolean;
 }) {
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
-  // Payments drawer for accepted jobs (schedule, mark-paid, change
-  // orders). Auto-opens when the URL carries ?pay=<proposalId> — the
-  // Overview needs-attention feed links here.
+  // Payments drawer for accepted jobs (schedule, mark-paid, reminders,
+  // change orders). Auto-opens when the URL carries ?pay=<proposalId> —
+  // the Overview needs-attention feed links here.
   const [payFor, setPayFor] = useState<string | null>(null);
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("pay");
@@ -137,14 +151,24 @@ export function ProposalsTable({
     );
   });
 
+  const overdueTotal = items.filter(
+    (p) => !deletedIds.has(p.id) && (p.overdueInstallments ?? 0) > 0,
+  ).length;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-card">
       {showFilters && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
           <div className="flex flex-wrap gap-1.5">
             {FILTERS.map((f) => {
-              const count = items.filter((p) => matchesFilter(p, f.id)).length;
+              const count = items.filter(
+                (p) => !deletedIds.has(p.id) && matchesFilter(p, f.id),
+              ).length;
+              // The Overdue chip only earns a slot when something is
+              // actually late — and then it demands attention in rose.
+              if (f.id === "overdue" && count === 0) return null;
               const active = filter === f.id;
+              const isAlert = f.id === "overdue";
               return (
                 <button
                   key={f.id}
@@ -152,17 +176,24 @@ export function ProposalsTable({
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition",
                     active
-                      ? "border-zinc-200 bg-zinc-100 font-medium text-zinc-900"
-                      : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
+                      ? isAlert
+                        ? "border-rose-200 bg-rose-50 font-medium text-rose-700"
+                        : "border-zinc-200 bg-zinc-100 font-medium text-zinc-900"
+                      : isAlert
+                        ? "border-rose-200 bg-white text-rose-600 hover:bg-rose-50"
+                        : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900",
                   )}
                 >
+                  {isAlert && <AlertTriangle className="h-3.5 w-3.5" />}
                   {f.label}
                   <span
                     className={cn(
                       "rounded px-1.5 py-0.5 text-[10px] tabular-nums",
-                      active
-                        ? "bg-white text-zinc-600"
-                        : "bg-zinc-100 text-zinc-500",
+                      isAlert
+                        ? "bg-rose-100 text-rose-700"
+                        : active
+                          ? "bg-white text-zinc-600"
+                          : "bg-zinc-100 text-zinc-500",
                     )}
                   >
                     {count}
@@ -183,20 +214,32 @@ export function ProposalsTable({
         </div>
       )}
 
-      {/* Column template must leave the flexible first column real room on
-          the Overview's narrower main pane (lg) — the wide template only
-          engages at xl. Keep in sync with the row grid below. */}
-      <div className="hidden grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] gap-3 px-4 py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400 lg:grid xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
+      <div
+        className={cn(
+          "hidden gap-3 px-4 py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400 lg:grid",
+          GRID_LG,
+          GRID_XL,
+        )}
+      >
         <div className="truncate">Property · Client</div>
         <div>Status</div>
-        <div className="text-right">Total</div>
+        <div className="text-right">Total · Collected</div>
         <div className="text-center">Client views</div>
         <div className="text-right">Updated</div>
         <div className="text-right">Actions</div>
       </div>
 
       <ul>
-        {filtered.length === 0 && (
+        {loading &&
+          [0, 1, 2, 3].map((i) => (
+            <li key={i} className="border-t border-zinc-100 px-4 py-4">
+              <div className="animate-pulse space-y-2">
+                <div className="h-4 w-2/5 rounded bg-zinc-100" />
+                <div className="h-3 w-1/4 rounded bg-zinc-100" />
+              </div>
+            </li>
+          ))}
+        {!loading && filtered.length === 0 && (
           <li className="px-4 py-12 text-center text-sm text-zinc-500">
             No proposals match these filters.
           </li>
@@ -211,50 +254,123 @@ export function ProposalsTable({
             Couldn&apos;t delete: {deleteError}
           </li>
         )}
-        {filtered.map((p, i) => {
-          const tone = STATUS_TONE[p.status];
-          const stage = jobStage(p);
-          // Send is meaningful for drafts and re-sends; suppress only
-          // for accepted / declined / expired where it'd be misleading.
-          const canSend =
-            p.status === "draft" ||
-            p.status === "sent" ||
-            p.status === "viewed";
-          const viewCount = p.viewCount ?? 0;
-          const lastViewed = p.lastViewedAt;
-          return (
-            <motion.li
-              key={p.id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: Math.min(i, 8) * 0.02 }}
-              className="relative border-t border-zinc-100"
-            >
-              <div className="group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_90px_104px_90px_76px] lg:items-center lg:gap-3 xl:grid-cols-[minmax(0,1fr)_180px_120px_140px_120px_88px] xl:gap-4">
-                <Link
-                  href={`/proposal?id=${p.id}`}
-                  className="min-w-0"
+        {!loading &&
+          filtered.map((p, i) => {
+            const tone = STATUS_TONE[p.status];
+            const stage = jobStage(p);
+            const overdue = (p.overdueInstallments ?? 0) > 0;
+            const pendingCOs = p.pendingChangeOrders ?? 0;
+            const paid = p.paidTotal ?? 0;
+            const pct =
+              p.total > 0
+                ? Math.min(100, Math.round((paid / p.total) * 100))
+                : 0;
+            // Send is meaningful for drafts and re-sends; suppress only
+            // for accepted / declined / expired where it'd be misleading.
+            const canSend =
+              p.status === "draft" ||
+              p.status === "sent" ||
+              p.status === "viewed";
+            const viewCount = p.viewCount ?? 0;
+            const lastViewed = p.lastViewedAt;
+            return (
+              <motion.li
+                key={p.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: Math.min(i, 8) * 0.02 }}
+                className="relative border-t border-zinc-100"
+              >
+                {/* Overdue rows get a rose spine so late money is
+                    scannable even with the row collapsed on mobile. */}
+                {overdue && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-[3px] bg-rose-400"
+                  />
+                )}
+                <div
+                  className={cn(
+                    "group grid grid-cols-1 gap-1 px-4 py-3.5 transition hover:bg-zinc-50/60",
+                    GRID_LG,
+                    GRID_XL,
+                  )}
                 >
-                  <div className="truncate font-medium text-zinc-900">
-                    {p.address || (
-                      <span className="text-zinc-400">(no address)</span>
+                  <Link href={`/proposal?id=${p.id}`} className="min-w-0">
+                    <div className="truncate font-medium text-zinc-900">
+                      {p.address || (
+                        <span className="text-zinc-400">(no address)</span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-zinc-500">
+                      {p.client || (
+                        <span className="text-zinc-400">(no client)</span>
+                      )}
+                      {p.selectedPackage && (
+                        <span className="ml-1 text-zinc-400">
+                          · {p.selectedPackage}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+
+                  {/* STATUS — badge plus the payment alarm chips, always
+                      visible (they were xl-only before, i.e. invisible). */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {stage === "done" ? (
+                      <Badge tone="emerald">Done · paid</Badge>
+                    ) : stage === "in_progress" ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setPayFor(p.id);
+                        }}
+                        title="Open payments — schedule, receipts, reminders"
+                      >
+                        <Badge tone="accent">In progress</Badge>
+                      </button>
+                    ) : (
+                      <Link href={`/proposal?id=${p.id}`}>
+                        <Badge tone={tone.tone}>{tone.label}</Badge>
+                      </Link>
+                    )}
+                    {overdue && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setPayFor(p.id);
+                        }}
+                        className="inline-flex items-center gap-0.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[11px] font-semibold text-rose-600 ring-1 ring-inset ring-rose-200"
+                        title={`${p.overdueInstallments} overdue payment${(p.overdueInstallments ?? 0) === 1 ? "" : "s"} — open payments`}
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        {p.overdueInstallments} late
+                      </button>
+                    )}
+                    {pendingCOs > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setPayFor(p.id);
+                        }}
+                        className="inline-flex items-center gap-0.5 rounded-full bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-600 ring-1 ring-inset ring-sky-200"
+                        title="Change order awaiting the client — open payments"
+                      >
+                        <FileDiff className="h-3 w-3" />
+                        {pendingCOs} CO
+                      </button>
                     )}
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-zinc-500">
-                    {p.client || (
-                      <span className="text-zinc-400">(no client)</span>
-                    )}
-                    {p.selectedPackage && (
-                      <span className="ml-1 text-zinc-400">
-                        · {p.selectedPackage}
-                      </span>
-                    )}
-                  </div>
-                </Link>
-                <div className="flex items-center gap-2">
-                  {stage === "done" ? (
-                    <Badge tone="emerald">Done · paid</Badge>
-                  ) : stage === "in_progress" ? (
+
+                  {/* TOTAL · COLLECTED — accepted jobs show the money
+                      state right in the money column. */}
+                  {stage ? (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -262,137 +378,143 @@ export function ProposalsTable({
                         e.stopPropagation();
                         setPayFor(p.id);
                       }}
-                      className="group/progress flex items-center gap-2"
-                      title={`${formatCurrency(p.paidTotal ?? 0)} of ${formatCurrency(p.total)} collected — open payments`}
+                      className="text-left lg:text-right"
+                      title={`${formatCurrency(paid)} of ${formatCurrency(p.total)} collected — open payments`}
                     >
-                      <Badge tone="accent">In progress</Badge>
-                      <span className="hidden h-1 w-14 overflow-hidden rounded-full bg-zinc-100 xl:block">
-                        <span
-                          className="block h-full rounded-full bg-accent-600"
-                          style={{
-                            width: `${p.total > 0 ? Math.min(100, Math.round(((p.paidTotal ?? 0) / p.total) * 100)) : 0}%`,
-                          }}
-                        />
-                      </span>
-                      {(p.overdueInstallments ?? 0) > 0 && (
-                        <span
-                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-rose-600"
-                          title="Overdue payment"
-                        >
-                          <AlertTriangle className="h-3 w-3" />
-                          {p.overdueInstallments}
+                      <div className="text-sm font-medium tabular-nums text-zinc-900">
+                        {formatCurrency(p.total)}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 lg:justify-end">
+                        <span className="h-1 w-12 overflow-hidden rounded-full bg-zinc-100">
+                          <span
+                            className={cn(
+                              "block h-full rounded-full",
+                              pct >= 100 ? "bg-emerald-500" : "bg-accent-600",
+                            )}
+                            style={{ width: `${pct}%` }}
+                          />
                         </span>
-                      )}
-                      {(p.pendingChangeOrders ?? 0) > 0 && (
                         <span
-                          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-sky-600"
-                          title="Change order awaiting client"
+                          className={cn(
+                            "text-[11px] font-medium tabular-nums",
+                            pct >= 100 ? "text-emerald-700" : "text-zinc-500",
+                          )}
                         >
-                          <FileDiff className="h-3 w-3" />
-                          {p.pendingChangeOrders}
+                          {pct}%
                         </span>
-                      )}
+                      </div>
                     </button>
                   ) : (
                     <Link
                       href={`/proposal?id=${p.id}`}
-                      className="flex items-center gap-2"
+                      className="text-sm font-medium tabular-nums text-zinc-900 lg:text-right"
                     >
-                      <Badge tone={tone.tone}>{tone.label}</Badge>
+                      {formatCurrency(p.total)}
                     </Link>
                   )}
+
+                  <Link
+                    href={`/proposal?id=${p.id}`}
+                    className="flex items-center gap-1.5 lg:justify-center"
+                    title={
+                      lastViewed
+                        ? `First viewed ${timeAgo(p.firstViewedAt ?? lastViewed)}, last ${timeAgo(lastViewed)}`
+                        : viewCount === 0
+                          ? "Not opened yet"
+                          : undefined
+                    }
+                  >
+                    {viewCount === 0 ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
+                        <Eye className="h-3 w-3" />
+                        Not opened
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">
+                        <Eye className="h-3 w-3" />
+                        <span className="tabular-nums">{viewCount}×</span>
+                        {lastViewed && (
+                          <span className="text-violet-500/80">
+                            · {timeAgo(lastViewed)}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </Link>
+                  <Link
+                    href={`/proposal?id=${p.id}`}
+                    className="text-xs text-zinc-500 lg:text-right"
+                  >
+                    {timeAgo(p.updatedAt)}
+                  </Link>
+                  <div className="flex items-center gap-1 lg:justify-end">
+                    {overdue ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setPayFor(p.id);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm transition hover:bg-rose-700"
+                        title="Payment overdue — open the schedule and send a reminder"
+                      >
+                        <Bell className="h-3 w-3" />
+                        Remind
+                      </button>
+                    ) : (
+                      stage && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setPayFor(p.id);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700"
+                          title="Payment schedule, receipts & change orders"
+                        >
+                          <Wallet className="h-3 w-3" />
+                          Payments
+                        </button>
+                      )
+                    )}
+                    {canSend && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openSendFor(p.id);
+                        }}
+                        disabled={loadingSendId === p.id}
+                        className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700 disabled:opacity-60"
+                        title={
+                          p.status === "draft"
+                            ? "Send proposal to client"
+                            : "Re-send proposal"
+                        }
+                      >
+                        {loadingSendId === p.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Send className="h-3 w-3" />
+                        )}
+                        {p.status === "draft" ? "Send" : "Re-send"}
+                      </button>
+                    )}
+                    <RowMenu
+                      onDelete={() => handleDelete(p.id)}
+                      deleting={deletingId === p.id}
+                      address={p.address}
+                      onPayments={stage ? () => setPayFor(p.id) : undefined}
+                    />
+                    <ChevronRight className="hidden h-4 w-4 text-zinc-300 xl:block" />
+                  </div>
                 </div>
-                <Link
-                  href={`/proposal?id=${p.id}`}
-                  className="text-right text-sm font-medium tabular-nums text-zinc-900"
-                >
-                  {formatCurrency(p.total)}
-                </Link>
-                <Link
-                  href={`/proposal?id=${p.id}`}
-                  className="flex items-center justify-center gap-1.5"
-                  title={
-                    lastViewed
-                      ? `First viewed ${timeAgo(p.firstViewedAt ?? lastViewed)}, last ${timeAgo(lastViewed)}`
-                      : viewCount === 0
-                        ? "Not opened yet"
-                        : undefined
-                  }
-                >
-                  {viewCount === 0 ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-zinc-400">
-                      <Eye className="h-3 w-3" />
-                      Not opened
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200">
-                      <Eye className="h-3 w-3" />
-                      <span className="tabular-nums">{viewCount}×</span>
-                      {lastViewed && (
-                        <span className="text-violet-500/80">
-                          · {timeAgo(lastViewed)}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </Link>
-                <Link
-                  href={`/proposal?id=${p.id}`}
-                  className="text-right text-xs text-zinc-500"
-                >
-                  {timeAgo(p.updatedAt)}
-                </Link>
-                <div className="flex items-center justify-end gap-1">
-                  {stage && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setPayFor(p.id);
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700"
-                      title="Payment schedule, receipts & change orders"
-                    >
-                      <Wallet className="h-3 w-3" />
-                      Payments
-                    </button>
-                  )}
-                  {canSend && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openSendFor(p.id);
-                      }}
-                      disabled={loadingSendId === p.id}
-                      className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50 hover:text-accent-700 disabled:opacity-60"
-                      title={
-                        p.status === "draft"
-                          ? "Send proposal to client"
-                          : "Re-send proposal"
-                      }
-                    >
-                      {loadingSendId === p.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Send className="h-3 w-3" />
-                      )}
-                      {p.status === "draft" ? "Send" : "Re-send"}
-                    </button>
-                  )}
-                  <RowMenu
-                    onDelete={() => handleDelete(p.id)}
-                    deleting={deletingId === p.id}
-                    address={p.address}
-                  />
-                  <ChevronRight className="hidden h-4 w-4 text-zinc-300 lg:block" />
-                </div>
-              </div>
-            </motion.li>
-          );
-        })}
+              </motion.li>
+            );
+          })}
       </ul>
 
       {compact && (
@@ -421,18 +543,20 @@ export function ProposalsTable({
 }
 
 /**
- * Per-row overflow menu — currently delete-only. Confirm step is
- * inline (no separate modal) so it's a single click + a single
- * confirm and the row vanishes.
+ * Per-row overflow menu — payments shortcut (accepted jobs) + delete.
+ * Confirm step is inline (no separate modal) so it's a single click +
+ * a single confirm and the row vanishes.
  */
 function RowMenu({
   onDelete,
   deleting,
   address,
+  onPayments,
 }: {
   onDelete: () => void;
   deleting: boolean;
   address: string;
+  onPayments?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -480,18 +604,35 @@ function RowMenu({
           onClick={(e) => e.stopPropagation()}
         >
           {!confirming ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setConfirming(true);
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete proposal
-            </button>
+            <>
+              {onPayments && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setOpen(false);
+                    onPayments();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition hover:bg-zinc-50"
+                >
+                  <Wallet className="h-4 w-4 text-zinc-400" />
+                  Payments, receipts & reminders
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setConfirming(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-rose-700 transition hover:bg-rose-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete proposal
+              </button>
+            </>
           ) : (
             <div className="p-3">
               <div className="text-sm font-medium text-zinc-900">
