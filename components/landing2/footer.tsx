@@ -28,8 +28,8 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
       { label: "About Us", href: "/sign-in" },
       { label: "Careers", href: "/sign-in" },
       { label: "Contact", href: "/sign-in" },
-      { label: "Privacy Policy", href: "/sign-in" },
-      { label: "Terms of Service", href: "/sign-in" },
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms of Service", href: "/terms" },
     ],
   },
 ];

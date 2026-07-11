@@ -7,6 +7,10 @@ const isPublic = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/p/(.*)",
+  // Legal pages must be reachable logged-out — Google's OAuth app
+  // verification crawls the privacy policy without a session.
+  "/privacy(.*)",
+  "/terms(.*)",
   "/api/webhooks/(.*)",
   "/api/cron/(.*)",
 ]);
