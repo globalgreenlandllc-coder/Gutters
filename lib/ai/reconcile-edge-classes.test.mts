@@ -134,10 +134,14 @@ test("reconcile: a gable spanning part of a long wall goes UNKNOWN, not rake", (
   const edges = outlineEdges(OUTLINE);
   const perFace = {
     ...PER_FACE,
-    north: face("north", "FRONT/NORTH ELEVATION", [
-      // 4 ft gable mapped onto the 15 ft front-left wall (E11).
-      { kind: "dormer", span_ft: 4, position_frac: 0.15 },
-    ]),
+    north: face(
+      "north",
+      "FRONT/NORTH ELEVATION",
+      // 4 ft gable mapped onto the 15 ft front-left wall (E11). The face's
+      // eave is NOT continuous (a wall-plane gable interrupts it).
+      [{ kind: "dormer", span_ft: 4, position_frac: 0.15 }],
+      { continuous_eave: false },
+    ),
   };
   const r = reconcileEdgeClasses({
     outline: OUTLINE,
@@ -201,11 +205,15 @@ test("reconcile: a posts-supported gable never consumes a base-line house wall",
   const edges = outlineEdges(OUTLINE);
   const perFace = {
     ...PER_FACE,
-    north: face("north", "FRONT/NORTH ELEVATION", [
+    north: face(
+      "north",
+      "FRONT/NORTH ELEVATION",
       // A projecting porch roof read at a position with NO protruding stub —
       // it maps onto the plain front wall E11, which must keep its gutter.
-      { kind: "porch", span_ft: 10, position_frac: 0.1, supported_on: "posts" },
-    ]),
+      // Non-continuous face so the posts guard itself is what fires.
+      [{ kind: "porch", span_ft: 10, position_frac: 0.1, supported_on: "posts" }],
+      { continuous_eave: false },
+    ),
   };
   const r = reconcileEdgeClasses({
     outline: OUTLINE,
@@ -281,6 +289,88 @@ test("reconcile: a gable the mapping missed raises a budget warning", () => {
     r.notes.some((n) => n.includes("⚠") && n.includes("north")),
     "deficit surfaced",
   );
+});
+
+test("reconcile: a continuous-eave face needs SHEET corroboration to consume a wall — even with set-back 0", () => {
+  // The run-4 failure: the side elevations' frame-over gables came back with
+  // an explicit set_back of 0, defeating the unknown-set-back gate, and
+  // CONFIRMED the raw rake calls on the side walls (E13/E3 tents).
+  const edges = outlineEdges(OUTLINE);
+  const perFace = {
+    ...PER_FACE,
+    east: face("east", "LEFT/EAST ELEVATION", [
+      // 14 ft on a 20 ft wall — a frame-over-sized claim (the real
+      // Woodinville reads were ~73% of the wall). A near-full-width claim
+      // (>=80%) would pierce the gate as a true wall-plane gable.
+      { kind: "main", span_ft: 14, position_frac: 0.5, set_back_ft: 0 },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // side walls arrive as raw rakes
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E12"), "eave", "side wall demoted, not confirmed");
+  assert.equal(cls.get("E10"), "eave");
+  assert.ok(
+    r.notes.some((n) => n.includes("continuous eave/gutter line across this side")),
+    "the hard gate explains itself",
+  );
+});
+
+test("reconcile: sheet evidence pierces the continuous-eave gate", () => {
+  // Same face, but the wall the gable maps onto carries gable-end framing
+  // (fieldParallel) — the gate's escape lets the mapping land. E12 arrives
+  // as EAVE so only the gate escape + mapping can make it rake.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E12" ? { ...c, edge_class: "eave" as const } : c,
+  );
+  const perFace = {
+    ...PER_FACE,
+    east: face("east", "LEFT/EAST ELEVATION", [
+      // u 0.5 maps onto E12 (the fieldParallel'd wall).
+      { kind: "main", span_ft: 14, position_frac: 0.5, set_back_ft: 0 },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace,
+    ptPerFt: PT_PER_FT,
+    fieldParallel: new Set(["E12"]),
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E12"), "rake", "field-backed gable survives the gate");
+  assert.ok(
+    r.notes.some((n) => n.includes("E12") && n.includes("RAKE")),
+    "promotion is noted",
+  );
+});
+
+test("reconcile: a near-full-width gable claim pierces the gate (true wall-plane gable)", () => {
+  // Rectangle-gable-house protection: the reader sloppily says
+  // continuous_eave=true but reads the REAL gable spanning ~the whole wall.
+  const edges = outlineEdges(OUTLINE);
+  const perFace = {
+    ...PER_FACE,
+    east: face("east", "LEFT/EAST ELEVATION", [
+      { kind: "main", span_ft: 19, position_frac: 0.5, set_back_ft: 0 },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(),
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E12"), "rake", "full-width gable stays a gable");
 });
 
 test("reconcile: no per-face reads → untouched", () => {

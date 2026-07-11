@@ -50,12 +50,17 @@ const edges = outlineEdges(outline);
 const { reconcileEdgeClasses } = await import("../lib/ai/reconcile-edge-classes.ts");
 const PT_PER_FT = 23.27; // run 2's dimension-line solve
 
+// Run-4 conditions: global inversion PLUS the patio's printed GABLE END
+// TRUSS label attached to both patio SIDES (E1/E15) by the vision read.
+const LABELED_SIDES = new Set(["E1", "E15"]);
 const rawClasses: EdgeClass[] = edges.map((e) => ({
   id: e.id,
   edge_class: SIMULATE_RUN2_INVERSION ? (e.axis === "h" ? "eave" : "rake") : "eave",
   tier: null,
   feature: null,
-  evidence: ["truss_direction"],
+  evidence: LABELED_SIDES.has(e.id)
+    ? ["gable_end_truss_label"]
+    : ["truss_direction"],
 }));
 
 // Truss-field arbiter — the sheet's own framing arrays, no AI.
@@ -74,7 +79,7 @@ console.log(
   "field verdicts:",
   [...field.entries()].map(([id, v]) => `${id}:${v.verdict[0] === "p" && v.verdict === "parallel" ? "∥" : "⊥"}`).join(" "),
 );
-const fieldPass = applyTrussFieldDemotions({ classes: rawClasses, field });
+const fieldPass = applyTrussFieldDemotions({ classes: rawClasses, field, edges });
 for (const n of fieldPass.notes) console.log(n);
 const fieldEave = new Set(
   [...field.entries()]
@@ -96,21 +101,28 @@ const face = (f: string, title: string, gables: ReturnType<typeof gable>[]) => (
 // elevations: great-room left, entry center, garage right; patio centered on
 // the rear; east/west show one frame-over gable each ABOVE the lower eave).
 const PER_FACE = {
-  north: face("north", "FRONT/NORTH ELEVATION", [
-    gable("main", 21, 0.25),
-    { ...gable("entry", 10, 0.46), supported_on: "posts" as const },
-    gable("garage", 21, 0.79),
-  ]),
+  // Run-4's actual reads: a 38ft "main" claim at u0.50 (landed on the garage
+  // wall), the entry at u0.35 with an over-wide 16ft span.
+  // Three wall-plane gables interrupt the front fascia → NOT continuous
+  // (what the tightened reader prompt instructs).
+  north: {
+    ...face("north", "FRONT/NORTH ELEVATION", [
+      gable("main", 38, 0.5),
+      { ...gable("entry", 16, 0.35), supported_on: "posts" as const },
+    ]),
+    continuous_eave: false,
+  },
+  // Patio span didn't read (E16 went unknown before the field promoted it).
   south: face("south", "REAR/SOUTH ELEVATION", [
-    { ...gable("patio", 23, 0.5), supported_on: "posts" as const },
+    { ...gable("patio", null as unknown as number, 0.5), supported_on: "posts" as const },
   ]),
-  // Live-run behavior: the reader sees the upper frame-over gables but does
-  // NOT report set_back_ft — the continuous-eave gate must protect the sides.
+  // Run-4's killer: the frame-over side gables came back with an EXPLICIT
+  // set-back of 0 on continuous-eave faces — the hard gate must hold.
   east: face("east", "LEFT/EAST ELEVATION", [
-    { ...gable("main", 16, 0.5), set_back_ft: null },
+    { ...gable("main", 16, 0.4), set_back_ft: 0 },
   ]),
   west: face("west", "RIGHT/WEST ELEVATION", [
-    { ...gable("main", 16, 0.5), set_back_ft: null },
+    { ...gable("main", 16, 0.4), set_back_ft: 0 },
   ]),
 };
 
@@ -128,6 +140,17 @@ const eaveLF = edges
   .filter((e) => classes.find((c) => c.id === e.id)?.edge_class === "eave")
   .reduce((s, e) => s + e.lenPt / PT_PER_FT, 0);
 console.log(`eave LF at ${PT_PER_FT} pt/ft: ${Math.round(eaveLF)} (run 3 shipped 121; sheet truth ≈ 165)`);
+
+// Takeoff stage — downspout synthesis must fire (run 4 read 0 D.S. marks).
+const { buildEdgeTakeoff } = await import("../lib/ai/edge-takeoff.ts");
+const takeoff = buildEdgeTakeoff({
+  outline, edges, classes, ptPerFt: PT_PER_FT, downspouts: [],
+});
+console.log(
+  `takeoff: ${takeoff.totals.eave_lf} LF, ${takeoff.totals.downspouts} downspout(s), ` +
+    `${takeoff.unpricedIds.length} unpriced`,
+);
+for (const n of takeoff.notes) console.log(n);
 
 const layout = buildRoofLayout({ outline, edges, classes, segments: segs });
 console.log(`ok=${layout.ok} reason=${layout.reason ?? "-"}`);

@@ -120,3 +120,136 @@ test("buildEdgeTakeoff: all-eave rectangle counts 4 outside corners regardless o
     assert.equal(t.totals.eave_lf, 280); // 2×(80+60)
   }
 });
+
+// ── Downspout synthesis (zero D.S. marks → 1-per-40 ft spacing rule) ──
+
+const allEave = (outline: { x: number; y: number }[]) =>
+  outlineEdges(outline).map((e) => ({
+    id: e.id,
+    edge_class: "eave" as const,
+    tier: null,
+    feature: null,
+  }));
+
+test("downspout synthesis: zero marks → ceil(LF/40) per chain, loudly noted", () => {
+  // 80×60 ft all-eave ring = 280 LF → ceil(280/40) = 7 drops.
+  const edges = outlineEdges(RECT);
+  const r = buildEdgeTakeoff({
+    outline: RECT,
+    edges,
+    classes: allEave(RECT),
+    ptPerFt: 1.5,
+    downspouts: [],
+  });
+  assert.equal(r.totals.downspouts, 7);
+  assert.ok(r.notes.some((n) => n.includes("1-per-40 ft spacing rule")));
+});
+
+test("downspout synthesis: marked downspouts suppress synthesis; a short read is warned", () => {
+  const edges = outlineEdges(RECT);
+  const r = buildEdgeTakeoff({
+    outline: RECT,
+    edges,
+    classes: allEave(RECT),
+    ptPerFt: 1.5,
+    downspouts: [{ edge_id: "E1", frac: 0.2 }],
+  });
+  assert.equal(r.totals.downspouts, 1, "marks are authoritative");
+  assert.ok(
+    !r.notes.some((n) => n.includes("spacing rule")),
+    "no synthesis note",
+  );
+  assert.ok(
+    r.notes.some((n) => n.includes("Review for missed marks")),
+    "1 mark for 280 LF is warned",
+  );
+});
+
+test("downspout synthesis: a duplicated outline vertex never splits a chain", () => {
+  // Same physical top wall, one drawn with a duplicate consecutive vertex.
+  const clean = [
+    { x: 0, y: 0 },
+    { x: 35, y: 0 },
+    { x: 35, y: 20 },
+    { x: 0, y: 20 },
+  ];
+  const dup = [
+    { x: 0, y: 0 },
+    { x: 25, y: 0 },
+    { x: 25, y: 0 },
+    { x: 35, y: 0 },
+    { x: 35, y: 20 },
+    { x: 0, y: 20 },
+  ];
+  const run = (outline: { x: number; y: number }[]) => {
+    const edges = outlineEdges(outline);
+    // Only the top wall is eave; the rest are rakes (isolated chain).
+    const classes = edges.map((e) => ({
+      id: e.id,
+      edge_class:
+        e.axis === "h" && Math.abs(e.mid.y) < 1e-6
+          ? ("eave" as const)
+          : ("rake" as const),
+      tier: null,
+      feature: null,
+    }));
+    return buildEdgeTakeoff({
+      outline,
+      edges,
+      classes,
+      ptPerFt: 1,
+      downspouts: [],
+    });
+  };
+  const a = run(clean);
+  const b = run(dup);
+  assert.equal(a.totals.eave_lf, b.totals.eave_lf, "same LF either way");
+  assert.equal(
+    b.totals.downspouts,
+    a.totals.downspouts,
+    "degenerate vertex is transparent to chains",
+  );
+});
+
+test("downspout synthesis: ptPerFt of 0 can't hang or synthesize garbage", () => {
+  const edges = outlineEdges(RECT);
+  const r = buildEdgeTakeoff({
+    outline: RECT,
+    edges,
+    classes: allEave(RECT),
+    ptPerFt: 0,
+    downspouts: [],
+  });
+  assert.equal(r.totals.downspouts, 0);
+});
+
+test("downspout synthesis: tiny isolated stubs don't each mint a drop", () => {
+  // A 40×20 ft body whose top wall is eave, plus a 3 ft eave jog isolated
+  // between rakes on the bottom — the jog gets no drop of its own.
+  const outline = [
+    { x: 0, y: 0 },
+    { x: 40, y: 0 },
+    { x: 40, y: 20 },
+    { x: 25, y: 20 },
+    { x: 25, y: 23 },
+    { x: 22, y: 23 },
+    { x: 22, y: 20 },
+    { x: 0, y: 20 },
+  ];
+  const edges = outlineEdges(outline);
+  const eaveIds = new Set(["E1", "E5"]); // top wall (40ft) + the 3ft jog
+  const classes = edges.map((e) => ({
+    id: e.id,
+    edge_class: eaveIds.has(e.id) ? ("eave" as const) : ("rake" as const),
+    tier: null,
+    feature: null,
+  }));
+  const r = buildEdgeTakeoff({
+    outline,
+    edges,
+    classes,
+    ptPerFt: 1,
+    downspouts: [],
+  });
+  assert.equal(r.totals.downspouts, 1, "only the real wall gets a drop");
+});

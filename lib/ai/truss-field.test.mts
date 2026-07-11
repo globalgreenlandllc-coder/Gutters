@@ -124,6 +124,36 @@ test("truss-field demotions: perpendicular flips a label-less rake, conflicts a 
   assert.ok(r.notes.some((n) => n.includes("E3") && n.includes("verify")));
 });
 
+test("truss-field demotions: a conflicting label re-attributes to an adjacent parallel gable", () => {
+  // The Woodinville patio: its printed GABLE END TRUSS label got attached to
+  // the patio SIDES (perpendicular field) while the true gable is the
+  // adjacent end wall (parallel field) — the sides keep their gutters.
+  const field = new Map([
+    ["E1", { verdict: "parallel" as const, par: 5, perp: 0 }],
+    ["E2", { verdict: "perpendicular" as const, par: 0, perp: 4 }],
+  ]);
+  const r = applyTrussFieldDemotions({
+    classes: classesOf({ E2: "rake" }, { E2: ["gable_end_truss_label"] }),
+    field,
+    edges: edges(),
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E2"), "eave", "label re-attributed, gutter kept");
+  assert.ok(
+    r.notes.some((n) => n.includes("E2") && n.includes("belongs to the adjacent gable end E1")),
+  );
+  // Without a parallel neighbor the conflict still goes unknown.
+  const r2 = applyTrussFieldDemotions({
+    classes: classesOf({ E2: "rake" }, { E2: ["gable_end_truss_label"] }),
+    field: new Map([["E2", { verdict: "perpendicular" as const, par: 0, perp: 4 }]]),
+    edges: edges(),
+  });
+  assert.equal(
+    new Map(r2.classes.map((c) => [c.id, c.edge_class])).get("E2"),
+    "unknown",
+  );
+});
+
 test("truss-field demotions: parallel verdicts come back as hints, not applied", () => {
   const field = deriveTrussField({
     outline: OUTLINE,

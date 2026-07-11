@@ -172,6 +172,85 @@ export function buildEdgeTakeoff(opts: {
     });
   }
 
+  // No D.S. marks read → synthesize by the 1-per-40 ft trade rule so the
+  // takeoff never ships zero downspouts on a guttered roof. One chain =
+  // consecutive eave edges around the ring; each chain gets
+  // ceil(LF/40) drops spaced evenly along it. Loudly noted — mark-read
+  // downspouts are always preferred.
+  if (downspouts.length === 0 && runs.length > 0 && ptPerFt > 0) {
+    const n = edges.length;
+    const isEave = (i: number) => byId.get(edges[i].id)?.edge_class === "eave";
+    // Degenerate (zero-length) edges are TRANSPARENT: they must neither
+    // count as eave nor break a physically-continuous run in two (a
+    // duplicated outline vertex would otherwise mint an extra min-1 drop).
+    const isBreaker = (i: number) => !isEave(i) && edges[i].lenPt > 1e-6;
+    // Start at a breaker so chains never wrap-split.
+    let start = 0;
+    while (start < n && !isBreaker(start)) start++;
+    const chains: number[][] = [];
+    if (start === n) {
+      chains.push(edges.map((_, i) => i).filter((i) => isEave(i) && edges[i].lenPt > 1e-6)); // fully guttered ring
+    } else {
+      let cur: number[] = [];
+      for (let k = 1; k <= n; k++) {
+        const i = (start + k) % n;
+        if (isEave(i) && edges[i].lenPt > 1e-6) cur.push(i);
+        else if (isBreaker(i) && cur.length > 0) {
+          chains.push(cur);
+          cur = [];
+        }
+      }
+      if (cur.length > 0) chains.push(cur);
+    }
+    for (const chain of chains) {
+      if (chain.length === 0) continue;
+      const lenPts = chain.map((i) => edges[i].lenPt);
+      const totalPt = lenPts.reduce((s, l) => s + l, 0);
+      const lf = totalPt / ptPerFt;
+      if (!Number.isFinite(lf) || lf <= 0) continue;
+      // Tiny isolated stubs (short bay jogs between rakes) don't warrant
+      // their own drop unless they're all the roof has.
+      if (lf < 6 && chains.length > 1) continue;
+      const count = Math.min(20, Math.max(1, Math.ceil(lf / 40)));
+      for (let d = 0; d < count; d++) {
+        let target = ((d + 0.5) / count) * totalPt;
+        let ci = 0;
+        while (ci < chain.length - 1 && target > lenPts[ci]) {
+          target -= lenPts[ci];
+          ci++;
+        }
+        const e = edges[chain[ci]];
+        const f = Math.max(0.05, Math.min(0.95, target / e.lenPt));
+        const tier = byId.get(e.id)?.tier;
+        downspouts.push({
+          at: {
+            x: e.p1.x + (e.p2.x - e.p1.x) * f,
+            y: e.p1.y + (e.p2.y - e.p1.y) * f,
+          },
+          drop_height_ft:
+            tier === "lower" ? tierHeights.lower : tierHeights.upper,
+          edge_id: e.id,
+          side: sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior",
+        });
+      }
+    }
+    if (downspouts.length > 0) {
+      notes.push(
+        `⚠ No usable D.S. marks read from the plan — ${downspouts.length} downspout(s) placed by the 1-per-40 ft spacing rule. Verify locations against the plan.`,
+      );
+    }
+  } else if (downspouts.length > 0 && ptPerFt > 0) {
+    // Marks are authoritative, but a partial read is the COMMON vision
+    // failure — warn when the marks fall far short of trade spacing.
+    const totalLf = runs.reduce((s, r) => s + r.length_ft, 0);
+    const expected = Math.ceil(totalLf / 40);
+    if (Number.isFinite(totalLf) && downspouts.length < expected) {
+      notes.push(
+        `⚠ Only ${downspouts.length} D.S. mark(s) read for ${Math.round(totalLf)} LF of gutter — 1-per-40 ft spacing suggests ~${expected}. Review for missed marks.`,
+      );
+    }
+  }
+
   const eaveLf = Math.round(runs.reduce((s, r) => s + r.length_ft, 0) * 10) / 10;
   if (unpricedIds.length > 0) {
     notes.push(

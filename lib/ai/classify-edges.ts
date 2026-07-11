@@ -543,7 +543,7 @@ export async function classifyPerimeterEdges(opts: {
       segments: opts.fieldSegments ?? null,
       ptPerFt: solved?.ptPerFt ?? null,
     });
-    const fieldPass = applyTrussFieldDemotions({ classes, field });
+    const fieldPass = applyTrussFieldDemotions({ classes, field, edges });
     classes = fieldPass.classes;
     const fieldEave = new Set(
       [...field.entries()]

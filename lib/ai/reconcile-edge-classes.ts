@@ -71,6 +71,7 @@ function isProtrusion(
   e: OutlineEdge,
   edges: readonly OutlineEdge[],
   outline: readonly OverlayPt[],
+  ptPerFt?: number | null,
 ): boolean {
   const n = edges.length;
   if (n < 4) return false;
@@ -78,6 +79,31 @@ function isProtrusion(
   if (idx < 0) return false;
   const prev = edges[(idx - 1 + n) % n];
   const next = edges[(idx + 1) % n];
+  // A stub is a LOCAL feature: two CLEARLY shorter perpendicular returns,
+  // and the outer edge itself well under the building's span (a full-width
+  // wall of a simple rectangle is not a stub even though all of its geometry
+  // is "inward"; a side wall whose neighbor is a near-equal back wall isn't
+  // one either — the Woodinville E13/E3 leak).
+  // Returns must be clearly shorter than the stub — but a deep square porch
+  // (8x7 ft) is still a stub, so allow returns up to ~8 ft absolute when the
+  // scale is known.
+  const maxReturn = Math.max(
+    e.lenPt * 0.8,
+    ptPerFt && ptPerFt > 0 ? 8 * ptPerFt : 0,
+  );
+  if (prev.lenPt > maxReturn || next.lenPt > maxReturn) return false;
+  const xs = outline.map((p) => p.x);
+  const ys = outline.map((p) => p.y);
+  const axisSpan =
+    e.axis === "h"
+      ? Math.max(...xs) - Math.min(...xs)
+      : e.axis === "v"
+        ? Math.max(...ys) - Math.min(...ys)
+        : Math.max(
+            Math.max(...xs) - Math.min(...xs),
+            Math.max(...ys) - Math.min(...ys),
+          );
+  if (e.lenPt > axisSpan * 0.5) return false;
   // Inward = from the edge line toward the polygon centroid's side of it.
   const cx = outline.reduce((s, p) => s + p.x, 0) / outline.length;
   const cy = outline.reduce((s, p) => s + p.y, 0) / outline.length;
@@ -219,13 +245,36 @@ export function reconcileEdgeClasses(opts: {
           );
           continue;
         }
+        // HARD GATE: the face reads ONE uninterrupted gutter line across its
+        // full width — then no wall-plane gable exists on it, whatever the
+        // gable's set-back number says (the eave line is the thing we price;
+        // trust it over a depth guess). A gable may still consume a wall here
+        // with SHEET-side corroboration: a protruding porch/patio stub,
+        // gable-end framing, or a printed label.
+        const spanPtGate =
+          g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
+        if (
+          reading.continuous_eave === true &&
+          !fieldParallel.has(cls.id) &&
+          !(cls.evidence ?? []).some((t) => STRONG_RAKE_EVIDENCE.has(t)) &&
+          !isProtrusion(hit.e, edges, outline, opts.ptPerFt) &&
+          // A gable as wide as (almost) the whole wall IS the wall plane —
+          // frame-overs read narrower. This keeps a true rectangle gable end
+          // alive even when the face sloppily reads continuous.
+          !(spanPtGate != null && spanPtGate >= hit.e.lenPt * 0.8)
+        ) {
+          notes.push(
+            `🧭 ${cls.id}: the ${face} elevation reads one continuous eave/gutter line across this side — its gable sits above the gutter (frame-over); the wall keeps its gutter.`,
+          );
+          continue;
+        }
         // Open porch/patio roofs (on posts/beams) live on protruding stubs.
         // Mapped onto a base-line house wall, the gable belongs to a
         // projecting roof our wall outline cannot see — never unprice the
         // wall for it.
         if (
           (g.supported_on === "posts" || g.supported_on === "beam") &&
-          !isProtrusion(hit.e, edges, outline)
+          !isProtrusion(hit.e, edges, outline, opts.ptPerFt)
         ) {
           notes.push(
             `🧭 ${face} elevation: the ${g.kind ?? "gable"} roof sits on ${g.supported_on} and projects beyond this wall — its own eaves/gutters are NOT in the wall outline. Review that structure separately.`,
