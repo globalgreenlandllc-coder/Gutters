@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useClerk } from "@clerk/nextjs";
 import {
+  Activity,
   ChevronDown,
   CreditCard,
   Database,
@@ -28,6 +29,7 @@ import type { MeData } from "@/app/actions/me";
 
 const NAV: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
+  { href: "/admin/analytics", label: "Analytics", icon: Activity },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/financials", label: "Financials", icon: DollarSign },
   { href: "/admin/api-keys", label: "API keys", icon: Key },

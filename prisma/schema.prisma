@@ -878,6 +878,73 @@ model AbuseEvent {
   @@map("abuse_events")
 }
 
+// -----------------------------------------------------------------------
+// Web analytics: first-party traffic tracking (sessions + pageviews)
+//
+// Written by the public beacon endpoint /api/track (client tracker in
+// components/analytics/tracker.tsx), read only by /admin/analytics.
+// One VisitorSession row per browsing session (30-min inactivity
+// rollover on the client); heartbeats bump lastSeenAt so "online now"
+// = lastSeenAt within the live window. Referrer/UTM/channel are
+// first-touch: written on session create, never overwritten.
+//
+// Deliberately no FK to users (SpendEvent precedent) — a beacon write
+// must never fail on referential integrity, and traffic history must
+// survive user deletion. `userId` is linked lazily when a signed-in
+// pageview arrives, which is what powers signup attribution.
+// -----------------------------------------------------------------------
+
+model VisitorSession {
+  id          String   @id // client-generated, validated ^[A-Za-z0-9_-]{8,64}$
+  visitorId   String // persistent anonymous id (localStorage), same charset
+  userId      String? // DB user id once signed in — no FK by design
+  // Segment of the ENTRY page: marketing | app | portal | admin.
+  // The live view derives the CURRENT segment from lastPath instead.
+  segment     String   @default("marketing")
+  entryPath   String
+  lastPath    String
+  referrer    String? // full document.referrer of the entry view
+  referrerHost String?
+  // direct | organic | paid | social | email | referral (lib/analytics.ts)
+  channel     String   @default("direct")
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmTerm     String?
+  utmContent  String?
+  device      String? // desktop | mobile | tablet
+  browser     String?
+  os          String?
+  country     String? // ISO-3166 alpha-2 from x-vercel-ip-country
+  region      String?
+  city        String?
+  pageviews   Int      @default(1)
+  startedAt   DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@index([lastSeenAt])
+  @@index([startedAt])
+  @@index([visitorId, startedAt])
+  @@index([userId, startedAt])
+  @@map("visitor_sessions")
+}
+
+model PageView {
+  id        String   @id @default(cuid())
+  sessionId String
+  visitorId String
+  userId    String?
+  path      String
+  createdAt DateTime @default(now())
+
+  // page_views is insert-heavy and read only by the admin dashboard, which
+  // queries by createdAt (time buckets) and path (top pages) — never by
+  // sessionId. Every extra index here is pure write amplification.
+  @@index([createdAt])
+  @@index([path, createdAt])
+  @@map("page_views")
+}
+
 // A crew member an owner (contractor) invites. Before the person signs up,
 // `userId` is null and only email/inviteToken exist; when they open the invite
 // link and accept, their Clerk-backed User is linked and status flips to ACTIVE.

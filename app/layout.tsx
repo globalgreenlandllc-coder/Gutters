@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Archivo_Black, Space_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { SessionProvider } from "@/components/auth/session-provider";
+import { Tracker } from "@/components/analytics/tracker";
 import "./globals.css";
 
 const inter = Inter({
@@ -55,6 +56,7 @@ export default function RootLayout({
       >
         <body className="font-sans antialiased text-zinc-900">
           <SessionProvider>{children}</SessionProvider>
+          <Tracker />
         </body>
       </html>
     </ClerkProvider>

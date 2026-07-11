@@ -13,6 +13,8 @@ const isPublic = createRouteMatcher([
   "/terms(.*)",
   "/api/webhooks/(.*)",
   "/api/cron/(.*)",
+  // Analytics beacon — anonymous visitors must be able to POST pageviews.
+  "/api/track(.*)",
 ]);
 
 // ---------------------------------------------------------------------
@@ -64,6 +66,9 @@ function limitFor(pathname: string): { limit: number; cls: string } {
   // anything hammering these is brute-forcing the secret.
   if (pathname.startsWith("/api/webhooks/")) return { limit: 120, cls: "webhook" };
   if (pathname.startsWith("/api/cron/")) return { limit: 30, cls: "cron" };
+  // Analytics beacons: ~2-3/min per open tab (pageview + 25s heartbeat),
+  // so 60/min absorbs many tabs while still capping floods.
+  if (pathname.startsWith("/api/track")) return { limit: 60, cls: "track" };
   // Auth + marketing pages (Clerk adds its own bot detection on top).
   if (
     pathname === "/" ||
