@@ -204,6 +204,39 @@ export function reconcileEdgeClasses(opts: {
         const b = uOf(e.p2);
         return { e, u0: Math.min(a, b), u1: Math.max(a, b) };
       });
+      // Pin a gable position to ONE edge — the containing span, else the
+      // nearest center within a quarter of the face. SHARED by the mapping,
+      // the frame-over demote, and the 2b recovery so one gable can never
+      // act on two different walls (a frame-over pinned to the house wall
+      // must not also demote the neighboring garage's true gable end).
+      const pinEdge = (posFrac: number | null | undefined) => {
+        if (posFrac == null) return null;
+        const u = Math.max(0, Math.min(1, posFrac));
+        // Among candidates, the NEAREST CENTER wins — the ±0.05 boundary
+        // slack makes adjacent spans overlap, and first-found would pin by
+        // ring order instead of by geometry.
+        const nearest = (cands: typeof spans) =>
+          cands.reduce(
+            (best, sp) => {
+              const c = (sp.u0 + sp.u1) / 2;
+              const d = Math.abs(c - u);
+              return d < best.d ? { d, s: sp } : best;
+            },
+            { d: Infinity, s: null as (typeof spans)[number] | null },
+          ).s;
+        // Strict containment first — the spans partition the face, so at
+        // most one wall strictly contains u and it IS the gable's wall (a
+        // narrow entry stub must not lose its gable to a wide neighbor
+        // whose center happens to sit closer).
+        const strict = spans.filter((sp) => u >= sp.u0 && u <= sp.u1);
+        if (strict.length > 0) return nearest(strict);
+        const containing = spans.filter(
+          (sp) => u >= sp.u0 - 0.05 && u <= sp.u1 + 0.05,
+        );
+        const hit = containing.length > 0 ? nearest(containing) : nearest(spans);
+        if (!hit || Math.abs((hit.u0 + hit.u1) / 2 - u) > 0.25) return null;
+        return hit;
+      };
 
       // Flush/at-the-eave gables only — a set-back gable rises BEHIND a
       // guttered eave and must not consume a perimeter edge. When the face
@@ -221,10 +254,22 @@ export function reconcileEdgeClasses(opts: {
       // frame-overs on stepped faces (no single continuous line to gate on).
       // They never consume a wall, and the wall at their position KEEPS its
       // gutter (see the demote pass below).
-      const frameOverGables: typeof gablesAll = [];
+      const frameOverGables: {
+        g: (typeof gablesAll)[number];
+        pin: ReturnType<typeof pinEdge>;
+      }[] = [];
       const flushGables = gablesAll.filter((g) => {
         if (g.eave_passes_in_front === true) {
-          frameOverGables.push(g);
+          const pin = pinEdge(g.position_frac);
+          const spanPt =
+            g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
+          // A gable as wide as (almost) its whole wall IS the wall plane —
+          // frame-overs read narrower (same exemption the continuous gate
+          // carries). A misread boolean must not price away a full-width
+          // gable end: treat it as flush and let the mapping decide.
+          if (pin && spanPt != null && spanPt >= pin.e.lenPt * 0.8) return true;
+          if (pin) frameOverGables.push({ g, pin });
+          else floatingGables++; // unpinnable frame-over — ambiguous, vetoes 2b
           return false;
         }
         const sb = typeof g.set_back_ft === "number" ? g.set_back_ft : null;
@@ -250,17 +295,8 @@ export function reconcileEdgeClasses(opts: {
           continue;
         }
         const u = Math.max(0, Math.min(1, g.position_frac));
-        const hit =
-          spans.find((s) => u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ??
-          spans.reduce(
-            (best, s) => {
-              const c = (s.u0 + s.u1) / 2;
-              const d = Math.abs(c - u);
-              return d < best.d ? { d, s } : best;
-            },
-            { d: Infinity, s: null as (typeof spans)[number] | null },
-          ).s;
-        if (!hit || Math.abs((hit.u0 + hit.u1) / 2 - u) > 0.25) {
+        const hit = pinEdge(g.position_frac);
+        if (!hit) {
           floatingGables++;
           continue;
         }
@@ -410,17 +446,10 @@ export function reconcileEdgeClasses(opts: {
           continue;
         }
         // Stepped face (continuous read is honestly false): when the face's
-        // gable at THIS position rises BEHIND a running eave line
+        // gable pinned to EXACTLY this wall rises BEHIND a running eave line
         // (eave_passes_in_front), the wall under it still carries that
         // gutter — the gable is a frame-over, not a wall plane.
-        const fo = frameOverGables.find((g) => {
-          if (g.position_frac == null) return false;
-          const u = Math.max(0, Math.min(1, g.position_frac));
-          return (
-            (u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ||
-            Math.abs((s.u0 + s.u1) / 2 - u) <= 0.25
-          );
-        });
+        const fo = frameOverGables.find((f) => f.pin?.e.id === s.e.id);
         if (fo) {
           cls.edge_class = "eave";
           cls.evidence = [...evidence, "eave_passes_in_front_of_gable"];
@@ -453,16 +482,9 @@ export function reconcileEdgeClasses(opts: {
         if (cls.edge_class !== "unknown") continue;
         if (!(cls.evidence ?? []).includes("truss_field_conflict")) continue;
         // Eave evidence from the face: one continuous line across the side,
-        // OR (stepped faces) a frame-over gable pinned at THIS wall — the
-        // elevation saw the eave running in front of it.
-        const foHere = frameOverGables.some((g) => {
-          if (g.position_frac == null) return false;
-          const u = Math.max(0, Math.min(1, g.position_frac));
-          return (
-            (u >= s.u0 - 0.05 && u <= s.u1 + 0.05) ||
-            Math.abs((s.u0 + s.u1) / 2 - u) <= 0.25
-          );
-        });
+        // OR (stepped faces) a frame-over gable pinned to EXACTLY this wall —
+        // the elevation saw the eave running in front of it.
+        const foHere = frameOverGables.some((f) => f.pin?.e.id === s.e.id);
         if (reading.continuous_eave !== true && !foHere) continue;
         if (confirmed.has(cls.id) || gableBlockedByField.has(cls.id)) continue;
         if (floatingGables > 0) {
@@ -513,6 +535,11 @@ export function reconcileEdgeClasses(opts: {
       if (evidence.some((t) => STRONG_RAKE_EVIDENCE.has(t))) continue;
       if (evidence.includes("truss_field_conflict")) continue;
       if (claimedByGable.has(cls.id)) continue;
+      // The framing field drew a gable-end array ALONG this wall — the tag
+      // only lands in evidence when a readable face corroborated (1b), so
+      // check the raw verdict set too: sheet-marked gable ends must never
+      // be priced by adjacency.
+      if (fieldParallel.has(cls.id)) continue;
       const prev = ringE[(i - 1 + ringE.length) % ringE.length];
       const next = ringE[(i + 1) % ringE.length];
       const rakeNb = [prev, next].find(

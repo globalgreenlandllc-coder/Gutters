@@ -605,7 +605,7 @@ test("reconcile: a gable rising BEHIND a running eave (stepped face) keeps the w
         [
           {
             kind: "main",
-            span_ft: 16,
+            span_ft: 12,
             position_frac: 0.5,
             eave_passes_in_front: true,
           } as never,
@@ -679,4 +679,101 @@ test("reconcile: gable-side rescue skips labeled and conflict-parked edges", () 
   const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
   assert.equal(cls.get("E8"), "unknown", "printed label stays parked");
   assert.equal(cls.get("E10"), "unknown", "conflict tie stays parked");
+});
+
+test("reconcile: a frame-over pinned to one wall never demotes its neighbor (exclusive pin)", () => {
+  // Adversarial review (c3a2385): the fo test matched ANY rake span within
+  // loose tolerances — a frame-over belonging to the porch span demoted the
+  // neighboring wall's true gable end. Pinning is exclusive now.
+  const edges = outlineEdges(OUTLINE);
+  // Front side spans: E11 u 0–0.375 · E9 (porch) u 0.375–0.625 · E7 u 0.625–1.
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    // E7 rake; its ring neighbors E6/E8 forced eave so pass 4 (gable-side
+    // adjacency) cannot fire — this isolates the frame-over pin logic.
+    classes: invertedClasses().map((c) =>
+      c.id === "E7"
+        ? { ...c, edge_class: "rake" as const }
+        : c.id === "E6" || c.id === "E8"
+          ? { ...c, edge_class: "eave" as const }
+          : c,
+    ),
+    perFace: {
+      ...PER_FACE,
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [
+          {
+            kind: "other",
+            span_ft: 8,
+            position_frac: 0.6, // inside the PORCH span, near E7's boundary
+            eave_passes_in_front: true,
+          } as never,
+        ],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.notEqual(
+    cls.get("E7"),
+    "eave",
+    "the neighbor wall must not be priced off a frame-over pinned elsewhere",
+  );
+});
+
+test("reconcile: a full-width gable stays a wall plane even with eave_passes_in_front misread", () => {
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E6 arrives rake
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [
+          {
+            kind: "main",
+            span_ft: 20, // == E6's full 20 ft — the wall plane itself
+            position_frac: 0.5,
+            eave_passes_in_front: true,
+          } as never,
+        ],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "rake",
+    "a gable as wide as the whole wall cannot be a frame-over",
+  );
+});
+
+test("reconcile: pass 4 never prices a wall whose framing field reads a gable-end array", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E8"
+      ? { ...c, edge_class: "unknown" as const, evidence: ["truss_direction"] }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: PER_FACE,
+    ptPerFt: PT_PER_FT,
+    fieldParallel: new Set(["E8"]),
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E8"),
+    "unknown",
+    "sheet-marked gable end stays parked, never priced by adjacency",
+  );
 });

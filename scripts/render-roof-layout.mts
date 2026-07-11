@@ -109,8 +109,9 @@ const PER_FACE = {
   // interrupt the front fascia → NOT continuous.
   north: {
     ...face("north", "FRONT/NORTH ELEVATION", [
-      gable("main", 24, 0.35),
-      gable("garage", 20, 0.85),
+      gable("main", 24, 0.35), // strictly inside E10 (great room)
+      { ...gable("entry", 10, 0.45), supported_on: "posts" as const }, // E8 stub
+      gable("garage", 20, 0.85), // strictly inside E6
     ]),
     continuous_eave: false,
   },
@@ -125,7 +126,9 @@ const PER_FACE = {
     { ...gable("main", 16, 0.4), set_back_ft: null as unknown as number, eave_passes_in_front: true } as never,
   ]),
   west: face("west", "RIGHT/WEST ELEVATION", [
-    { ...gable("main", 16, 0.4), set_back_ft: null as unknown as number, eave_passes_in_front: true } as never,
+    // viewer-u runs the opposite way on the west face: the upper side wall
+    // (E3, plan-u 0.16-0.55) reads at viewer-u ~0.6 from this side.
+    { ...gable("main", 16, 0.6), set_back_ft: null as unknown as number, eave_passes_in_front: true } as never,
   ]),
 };
 (PER_FACE.east as { continuous_eave: boolean }).continuous_eave = false;

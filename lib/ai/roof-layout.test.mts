@@ -339,3 +339,56 @@ test("organizeInterior: a stroke floating free of the whole frame is dropped", a
   assert.equal(r.kept.length, 0);
   assert.equal(r.dropped, 1);
 });
+
+test("organizeInterior: a stroke anchored only to a dropped stray re-anchors to real geometry", async () => {
+  const { organizeInterior } = await import("./roof-layout.ts");
+  const OUT = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  // B floats free (both extensions overshoot the 22% tolerance); A's upper
+  // end extends onto B. After B drops, A must re-anchor to the outline —
+  // never keep hanging at B's phantom position (175,50).
+  const A = { p1: { x: 175, y: 90 }, p2: { x: 175, y: 70 } };
+  const B = { p1: { x: 150, y: 50 }, p2: { x: 200, y: 50 } };
+  const r = organizeInterior({
+    adopted: [A, B],
+    frame: [{ p1: { x: 100, y: 100 }, p2: { x: 300, y: 100 } }],
+    outline: OUT,
+    span: 400,
+  });
+  assert.equal(r.dropped, 1, "the stray drops");
+  assert.equal(r.kept.length, 1);
+  const ys = [r.kept[0].p1.y, r.kept[0].p2.y];
+  assert.ok(
+    !ys.some((y) => Math.abs(y - 50) < 1),
+    `no endpoint may rest on the dropped stray's phantom ink (got ys ${ys})`,
+  );
+});
+
+test("organizeInterior: extension follows the ORIGINAL ink direction after a lateral snap", async () => {
+  const { organizeInterior } = await import("./roof-layout.ts");
+  const OUT = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  // Vertical stroke at x=100; its top end snaps 10px sideways onto a frame
+  // segment. The bottom extension must still run straight down the original
+  // axis to (100,300) — not along the rotated post-snap direction.
+  const r = organizeInterior({
+    adopted: [{ p1: { x: 100, y: 140 }, p2: { x: 100, y: 250 } }],
+    frame: [{ p1: { x: 90, y: 130 }, p2: { x: 90, y: 180 } }],
+    outline: OUT,
+    span: 400,
+  });
+  assert.equal(r.kept.length, 1);
+  const low = [r.kept[0].p1, r.kept[0].p2].sort((a, b) => b.y - a.y)[0];
+  assert.ok(
+    Math.abs(low.x - 100) < 1e-6 && Math.abs(low.y - 300) < 1e-6,
+    `expected (100,300), got ${JSON.stringify(low)}`,
+  );
+});

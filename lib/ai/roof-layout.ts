@@ -427,71 +427,83 @@ export function organizeInterior(opts: {
     p1: p,
     p2: outline[(i + 1) % outline.length],
   }));
-  // Anchor geometry: the frame, the outline, and the OTHER adopted strokes
-  // at their ORIGINAL positions (two dormer valleys meet each other at the
-  // apex; original positions keep the pass order-independent).
-  const anchorsFor = (self: number): LayoutSeg[] => [
-    ...frame,
-    ...outlineSegs,
-    ...adopted.filter((_, i) => i !== self),
-  ];
-
-  const kept: { seg: LayoutSeg; origMid: OverlayPt }[] = [];
+  // FIXPOINT over the adoptee set: anchor geometry includes the other
+  // adopted strokes (two dormer valleys meet each other at the apex), but a
+  // stroke must never stay "connected" to a neighbor that itself gets
+  // dropped as a stray — that anchor is phantom ink. Re-run with dropped
+  // strokes removed until the surviving set stabilizes (hard-capped; each
+  // round can only shrink the set).
+  let activeIdx = adopted.map((_, i) => i);
+  let kept: { seg: LayoutSeg; origMid: OverlayPt }[] = [];
   let connected = 0;
-  let dropped = 0;
-  for (let i = 0; i < adopted.length; i++) {
-    const s = adopted[i];
-    const anchors = anchorsFor(i);
-    const pts = [
-      { x: s.p1.x, y: s.p1.y },
-      { x: s.p2.x, y: s.p2.y },
-    ];
-    const anchoredFlags = [false, false];
-    let moved = false;
-    for (const end of [0, 1] as const) {
-      const p = pts[end];
-      const other = pts[1 - end];
-      // 1) snap to the nearest anchor point within tolerance
-      let best: { q: OverlayPt; d: number } | null = null;
-      for (const a of anchors) {
-        const hit = nearestOnSeg(p, a.p1, a.p2);
-        if (hit.d <= snapTol && (!best || hit.d < best.d)) best = hit;
+  for (let round = 0; round < 6; round++) {
+    kept = [];
+    connected = 0;
+    const survivors: number[] = [];
+    for (const i of activeIdx) {
+      const s = adopted[i];
+      const anchors: LayoutSeg[] = [
+        ...frame,
+        ...outlineSegs,
+        ...activeIdx.filter((j) => j !== i).map((j) => adopted[j]),
+      ];
+      const pts = [
+        { x: s.p1.x, y: s.p1.y },
+        { x: s.p2.x, y: s.p2.y },
+      ];
+      const anchoredFlags = [false, false];
+      let moved = false;
+      for (const end of [0, 1] as const) {
+        const p = pts[end];
+        // 1) snap to the nearest anchor point within tolerance
+        let best: { q: OverlayPt; d: number } | null = null;
+        for (const a of anchors) {
+          const hit = nearestOnSeg(p, a.p1, a.p2);
+          if (hit.d <= snapTol && (!best || hit.d < best.d)) best = hit;
+        }
+        if (best) {
+          if (best.d > 1e-6) moved = true;
+          pts[end] = best.q;
+          anchoredFlags[end] = true;
+          continue;
+        }
+        // 2) extend outward along the stroke's ORIGINAL ink direction (the
+        // other endpoint may already be snapped — a lateral snap must not
+        // rotate the ray and shoot it at a far anchor off-axis)
+        const origSelf = end === 0 ? s.p1 : s.p2;
+        const origOther = end === 0 ? s.p2 : s.p1;
+        const len =
+          Math.hypot(origSelf.x - origOther.x, origSelf.y - origOther.y) || 1;
+        const dir = {
+          x: (origSelf.x - origOther.x) / len,
+          y: (origSelf.y - origOther.y) / len,
+        };
+        let hitBest: { q: OverlayPt; t: number } | null = null;
+        for (const a of anchors) {
+          const hit = raySegHit(p, dir, a.p1, a.p2, extendTol);
+          if (hit && (!hitBest || hit.t < hitBest.t)) hitBest = hit;
+        }
+        if (hitBest) {
+          pts[end] = hitBest.q;
+          anchoredFlags[end] = true;
+          moved = true;
+        }
       }
-      if (best) {
-        if (best.d > 1e-6) moved = true;
-        pts[end] = best.q;
-        anchoredFlags[end] = true;
-        continue;
-      }
-      // 2) extend outward along the stroke's own direction until the frame
-      const len = Math.hypot(p.x - other.x, p.y - other.y) || 1;
-      const dir = { x: (p.x - other.x) / len, y: (p.y - other.y) / len };
-      let hitBest: { q: OverlayPt; t: number } | null = null;
-      for (const a of anchors) {
-        const hit = raySegHit(p, dir, a.p1, a.p2, extendTol);
-        if (hit && (!hitBest || hit.t < hitBest.t)) hitBest = hit;
-      }
-      if (hitBest) {
-        pts[end] = hitBest.q;
-        anchoredFlags[end] = true;
-        moved = true;
-      }
+      const newLen = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (!anchoredFlags[0] && !anchoredFlags[1]) continue; // stray — dropped
+      if (newLen < span * 0.03) continue; // collapsed to a dot
+      if (moved) connected++;
+      survivors.push(i);
+      kept.push({
+        seg: { p1: pts[0], p2: pts[1] },
+        origMid: { x: (s.p1.x + s.p2.x) / 2, y: (s.p1.y + s.p2.y) / 2 },
+      });
     }
-    const newLen = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    if (!anchoredFlags[0] && !anchoredFlags[1]) {
-      dropped++; // floats free of the whole frame — a stray stroke
-      continue;
-    }
-    if (newLen < span * 0.03) {
-      dropped++; // collapsed to a dot by the snaps
-      continue;
-    }
-    if (moved) connected++;
-    kept.push({
-      seg: { p1: pts[0], p2: pts[1] },
-      origMid: { x: (s.p1.x + s.p2.x) / 2, y: (s.p1.y + s.p2.y) / 2 },
-    });
+    const stable = survivors.length === activeIdx.length;
+    activeIdx = survivors;
+    if (stable) break;
   }
+  const dropped = adopted.length - activeIdx.length;
 
   // Two valleys cannot CROSS mid-plane — where two organized strokes now
   // properly intersect (an extension overshot), the crossing IS their real
