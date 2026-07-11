@@ -388,3 +388,98 @@ test("reconcile: no per-face reads → untouched", () => {
     invertedClasses().map((c) => c.edge_class),
   );
 });
+
+test("reconcile: a label-vs-field conflict on a continuous-eave face gets its gutter back", () => {
+  // The Woodinville run-5 failure: E5/E11 (long side walls) carried a stray
+  // GABLE END TRUSS label, the field read perpendicular (conflict → unknown),
+  // and the side's elevation read one continuous gutter line — the wall
+  // shipped UNPRICED. Two sheet reads outvote the stray label.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: PER_FACE,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "eave", "gutter restored");
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("outvote")),
+    "recovery says why",
+  );
+});
+
+test("reconcile: the conflict recovery needs a continuous eave read — else it stays UNPRICED", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      west: face("west", "RIGHT/WEST ELEVATION", [], { continuous_eave: false }),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "unknown",
+    "one corroboration is not enough",
+  );
+});
+
+test("reconcile: a conflict edge a gable also claims stays a tie (UNPRICED)", () => {
+  // Label + mapped elevation gable vs field + continuous eave: 2-2 — human
+  // review, never auto-priced either way.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E6"
+      ? {
+          ...c,
+          edge_class: "unknown" as const,
+          evidence: ["gable_end_truss_label", "truss_field_conflict"],
+        }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      west: face("west", "RIGHT/WEST ELEVATION", [
+        { kind: "other", span_ft: 10, position_frac: 0.5 },
+      ]),
+    },
+    ptPerFt: PT_PER_FT,
+    fieldEave: new Set(["E6"]),
+  });
+  assert.equal(
+    new Map(r.classes.map((c) => [c.id, c.edge_class])).get("E6"),
+    "unknown",
+    "2-2 evidence tie is a human call",
+  );
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("frame-over")),
+    "the blocked gable is noted",
+  );
+});

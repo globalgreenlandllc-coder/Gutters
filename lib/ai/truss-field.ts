@@ -332,7 +332,12 @@ export function applyTrussFieldDemotions(opts: {
         );
         continue;
       }
+      // Tagged so the elevation reconciler can settle the tie: when the
+      // face ALSO reads one continuous gutter line across this wall, two
+      // independent sheet reads outvote the stray label (see
+      // reconcile-edge-classes.ts). Until then: UNPRICED, visible.
       cls.edge_class = "unknown";
+      cls.evidence = [...(cls.evidence ?? []), "truss_field_conflict"];
       notes.push(
         `📐 ${cls.id}: printed gable label vs a truss array drawn INTO this wall — conflicting sheet evidence, UNPRICED, verify.`,
       );

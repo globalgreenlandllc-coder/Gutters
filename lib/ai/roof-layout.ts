@@ -568,9 +568,16 @@ export function buildRoofLayout(opts: {
       const post = skeletonKept
         ? pre
         : matchDiagonals({ hips, valleys }, planDiags, outline);
-      const adoptees = planDiags
-        .filter((_, i) => !post.matchedPlanIdx.has(i))
-        .slice(0, 8);
+      // Generous ceiling — a 20-gable plan legitimately draws dozens of
+      // valleys; the cap only guards against a degenerate diagonal storm,
+      // and dropping anything is said out loud, never silent.
+      const unmatched = planDiags.filter((_, i) => !post.matchedPlanIdx.has(i));
+      const adoptees = unmatched.slice(0, 32);
+      if (unmatched.length > adoptees.length) {
+        notes.push(
+          `📐 ${unmatched.length - adoptees.length} drawn diagonal(s) beyond the 32-line adoption ceiling were left off the diagram — review the sheet.`,
+        );
+      }
       for (const d of adoptees) {
         valleys.push({ p1: d.p1, p2: d.p2 });
       }

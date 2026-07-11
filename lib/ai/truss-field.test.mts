@@ -119,6 +119,12 @@ test("truss-field demotions: perpendicular flips a label-less rake, conflicts a 
   const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
   assert.equal(cls.get("E1"), "eave", "label-less rake returned to eave");
   assert.equal(cls.get("E3"), "unknown", "printed label conflict → unpriced");
+  assert.ok(
+    r.classes
+      .find((c) => c.id === "E3")!
+      .evidence?.includes("truss_field_conflict"),
+    "conflict tagged so the elevation reconcile can settle the tie",
+  );
   assert.equal(r.demoted, 1);
   assert.ok(r.notes.some((n) => n.includes("E1")));
   assert.ok(r.notes.some((n) => n.includes("E3") && n.includes("verify")));

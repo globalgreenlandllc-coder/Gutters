@@ -38,10 +38,12 @@ export { mergeFaceReadings } from "./face-merge";
  * stage never throws and never blocks the takeoff.
  */
 
-// Per-face reads are 4 vision calls per analysis. Haiku keeps them cheap; if
-// gable recall misses persist on real sheets (e.g. the classic missed garage
-// gable), set BLUEPRINT_ELEVATION_MODEL=claude-sonnet-5 to trade cost for eyes.
-const MODEL = process.env.BLUEPRINT_ELEVATION_MODEL || "claude-haiku-4-5-20251001";
+// Per-face reads are 4 vision calls per analysis. Haiku was the original
+// default; on the Woodinville front it read 3 gables where the sheet shows 5
+// (stacked porch/center gables merged) — recall misses are exactly the
+// failure the owner pays to avoid, so the default is now Sonnet.
+// Override with BLUEPRINT_ELEVATION_MODEL.
+const MODEL = process.env.BLUEPRINT_ELEVATION_MODEL || "claude-sonnet-5";
 
 export type ElevationReadResult = {
   per_face: Record<string, FaceReadingRaw>;
@@ -75,9 +77,18 @@ label near it — "other" if unlabelled. The two SLOPED edges of a gable are
 RAKES → they carry NO gutter.
 
 MULTIPLE GABLES PER FACE ARE THE NORM, not the exception: a craftsman FRONT
-typically stacks TWO or THREE (main gable + entry-porch gable + GARAGE gable).
-Finding one or two does NOT mean you are done — under-counting is the #1 read
-error, and every missed gable becomes gutter billed across a rake.
+typically stacks TWO or THREE (main gable + entry-porch gable + GARAGE gable),
+and a complex plan can show 10, 20 or more on one face — there is NO upper
+limit; report EVERY one. Finding one or two does NOT mean you are done —
+under-counting is the #1 read error, and every missed gable becomes gutter
+billed across a rake.
+
+STACKED / NESTED GABLES ARE SEPARATE GABLES. A porch or entry gable sitting
+BELOW a taller wall gable, a small gable rising in front of or behind a bigger
+one, and a dormer gable poking through a larger triangle are each their OWN
+entry with their OWN span, position_frac, kind, and set_back_ft. NEVER merge
+nested or overlapping triangles into one wide gable — a merged read reports a
+phantom span that matches no wall and both real gables get lost.
 
 Gable signatures to look for (any ONE of these marks a gable):
   - a triangular panel of vertical board-and-batten siding above the eave line
@@ -284,7 +295,10 @@ export async function readElevationFace(
     const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM);
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      // Sized for the WORST face, not the typical one: a 20-gable elevation
+      // is ~2k tokens of tool JSON, and a truncated tool call loses the whole
+      // face (the old 1500 cap silently limited gable counts).
+      max_tokens: 8000,
       // Opus 4.7+/Sonnet 5 reject `temperature`. Positive allowlist: pin 0
       // only on models KNOWN to accept it; unknown models get no sampling params.
       ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),

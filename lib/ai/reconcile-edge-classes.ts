@@ -222,6 +222,9 @@ export function reconcileEdgeClasses(opts: {
 
       // 1) PROMOTE: map each elevation gable onto its wall segment.
       const confirmed = new Set<string>();
+      // Edges a flush gable tried to claim but the framing field blocked —
+      // a label-conflict on such an edge stays a genuine tie (see 2b).
+      const gableBlockedByField = new Set<string>();
       for (const g of flushGables) {
         if (g.position_frac == null) continue;
         const u = Math.max(0, Math.min(1, g.position_frac));
@@ -240,6 +243,7 @@ export function reconcileEdgeClasses(opts: {
         // The framing field says this wall BEARS trusses — the gable the
         // elevation sees here is a frame-over above the eave, not the wall.
         if (fieldEave.has(cls.id)) {
+          gableBlockedByField.add(cls.id);
           notes.push(
             `🧭 ${cls.id}: the ${face} elevation shows a gable here, but the framing bears on this wall — frame-over above the eave; the gutter stays.`,
           );
@@ -382,6 +386,28 @@ export function reconcileEdgeClasses(opts: {
             `🧭 ${cls.id} rake→unknown: no printed gable label and the ${face} elevation shows no gable here — UNPRICED, review.`,
           );
         }
+      }
+
+      // 2b) SETTLE LABEL-vs-FIELD CONFLICTS: the truss-field pass parks a
+      // printed-label edge whose framing reads PERPENDICULAR as unknown
+      // (truss_field_conflict). When THIS face independently reads one
+      // continuous eave/gutter line across the side and no elevation gable
+      // claimed the edge, that's TWO sheet reads (framing bears + unbroken
+      // fascia) against ONE stray label — the wall gets its gutter back.
+      // An edge a gable tried to claim (gableBlockedByField) stays a tie:
+      // UNPRICED, human review.
+      for (const s of spans) {
+        const cls = byId.get(s.e.id)!;
+        if (cls.edge_class !== "unknown") continue;
+        if (!(cls.evidence ?? []).includes("truss_field_conflict")) continue;
+        if (reading.continuous_eave !== true) continue;
+        if (confirmed.has(cls.id) || gableBlockedByField.has(cls.id)) continue;
+        cls.edge_class = "eave";
+        cls.evidence = [...(cls.evidence ?? []), "elevation_continuous_eave"];
+        demoted++;
+        notes.push(
+          `🧭 ${cls.id} unknown→EAVE: the framing bears on this wall AND the ${face} elevation reads one continuous eave/gutter line across this side — two sheet reads outvote the stray gable label; gutter restored, verify.`,
+        );
       }
 
       // 3) BUDGET CHECK: every flush gable the elevation shows should own a

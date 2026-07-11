@@ -50,9 +50,12 @@ const edges = outlineEdges(outline);
 const { reconcileEdgeClasses } = await import("../lib/ai/reconcile-edge-classes.ts");
 const PT_PER_FT = 23.27; // run 2's dimension-line solve
 
-// Run-4 conditions: global inversion PLUS the patio's printed GABLE END
-// TRUSS label attached to both patio SIDES (E1/E15) by the vision read.
-const LABELED_SIDES = new Set(["E1", "E15"]);
+// Run-5 conditions: global inversion PLUS printed GABLE END TRUSS labels
+// attached by the vision read to both patio sides (E1/E15) AND both long
+// side walls (E5/E11 — run-5 shipped those UNPRICED as label-vs-field
+// conflicts; the reconcile recovery must return them to eave off the
+// east/west continuous-eave reads).
+const LABELED_SIDES = new Set(["E1", "E5", "E11", "E15"]);
 const rawClasses: EdgeClass[] = edges.map((e) => ({
   id: e.id,
   edge_class: SIMULATE_RUN2_INVERSION ? (e.axis === "h" ? "eave" : "rake") : "eave",

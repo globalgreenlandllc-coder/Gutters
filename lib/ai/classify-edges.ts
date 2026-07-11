@@ -406,7 +406,9 @@ export async function classifyPerimeterEdges(opts: {
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      // Sized for many-edge outlines: a 20+ gable plan can put 60+ E-chips on
+      // the ring, each needing a class + evidence entry in the tool JSON.
+      max_tokens: 16000,
       // Opus 4.7+/Sonnet 5 reject `temperature` ("deprecated for this model")
       // — this 400 killed the first v2 run. Positive allowlist: pin 0 only on
       // models KNOWN to accept it; unknown/newer models get no sampling params.
