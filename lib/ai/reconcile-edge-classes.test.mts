@@ -173,6 +173,116 @@ test("reconcile: set-back gables never consume a perimeter edge", () => {
   assert.equal(cls.get("E10"), "eave");
 });
 
+test("reconcile: on a continuous-eave face, a gable with UNKNOWN set-back is a frame-over (wall keeps its gutter)", () => {
+  const edges = outlineEdges(OUTLINE);
+  const perFace = {
+    ...PER_FACE,
+    east: face("east", "LEFT/EAST ELEVATION", [
+      // The live-run failure: the reader saw the upper frame-over gable but
+      // never reported set_back_ft — with a continuous eave those can't be
+      // wall-plane gables.
+      { kind: "main", span_ft: 16, position_frac: 0.5, set_back_ft: null },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(),
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E12"), "eave", "side wall keeps the gutter");
+  assert.equal(cls.get("E10"), "eave");
+  assert.ok(r.notes.some((n) => n.includes("frame-over")));
+});
+
+test("reconcile: a posts-supported gable never consumes a base-line house wall", () => {
+  const edges = outlineEdges(OUTLINE);
+  const perFace = {
+    ...PER_FACE,
+    north: face("north", "FRONT/NORTH ELEVATION", [
+      // A projecting porch roof read at a position with NO protruding stub —
+      // it maps onto the plain front wall E11, which must keep its gutter.
+      { kind: "porch", span_ft: 10, position_frac: 0.1, supported_on: "posts" },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(),
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "eave", "base wall untouched");
+  assert.ok(
+    r.notes.some((n) => n.includes("projects beyond this wall")),
+    "the projecting roof is surfaced for review",
+  );
+});
+
+test("reconcile: a truss-field parallel hint promotes when the face shows a gable", () => {
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    // E11 (front-left wall) read as eave; the sheet's framing says gable end.
+    classes: invertedClasses(),
+    perFace: PER_FACE,
+    ptPerFt: PT_PER_FT,
+    fieldParallel: new Set(["E11"]),
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "rake", "sheet gable promoted");
+  assert.ok(r.notes.some((n) => n.includes("E11") && n.includes("📐")));
+});
+
+test("reconcile: a truss-field bearing wall (fieldEave) can't be re-promoted by a mapped gable", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes = outlineEdges(OUTLINE).map((e) => ({
+    id: e.id,
+    edge_class: "eave" as const,
+    tier: null,
+    feature: null,
+    evidence: ["truss_field_perpendicular"],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: PER_FACE,
+    ptPerFt: PT_PER_FT,
+    fieldEave: new Set(["E9"]),
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E9"), "eave", "bearing wall keeps the gutter");
+  assert.ok(r.notes.some((n) => n.includes("E9") && n.includes("frame-over")));
+});
+
+test("reconcile: a gable the mapping missed raises a budget warning", () => {
+  const edges = outlineEdges(OUTLINE);
+  const perFace = {
+    ...PER_FACE,
+    north: face("north", "FRONT/NORTH ELEVATION", [
+      { kind: "entry", span_ft: 10, position_frac: 0.5, supported_on: "posts" },
+      // A second flush gable whose position doesn't land on any wall span.
+      { kind: "main", span_ft: 12, position_frac: null },
+    ]),
+  };
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(),
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  assert.ok(
+    r.notes.some((n) => n.includes("⚠") && n.includes("north")),
+    "deficit surfaced",
+  );
+});
+
 test("reconcile: no per-face reads → untouched", () => {
   const edges = outlineEdges(OUTLINE);
   const r = reconcileEdgeClasses({

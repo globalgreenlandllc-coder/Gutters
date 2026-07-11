@@ -580,6 +580,9 @@ export async function POST(request: Request) {
               // every rake call is reconciled against the elevation the wall
               // actually faces (reconcile-edge-classes.ts).
               perFace: elevations?.per_face ?? null,
+              // Thin framing linework — the truss-field arbiter reads
+              // eave/gable straight off the sheet's truss arrays.
+              fieldSegments: vectorGeometry?.roof?.fieldSegments ?? null,
             });
             if (edgeTakeoff.notes.length > 0) {
               finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
@@ -629,7 +632,14 @@ export async function POST(request: Request) {
       // Stash the extracted text layer so it's inspectable on the detail
       // page (what dimensions/labels the model actually got).
       if (vectorGeometry) {
-        analysisJson._vectorGeometry = vectorGeometry;
+        // Strip the code-only field channel — bulky and never needed after
+        // classification (recomputed on re-analyze).
+        analysisJson._vectorGeometry = vectorGeometry.roof?.fieldSegments
+          ? {
+              ...vectorGeometry,
+              roof: { ...vectorGeometry.roof, fieldSegments: undefined },
+            }
+          : vectorGeometry;
       }
       if (edgeTakeoff) {
         analysisJson._edgeTakeoff = edgeTakeoff;

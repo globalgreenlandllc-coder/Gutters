@@ -47,10 +47,12 @@ export type ReconcileResult = {
 
 type Side = "front" | "back" | "left" | "right";
 
-/** Evidence tags that outrank an elevation summary — the sheet's own words. */
+/** Evidence tags that outrank an elevation summary — the sheet's own words
+ *  (printed labels, and the framing field read directly off the linework). */
 const STRONG_RAKE_EVIDENCE = new Set([
   "gable_end_truss_label",
   "barge_or_rake_callout",
+  "truss_field_parallel",
 ]);
 
 const sideOfNormal = (n: { x: number; y: number }): Side =>
@@ -62,12 +64,55 @@ const sideOfNormal = (n: { x: number; y: number }): Side =>
       ? "right"
       : "left";
 
+/** Does this edge protrude from its side — i.e. do BOTH ring neighbors step
+ *  back inward from its line? Open porch/patio roofs sit on protruding
+ *  stubs; their elevation gables must never consume a base-line house wall. */
+function isProtrusion(
+  e: OutlineEdge,
+  edges: readonly OutlineEdge[],
+  outline: readonly OverlayPt[],
+): boolean {
+  const n = edges.length;
+  if (n < 4) return false;
+  const idx = edges.findIndex((x) => x.id === e.id);
+  if (idx < 0) return false;
+  const prev = edges[(idx - 1 + n) % n];
+  const next = edges[(idx + 1) % n];
+  // Inward = from the edge line toward the polygon centroid's side of it.
+  const cx = outline.reduce((s, p) => s + p.x, 0) / outline.length;
+  const cy = outline.reduce((s, p) => s + p.y, 0) / outline.length;
+  const dx = e.p2.x - e.p1.x;
+  const dy = e.p2.y - e.p1.y;
+  const len = Math.hypot(dx, dy) || 1;
+  // Normal pointing toward the centroid.
+  let nx = -dy / len;
+  let ny = dx / len;
+  if ((cx - e.mid.x) * nx + (cy - e.mid.y) * ny < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const depthOf = (p: OverlayPt) =>
+    (p.x - e.mid.x) * nx + (p.y - e.mid.y) * ny;
+  const minStep = Math.max(8, len * 0.15);
+  // The far endpoint of each neighbor must sit clearly inward of the edge line.
+  const prevFar = prev.p1;
+  const nextFar = next.p2;
+  return depthOf(prevFar) > minStep && depthOf(nextFar) > minStep;
+}
+
 export function reconcileEdgeClasses(opts: {
   outline: readonly OverlayPt[];
   edges: readonly OutlineEdge[];
   classes: readonly EdgeClass[];
   perFace: Partial<Record<string, FaceReadingRaw>> | null | undefined;
   ptPerFt?: number | null;
+  /** Edge ids whose framing field reads PARALLEL (gable-end arrays) — the
+   *  sheet's own gable hints, promoted when the face corroborates. */
+  fieldParallel?: ReadonlySet<string> | null;
+  /** Edge ids whose framing field reads PERPENDICULAR (trusses bear on the
+   *  wall) — never promotable to rake; a gable mapping here is a frame-over
+   *  above the eave. */
+  fieldEave?: ReadonlySet<string> | null;
 }): ReconcileResult {
   const noop = (why?: string): ReconcileResult => ({
     classes: opts.classes.map((c) => ({ ...c })),
@@ -90,6 +135,8 @@ export function reconcileEdgeClasses(opts: {
 
     const classes = opts.classes.map((c) => ({ ...c }));
     const byId = new Map(classes.map((c) => [c.id, c]));
+    const fieldParallel = opts.fieldParallel ?? new Set<string>();
+    const fieldEave = opts.fieldEave ?? new Set<string>();
     const notes: string[] = [];
     let promoted = 0;
     let demoted = 0;
@@ -130,10 +177,22 @@ export function reconcileEdgeClasses(opts: {
       });
 
       // Flush/at-the-eave gables only — a set-back gable rises BEHIND a
-      // guttered eave and must not consume a perimeter edge.
-      const flushGables = (reading.gables ?? []).filter(
-        (g) => !(typeof g.set_back_ft === "number" && g.set_back_ft > 2),
-      );
+      // guttered eave and must not consume a perimeter edge. When the face
+      // reads a CONTINUOUS eave line, a flush wall-plane gable is physically
+      // impossible unless the read explicitly places it at the eave — treat
+      // set-back-unknown gables on such faces as frame-overs/dormers.
+      const gablesAll = reading.gables ?? [];
+      const flushGables = gablesAll.filter((g) => {
+        const sb = typeof g.set_back_ft === "number" ? g.set_back_ft : null;
+        if (sb != null) return sb <= 2;
+        return reading.continuous_eave !== true;
+      });
+      if (gablesAll.length > flushGables.length) {
+        const skipped = gablesAll.length - flushGables.length;
+        notes.push(
+          `🧭 ${face} elevation: ${skipped} gable(s) sit above the continuous eave line (frame-over/dormer) — the gutter below them stays.`,
+        );
+      }
 
       // 1) PROMOTE: map each elevation gable onto its wall segment.
       const confirmed = new Set<string>();
@@ -152,6 +211,27 @@ export function reconcileEdgeClasses(opts: {
           ).s;
         if (!hit || Math.abs((hit.u0 + hit.u1) / 2 - u) > 0.25) continue;
         const cls = byId.get(hit.e.id)!;
+        // The framing field says this wall BEARS trusses — the gable the
+        // elevation sees here is a frame-over above the eave, not the wall.
+        if (fieldEave.has(cls.id)) {
+          notes.push(
+            `🧭 ${cls.id}: the ${face} elevation shows a gable here, but the framing bears on this wall — frame-over above the eave; the gutter stays.`,
+          );
+          continue;
+        }
+        // Open porch/patio roofs (on posts/beams) live on protruding stubs.
+        // Mapped onto a base-line house wall, the gable belongs to a
+        // projecting roof our wall outline cannot see — never unprice the
+        // wall for it.
+        if (
+          (g.supported_on === "posts" || g.supported_on === "beam") &&
+          !isProtrusion(hit.e, edges, outline)
+        ) {
+          notes.push(
+            `🧭 ${face} elevation: the ${g.kind ?? "gable"} roof sits on ${g.supported_on} and projects beyond this wall — its own eaves/gutters are NOT in the wall outline. Review that structure separately.`,
+          );
+          continue;
+        }
         const spanPt =
           g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
         if (cls.edge_class === "rake") {
@@ -192,6 +272,38 @@ export function reconcileEdgeClasses(opts: {
             (g.span_ft != null ? `, span ${Math.round(g.span_ft)}ft` : "") +
             `).`,
         );
+        if (spanPt != null && spanPt > hit.e.lenPt * 1.5) {
+          notes.push(
+            `🧭 ${cls.id}: the read gable span (${Math.round(g.span_ft!)}ft) is wider than this ${Math.round(hit.e.lenPt / (opts.ptPerFt || 1))}ft wall — span read suspect, verify.`,
+          );
+        }
+      }
+
+      // 1b) SHEET GABLES: the framing field found a gable-end array along
+      // these walls — the sheet's own evidence. Promote when the face
+      // corroborates (shows any flush gable) or can't be read; a face that
+      // reads as continuous-eave-only vetoes (two-tier side walls draw the
+      // upper roof's trusses while the gutter rides a lower fascia).
+      for (const s of spans) {
+        const cls = byId.get(s.e.id)!;
+        if (!fieldParallel.has(cls.id)) continue;
+        if (cls.edge_class === "rake") {
+          confirmed.add(cls.id);
+          continue;
+        }
+        if (flushGables.length === 0) {
+          notes.push(
+            `🧭 ${cls.id}: gable-end framing on the sheet, but the ${face} elevation shows no flush gable on this side — left as-is, verify.`,
+          );
+          continue;
+        }
+        cls.edge_class = "rake";
+        cls.evidence = [...(cls.evidence ?? []), "truss_field_parallel"];
+        confirmed.add(cls.id);
+        promoted++;
+        notes.push(
+          `📐 ${cls.id} → RAKE: gable-end framing runs along this wall on the sheet and the ${face} elevation shows a gable on this side.`,
+        );
       }
 
       // 2) DEMOTE: rake calls with neither a printed label nor a mapped gable.
@@ -221,6 +333,17 @@ export function reconcileEdgeClasses(opts: {
             `🧭 ${cls.id} rake→unknown: no printed gable label and the ${face} elevation shows no gable here — UNPRICED, review.`,
           );
         }
+      }
+
+      // 3) BUDGET CHECK: every flush gable the elevation shows should own a
+      // gable wall on this side — a deficit means a gable the mapping missed.
+      const rakeWalls = spans.filter(
+        (s) => byId.get(s.e.id)!.edge_class === "rake",
+      ).length;
+      if (flushGables.length > rakeWalls) {
+        notes.push(
+          `⚠ ${face} elevation shows ${flushGables.length} gable(s) at the eave line but only ${rakeWalls} gable wall(s) placed on this side — review gable placement.`,
+        );
       }
     }
 

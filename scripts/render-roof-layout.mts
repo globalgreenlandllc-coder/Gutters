@@ -35,7 +35,10 @@ const pdf = await getDocumentProxy(bytes);
 const { OPS } = await getResolvedPDFJS();
 const page = await pdf.getPage(ROOF_PAGE);
 const opList = await page.getOperatorList();
-const segs = selectSegments(segmentsFromOps(opList, OPS), true);
+// Raster-convention space (y-down like the printed sheet) — same as production.
+const vpT = page.getViewport({ scale: 1 }).transform as [number, number, number, number, number, number];
+const rawSegs = segmentsFromOps(opList, OPS, vpT);
+const segs = selectSegments(rawSegs, true);
 
 const roof = readRoofFromVectors([], segs);
 if (!roof || roof.perimeter.length <= 4) {
@@ -55,6 +58,30 @@ const rawClasses: EdgeClass[] = edges.map((e) => ({
   evidence: ["truss_direction"],
 }));
 
+// Truss-field arbiter — the sheet's own framing arrays, no AI.
+const { deriveTrussField, applyTrussFieldDemotions } = await import(
+  "../lib/ai/truss-field.ts"
+);
+const { selectFieldSegments } = await import("../lib/ai/pdf-segments.ts");
+const fieldSegs = selectFieldSegments(rawSegs);
+const field = deriveTrussField({
+  outline,
+  edges,
+  segments: fieldSegs,
+  ptPerFt: PT_PER_FT,
+});
+console.log(
+  "field verdicts:",
+  [...field.entries()].map(([id, v]) => `${id}:${v.verdict[0] === "p" && v.verdict === "parallel" ? "∥" : "⊥"}`).join(" "),
+);
+const fieldPass = applyTrussFieldDemotions({ classes: rawClasses, field });
+for (const n of fieldPass.notes) console.log(n);
+const fieldEave = new Set(
+  [...field.entries()]
+    .filter(([, v]) => v.verdict === "perpendicular")
+    .map(([id]) => id),
+);
+
 const gable = (kind: string, span_ft: number, position_frac: number, set_back_ft = 0) => ({
   id: kind, kind: kind as never, span_ft, pitch: 6, position_frac,
   eave_condition_guess: "flush" as const, supported_on: "unknown" as const,
@@ -70,15 +97,26 @@ const face = (f: string, title: string, gables: ReturnType<typeof gable>[]) => (
 // the rear; east/west show one frame-over gable each ABOVE the lower eave).
 const PER_FACE = {
   north: face("north", "FRONT/NORTH ELEVATION", [
-    gable("main", 21, 0.16), gable("entry", 23, 0.5), gable("garage", 21, 0.85),
+    gable("main", 21, 0.25),
+    { ...gable("entry", 10, 0.46), supported_on: "posts" as const },
+    gable("garage", 21, 0.79),
   ]),
-  south: face("south", "REAR/SOUTH ELEVATION", [gable("patio", 8, 0.54)]),
-  east: face("east", "LEFT/EAST ELEVATION", [gable("main", 16, 0.5, 4)]),
-  west: face("west", "RIGHT/WEST ELEVATION", [gable("main", 16, 0.5, 4)]),
+  south: face("south", "REAR/SOUTH ELEVATION", [
+    { ...gable("patio", 23, 0.5), supported_on: "posts" as const },
+  ]),
+  // Live-run behavior: the reader sees the upper frame-over gables but does
+  // NOT report set_back_ft — the continuous-eave gate must protect the sides.
+  east: face("east", "LEFT/EAST ELEVATION", [
+    { ...gable("main", 16, 0.5), set_back_ft: null },
+  ]),
+  west: face("west", "RIGHT/WEST ELEVATION", [
+    { ...gable("main", 16, 0.5), set_back_ft: null },
+  ]),
 };
 
 const rec = reconcileEdgeClasses({
-  outline, edges, classes: rawClasses, perFace: PER_FACE, ptPerFt: PT_PER_FT,
+  outline, edges, classes: fieldPass.classes, perFace: PER_FACE, ptPerFt: PT_PER_FT,
+  fieldParallel: fieldPass.parallelIds, fieldEave,
 });
 for (const n of rec.notes) console.log(n);
 const classes = rec.classes;
@@ -89,7 +127,7 @@ console.log(
 const eaveLF = edges
   .filter((e) => classes.find((c) => c.id === e.id)?.edge_class === "eave")
   .reduce((s, e) => s + e.lenPt / PT_PER_FT, 0);
-console.log(`eave LF at ${PT_PER_FT} pt/ft: ${Math.round(eaveLF)} (run 2 shipped 129)`);
+console.log(`eave LF at ${PT_PER_FT} pt/ft: ${Math.round(eaveLF)} (run 3 shipped 121; sheet truth ≈ 165)`);
 
 const layout = buildRoofLayout({ outline, edges, classes, segments: segs });
 console.log(`ok=${layout.ok} reason=${layout.reason ?? "-"}`);

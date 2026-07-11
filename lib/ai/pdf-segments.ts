@@ -73,6 +73,15 @@ const deviceWidth = (userWidth: number, ctm: Mat): number => {
 export function segmentsFromOps(
   ops: { fnArray: number[]; argsArray: unknown[] },
   OPS: Record<string, number>,
+  /**
+   * Initial CTM — pass the page's `viewport.transform` (scale 1) so segments
+   * come out in RASTER convention (y-down, crop-box origin, rotation applied)
+   * instead of raw PDF user space (y-UP). Raw user space mirrors the printed
+   * sheet vertically, which silently inverted every front/back judgment made
+   * downstream (edge map, elevation reconciliation, canvas). Omitted → legacy
+   * identity (tests build their own geometry and don't care).
+   */
+  base?: Mat,
 ): WSeg[] {
   const num = (x: unknown): x is number => typeof x === "number";
   // Paint ops that draw a stroked edge → width meaningful. Built from the live
@@ -90,7 +99,8 @@ export function segmentsFromOps(
 
   const out: WSeg[] = [];
   const stack: { ctm: Mat; w: number }[] = [];
-  let ctm: Mat = IDENTITY;
+  const base0: Mat = base ?? IDENTITY;
+  let ctm: Mat = base0;
   let widthUser = 1; // pdfjs initial graphics-state lineWidth
   const emit = (x1: number, y1: number, x2: number, y2: number, w: number | null) => {
     if (Math.hypot(x2 - x1, y2 - y1) < WALK_MIN_LEN) return; // glyph stroke
@@ -107,7 +117,7 @@ export function segmentsFromOps(
         ctm = popped.ctm;
         widthUser = popped.w;
       } else {
-        ctm = IDENTITY;
+        ctm = base0;
       }
     } else if (fn === OPS.transform) {
       const a = ops.argsArray[k] as number[] | undefined;
@@ -359,4 +369,38 @@ export function selectSegments(raw: WSeg[], boldOnly: boolean): number[][] {
         ? [...k.seg, Math.round(k.w * 100) / 100]
         : k.seg,
     );
+}
+
+// Field-segment tuning: the truss/jack fill the bold filter DROPS is exactly
+// the signal the truss-field arbiter needs (lib/ai/truss-field.ts). Keep it
+// in a separate, code-only channel — never formatted into an AI prompt.
+const FIELD_MIN_LEN = 40; // pt (~1.7 ft) — keeps end jacks, drops glyph noise
+const FIELD_MAX_SEGMENTS = 2500;
+
+/** Axis-aligned framing linework at EVERY stroke weight, for the per-edge
+ *  truss-direction test: trusses drawn running INTO a wall mean the wall
+ *  bears them (eave); trusses running ALONG it mean a gable end. Plain
+ *  int 4-tuples, longest first. */
+export function selectFieldSegments(raw: WSeg[]): number[][] {
+  const merged = mergeCollinearStrokes(raw);
+  const kept: { seg: number[]; len: number }[] = [];
+  const seen = new Set<string>();
+  for (const { seg } of merged) {
+    const [x1, y1, x2, y2] = seg;
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    if (dx >= 1.5 && dy >= 1.5) continue; // diagonals: valleys/hatch, not field
+    const len = Math.max(dx, dy);
+    if (len < FIELD_MIN_LEN) continue;
+    const a = [Math.round(x1), Math.round(y1)];
+    const b = [Math.round(x2), Math.round(y2)];
+    const [p, q] =
+      a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]) ? [a, b] : [b, a];
+    const key = `${p[0]},${p[1]},${q[0]},${q[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push({ seg: [p[0], p[1], q[0], q[1]], len });
+  }
+  kept.sort((m, n) => n.len - m.len);
+  return kept.slice(0, FIELD_MAX_SEGMENTS).map((k) => k.seg);
 }

@@ -15,6 +15,7 @@ import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
 import { buildRoofLayout, type RoofLayout } from "./roof-layout";
 import { reconcileEdgeClasses } from "./reconcile-edge-classes";
+import { applyTrussFieldDemotions, deriveTrussField } from "./truss-field";
 import type { FaceReadingRaw } from "./face-merge";
 
 /**
@@ -264,6 +265,48 @@ function sourceBlock(source: PlanSource): Anthropic.ContentBlockParam {
 }
 
 /**
+ * A protruding stub (porch/patio — both ring neighbors step back inward)
+ * carries ONE roof, so its three edges share one tier. The classifier often
+ * tags only the outer edge "lower"; spread it to the returns so downspout
+ * drop heights price consistently.
+ */
+function unifyStubTiers(
+  edges: readonly OutlineEdge[],
+  classes: EdgeClass[],
+  outline: readonly OverlayPt[],
+): void {
+  const n = edges.length;
+  if (n < 4 || outline.length < 3) return;
+  const cx = outline.reduce((s, p) => s + p.x, 0) / outline.length;
+  const cy = outline.reduce((s, p) => s + p.y, 0) / outline.length;
+  const byId = new Map(classes.map((c) => [c.id, c]));
+  for (let i = 0; i < n; i++) {
+    const e = edges[i];
+    const prev = edges[(i - 1 + n) % n];
+    const next = edges[(i + 1) % n];
+    const dx = e.p2.x - e.p1.x;
+    const dy = e.p2.y - e.p1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    let nx = -dy / len;
+    let ny = dx / len;
+    if ((cx - e.mid.x) * nx + (cy - e.mid.y) * ny < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+    const depth = (p: OverlayPt) =>
+      (p.x - e.mid.x) * nx + (p.y - e.mid.y) * ny;
+    const minStep = Math.max(8, len * 0.15);
+    if (depth(prev.p1) <= minStep || depth(next.p2) <= minStep) continue;
+    const trio = [byId.get(prev.id), byId.get(e.id), byId.get(next.id)].filter(
+      (c): c is EdgeClass => !!c,
+    );
+    if (trio.some((c) => c.tier === "lower")) {
+      for (const c of trio) c.tier = "lower";
+    }
+  }
+}
+
+/**
  * Run the edge classification. Never throws — {ok:false, reason} on any
  * failure so the caller falls back to the v1 path.
  */
@@ -287,6 +330,10 @@ export async function classifyPerimeterEdges(opts: {
    *  gables are mapped back onto their wall segments (promote/demote/unknown,
    *  see reconcile-edge-classes.ts). */
   perFace?: Partial<Record<string, FaceReadingRaw>> | null;
+  /** Thin-inclusive axis-aligned framing linework (selectFieldSegments) —
+   *  lets the truss-field arbiter read eave/gable straight off the sheet's
+   *  own truss arrays (truss-field.ts). */
+  fieldSegments?: number[][] | null;
 }): Promise<EdgeClassification> {
   const empty = (reason: string): EdgeClassification => ({
     ok: false,
@@ -486,6 +533,24 @@ export async function classifyPerimeterEdges(opts: {
       )
       .map((h) => ({ direction: h.direction, near_edge_id: h.near_edge_id }));
 
+    // Truss-field arbiter — the framing sheet's own linework, read per edge.
+    // A periodic truss array drawn INTO a wall means the wall bears it (eave,
+    // enforced here); an array ALONG it is gable-end framing (a rake HINT the
+    // elevation reconcile corroborates below). No AI in this step.
+    const field = deriveTrussField({
+      outline: opts.outline,
+      edges,
+      segments: opts.fieldSegments ?? null,
+      ptPerFt: solved?.ptPerFt ?? null,
+    });
+    const fieldPass = applyTrussFieldDemotions({ classes, field });
+    classes = fieldPass.classes;
+    const fieldEave = new Set(
+      [...field.entries()]
+        .filter(([, v]) => v.verdict === "perpendicular")
+        .map(([id]) => id),
+    );
+
     // Elevation reconcile — code-enforced, runs BEFORE the layout so gable
     // ridges land on the walls the elevations actually show gables on. The
     // production failure this guards: one global truss direction inverted
@@ -496,8 +561,35 @@ export async function classifyPerimeterEdges(opts: {
       classes,
       perFace: opts.perFace ?? null,
       ptPerFt: solved?.ptPerFt ?? null,
+      fieldParallel: fieldPass.parallelIds,
+      fieldEave,
     });
     classes = reconcile.classes;
+
+    // No elevations to corroborate (or none readable) — the sheet's gable-end
+    // framing is still better evidence than nothing: promote with a verify
+    // note instead of dropping the hint on the floor.
+    const anyFaceReadable = ["north", "south", "east", "west"].some(
+      (f) => opts.perFace?.[f]?.readable,
+    );
+    if (!anyFaceReadable) {
+      const minRakePt = (solved?.ptPerFt ?? 20) * 8;
+      for (const cls of classes) {
+        if (!fieldPass.parallelIds.has(cls.id)) continue;
+        if (cls.edge_class === "rake") continue;
+        const e = edges.find((x) => x.id === cls.id);
+        if (!e || e.lenPt < minRakePt) continue;
+        cls.edge_class = "rake";
+        cls.evidence = [...(cls.evidence ?? []), "truss_field_parallel"];
+        fieldPass.notes.push(
+          `📐 ${cls.id} → RAKE: gable-end framing runs along this wall on the sheet (no readable elevation to cross-check — verify).`,
+        );
+      }
+    }
+
+    // Protrusion stubs (porch/patio) share one roof — their three edges
+    // share one tier. The classifier often tags only the outer edge.
+    unifyStubTiers(edges, classes, opts.outline);
 
     // Interior geometry — computed, never traced. Stored alongside the
     // classes so the estimate path draws the same layout the evidence built.
@@ -517,6 +609,7 @@ export async function classifyPerimeterEdges(opts: {
         (solved
           ? `; scale ${Math.round(solved.ptPerFt * 100) / 100} pt/ft from dimension line(s) ${solved.used.join(", ")}.`
           : `; no dimension value read — scale unsolved.`),
+      ...fieldPass.notes,
       ...reconcile.notes,
       ...layout.notes,
     ];

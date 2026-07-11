@@ -138,7 +138,9 @@ strip of eave-and-gutter running IN FRONT of it (a dormer, or a gable recessed u
 the roof slope). When a gable base is clearly above the eave line rather than on
 it, set set_back_ft to how far back it reads (feet) — the eave in front keeps its
 gutter and the gable rises behind it. A base sitting ON the eave ⇒ set_back_ft 0
-(or omit).
+— ALWAYS report set_back_ft explicitly (0 for a flush gable): a missing value on
+a continuous-eave face is treated as "above the eave" downstream and the gable
+will NOT consume a wall.
 </set_back_gable>
 
 <profile_depth>
@@ -154,8 +156,10 @@ perpendicular view's job, i.e. some OTHER elevation reports this one's gables.
 <edges>
 Classify each roof-bottom edge: a HORIZONTAL bottom edge is an EAVE (gutter); a
 SLOPED bottom edge rising to a peak is a RAKE (no gutter). Report continuous_eave
-= true when the main fascia/gutter line runs continuously across this face
-(broken only where a mass steps or projects).
+= true ONLY when one uninterrupted fascia/gutter line runs the FULL width of this
+face (broken only where a mass steps or projects, never by a gable). A wall-plane
+gable that interrupts the eave line ⇒ continuous_eave = false. Frame-over/dormer
+gables ABOVE the line don't break it — those faces stay true.
 </edges>
 
 <resolution_gate>
