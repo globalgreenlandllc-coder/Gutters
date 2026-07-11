@@ -120,6 +120,32 @@ function jogKindsOf(r: FaceReadingRaw | undefined): Set<string> {
   return out;
 }
 
+/** Offset jogs the elevations prove: a garage/porch/patio one face shows
+ *  that its OPPOSITE face lacks. Shared by mergeFaceReadings (flags) and
+ *  the edge reconcile (footprint step cross-check). */
+export function detectAsymmetricJogs(
+  perFace: Partial<Record<string, FaceReadingRaw | undefined>>,
+): { face: string; opp: string; axis: string; kind: string }[] {
+  const out: { face: string; opp: string; axis: string; kind: string }[] = [];
+  const asymPairs: [string, string, string][] = [
+    ["east", "west", "left↔right"],
+    ["west", "east", "left↔right"],
+    ["north", "south", "front↔rear"],
+    ["south", "north", "front↔rear"],
+  ];
+  for (const [f, opp, axis] of asymPairs) {
+    const a = perFace[f];
+    const b = perFace[opp];
+    if (!a?.readable || !b?.readable) continue; // need BOTH sides to call it asymmetric
+    const has = jogKindsOf(a);
+    const oppHas = jogKindsOf(b);
+    for (const kind of has) {
+      if (!oppHas.has(kind)) out.push({ face: f, opp, axis, kind });
+    }
+  }
+  return out;
+}
+
 export function mergeFaceReadings(reads: FaceReadingRaw[], expectedFaces: string[]): MergedFaces {
   const per_face: Record<string, FaceReadingRaw> = {};
   for (const r of reads) per_face[r.face] = r;
@@ -175,25 +201,10 @@ export function mergeFaceReadings(reads: FaceReadingRaw[], expectedFaces: string
   // plain wall. Flag it so the footprint carries the jog on the correct side
   // only, instead of a mirrored (or dropped) mass. Ordered pairs, so a jog
   // unique to each side is reported once from the side that has it.
-  const asymPairs: [string, string, string][] = [
-    ["east", "west", "left↔right"],
-    ["west", "east", "left↔right"],
-    ["north", "south", "front↔rear"],
-    ["south", "north", "front↔rear"],
-  ];
-  for (const [f, opp, axis] of asymPairs) {
-    const a = per_face[f];
-    const b = per_face[opp];
-    if (!a?.readable || !b?.readable) continue; // need BOTH sides to call it asymmetric
-    const has = jogKindsOf(a);
-    const oppHas = jogKindsOf(b);
-    for (const kind of has) {
-      if (!oppHas.has(kind)) {
-        flags.push(
-          `ASYMMETRIC (${axis}): the ${f} elevation shows a ${kind} but the ${opp} does not — an OFFSET ${kind} jog, not a symmetric/mirrored mass. Carry the jog on the ${f} side of the footprint only.`,
-        );
-      }
-    }
+  for (const j of detectAsymmetricJogs(per_face)) {
+    flags.push(
+      `ASYMMETRIC (${j.axis}): the ${j.face} elevation shows a ${j.kind} but the ${j.opp} does not — an OFFSET ${j.kind} jog, not a symmetric/mirrored mass. Carry the jog on the ${j.face} side of the footprint only.`,
+    );
   }
 
   // Projection cues → confirm-before-guttering flag (default flush).

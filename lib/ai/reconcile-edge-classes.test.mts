@@ -130,7 +130,7 @@ test("reconcile: a printed GABLE END TRUSS label is never demoted", () => {
   );
 });
 
-test("reconcile: a gable spanning part of a long wall goes UNKNOWN, not rake", () => {
+test("reconcile: a gable spanning part of a long wall carves the span out — gutter kept on the remainder", () => {
   const edges = outlineEdges(OUTLINE);
   const perFace = {
     ...PER_FACE,
@@ -150,9 +150,105 @@ test("reconcile: a gable spanning part of a long wall goes UNKNOWN, not rake", (
     perFace,
     ptPerFt: PT_PER_FT,
   });
+  const e11 = r.classes.find((c) => c.id === "E11")!;
+  // Never the whole wall as rake — and no longer $0 either: the wall stays
+  // an eave with exactly the gable's interval carved out.
+  assert.equal(e11.edge_class, "eave", "partial-gable wall keeps its gutter");
+  assert.equal(e11.partial_gables?.length, 1, "one gable interval recorded");
+  const g = e11.partial_gables![0];
+  // 4 ft of the 15 ft wall — interval width ≈ 4/15.
+  assert.ok(Math.abs(g.u1 - g.u0 - 4 / 15) < 0.02, "interval spans the gable width");
+  assert.ok(
+    r.notes.some((n) => n.includes("gutter kept on the remaining ~11ft")),
+    "remainder note present",
+  );
+});
+
+// Simple 40×20 ft rectangle (400×200 pt at 10 pt/ft), front at the bottom.
+const RECT_OUTLINE = [
+  { x: 0, y: 0 },
+  { x: 400, y: 0 },
+  { x: 400, y: 200 },
+  { x: 0, y: 200 },
+];
+// E1 back h · E2 right v · E3 front h (400pt = 40ft) · E4 left v
+
+test("reconcile: two gables sharing one rake wall flag the unpriced remainder (missing jog signature)", () => {
+  const edges = outlineEdges(RECT_OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: ["truss_direction"],
+  }));
+  const perFace = {
+    ...PER_FACE,
+    north: face(
+      "north",
+      "FRONT/NORTH ELEVATION",
+      [
+        { kind: "main", span_ft: 25, position_frac: 0.5 },
+        { kind: "garage", span_ft: 5, position_frac: 0.9 },
+      ],
+      { continuous_eave: false },
+    ),
+    south: face("south", "REAR/SOUTH ELEVATION", []),
+  };
+  const r = reconcileEdgeClasses({
+    outline: RECT_OUTLINE,
+    edges,
+    classes,
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
   const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
-  assert.equal(cls.get("E11"), "unknown", "partial gable → unknown (unpriced)");
-  assert.ok(r.notes.some((n) => n.includes("partial gable")));
+  assert.equal(cls.get("E3"), "rake", "the 25ft main gable tents the wall");
+  assert.ok(
+    r.notes.some(
+      (n) => n.includes("share this 40ft wall") && n.includes("UNPRICED"),
+    ),
+    "multi-gable remainder flagged",
+  );
+});
+
+test("reconcile: a proven offset jog with a straight footprint side gets the footprint↔elevation flag", () => {
+  const edges = outlineEdges(RECT_OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: ["truss_direction"],
+  }));
+  const perFace = {
+    ...PER_FACE,
+    // North proves a garage; south (readable) shows none → offset jog on
+    // the north side. The rectangle's north side is one straight line.
+    north: face(
+      "north",
+      "FRONT/NORTH ELEVATION",
+      [{ kind: "garage", span_ft: 25, position_frac: 0.5 }],
+      { continuous_eave: false },
+    ),
+    south: face("south", "REAR/SOUTH ELEVATION", []),
+  };
+  const r = reconcileEdgeClasses({
+    outline: RECT_OUTLINE,
+    edges,
+    classes,
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  assert.ok(
+    r.notes.some(
+      (n) =>
+        n.includes("footprint↔elevation") &&
+        n.includes("garage") &&
+        n.includes("no step"),
+    ),
+    "jog-contradiction flag present",
+  );
 });
 
 test("reconcile: set-back gables never consume a perimeter edge", () => {
@@ -806,4 +902,36 @@ test("reconcile: a gable WIDER than its wall is an overframe — never tented (r
     r.notes.some((n) => n.includes("E6") && n.includes("overframe")),
     "the overframe note explains it",
   );
+});
+
+test("reconcile: an UNKNOWN base wall with a partial gable stays UNKNOWN — never promoted to priced eave", () => {
+  const edges = outlineEdges(RECT_OUTLINE);
+  // Front wall (E3) base-classed UNKNOWN — the classifier couldn't decide.
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: e.id === "E3" ? "unknown" : "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const perFace = {
+    ...PER_FACE,
+    north: face(
+      "north",
+      "FRONT/NORTH ELEVATION",
+      [{ kind: "dormer", span_ft: 6, position_frac: 0.5 }], // 6ft on 40ft wall
+      { continuous_eave: false },
+    ),
+    south: face("south", "REAR/SOUTH ELEVATION", []),
+  };
+  const r = reconcileEdgeClasses({
+    outline: RECT_OUTLINE,
+    edges,
+    classes,
+    perFace,
+    ptPerFt: PT_PER_FT,
+  });
+  const e3 = r.classes.find((c) => c.id === "E3")!;
+  assert.equal(e3.edge_class, "unknown", "unknown base stays unpriced — no partial carve");
+  assert.equal(e3.partial_gables, undefined, "no gutter interval priced");
 });

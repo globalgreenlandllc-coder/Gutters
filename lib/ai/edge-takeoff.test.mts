@@ -253,3 +253,77 @@ test("downspout synthesis: tiny isolated stubs don't each mint a drop", () => {
   });
   assert.equal(r.totals.downspouts, 1, "only the real wall gets a drop");
 });
+
+test("buildEdgeTakeoff: partial-gable edge prices the complement and skips the gable-end miter", () => {
+  const edges = outlineEdges(RECT);
+  const classes = [
+    // Gable occupies the LAST quarter of E1 — gutter runs [0, 0.75].
+    { id: "E1", edge_class: "eave" as const, partial_gables: [{ u0: 0.75, u1: 1 }] },
+    { id: "E2", edge_class: "eave" as const },
+    { id: "E3", edge_class: "eave" as const },
+    { id: "E4", edge_class: "eave" as const },
+  ];
+  const t = buildEdgeTakeoff({ outline: RECT, edges, classes, ptPerFt: 1.5 });
+  // Full ring = 280 ft; the 20 ft gable span comes out of E1.
+  assert.equal(t.totals.eave_lf, 260);
+  const e1runs = t.gutter_runs.filter((r) => r.id.startsWith("edge-E1"));
+  assert.equal(e1runs.length, 1, "one trimmed run on the partial edge");
+  assert.equal(e1runs[0].length_ft, 60);
+  // The trimmed run's geometry stops where the gable starts.
+  assert.ok(Math.abs(e1runs[0].end.x - 90) < 1e-6, "run ends at u=0.75");
+  // Corner E1→E2 sits under the gable — no miter there; the other 3 stay.
+  assert.equal(t.totals.outside_corner_miters, 3);
+  assert.ok(
+    t.excluded_edges.some(
+      (x) => x.kind === "rake" && x.reason.includes("Flush gable"),
+    ),
+    "gable interval excluded as rake",
+  );
+});
+
+test("buildEdgeTakeoff: partial-gable slivers under 2 ft are not priced", () => {
+  const edges = outlineEdges(RECT);
+  const classes = [
+    // Gable eats nearly the whole edge — 1.6 ft + 1.2 ft slivers remain.
+    { id: "E1", edge_class: "eave" as const, partial_gables: [{ u0: 0.02, u1: 0.985 }] },
+    { id: "E2", edge_class: "eave" as const },
+    { id: "E3", edge_class: "eave" as const },
+    { id: "E4", edge_class: "eave" as const },
+  ];
+  const t = buildEdgeTakeoff({ outline: RECT, edges, classes, ptPerFt: 1.5 });
+  assert.equal(
+    t.gutter_runs.filter((r) => r.id.startsWith("edge-E1")).length,
+    0,
+    "slivers dropped",
+  );
+  assert.equal(t.totals.eave_lf, 200);
+  // Neither corner of E1 carries gutter → both miters suppressed.
+  assert.equal(t.totals.outside_corner_miters, 2);
+});
+
+test("buildEdgeTakeoff: synthesized downspouts measure guttered length only and never land on a gable span", () => {
+  // One long front eave (E3) with a big mid-wall gable; no D.S. marks read.
+  // At 1.5 pt/ft the ring is 280 ft; E3 alone is 80 ft with a ~30 ft gable
+  // carved out of the middle → ~50 ft guttered on that edge.
+  const edges = outlineEdges(RECT);
+  const classes = [
+    { id: "E1", edge_class: "eave" as const },
+    { id: "E2", edge_class: "rake" as const, evidence: ["gable_end_truss_label"] },
+    // E3 = 120pt = 80ft; gable [0.3,0.86] ≈ 45ft → 35ft guttered.
+    { id: "E3", edge_class: "eave" as const, partial_gables: [{ u0: 0.3, u1: 0.86 }] },
+    { id: "E4", edge_class: "rake" as const, evidence: ["gable_end_truss_label"] },
+  ];
+  const t = buildEdgeTakeoff({ outline: RECT, edges, classes, ptPerFt: 1.5 });
+  const dsOnE3 = t.downspouts.filter((d) => d.edge_id === "E3");
+  // Guttered 35 ft → ceil(35/40)=1, NOT the 2 the full 80 ft would force.
+  assert.equal(dsOnE3.length, 1, "count uses guttered length, not full edge");
+  for (const d of dsOnE3) {
+    // Map the drop back to its fraction along E3 and assert it's on gutter.
+    const e3 = edges.find((e) => e.id === "E3")!;
+    const f = (d.at.x - e3.p1.x) / (e3.p2.x - e3.p1.x);
+    assert.ok(
+      f <= 0.3 + 1e-6 || f >= 0.86 - 1e-6,
+      `drop at f=${f.toFixed(3)} must sit on gutter, not the [0.3,0.86] gable`,
+    );
+  }
+});

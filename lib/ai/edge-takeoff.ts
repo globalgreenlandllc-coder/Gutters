@@ -18,6 +18,13 @@ export type EdgeClass = {
   tier?: "upper" | "lower" | null;
   feature?: string | null;
   evidence?: string[];
+  /** Flush gable span(s) occupying only PART of this eave wall, as
+   *  [u0,u1] intervals along the edge (0 = p1, 1 = p2). The gutter is
+   *  priced on the complement; each gable interval is excluded as rake.
+   *  Set by the elevation reconcile when a read gable is clearly
+   *  narrower than the wall it pins to (partial-gable walls used to
+   *  ship entirely UNPRICED). */
+  partial_gables?: { u0: number; u1: number }[];
 };
 
 export type EdgeDownspout = { edge_id: string; frac: number };
@@ -93,6 +100,19 @@ export function buildEdgeTakeoff(opts: {
 
   const runs: EdgeTakeoffResult["gutter_runs"] = [];
   const excluded: EdgeTakeoffResult["excluded_edges"] = [];
+  // Which ends of each eave edge the gutter actually REACHES — a partial
+  // edge whose gable sits at one end must not miter that corner.
+  const gutteredEnds = new Map<string, { start: boolean; end: boolean }>();
+  // The guttered sub-intervals [u0,u1] of each eave edge (gable spans
+  // removed) — the downspout synthesizer measures and places drops on
+  // these, never on the gable/rake portion.
+  const gutteredIntervals = new Map<string, { u0: number; u1: number }[]>();
+
+  const lerp = (e: OutlineEdge, t: number): OverlayPt => ({
+    x: e.p1.x + (e.p2.x - e.p1.x) * t,
+    y: e.p1.y + (e.p2.y - e.p1.y) * t,
+  });
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
   for (const e of edges) {
     if (e.lenPt < 1e-6) continue;
@@ -103,17 +123,76 @@ export function buildEdgeTakeoff(opts: {
         ? c.feature
         : undefined;
     if (cls === "eave") {
-      runs.push({
-        id: `edge-${e.id}`,
-        side: sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior",
-        start: e.p1,
-        end: e.p2,
-        length_px: e.lenPt,
-        length_ft: Math.round((e.lenPt / ptPerFt) * 10) / 10,
-        drains_to: [],
-        tier: c?.tier === "lower" ? "lower" : c?.tier === "upper" ? "upper" : "unknown",
-        ...(feature ? { feature } : {}),
-      });
+      const tier =
+        c?.tier === "lower" ? ("lower" as const) : c?.tier === "upper" ? ("upper" as const) : ("unknown" as const);
+      const side = sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior";
+      // Gable intervals along the edge — merge overlaps, then price the
+      // complement. An empty/degenerate list is the plain full-edge case.
+      const gables = (c?.partial_gables ?? [])
+        .map((g) => ({ u0: clamp01(Math.min(g.u0, g.u1)), u1: clamp01(Math.max(g.u0, g.u1)) }))
+        .filter((g) => g.u1 - g.u0 > 1e-6)
+        .sort((a, b) => a.u0 - b.u0);
+      const merged: { u0: number; u1: number }[] = [];
+      for (const g of gables) {
+        const last = merged[merged.length - 1];
+        if (last && g.u0 <= last.u1) last.u1 = Math.max(last.u1, g.u1);
+        else merged.push({ ...g });
+      }
+      if (merged.length === 0) {
+        gutteredEnds.set(e.id, { start: true, end: true });
+        gutteredIntervals.set(e.id, [{ u0: 0, u1: 1 }]);
+        runs.push({
+          id: `edge-${e.id}`,
+          side,
+          start: e.p1,
+          end: e.p2,
+          length_px: e.lenPt,
+          length_ft: Math.round((e.lenPt / ptPerFt) * 10) / 10,
+          drains_to: [],
+          tier,
+          ...(feature ? { feature } : {}),
+        });
+      } else {
+        // Complement of the gable intervals over [0,1].
+        const segs: { u0: number; u1: number }[] = [];
+        let cursor = 0;
+        for (const g of merged) {
+          if (g.u0 > cursor) segs.push({ u0: cursor, u1: g.u0 });
+          cursor = Math.max(cursor, g.u1);
+        }
+        if (cursor < 1) segs.push({ u0: cursor, u1: 1 });
+        // Drop slivers the trade wouldn't hang gutter on (< 2 ft).
+        const minPt = ptPerFt > 0 ? 2 * ptPerFt : 0;
+        const kept = segs.filter((s) => e.lenPt * (s.u1 - s.u0) >= minPt);
+        const eps = 0.02;
+        gutteredEnds.set(e.id, {
+          start: kept.some((s) => s.u0 <= eps),
+          end: kept.some((s) => s.u1 >= 1 - eps),
+        });
+        gutteredIntervals.set(e.id, kept);
+        kept.forEach((s, k) => {
+          const lenPt = e.lenPt * (s.u1 - s.u0);
+          runs.push({
+            id: `edge-${e.id}-g${k}`,
+            side,
+            start: lerp(e, s.u0),
+            end: lerp(e, s.u1),
+            length_px: lenPt,
+            length_ft: Math.round((lenPt / ptPerFt) * 10) / 10,
+            drains_to: [],
+            tier,
+            ...(feature ? { feature } : {}),
+          });
+        });
+        for (const g of merged) {
+          excluded.push({
+            kind: "rake",
+            start: lerp(e, g.u0),
+            end: lerp(e, g.u1),
+            reason: `Flush gable spans ${Math.round((e.lenPt * (g.u1 - g.u0)) / ptPerFt)}ft of ${e.id} — rake over the gable only; gutter kept on the rest of the wall`,
+          });
+        }
+      }
     } else if (cls === "rake") {
       excluded.push({
         kind: "rake",
@@ -135,7 +214,8 @@ export function buildEdgeTakeoff(opts: {
     }
   }
 
-  // Corners: consecutive eave-eave pairs only.
+  // Corners: consecutive eave-eave pairs only — and on partial edges the
+  // gutter must actually REACH the shared corner to miter it.
   const orient = polygonArea(outline) >= 0 ? 1 : -1;
   let outside = 0;
   let inside = 0;
@@ -147,6 +227,8 @@ export function buildEdgeTakeoff(opts: {
     const ca = byId.get(a.id)?.edge_class;
     const cb = byId.get(b.id)?.edge_class;
     if (ca !== "eave" || cb !== "eave") continue;
+    if (gutteredEnds.get(a.id)?.end === false) continue;
+    if (gutteredEnds.get(b.id)?.start === false) continue;
     const turn = cross(a.p1, a.p2, b.p2) * orient;
     if (turn > 1e-9) outside++;
     else if (turn < -1e-9) inside++;
@@ -202,9 +284,32 @@ export function buildEdgeTakeoff(opts: {
       }
       if (cur.length > 0) chains.push(cur);
     }
+    // Guttered pt-length of an edge (full, minus any gable spans) and a
+    // mapper from a guttered offset → the actual point on the gutter, so a
+    // partial-gable edge is never measured or dropped-on over its gable.
+    const intervalsOf = (id: string) =>
+      gutteredIntervals.get(id) ?? [{ u0: 0, u1: 1 }];
+    const gutteredPt = (i: number) => {
+      const e = edges[i];
+      return intervalsOf(e.id).reduce((s, iv) => s + (iv.u1 - iv.u0) * e.lenPt, 0);
+    };
+    // offsetPt measured along the edge's GUTTERED length → fraction u.
+    const uAtGutteredOffset = (i: number, offsetPt: number): number => {
+      const e = edges[i];
+      let rem = offsetPt;
+      const ivs = intervalsOf(e.id);
+      for (const iv of ivs) {
+        const segPt = (iv.u1 - iv.u0) * e.lenPt;
+        if (rem <= segPt || iv === ivs[ivs.length - 1]) {
+          return iv.u0 + Math.max(0, Math.min(segPt, rem)) / e.lenPt;
+        }
+        rem -= segPt;
+      }
+      return 0.5;
+    };
     for (const chain of chains) {
       if (chain.length === 0) continue;
-      const lenPts = chain.map((i) => edges[i].lenPt);
+      const lenPts = chain.map((i) => gutteredPt(i));
       const totalPt = lenPts.reduce((s, l) => s + l, 0);
       const lf = totalPt / ptPerFt;
       if (!Number.isFinite(lf) || lf <= 0) continue;
@@ -220,7 +325,8 @@ export function buildEdgeTakeoff(opts: {
           ci++;
         }
         const e = edges[chain[ci]];
-        const f = Math.max(0.05, Math.min(0.95, target / e.lenPt));
+        const u = uAtGutteredOffset(chain[ci], target);
+        const f = Math.max(0.05, Math.min(0.95, u));
         const tier = byId.get(e.id)?.tier;
         downspouts.push({
           at: {

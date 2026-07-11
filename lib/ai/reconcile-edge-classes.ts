@@ -28,7 +28,7 @@
 
 import type { OutlineEdge, OverlayPt } from "./plan-overlay";
 import type { EdgeClass } from "./edge-takeoff";
-import type { FaceReadingRaw } from "./face-merge";
+import { detectAsymmetricJogs, type FaceReadingRaw } from "./face-merge";
 import {
   DEFAULT_FACE_NORMALS,
   deriveOrientationFromFaceTitles,
@@ -297,6 +297,10 @@ export function reconcileEdgeClasses(opts: {
 
       // 1) PROMOTE: map each elevation gable onto its wall segment.
       const confirmed = new Set<string>();
+      // Gables pinned per rake edge — TWO gables on one wall is the
+      // signature of a missing footprint jog (each should own its own
+      // wall segment); the un-gabled remainder ships unpriced, so say so.
+      const rakePins = new Map<string, { count: number; spanPt: number }>();
       // Edges a flush gable tried to claim but the framing field blocked —
       // a label-conflict on such an edge stays a genuine tie (see 2b).
       const gableBlockedByField = new Set<string>();
@@ -387,6 +391,10 @@ export function reconcileEdgeClasses(opts: {
           g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
         if (cls.edge_class === "rake") {
           confirmed.add(cls.id);
+          const acc = rakePins.get(cls.id) ?? { count: 0, spanPt: 0 };
+          acc.count++;
+          if (spanPt != null) acc.spanPt += spanPt;
+          rakePins.set(cls.id, acc);
           // Say WHY the tent stands — the depth fields are the reviewable
           // part (a frame-over misread as flush lands exactly here).
           notes.push(
@@ -397,14 +405,60 @@ export function reconcileEdgeClasses(opts: {
           continue;
         }
         if (spanPt != null && hit.e.lenPt > spanPt * 1.6) {
-          // The gable covers only part of a longer wall — converting the whole
-          // edge would drop real gutter. Surface it instead of guessing.
+          // The gable covers only part of a longer wall. Whole-edge unknown
+          // SHIPPED the gutter at $0 (the Woodinville front). The elevation
+          // read the gable's position AND span, so carve that interval out
+          // and keep the gutter on the remainder — the eave line by
+          // definition runs up to the gable on a mixed wall.
+          //
+          // ONLY when the base classifier already believes this wall is an
+          // EAVE. An `unknown` base means the geometry couldn't decide
+          // eave-vs-rake; a single partial gable proves only that PART is a
+          // rake, never that the rest is gutter — "unknown beats a guess",
+          // so an unknown wall stays unknown (UNPRICED), not priced-eave.
+          const wallFt = Math.round(hit.e.lenPt / (opts.ptPerFt || 1));
+          const a1 = uOf(hit.e.p1);
+          const a2 = uOf(hit.e.p2);
+          const spanU = spanPt / extent;
+          const g0 = Math.max(hit.u0, u - spanU / 2);
+          const g1 = Math.min(hit.u1, u + spanU / 2);
+          // If clamping to the wall ate a real slice of the read span, the
+          // gable straddles the corner — position/span is suspect and the
+          // clamped-off part would price as gutter. Bail to review instead.
+          const clampedCleanly = g1 - g0 >= spanU * 0.75;
+          const remainderFt =
+            (hit.e.lenPt - Math.max(0, g1 - g0) * extent) / (opts.ptPerFt || 1);
+          if (
+            cls.edge_class === "eave" &&
+            clampedCleanly &&
+            Math.abs(a2 - a1) > 1e-9 &&
+            g1 > g0 &&
+            remainderFt >= 6 &&
+            !fieldParallel.has(cls.id)
+          ) {
+            const t0 = (g0 - a1) / (a2 - a1);
+            const t1 = (g1 - a1) / (a2 - a1);
+            cls.partial_gables = [
+              ...(cls.partial_gables ?? []),
+              { u0: Math.min(t0, t1), u1: Math.max(t0, t1) },
+            ];
+            cls.evidence = [...(cls.evidence ?? []), "partial_gable_remainder"];
+            notes.push(
+              `🧭 ${cls.id}: the ${face} elevation shows a ${Math.round(g.span_ft!)}ft gable on this ${wallFt}ft wall — rake over the gable span only; gutter kept on the remaining ~${Math.round(remainderFt)}ft. Verify.`,
+            );
+            confirmed.add(cls.id);
+            continue;
+          }
+          // No clean carve (unknown base, straddling gable, perpendicular
+          // return, sliver remainder, sheet gable-end framing) — surface it
+          // instead of guessing. An eave base is knocked to unknown so a
+          // partial gable never leaves the whole wall priced.
           if (cls.edge_class === "eave") {
             cls.edge_class = "unknown";
             unknowns++;
             notes.push(
               `🧭 ${cls.id} eave→unknown: the ${face} elevation shows a ` +
-                `${Math.round(g.span_ft!)}ft gable on this ${Math.round(hit.e.lenPt / (opts.ptPerFt || 1))}ft wall — partial gable, review.`,
+                `${Math.round(g.span_ft!)}ft gable on this ${wallFt}ft wall — partial gable, review.`,
             );
           }
           confirmed.add(cls.id);
@@ -423,6 +477,12 @@ export function reconcileEdgeClasses(opts: {
         cls.edge_class = "rake";
         cls.evidence = [...(cls.evidence ?? []), "elevation_gable_mapped"];
         confirmed.add(cls.id);
+        {
+          const acc = rakePins.get(cls.id) ?? { count: 0, spanPt: 0 };
+          acc.count++;
+          if (spanPt != null) acc.spanPt += spanPt;
+          rakePins.set(cls.id, acc);
+        }
         promoted++;
         notes.push(
           `🧭 ${cls.id} ${side === "front" || side === "back" ? side : side + " side"} → RAKE: the ${face} elevation's ` +
@@ -546,11 +606,34 @@ export function reconcileEdgeClasses(opts: {
         );
       }
 
+      // 2c) MULTI-GABLE WALL: two flush gables pinned onto ONE rake wall
+      // means each lacks its own wall segment (usually a jog the footprint
+      // dropped). The stretch between/beside them may carry gutter but the
+      // whole edge is rake — say what's unpriced instead of staying silent.
+      for (const [id, acc] of rakePins) {
+        if (acc.count < 2 || acc.spanPt <= 0) continue;
+        const cls = byId.get(id)!;
+        if (cls.edge_class !== "rake") continue;
+        if ((cls.evidence ?? []).some((t) => STRONG_RAKE_EVIDENCE.has(t))) continue;
+        if (fieldParallel.has(id)) continue;
+        const e = spans.find((s) => s.e.id === id)?.e;
+        if (!e) continue;
+        const remFt = (e.lenPt - acc.spanPt) / (opts.ptPerFt || 1);
+        if (remFt >= 8) {
+          notes.push(
+            `⚠ ${id}: ${acc.count} gables from the ${face} elevation share this ${Math.round(e.lenPt / (opts.ptPerFt || 1))}ft wall — each should own its own wall segment (likely a footprint jog this outline is missing). The ~${Math.round(remFt)}ft between/beside them may carry gutter but ships UNPRICED — review.`,
+          );
+        }
+      }
+
       // 3) BUDGET CHECK: every flush gable the elevation shows should own a
       // gable wall on this side — a deficit means a gable the mapping missed.
-      const rakeWalls = spans.filter(
-        (s) => byId.get(s.e.id)!.edge_class === "rake",
-      ).length;
+      // A partial-gable wall (rake over the span, gutter on the rest) counts
+      // as placed.
+      const rakeWalls = spans.filter((s) => {
+        const c = byId.get(s.e.id)!;
+        return c.edge_class === "rake" || (c.partial_gables?.length ?? 0) > 0;
+      }).length;
       if (flushGables.length > rakeWalls) {
         notes.push(
           `⚠ ${face} elevation shows ${flushGables.length} gable(s) at the eave line but only ${rakeWalls} gable wall(s) placed on this side — review gable placement.`,
@@ -594,6 +677,50 @@ export function reconcileEdgeClasses(opts: {
       notes.push(
         `🧭 ${cls.id} unknown→EAVE: it flanks the gable end ${rakeNb.id} — the gable roof sheds onto this wall, so it carries the gutter (its side eave). Verify.`,
       );
+    }
+
+    // 5) JOG ↔ FOOTPRINT CROSS-CHECK: the elevations prove an offset
+    // garage/porch jog on a side, but the footprint's wall line there
+    // shows fewer steps than jogs — the outline (often borrowed from a
+    // foundation/wall loop) flattened a projection. Every length on that
+    // side is then suspect; a straight-through wall can also make two
+    // gables share one edge. Note-only — geometry is never invented.
+    if (opts.ptPerFt && opts.ptPerFt > 0) {
+      const stepTol = 1.5 * opts.ptPerFt;
+      const minWall = 4 * opts.ptPerFt;
+      const jogsByFace = new Map<string, string[]>();
+      for (const j of detectAsymmetricJogs(perFace)) {
+        const arr = jogsByFace.get(j.face) ?? [];
+        if (!arr.includes(j.kind)) arr.push(j.kind);
+        jogsByFace.set(j.face, arr);
+      }
+      for (const [faceName, kinds] of jogsByFace) {
+        const nrm = normals[faceName as FaceName];
+        if (!nrm) continue;
+        const side = sideOfNormal(nrm);
+        const wantAxis: "h" | "v" =
+          side === "front" || side === "back" ? "h" : "v";
+        const offsets = edges
+          .filter(
+            (e) =>
+              e.axis === wantAxis &&
+              e.lenPt >= minWall &&
+              sideOfPerimeterEdge(e.p1, e.p2, outline) === side,
+          )
+          .map((e) => (wantAxis === "h" ? e.mid.y : e.mid.x))
+          .sort((a, b) => a - b);
+        if (offsets.length === 0) continue;
+        let clusters = 1;
+        for (let i = 1; i < offsets.length; i++) {
+          if (offsets[i] - offsets[i - 1] > stepTol) clusters++;
+        }
+        const steps = clusters - 1;
+        if (steps < kinds.length) {
+          notes.push(
+            `⚠ footprint↔elevation: the elevations prove ${kinds.length} offset jog(s) on the ${faceName} side (${kinds.join(" + ")}), but its wall line shows ${steps === 0 ? "no step" : `only ${steps} step(s)`} — the outline may be missing a projection (wall/foundation loop vs the roof). Lengths and gutter on this side need review.`,
+          );
+        }
+      }
     }
 
     if (promoted + demoted + unknowns > 0) {
