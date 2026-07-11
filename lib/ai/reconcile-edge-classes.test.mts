@@ -777,3 +777,33 @@ test("reconcile: pass 4 never prices a wall whose framing field reads a gable-en
     "sheet-marked gable end stays parked, never priced by adjacency",
   );
 });
+
+test("reconcile: a gable WIDER than its wall is an overframe — never tented (run-10 E3)", () => {
+  // The west read claimed a 24ft gable on the 20ft side wall E6 — a gable
+  // wider than its wall cannot be that wall's plane (its roof spans past:
+  // the sections print these as FRAME-OVER PER PLAN). The wall must ship
+  // UNPRICED, not tented. Protruding stubs stay exempt (covered by the
+  // porch-promote tests, whose stub gables read wider than the inset wall).
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E6 arrives rake (truss_direction only)
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [{ kind: "main", span_ft: 24, position_frac: 0.5 } as never],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "unknown", "over-wide gable claim parks the wall");
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("overframe")),
+    "the overframe note explains it",
+  );
+});

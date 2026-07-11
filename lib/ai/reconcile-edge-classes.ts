@@ -324,14 +324,37 @@ export function reconcileEdgeClasses(opts: {
           );
           continue;
         }
+        const spanPtGate =
+          g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
+        // OVERFRAME GATE: a gable that reads clearly WIDER than the wall it
+        // pins to cannot be that wall's plane — its roof spans PAST the wall
+        // (an overframe; the section sheets print these as "FRAME-OVER PER
+        // PLAN"). Protruding stubs are exempt: their inset walls read
+        // narrower than the roof they carry. Sheet evidence (printed label /
+        // gable-end framing) overrides. The wall ships UNPRICED for review —
+        // never silently tented.
+        if (
+          spanPtGate != null &&
+          spanPtGate > hit.e.lenPt * 1.08 &&
+          !(cls.evidence ?? []).some((t) => STRONG_RAKE_EVIDENCE.has(t)) &&
+          !fieldParallel.has(cls.id) &&
+          !isProtrusion(hit.e, edges, outline, opts.ptPerFt)
+        ) {
+          if (cls.edge_class === "rake") {
+            cls.edge_class = "unknown";
+            unknowns++;
+          }
+          notes.push(
+            `🧭 ${cls.id}: the ${face} elevation's ${g.kind ?? "gable"} gable reads ${Math.round(g.span_ft!)}ft — WIDER than this ${Math.round(hit.e.lenPt / (opts.ptPerFt || 1))}ft wall, so its roof spans past the wall (overframe/frame-over). Not tented — UNPRICED, review the building sections.`,
+          );
+          continue;
+        }
         // HARD GATE: the face reads ONE uninterrupted gutter line across its
         // full width — then no wall-plane gable exists on it, whatever the
         // gable's set-back number says (the eave line is the thing we price;
         // trust it over a depth guess). A gable may still consume a wall here
         // with SHEET-side corroboration: a protruding porch/patio stub,
         // gable-end framing, or a printed label.
-        const spanPtGate =
-          g.span_ft != null && opts.ptPerFt ? g.span_ft * opts.ptPerFt : null;
         if (
           reading.continuous_eave === true &&
           !fieldParallel.has(cls.id) &&
