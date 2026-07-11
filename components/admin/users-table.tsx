@@ -12,6 +12,8 @@ import {
   Search,
   ShieldAlert,
   Sparkles,
+  Tag,
+  UserCog,
   UserMinus,
   UserPlus,
   Users as UsersIcon,
@@ -22,23 +24,49 @@ import { Button } from "@/components/ui/button";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   adjustCredits,
+  setUserRole,
   setUserStatus,
+  setUserTier,
   startImpersonation,
   type AdminUserRow,
+  type UserTier,
 } from "@/app/actions/admin";
 
-export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
+const TIER_META: Record<
+  UserTier,
+  { label: string; tone: "emerald" | "sky" | "neutral" }
+> = {
+  pro: { label: "Pro", tone: "emerald" },
+  trial: { label: "Trial", tone: "sky" },
+  free: { label: "Free", tone: "neutral" },
+};
+
+const ROLE_LABEL: Record<AdminUserRow["role"], string> = {
+  CONTRACTOR: "Contractor",
+  WORKER: "Worker",
+  SUPER_ADMIN: "Admin",
+};
+
+export function UsersTable({
+  rows: initial,
+  initialQuery = "",
+}: {
+  rows: AdminUserRow[];
+  initialQuery?: string;
+}) {
   const [rows, setRows] = useState(initial);
   const [filter, setFilter] = useState<
     "all" | "active" | "suspended" | "admin" | "no_payments"
   >("all");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [editing, setEditing] = useState<AdminUserRow | null>(null);
   const [confirm, setConfirm] = useState<{
     user: AdminUserRow;
     action: "suspend" | "unsuspend";
   } | null>(null);
   const [impersonating, setImpersonating] = useState<AdminUserRow | null>(null);
+  const [changingRole, setChangingRole] = useState<AdminUserRow | null>(null);
+  const [changingPlan, setChangingPlan] = useState<AdminUserRow | null>(null);
 
   const filtered = rows.filter((r) => {
     if (filter === "active" && r.status !== "ACTIVE") return false;
@@ -153,6 +181,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                       {u.role === "SUPER_ADMIN" && (
                         <Badge tone="violet">Admin</Badge>
                       )}
+                      {u.role === "WORKER" && <Badge tone="sky">Worker</Badge>}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-zinc-500">
                       {u.email}
@@ -165,8 +194,10 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   </div>
 
                   <div className="text-xs text-zinc-600">
-                    Pro
-                    <div className="text-zinc-400">
+                    <Badge tone={TIER_META[u.tier].tone}>
+                      {TIER_META[u.tier].label}
+                    </Badge>
+                    <div className="mt-1 text-zinc-400">
                       Joined{" "}
                       {new Date(u.createdAt).toLocaleDateString("en-US", {
                         month: "short",
@@ -201,6 +232,8 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                       user={u}
                       onEditCredits={() => setEditing(u)}
                       onImpersonate={() => setImpersonating(u)}
+                      onChangeRole={() => setChangingRole(u)}
+                      onChangePlan={() => setChangingPlan(u)}
                       onConfirmStatus={(action) => setConfirm({ user: u, action })}
                     />
                   </div>
@@ -232,6 +265,24 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
       <ImpersonateDialog
         user={impersonating}
         onClose={() => setImpersonating(null)}
+      />
+
+      <RoleDialog
+        user={changingRole}
+        onClose={() => setChangingRole(null)}
+        onApplied={(updated) => {
+          applyRowUpdate(updated);
+          setChangingRole(null);
+        }}
+      />
+
+      <PlanDialog
+        user={changingPlan}
+        onClose={() => setChangingPlan(null)}
+        onApplied={(updated) => {
+          applyRowUpdate(updated);
+          setChangingPlan(null);
+        }}
       />
     </>
   );
@@ -279,14 +330,19 @@ function RowMenu({
   user,
   onEditCredits,
   onImpersonate,
+  onChangeRole,
+  onChangePlan,
   onConfirmStatus,
 }: {
   user: AdminUserRow;
   onEditCredits: () => void;
   onImpersonate: () => void;
+  onChangeRole: () => void;
+  onChangePlan: () => void;
   onConfirmStatus: (action: "suspend" | "unsuspend") => void;
 }) {
   const [open, setOpen] = useState(false);
+  const isAdmin = user.role === "SUPER_ADMIN";
   return (
     <div className="relative">
       <button
@@ -300,6 +356,32 @@ function RowMenu({
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="anim-pop origin-top-right absolute right-0 z-20 mt-1 w-52 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
+            <button
+              onClick={() => {
+                onChangePlan();
+                setOpen(false);
+              }}
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+            >
+              <Tag className="h-3.5 w-3.5 text-accent-600" />
+              Change plan
+            </button>
+            <button
+              onClick={() => {
+                onChangeRole();
+                setOpen(false);
+              }}
+              disabled={isAdmin}
+              title={
+                isAdmin
+                  ? "Admins are managed via the ADMIN_EMAILS env var"
+                  : "Switch between Contractor and Worker"
+              }
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              <UserCog className="h-3.5 w-3.5 text-accent-600" />
+              Change role
+            </button>
             <button
               onClick={() => {
                 onEditCredits();
@@ -608,6 +690,234 @@ function ImpersonateDialog({
               <Eye className="h-3.5 w-3.5" />
               {pending ? "Starting…" : "Start session"}
             </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function RoleDialog({
+  user,
+  onClose,
+  onApplied,
+}: {
+  user: AdminUserRow | null;
+  onClose: () => void;
+  onApplied: (u: AdminUserRow) => void;
+}) {
+  const [role, setRole] = useState<"CONTRACTOR" | "WORKER">("CONTRACTOR");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  // Seed the selection from the user each time the dialog opens; reset when
+  // it closes so reopening the same user re-reads their current role.
+  const seed = user?.role === "WORKER" ? "WORKER" : "CONTRACTOR";
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (!user && seededFor !== null) setSeededFor(null);
+  if (user && seededFor !== user.id) {
+    setSeededFor(user.id);
+    setRole(seed);
+    setError(null);
+  }
+
+  function submit() {
+    if (!user) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await setUserRole(user.id, role);
+        onApplied({ ...user, role });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not change role");
+      }
+    });
+  }
+
+  const options: { id: "CONTRACTOR" | "WORKER"; label: string; hint: string }[] =
+    [
+      { id: "CONTRACTOR", label: "Contractor", hint: "Full owner account" },
+      { id: "WORKER", label: "Worker", hint: "Crew member — redacted pricing" },
+    ];
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Change role">
+      {user && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
+            <div className="font-medium text-zinc-900">
+              {user.company || user.contractorName || user.email}
+            </div>
+            <div className="text-xs text-zinc-500">{user.email}</div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {options.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => setRole(o.id)}
+                className={cn(
+                  "transition-smooth ring-focus rounded-lg border p-3 text-left",
+                  role === o.id
+                    ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/15"
+                    : "border-zinc-200 hover:border-zinc-300",
+                )}
+              >
+                <div className="text-sm font-medium text-zinc-900">{o.label}</div>
+                <div className="mt-0.5 text-xs text-zinc-500">{o.hint}</div>
+              </button>
+            ))}
+          </div>
+
+          <p className="text-xs text-zinc-400">
+            Admin access is managed via the ADMIN_EMAILS env var, not here.
+          </p>
+
+          {error && (
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={submit}
+              disabled={pending || role === user.role}
+            >
+              {pending ? "Saving…" : "Save role"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function PlanDialog({
+  user,
+  onClose,
+  onApplied,
+}: {
+  user: AdminUserRow | null;
+  onClose: () => void;
+  onApplied: (u: AdminUserRow) => void;
+}) {
+  const [tier, setTier] = useState<UserTier>("free");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (!user && seededFor !== null) setSeededFor(null);
+  if (user && seededFor !== user.id) {
+    setSeededFor(user.id);
+    setTier(user.tier);
+    setError(null);
+  }
+
+  function submit() {
+    if (!user) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await setUserTier(user.id, tier);
+        // Mirror the server's tier -> status/planId mapping for the
+        // optimistic row so the badge updates without a refetch.
+        const mapped =
+          tier === "pro"
+            ? { subscriptionStatus: "ACTIVE" as const, planId: "pro_monthly" }
+            : tier === "trial"
+              ? { subscriptionStatus: "TRIALING" as const, planId: "pro_monthly" }
+              : { subscriptionStatus: "CANCELED" as const, planId: "free" };
+        onApplied({ ...user, tier, ...mapped });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not change plan");
+      }
+    });
+  }
+
+  const options: { id: UserTier; label: string; hint: string }[] = [
+    { id: "free", label: "Free", hint: "No subscription" },
+    { id: "trial", label: "Trial", hint: "Trialing Pro" },
+    { id: "pro", label: "Pro", hint: "Counts as paying" },
+  ];
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Change plan">
+      {user && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
+            <div className="font-medium text-zinc-900">
+              {user.company || user.contractorName || user.email}
+            </div>
+            <div className="text-xs text-zinc-500">{user.email}</div>
+          </div>
+
+          {user.stripeLinked ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm">
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <div className="text-amber-900">
+                  This account has a live Stripe subscription. Change its plan
+                  in Stripe — a manual override here would be overwritten by the
+                  next billing webhook.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {options.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => setTier(o.id)}
+                    className={cn(
+                      "transition-smooth ring-focus rounded-lg border p-3 text-left",
+                      tier === o.id
+                        ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/15"
+                        : "border-zinc-200 hover:border-zinc-300",
+                    )}
+                  >
+                    <div className="text-sm font-medium text-zinc-900">
+                      {o.label}
+                    </div>
+                    <div className="mt-0.5 text-[11px] leading-tight text-zinc-500">
+                      {o.hint}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-400">
+                This sets the billing label only — it doesn&apos;t change credits
+                (use Adjust credits for that).
+              </p>
+            </>
+          )}
+
+          {error && (
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              {user.stripeLinked ? "Close" : "Cancel"}
+            </Button>
+            {!user.stripeLinked && (
+              <Button
+                size="sm"
+                onClick={submit}
+                disabled={pending || tier === user.tier}
+              >
+                {pending ? "Saving…" : "Save plan"}
+              </Button>
+            )}
           </div>
         </div>
       )}

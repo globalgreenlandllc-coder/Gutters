@@ -32,7 +32,9 @@ async function logAction(
     | "API_KEY_REVOKED"
     | "API_KEY_VIEWED"
     | "PRICING_UPDATED"
-    | "MATERIAL_DEFAULTS_UPDATED",
+    | "MATERIAL_DEFAULTS_UPDATED"
+    | "USER_ROLE_CHANGED"
+    | "USER_PLAN_CHANGED",
   targetType: string | null,
   targetId: string | null,
   payload: Record<string, unknown> = {},
@@ -48,12 +50,28 @@ async function logAction(
   });
 }
 
+export type UserTier = "free" | "trial" | "pro";
+
 export type AdminUserRow = {
   id: string;
   email: string;
   name: string | null;
-  role: "CONTRACTOR" | "SUPER_ADMIN";
+  role: "CONTRACTOR" | "WORKER" | "SUPER_ADMIN";
   status: "ACTIVE" | "SUSPENDED";
+  // Subscription snapshot. `subscriptionStatus` is null when the user has
+  // never started a subscription (= free). `stripeLinked` is true when a
+  // live Stripe subscription backs the row — the admin plan override is
+  // refused in that case to avoid billing desync (Stripe would overwrite it).
+  subscriptionStatus:
+    | "TRIALING"
+    | "ACTIVE"
+    | "PAST_DUE"
+    | "CANCELED"
+    | "INCOMPLETE"
+    | null;
+  planId: string | null;
+  tier: UserTier;
+  stripeLinked: boolean;
   createdAt: string;
   lastLoginAt: string | null;
   company: string;
@@ -72,12 +90,22 @@ export type AdminUserRow = {
   };
 };
 
+/** Collapse the five subscription statuses to the three tiers the admin
+ *  cares about. Matches the user-facing settings badge, where TRIALING /
+ *  CANCELED / INCOMPLETE / no-row all read as "Free plan". */
+function tierOf(status: string | null | undefined): UserTier {
+  if (status === "ACTIVE" || status === "PAST_DUE") return "pro";
+  if (status === "TRIALING") return "trial";
+  return "free";
+}
+
 export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
   await requireAdmin();
   const users = await db.user.findMany({
     include: {
       contractorProfile: true,
       creditWallet: true,
+      subscription: true,
       _count: {
         select: { estimateRuns: true, proposals: true },
       },
@@ -108,8 +136,12 @@ export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
       id: u.id,
       email: u.email,
       name: u.name,
-      role: u.role as "CONTRACTOR" | "SUPER_ADMIN",
+      role: u.role as "CONTRACTOR" | "WORKER" | "SUPER_ADMIN",
       status: u.status as "ACTIVE" | "SUSPENDED",
+      subscriptionStatus: u.subscription?.status ?? null,
+      planId: u.subscription?.planId ?? null,
+      tier: tierOf(u.subscription?.status),
+      stripeLinked: !!u.subscription?.stripeSubscriptionId,
       createdAt: u.createdAt.toISOString(),
       lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
       company: u.contractorProfile?.company ?? "",
@@ -186,6 +218,94 @@ export async function setUserStatus(
     { reason: reason ?? null, prior: before.status },
   );
   revalidatePath("/admin/users");
+  return { ok: true };
+}
+
+/**
+ * Change a contractor's role. Deliberately limited to CONTRACTOR <-> WORKER:
+ * SUPER_ADMIN is governed by the ADMIN_EMAILS env allowlist and re-synced on
+ * every request in me.ts (a UI-set admin role would just revert on the
+ * target's next page load), so we neither grant nor revoke it here — same
+ * stance suspend/impersonate already take toward admins.
+ */
+export async function setUserRole(
+  userId: string,
+  role: "CONTRACTOR" | "WORKER",
+): Promise<{ ok: true }> {
+  const me = await requireAdmin();
+  if (role !== "CONTRACTOR" && role !== "WORKER") {
+    throw new Error("Role must be CONTRACTOR or WORKER");
+  }
+  const before = await db.user.findUnique({ where: { id: userId } });
+  if (!before) throw new Error("User not found");
+  if (before.role === "SUPER_ADMIN") {
+    throw new Error(
+      "Admins are managed via the ADMIN_EMAILS env var, not here.",
+    );
+  }
+  if (before.role === role) return { ok: true };
+
+  await db.user.update({ where: { id: userId }, data: { role } });
+  await logAction(me.user.id, "USER_ROLE_CHANGED", "User", userId, {
+    from: before.role,
+    to: role,
+  });
+  revalidatePath("/admin/users");
+  return { ok: true };
+}
+
+/**
+ * Admin override of a user's plan tier. Access is gated on CREDITS, not on
+ * subscription status, so this is a billing LABEL + accounting lever, not a
+ * feature switch — it does not touch the credit wallet (use adjustCredits).
+ *
+ * Refused when a live Stripe subscription backs the row: mutating status
+ * locally would desync (the next Stripe webhook overwrites it, and a
+ * hand-set ACTIVE with no real sub locks the user out of checkout). Manage
+ * those in Stripe. For comp / manual / pre-Stripe accounts it upserts the
+ * local Subscription row.
+ */
+export async function setUserTier(
+  userId: string,
+  tier: UserTier,
+): Promise<{ ok: true }> {
+  const me = await requireAdmin();
+  const map: Record<
+    UserTier,
+    { status: "ACTIVE" | "TRIALING" | "CANCELED"; planId: string }
+  > = {
+    free: { status: "CANCELED", planId: "free" },
+    trial: { status: "TRIALING", planId: "pro_monthly" },
+    pro: { status: "ACTIVE", planId: "pro_monthly" },
+  };
+  const next = map[tier];
+  if (!next) throw new Error("Tier must be free, trial, or pro");
+
+  const before = await db.subscription.findUnique({ where: { userId } });
+  if (before?.stripeSubscriptionId) {
+    throw new Error(
+      "This account has a live Stripe subscription — change it in Stripe to avoid billing desync.",
+    );
+  }
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true },
+  });
+  if (!user) throw new Error("User not found");
+
+  await db.subscription.upsert({
+    where: { userId },
+    create: { userId, status: next.status, planId: next.planId },
+    update: { status: next.status, planId: next.planId },
+  });
+  await logAction(me.user.id, "USER_PLAN_CHANGED", "User", userId, {
+    tier,
+    status: next.status,
+    planId: next.planId,
+    prior: before?.status ?? null,
+  });
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/analytics");
   return { ok: true };
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Globe, MonitorSmartphone, Radio } from "lucide-react";
 import type { LiveNow } from "@/app/actions/analytics";
 import { Badge } from "@/components/ui/badge";
@@ -106,7 +107,17 @@ export function LiveNowCard({ live, nowMs }: { live: LiveNow; nowMs: number }) {
                       {s.path}
                     </td>
                     <td className="max-w-[180px] truncate px-3 py-2.5 text-zinc-600">
-                      {s.userEmail ?? "Anonymous"}
+                      {s.userEmail ? (
+                        <Link
+                          href={`/admin/users?q=${encodeURIComponent(s.userEmail)}`}
+                          className="transition-smooth ring-focus text-accent-700 hover:underline"
+                          title="Manage this user"
+                        >
+                          {s.userEmail}
+                        </Link>
+                      ) : (
+                        "Anonymous"
+                      )}
                     </td>
                     <td className="px-3 py-2.5">
                       <Badge tone={meta.tone}>{meta.label}</Badge>

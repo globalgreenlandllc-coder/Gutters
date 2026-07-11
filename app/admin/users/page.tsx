@@ -1,8 +1,12 @@
 import { listUsersForAdmin } from "@/app/actions/admin";
 import { UsersTable } from "@/components/admin/users-table";
 
-export default async function AdminUsersPage() {
-  const rows = await listUsersForAdmin();
+export default async function AdminUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const [{ q }, rows] = await Promise.all([searchParams, listUsersForAdmin()]);
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
@@ -21,7 +25,7 @@ export default async function AdminUsersPage() {
         </div>
       </header>
 
-      <UsersTable rows={rows} />
+      <UsersTable rows={rows} initialQuery={q ?? ""} />
     </div>
   );
 }
