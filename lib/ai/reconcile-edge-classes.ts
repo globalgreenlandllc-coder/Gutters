@@ -171,13 +171,48 @@ export function reconcileEdgeClasses(opts: {
     const { outline, edges, perFace } = opts;
     if (!perFace || outline.length < 3) return noop();
     const faces = ["north", "south", "east", "west"] as const;
-    if (!faces.some((f) => perFace[f]?.readable)) return noop();
+    // House-relative face names map 1:1 onto the footprint sides with NO
+    // compass — front=bottom edge, rear=top, left, right (the front-at-bottom
+    // drafting convention). A set titled FRONT/RIGHT SIDE/REAR/LEFT SIDE (no
+    // compass) is read house-relative upstream; without this branch its
+    // fully-legible hip elevations were discarded and a gable-biased guess won.
+    const HR_FOR_SIDE: Record<Side, string> = {
+      front: "front",
+      back: "rear",
+      left: "left",
+      right: "right",
+    };
+    // Each side's outward canvas normal (front-at-bottom, y down). Equivalent to
+    // normals[compassFace] for compass plans (faceForSide placed that face here
+    // precisely because its normal points this way), and the ONLY normal we have
+    // for a house-relative read — so use it uniformly.
+    const SIDE_NORMAL: Record<Side, { x: number; y: number }> = {
+      front: { x: 0, y: 1 },
+      back: { x: 0, y: -1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 },
+    };
+    const anyCompass = faces.some((f) => perFace[f]?.readable);
+    const anyHouseRel = (["front", "back", "left", "right"] as Side[]).some(
+      (s) => perFace[HR_FOR_SIDE[s]]?.readable,
+    );
+    if (!anyCompass && !anyHouseRel) return noop();
 
     const normals: FaceNormals =
       deriveOrientationFromFaceTitles(perFace)?.normals ?? DEFAULT_FACE_NORMALS;
     // compass face → canvas side its outward normal points to
     const faceForSide = new Map<Side, FaceName>();
     for (const f of faces) faceForSide.set(sideOfNormal(normals[f]), f);
+    // Per side, prefer a readable HOUSE-RELATIVE read (which already names the
+    // side directly) over the compass-mapped face.
+    const readingForSide = (
+      side: Side,
+    ): { faceLabel: string | undefined; reading: FaceReadingRaw | undefined } => {
+      const hr = HR_FOR_SIDE[side];
+      if (perFace[hr]?.readable) return { faceLabel: hr, reading: perFace[hr] };
+      const cf = faceForSide.get(side);
+      return { faceLabel: cf, reading: cf ? perFace[cf] : undefined };
+    };
 
     const classes = opts.classes.map((c) => ({ ...c }));
     const droppedProjections: DroppedProjection[] = [];
@@ -188,13 +223,13 @@ export function reconcileEdgeClasses(opts: {
     let promoted = 0;
     let demoted = 0;
     let unknowns = 0;
+    let hipVetoed = 0;
     // Edges an elevation gable claimed on ANY side — pass 4 must not touch a
     // wall that is itself disputed as a gable candidate.
     const claimedByGable = new Set<string>();
 
     for (const side of ["front", "back", "left", "right"] as Side[]) {
-      const face = faceForSide.get(side);
-      const reading = face ? perFace[face] : undefined;
+      const { faceLabel: face, reading } = readingForSide(side);
       if (!reading || reading.readable === false) continue;
 
       const sideEdges = edges.filter(
@@ -208,7 +243,7 @@ export function reconcileEdgeClasses(opts: {
       // Order the side's edges the way the elevation VIEWER sees them
       // (left→right), same convention place-gables pins with tests:
       // rightDir = (n.y, -n.x) for outward normal n.
-      const n = normals[face!];
+      const n = SIDE_NORMAL[side];
       const rd = { x: n.y, y: -n.x };
       const proj = (p: OverlayPt) => p.x * rd.x + p.y * rd.y;
       let lo = Infinity;
@@ -346,6 +381,23 @@ export function reconcileEdgeClasses(opts: {
               (byId.get(cls.id)!.edge_class === "eave"
                 ? "the gutter stays."
                 : "the wall stays under review (UNPRICED)."),
+          );
+          continue;
+        }
+        // HIP VETO: when the face reads HIPPED (every edge a horizontal eave) or
+        // the reader marked THIS shape a hip end (is_hip_end), the "gable" is a
+        // hip — it carries a gutter. Never promote its wall to a rake. This is
+        // the deterministic counter-evidence a hip-dominant roof was missing;
+        // it is gutter-PROTECTIVE (keeps the base eave/unknown, invents nothing)
+        // and yields to a printed rake label (the sheet's own words win).
+        const faceHipped = reading?.roof_form === "hipped";
+        if (
+          (faceHipped || g.is_hip_end === true) &&
+          !(cls.evidence ?? []).some((t) => STRONG_RAKE_EVIDENCE.has(t))
+        ) {
+          hipVetoed++;
+          notes.push(
+            `🛖 ${cls.id}: the ${face} elevation reads a HIP end here (${faceHipped ? "hipped face" : "hip-end shape"}), not a gable — the roof sheds to a gutter across this wall. Kept the eave; not tented. Verify.`,
           );
           continue;
         }
@@ -750,9 +802,18 @@ export function reconcileEdgeClasses(opts: {
       }
     }
 
-    if (promoted + demoted + unknowns > 0) {
+    if (promoted + demoted + unknowns + hipVetoed > 0) {
       notes.push(
-        `🧭 Edge↔elevation reconcile: ${promoted} promoted to rake, ${demoted} demoted to eave, ${unknowns} set unknown (elevations are the gable budget).`,
+        `🧭 Edge↔elevation reconcile: ${promoted} promoted to rake, ${demoted} demoted to eave, ${unknowns} set unknown` +
+          (hipVetoed > 0
+            ? `, ${hipVetoed} kept as eave (read as hip ends, not gables)`
+            : "") +
+          " (elevations are the gable budget).",
+      );
+    }
+    if (hipVetoed > 0) {
+      notes.push(
+        `⚠ ${hipVetoed} wall(s) the elevations read as HIP ends kept their gutter over a gable read — a hip-driven change to the priced eaves. Eyeball the front/garage/entry against the roof before quoting.`,
       );
     }
     return { classes, notes, promoted, demoted, unknowns, droppedProjections };

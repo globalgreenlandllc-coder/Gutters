@@ -254,6 +254,101 @@ export function deriveTrussField(opts: {
   return out;
 }
 
+/**
+ * HIP-CORNER EAVE HINTS — read the roof-framing sheet's drawn HIP LINES.
+ *
+ * A hip springs as a ~45° diagonal from an OUTSIDE (convex) building corner and
+ * runs inward to a ridge; a valley springs from an INSIDE (reflex) corner. A
+ * hip proves that BOTH walls meeting at that corner are EAVES — the roof sheds
+ * to a gutter on each. This is the deterministic counter-evidence a
+ * hip-dominant roof was missing: the framing plan literally draws it, but no
+ * engine read it (truss-field only looked at axis-aligned members).
+ *
+ * Returns the ids of perimeter edges flanked by a hip. PROTECTIVE (eave-only):
+ * it never produces a rake, so it can restore/keep a gutter but never strip one.
+ * A valley off a reflex corner is deliberately ignored.
+ */
+export function deriveHipCorners(opts: {
+  outline: readonly OverlayPt[];
+  edges: readonly OutlineEdge[];
+  segments: readonly number[][] | null | undefined;
+  ptPerFt?: number | null;
+}): Set<string> {
+  const hint = new Set<string>();
+  const { outline, edges, segments } = opts;
+  if (!segments || segments.length < 4 || outline.length < 4) return hint;
+
+  const xs = outline.map((p) => p.x);
+  const ys = outline.map((p) => p.y);
+  const span = Math.max(
+    Math.max(...xs) - Math.min(...xs),
+    Math.max(...ys) - Math.min(...ys),
+    1,
+  );
+  const ptPerFt =
+    opts.ptPerFt && Number.isFinite(opts.ptPerFt) && opts.ptPerFt > 0
+      ? opts.ptPerFt
+      : span / 60;
+  const minLen = 3 * ptPerFt; // a real hip run, not a hardware glyph
+  const cornerTol = Math.max(1.5 * ptPerFt, span * 0.02);
+
+  // Diagonal strokes at ~45° (22°–68°): both deltas meaningful, ratio near 1.
+  const diagonals: Array<{ a: OverlayPt; b: OverlayPt }> = [];
+  for (const s of segments) {
+    if (!Array.isArray(s) || s.length < 4) continue;
+    const dx = Math.abs(s[2] - s[0]);
+    const dy = Math.abs(s[3] - s[1]);
+    if (Math.hypot(dx, dy) < minLen) continue;
+    const lo = Math.min(dx, dy);
+    const hi = Math.max(dx, dy);
+    if (lo < hi * 0.4) continue; // too axis-aligned to be a hip
+    diagonals.push({ a: { x: s[0], y: s[1] }, b: { x: s[2], y: s[3] } });
+  }
+  if (diagonals.length === 0) return hint;
+
+  // Polygon orientation (shoelace) so we can tell convex (outside) corners from
+  // reflex (inside) ones — a hip only springs from a convex corner.
+  let area2 = 0;
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    area2 += a.x * b.y - b.x * a.y;
+  }
+  const ccw = area2 > 0;
+
+  for (let i = 0; i < outline.length; i++) {
+    const prev = outline[(i - 1 + outline.length) % outline.length];
+    const v = outline[i];
+    const next = outline[(i + 1) % outline.length];
+    // Cross product of incoming→outgoing edge; sign vs orientation = convexity.
+    const cross =
+      (v.x - prev.x) * (next.y - v.y) - (v.y - prev.y) * (next.x - v.x);
+    const convex = ccw ? cross > 0 : cross < 0;
+    if (!convex) continue; // valley corner — not a hip
+
+    // A hip diagonal has an endpoint AT this corner and runs INWARD (its far
+    // end sits inside the footprint, away from the corner).
+    const hasHip = diagonals.some((d) => {
+      const atA = Math.hypot(d.a.x - v.x, d.a.y - v.y) <= cornerTol;
+      const atB = Math.hypot(d.b.x - v.x, d.b.y - v.y) <= cornerTol;
+      if (!atA && !atB) return false;
+      const far = atA ? d.b : d.a;
+      return pointInPolygon({ x: far.x, y: far.y }, outline);
+    });
+    if (!hasHip) continue;
+
+    // Mark the two perimeter edges meeting at this corner.
+    for (const e of edges) {
+      const touches =
+        (Math.hypot(e.p1.x - v.x, e.p1.y - v.y) <= cornerTol ||
+          Math.hypot(e.p2.x - v.x, e.p2.y - v.y) <= cornerTol) &&
+        (e.axis === "h" || e.axis === "v");
+      if (touches) hint.add(e.id);
+    }
+  }
+  return hint;
+}
+
 export type TrussFieldResult = {
   classes: EdgeClass[];
   notes: string[];

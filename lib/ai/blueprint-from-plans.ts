@@ -232,11 +232,38 @@ break WITHIN one roof plane, not an eave/rake/ridge. It adds no gutter LF; just
 don't mistake it for a ridge or an eave.
 </penetrations_and_fireplace>
 
+<read_all_sheets>
+Use EVERY sheet in the set, not just the roof plan — the truth is spread across
+them and they cross-check each other:
+- ROOF FRAMING / TRUSS PLAN: its drawn HIP LINES are the single most reliable
+  hip-vs-gable evidence. A hip is a ~45° line springing INWARD from an OUTSIDE
+  (convex) building corner to a ridge; it proves BOTH walls at that corner are
+  EAVES (gutter). A valley is a ~45° line at an INSIDE (reflex) corner. A ridge
+  running to a wall with NO hip is a gable end (rake). If the framing plan shows
+  hips at every outside corner and no gable-end trusses, the roof is FULLY
+  HIPPED — gutter the whole perimeter, add ZERO gables.
+- ELEVATIONS: hip end (horizontal eave + inward hip slopes) = eave; gable end
+  (two rakes down to the wall, no horizontal eave) = rake.
+- SECTIONS: an eave OVERHANG at a wall corroborates a hip/eave; a flush rake at
+  the wall top corroborates a gable.
+Reconcile the roof plan, framing plan, elevations and sections; where they
+conflict, say so in the notes. Do NOT rely on the roof plan alone.
+</read_all_sheets>
+
 <four_faces_and_flush_default>
 Read all FOUR elevations (front, rear, left, right) on their own. NEVER derive
 one face from another and NEVER assume front/back or left/right symmetry — a
 house can be a busy cross-gable in front and a plain hip with a patio in back.
 Run the gable count + eave-vs-rake pass separately on EACH face.
+
+MANY homes are FULLY HIPPED (prairie / ranch / Northwest contemporary): every
+face steps down to a continuous eave, hips climb from every outside corner, and
+there are ZERO gables — including over the garage and entry. This is normal, not
+an edge case. Do NOT manufacture a garage/entry/porch gable on a hipped front:
+if the roof over the garage doors has a horizontal eave with hips climbing
+inward, it is an EAVE that carries a gutter, not a gable. A small decorative
+gablet over an entry is the exception, not the rule — confirm a true gable
+(rakes to the corners, no horizontal eave) before dropping the front eave.
 
 A gable's projection decides whether it has guttered SIDE eaves, and projection
 is visible only in the perpendicular (side) elevation or the roof-plan footprint

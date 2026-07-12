@@ -97,9 +97,13 @@ Gable signatures to look for (any ONE of these marks a gable):
   - a louvered GABLE END VENT in the triangle
   - two sloped fascia lines rising to a peak
 
-GARAGE CHECK: if this face shows garage doors, look directly ABOVE them — a
-gable over the garage is one of the most common forms and the most commonly
-missed. Report it with kind:"garage".
+GARAGE CHECK: if this face shows garage doors, look directly ABOVE them. If the
+roof over the garage is a true gable (two rakes down to the corners, NO
+horizontal eave under the peak), it is one of the most commonly missed gables —
+report it with kind:"garage". But if the roof over the garage has a HORIZONTAL
+eave along its bottom with hip lines climbing inward (a hip end — see
+<hipped_face>), it is an EAVE, not a gable — do NOT report a garage gable there.
+On a fully hipped home the garage front is a plain eave.
 
 Before you report the count, SELF-CHECK: split the face into left / center /
 right thirds and confirm you scanned each third — misses cluster at the far
@@ -118,7 +122,40 @@ and misplaces a mass:
 Only a triangular roof FACE pointing at the viewer is a gable. A masonry CHIMNEY
 CHASE that projects past the wall IS a real mass — report it (kind:"other" with
 its width) — but a flue PIPE is not.
+  - a HIP END or HIPPED roof section (see <hipped_face> — the single most
+    common false gable). It has a HORIZONTAL eave along its bottom; a gable
+    does not.
 </not_a_gable>
+
+<hipped_face>
+HIP vs GABLE is the decision that most changes the gutter, so make it on ONE
+hard test — the bottom edge under the slope — not on the silhouette:
+
+  • GABLE END: two sloped roof lines (RAKES) run all the way DOWN to the wall's
+    top corners. There is NO horizontal roof edge under the peak — the triangle
+    meets open wall. A gable end gets NO gutter across that face.
+
+  • HIP END / HIPPED section: a HORIZONTAL eave (fascia + gutter line) runs the
+    full bottom of the roof, and the sloped hip lines climb INWARD from the two
+    ends UP to a ridge (making a trapezoid, or a low wide triangle sitting ON a
+    horizontal eave). A hip end IS an eave — it gets a gutter across its whole
+    width.
+
+Whole prairie / ranch / contemporary / "Northwest modern" homes are HIPPED on
+every side — the roof steps down to a continuous eave all the way around and
+there are ZERO gables. That is not unusual; report it honestly: gable_count 0,
+gables [], continuous_eave true, roof_form "hipped". Do NOT manufacture gables
+to fill a face that is plainly a hip.
+
+Set roof_form for the whole face: "hipped" (every roof edge on this face is a
+horizontal eave, hips climb inward), "gabled" (one or more true gable ends /
+rakes), "mixed" (both), or "unknown" (can't tell). For EACH gable you DO report,
+set is_hip_end:true only if — on a second look — its bottom is actually a
+horizontal eave (i.e. you now think it is a hip, not a gable); normally false.
+This is a DISCRIMINATOR, not a license to under-count: a genuine gable with two
+down-running rakes and no horizontal eave beneath it is STILL a gable — keep
+counting those exactly as before.
+</hipped_face>
 
 <gable_end_span>
 When the gable IS the entire END of the house — the whole face you are reading is
@@ -207,6 +244,12 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
       },
       readable: { type: "boolean", description: "false when the image is too low-res to classify edges/gables." },
       unreadable_reason: { type: ["string", "null"] },
+      roof_form: {
+        type: "string",
+        enum: ["hipped", "gabled", "mixed", "unknown"],
+        description:
+          "The roof form on THIS face: 'hipped' = every roof edge is a horizontal eave (hips climb inward, ZERO gables); 'gabled' = one or more true gable ends/rakes; 'mixed' = both; 'unknown' if unclear. See <hipped_face>.",
+      },
       gable_count: { type: ["integer", "null"] },
       continuous_eave: { type: "boolean" },
       gables: {
@@ -226,6 +269,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
               type: ["number", "null"],
               description:
                 "Horizontal center of this gable along the face: 0 = far left, 0.5 = center, 1 = far right, as you look at the elevation.",
+            },
+            is_hip_end: {
+              type: "boolean",
+              description:
+                "true if, on a second look, this shape's bottom is actually a HORIZONTAL eave (a hip end), not two down-running rakes — i.e. you now think it is a hip, not a gable. Normally false. See <hipped_face>.",
             },
             eave_condition_guess: { type: "string", enum: ["projecting", "roof_mounted", "flush", "unknown"] },
             supported_on: { type: "string", enum: ["wall", "posts", "beam", "unknown"] },
@@ -285,6 +333,7 @@ function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
     sheet_title: null,
     readable: false,
     unreadable_reason: reason,
+    roof_form: null,
     gable_count: null,
     continuous_eave: false,
     gables: [],
@@ -328,11 +377,11 @@ export async function readElevationFace(
               text:
                 `Find and read the ${spec.face.toUpperCase()} exterior elevation — in isolation. ` +
                 (spec.pages.length
-                  ? `The elevation sheets in this set are page(s) ${spec.pages.join(", ")}, and a single sheet often holds TWO elevations side by side, so look at ALL of them and pick the ${spec.face.toUpperCase()} one (it may be titled "${spec.face.toUpperCase()}" or e.g. "FRONT/${spec.face.toUpperCase()}", "LEFT/${spec.face.toUpperCase()}"). `
+                  ? `The elevation sheets in this set are page(s) ${spec.pages.join(", ")}, and a single sheet often holds TWO elevations side by side, so look at ALL of them and pick the ${spec.face.toUpperCase()} one. It may be titled plainly "${spec.face.toUpperCase()} ELEVATION" or "${spec.face.toUpperCase()} SIDE ELEVATION", or paired with a compass bearing like "FRONT/${spec.face.toUpperCase()}". A plain house-relative title (FRONT / REAR / LEFT SIDE / RIGHT SIDE) with NO compass is normal and fully readable — do NOT mark it unreadable just because no N/S/E/W bearing is printed. `
                   : `Locate the ${spec.face.toUpperCase()} elevation anywhere in the set. `) +
                 `Read ONLY the ${spec.face.toUpperCase()} elevation; ignore every other elevation and face, and do NOT assume any other face looks like this one. ` +
-                `If there is no ${spec.face.toUpperCase()} elevation in the set, set readable:false. ` +
-                `Report sheet_title with the elevation's printed title EXACTLY as it appears (e.g. "FRONT/${spec.face.toUpperCase()} ELEVATION") — it anchors the plan's compass orientation. ` +
+                `If there is genuinely no ${spec.face.toUpperCase()} elevation in the set, set readable:false. ` +
+                `Report sheet_title with the elevation's printed title EXACTLY as it appears (e.g. "${spec.face.toUpperCase()} ELEVATION") — it anchors the plan's orientation. ` +
                 `Enumerate its gables, classify its eave/rake edges, note any projection cues, and call record_face_reading with face:"${spec.face}".`,
             },
             sourceBlock(source),
@@ -359,6 +408,7 @@ export async function readElevationFace(
       sheet_title: typeof raw.sheet_title === "string" && raw.sheet_title.trim() ? raw.sheet_title.trim() : null,
       readable: raw.readable !== false,
       unreadable_reason: raw.unreadable_reason ?? null,
+      roof_form: raw.roof_form ?? null,
       gable_count: typeof raw.gable_count === "number" ? raw.gable_count : null,
       continuous_eave: raw.continuous_eave !== false,
       gables: Array.isArray(raw.gables) ? raw.gables : [],
@@ -404,14 +454,29 @@ export async function readAllElevations(
       ),
     );
 
-    // Always read ALL FOUR cardinal faces, each locating its own elevation among
-    // the elevation pages — so two-elevations-per-sheet no longer skips a side.
-    const CARDINAL_FACES: ElevationFaceName[] = ["north", "south", "east", "west"];
-    const specs = CARDINAL_FACES.map((face) => ({ face, pages: elevationPages }));
+    // Pick the face VOCABULARY from what the sheets are actually titled. Many
+    // sets (esp. contemporary/prairie plans like the Mascord catalog) title
+    // their elevations FRONT / RIGHT SIDE / REAR / LEFT SIDE with NO compass
+    // bearing anywhere. Reading those as north/south/east/west forces every
+    // face to readable:false — the fully-legible hip elevations get discarded,
+    // and downstream falls back to a gable-biased guess. House-relative names
+    // map 1:1 onto the footprint sides (front=bottom edge, rear=top, …) with
+    // no compass needed, so when the classifier saw no cardinal side, read the
+    // faces house-relative instead. Compass sets keep the cardinal read.
+    const hasCompassSide = sheets.some(
+      (s) =>
+        s.sheet_type === "elevation" &&
+        typeof s.elevation_side === "string" &&
+        ["north", "south", "east", "west"].includes(s.elevation_side),
+    );
+    const FACES: ElevationFaceName[] = hasCompassSide
+      ? ["north", "south", "east", "west"]
+      : ["front", "rear", "left", "right"];
+    const specs = FACES.map((face) => ({ face, pages: elevationPages }));
 
     const results = await Promise.all(specs.map((spec) => readElevationFace(source, spec)));
     const reads = results.map((r) => r.reading);
-    const merged = mergeFaceReadings(reads, CARDINAL_FACES);
+    const merged = mergeFaceReadings(reads, FACES);
     const usage = results.reduce(
       (acc, r) => ({
         input_tokens: acc.input_tokens + r.usage.input_tokens,

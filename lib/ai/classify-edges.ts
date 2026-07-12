@@ -15,7 +15,7 @@ import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
 import { buildRoofLayout, type RoofLayout } from "./roof-layout";
 import { reconcileEdgeClasses, type DroppedProjection } from "./reconcile-edge-classes";
-import { applyTrussFieldDemotions, deriveTrussField } from "./truss-field";
+import { applyTrussFieldDemotions, deriveTrussField, deriveHipCorners } from "./truss-field";
 import type { FaceReadingRaw } from "./face-merge";
 
 /**
@@ -557,6 +557,22 @@ export async function classifyPerimeterEdges(opts: {
         .filter(([, v]) => v.verdict === "perpendicular")
         .map(([id]) => id),
     );
+    // Hip lines drawn on the roof-framing sheet: a hip off an OUTSIDE corner
+    // proves both walls there are eaves. Fold those ids into fieldEave (they
+    // read as "bears the roof" evidence) so the reconcile keeps their gutter
+    // and never tents them. Eave-only — cannot strip a gutter.
+    const hipCornerEaves = deriveHipCorners({
+      outline: opts.outline,
+      edges,
+      segments: opts.fieldSegments ?? null,
+      ptPerFt: solved?.ptPerFt ?? null,
+    });
+    for (const id of hipCornerEaves) fieldEave.add(id);
+    if (hipCornerEaves.size > 0) {
+      fieldPass.notes.push(
+        `📐 ${hipCornerEaves.size} edge(s) sit at a HIP corner on the framing sheet — a hip sheds to a gutter on both walls, so these are kept as eaves.`,
+      );
+    }
 
     // Elevation reconcile — code-enforced, runs BEFORE the layout so gable
     // ridges land on the walls the elevations actually show gables on. The
@@ -576,9 +592,21 @@ export async function classifyPerimeterEdges(opts: {
     // No elevations to corroborate (or none readable) — the sheet's gable-end
     // framing is still better evidence than nothing: promote with a verify
     // note instead of dropping the hint on the floor.
-    const anyFaceReadable = ["north", "south", "east", "west"].some(
-      (f) => opts.perFace?.[f]?.readable,
-    );
+    // Check BOTH compass and house-relative face names: a set titled
+    // FRONT/RIGHT SIDE/REAR/LEFT SIDE is read house-relative, and its faces DID
+    // bind in the reconcile above — so this dangerous "promote every parallel
+    // field to rake" fallback must NOT fire and re-invent the front gables the
+    // reconcile just resolved.
+    const anyFaceReadable = [
+      "north",
+      "south",
+      "east",
+      "west",
+      "front",
+      "rear",
+      "left",
+      "right",
+    ].some((f) => opts.perFace?.[f]?.readable);
     if (!anyFaceReadable) {
       const minRakePt = (solved?.ptPerFt ?? 20) * 8;
       for (const cls of classes) {

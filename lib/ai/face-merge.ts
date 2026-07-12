@@ -51,6 +51,11 @@ export type FaceGableRead = {
    *  The gable then rises BEHIND a guttered roof edge (frame-over): it must
    *  not consume a wall, and the wall under it keeps its gutter. */
   eave_passes_in_front?: boolean | null;
+  /** Hip DISCRIMINATOR: true when this shape's bottom is actually a horizontal
+   *  eave (a hip end), i.e. the reader concluded on a second look it's a hip,
+   *  not a gable. A hip end carries a gutter — the reconcile must NOT promote
+   *  its wall to a rake. Optional; absent/false ⇒ treated as a real gable. */
+  is_hip_end?: boolean | null;
   notes: string;
 };
 
@@ -72,6 +77,11 @@ export type FaceReadingRaw = {
   sheet_title?: string | null;
   readable: boolean;
   unreadable_reason: string | null;
+  /** Roof form on this face: 'hipped' = every edge is a horizontal eave (zero
+   *  gables), 'gabled' = has true gable ends, 'mixed', 'unknown'. A 'hipped'
+   *  face is gutter-PROTECTIVE — the reconcile keeps its perimeter eaves and
+   *  vetoes a phantom gable→rake promotion on it. Optional (older reads omit). */
+  roof_form?: "hipped" | "gabled" | "mixed" | "unknown" | null;
   gable_count: number | null;
   continuous_eave: boolean;
   gables: FaceGableRead[];
