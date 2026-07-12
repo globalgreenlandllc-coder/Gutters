@@ -47,6 +47,17 @@ export async function segmentRoofViaSam(
    * When omitted, falls back to the whole-crop-minus-5%-margin box.
    */
   boxPrompt?: { x_min: number; y_min: number; x_max: number; y_max: number },
+  /**
+   * Optional POSITIVE point prompts (image-pixel space), one per roof
+   * plane — from the Google Solar segment centers. On a big multi-wing
+   * roof a box prompt alone locks onto the single brightest plane; seeding
+   * a positive point INSIDE every wing makes SAM 2 union all the planes
+   * into the whole footprint. Only used on the retry path (the first call
+   * is box-only, which is best for simple roofs — a lone point+box once
+   * returned a 0.4% mask, so points are added only when the box already
+   * under-segmented). Points outside the crop are dropped by the caller.
+   */
+  pointPrompts?: readonly { x: number; y: number }[],
 ): Promise<SamOutcome> {
   const key = await getActiveApiKey("FAL");
   if (!key) return { ok: false, reason: "no FAL key in vault" };
@@ -99,6 +110,25 @@ export async function segmentRoofViaSam(
             y_max: box.y_max,
             label: 1,
           },
+          // One positive point per roof wing (retry path). SAM 2 unions
+          // the box + every positive point, so each seeded wing joins the
+          // mask — the fix for "segmented one wing not whole roof".
+          ...(pointPrompts ?? [])
+            .filter(
+              (p) =>
+                Number.isFinite(p.x) &&
+                Number.isFinite(p.y) &&
+                p.x >= 0 &&
+                p.y >= 0 &&
+                p.x <= image.width &&
+                p.y <= image.height,
+            )
+            .map((p) => ({
+              type: "point" as const,
+              x: clamp(p.x, image.width),
+              y: clamp(p.y, image.height),
+              label: 1,
+            })),
         ],
       }),
       cache: "no-store",

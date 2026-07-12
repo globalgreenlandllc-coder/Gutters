@@ -118,3 +118,14 @@ test("vision flag never rescues a mock/degenerate trace back up", () => {
   });
   assert.equal(q.status, "unusable");
 });
+
+test("coarse Solar-segment footprint is forced 'unusable' — never auto-priced", () => {
+  // A geometrically clean trace that would otherwise be "ok"; the coarse
+  // provenance flag alone must route it to the redraw banner.
+  const q = assessSatelliteTrace({ ...okArgs, interiorTiersDetected: 0, coarseFootprint: true });
+  assert.equal(q.status, "unusable");
+  assert.ok(
+    q.reasons.some((r) => /roof-plane data/i.test(r) && /redraw/i.test(r)),
+    "explains the coarse plane-box outline and says to redraw",
+  );
+});

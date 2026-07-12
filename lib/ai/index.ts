@@ -9,6 +9,7 @@ import {
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
+import { footprintMaskFromSolarSegments } from "./solar-segment-footprint";
 
 import { classifyEdgeWithAzimuth, ringCentroid } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
@@ -474,6 +475,10 @@ export async function runAIEstimatePipeline(
   // pixelated blob — tracing it tends to round corners and warp wall
   // angles, which causes the azimuth math to flag rakes as eaves.
   let roofPolygon: RoofPolygon | null = null;
+  // True when roofPolygon was synthesized from Solar segment bboxes (both
+  // image tracers failed) — a coarse footprint that must be trace-quality
+  // flagged so it never reads "ok".
+  let usedCoarseFootprint = false;
   type ClassifiedEdge = {
     a: { lat: number; lng: number };
     b: { lat: number; lng: number };
@@ -545,7 +550,6 @@ export async function runAIEstimatePipeline(
     // the trace fell all the way through to the crude vision rectangle. The
     // marginal corner gain isn't worth regressing the PRIMARY tracer into a
     // total miss; the rectify pass below recovers clean corners for free.
-    const samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
     // Gate SAM acceptance on areaFraction. A real residential roof, tightly
     // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
     // locked onto a sub-region (one gable, a high-contrast plane, a
@@ -555,6 +559,49 @@ export async function runAIEstimatePipeline(
     // outlines and is robust against multi-gable hip roofs that confuse
     // SAM's box prompt.
     const SAM_MIN_AREA_FRACTION = 0.15;
+    let samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
+    // MULTI-WING RETRY: on a big roof the box prompt locks onto one bright
+    // plane (this house: 4.2%). Google Solar already handed us a center per
+    // roof segment — seed a positive SAM point inside every wing so SAM 2
+    // unions all the planes into the whole footprint. Fires ONCE, only when
+    // the box result under-segmented AND the roof is genuinely multi-plane;
+    // the seeded retry is kept only if it covers MORE than the box alone,
+    // so the worst case is one extra fal call and === today's fallthrough.
+    const boxCoverage = samOutcome.ok ? samOutcome.polygon.areaFraction : 0;
+    if (boxCoverage < SAM_MIN_AREA_FRACTION && solarRoofSegments.length >= 4) {
+      const seeds = solarRoofSegments
+        .map((s) => s.center)
+        .filter((c): c is { lat: number; lng: number } => !!c)
+        .map((c) => {
+          const px = latLngToImagePixel(
+            c.lat,
+            c.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          return { x: px.x - cropOffset.x, y: px.y - cropOffset.y };
+        })
+        .filter(
+          (p) =>
+            p.x >= 0 &&
+            p.y >= 0 &&
+            p.x <= workImage.width &&
+            p.y <= workImage.height,
+        );
+      if (seeds.length >= 2) {
+        const retry = await segmentRoofViaSam(workImage, samPoint, samBox, seeds);
+        const retryCoverage = retry.ok ? retry.polygon.areaFraction : 0;
+        notes.push(
+          `SAM multi-wing retry (${seeds.length} Solar-segment seeds): ${(
+            retryCoverage * 100
+          ).toFixed(1)}% coverage vs ${(boxCoverage * 100).toFixed(1)}% box-only`,
+        );
+        if (retryCoverage > boxCoverage) samOutcome = retry;
+      }
+    }
     if (
       samOutcome.ok &&
       samOutcome.polygon.points.length >= 8 &&
@@ -716,6 +763,40 @@ export async function runAIEstimatePipeline(
       }
     } else {
       notes.push(`Solar mask unavailable — ${solarMask.reason}`);
+    }
+  }
+
+  // 4b-ii. SOLAR-SEGMENT FOOTPRINT FALLBACK. Both image tracers failed
+  //   (SAM couldn't lock on, the raster mask was too sparse), but Solar
+  //   still handed us a bounding box PER roof plane. Those boxes come from
+  //   a different Solar product than the sparse mask and collectively
+  //   cover the whole roof — union them into a synthetic mask and trace it
+  //   with the same machinery. Deterministic and image-independent, but a
+  //   coarse over-approximation (axis-aligned plane bboxes), so it's
+  //   trace-quality-flagged (usedCoarseFootprint) and never reads "ok".
+  //   This is the deterministic floor under the weak GPT-4o vision path.
+  if (image && !roofPolygon && solarRoofSegments.length >= 4) {
+    const segMask = footprintMaskFromSolarSegments(solarRoofSegments);
+    if (segMask) {
+      const result = polygonFromSolarMask(
+        segMask,
+        { lat: geocoded.lat, lng: geocoded.lng },
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      if (result && result.polygon.points.length >= 8) {
+        roofPolygon = result.polygon;
+        usedCoarseFootprint = true;
+        classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
+        notes.push(
+          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert outline (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid). Coarse (plane bounding boxes) — verify the outline against the image before pricing.`,
+        );
+      } else {
+        notes.push(
+          `Solar-segment footprint fallback produced too small a polygon (${result?.polygon.points.length ?? 0} verts) — falling through to vision.`,
+        );
+      }
     }
   }
 
@@ -1144,6 +1225,7 @@ export async function runAIEstimatePipeline(
             footprintBboxCanvas: fp?.bbox ?? null,
             interiorTiersDetected,
             segmentCount: solarRoofSegments.length,
+            coarseFootprint: usedCoarseFootprint,
           });
           // An over-traced perimeter (swallowed shadow/pavement) must fire
           // the loud "draw it yourself" banner even if the other signals

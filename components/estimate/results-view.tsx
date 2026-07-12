@@ -271,7 +271,16 @@ export function ResultsView({
                   // tool lives in AerialCanvas ("Photo & edit"), which is
                   // NOT mounted on the default satellite Diagram view, so
                   // arming drawNonce alone would do nothing there.
+                  //
+                  // Clear EVERYTHING the AI derived, not just the eaves: the
+                  // downspouts, rakes, and suggested tier-drops were all
+                  // placed FROM those eaves, so wiping eaves alone orphans
+                  // them — that's how a "bad pic" redraw left 9 downspouts
+                  // floating over 0 LF of gutter.
                   setEaves([]);
+                  setDownspouts([]);
+                  setRakes([]);
+                  setSuggestedEaves([]);
                   setViewMode("plan");
                   setDrawNonce((n) => n + 1);
                 }}

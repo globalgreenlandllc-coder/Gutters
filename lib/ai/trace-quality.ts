@@ -64,6 +64,11 @@ export function assessSatelliteTrace(args: {
   /** Vision itself called this a multi-level roof — an extra complexity
    *  signal for the vision-fallback guardrail. */
   roofLevelsMulti?: boolean;
+  /** The outline was synthesized from Google Solar's per-plane segment
+   *  bounding boxes (SAM 2 + the Solar raster mask both failed). Those
+   *  boxes are axis-aligned over-approximations of angled planes, so the
+   *  footprint is deterministic but COARSE — it must never read "ok". */
+  coarseFootprint?: boolean;
 }): TraceQuality {
   // 1. No real trace at all — the pipeline fell through to mock geometry.
   if (args.source === "mock") {
@@ -186,6 +191,23 @@ export function assessSatelliteTrace(args: {
         "Traced from the photo by AI vision (the precise roof-outline pass didn't lock on). Double-check the outline against the image before pricing.",
       );
     }
+  }
+
+  // 8. Coarse-footprint guardrail. A segment-bbox footprint is the union
+  //    of NORTH-ALIGNED plane boxes, so on a roof that sits off-cardinal
+  //    it over-approximates the true footprint — eave LF can run ~40% long
+  //    on a 45°-rotated roof, and nothing downstream catches that (the
+  //    LF/√area ratio stays in-band because area inflates too). It is a
+  //    genuinely useful STARTING outline (both image tracers failed) but
+  //    must never auto-price: force "unusable" so the loud redraw banner
+  //    fires, same as the vision fallback. The contractor keeps/edits the
+  //    box or redraws — they never send the coarse number as a quote.
+  if (args.coarseFootprint && status !== "unusable") {
+    status = "unusable";
+    confidence = Math.min(confidence, 0.4);
+    tierReasons.unshift(
+      "This outline was built from Google's roof-plane data because the photo was too unclear to trace — it's a rough box around the roof and can read larger than the real thing, especially on angled roofs. Adjust or redraw the outline before pricing.",
+    );
   }
 
   return {
