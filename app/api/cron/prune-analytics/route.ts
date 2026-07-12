@@ -43,6 +43,15 @@ export async function GET(request: Request) {
       where: { id: { in: staleViews.map((r) => r.id) } },
     });
 
+    const staleEvents = await db.analyticsEvent.findMany({
+      where: { createdAt: { lt: cutoff } },
+      select: { id: true },
+      take: MAX_DELETE,
+    });
+    const events = await db.analyticsEvent.deleteMany({
+      where: { id: { in: staleEvents.map((r) => r.id) } },
+    });
+
     const staleSessions = await db.visitorSession.findMany({
       where: { startedAt: { lt: cutoff } },
       select: { id: true },
@@ -55,7 +64,11 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       cutoff: cutoff.toISOString(),
-      deleted: { pageViews: pageViews.count, sessions: sessions.count },
+      deleted: {
+        pageViews: pageViews.count,
+        events: events.count,
+        sessions: sessions.count,
+      },
     });
   } catch (err) {
     console.error("[cron/prune-analytics] failed:", err);

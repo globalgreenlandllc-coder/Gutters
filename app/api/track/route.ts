@@ -7,6 +7,7 @@ import {
   hostnameOf,
   isBotUserAgent,
   isValidTrackingId,
+  KNOWN_EVENTS,
   parseBrowser,
   parseDevice,
   parseOs,
@@ -17,7 +18,7 @@ import {
 // at the edge under its own class in middleware.ts. The contract with the
 // client tracker (components/analytics/tracker.tsx):
 //
-//   POST { type: "pageview"|"heartbeat", sid, vid, path, ref?, utm?, click? }
+//   POST { type: "pageview"|"heartbeat"|"event", sid, vid, path, ref?, utm?, click?, name? }
 //
 // Every response is 204 — sendBeacon can't read bodies, and a broken
 // beacon must never surface errors to visitors. Malformed/bot traffic is
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
       });
       return done();
     }
-    if (body.type !== "pageview") return done();
+    if (body.type !== "pageview" && body.type !== "event") return done();
 
     // Same-origin beacons carry Clerk cookies, so signed-in traffic links
     // to its DB user here — that link is what powers signup attribution.
@@ -75,6 +76,25 @@ export async function POST(req: NextRequest) {
       }
     } catch {
       // Anonymous or auth unavailable — track without a user link.
+    }
+
+    if (body.type === "event") {
+      // Custom high-intent event (e.g. subscribe click). Allow-listed names
+      // only. Recorded separately from page_views so it never inflates
+      // pageview/bounce counts; the session is bumped so an active clicker
+      // stays "live" and the feed can attribute who/where.
+      const name = clamp(body.name, 64);
+      if (!name || !KNOWN_EVENTS.has(name)) return done();
+      await db.$transaction([
+        db.analyticsEvent.create({
+          data: { sessionId: sid, visitorId: vid, userId, name, path },
+        }),
+        db.visitorSession.updateMany({
+          where: { id: sid },
+          data: { lastSeenAt: now, lastPath: path, ...(userId ? { userId } : {}) },
+        }),
+      ]);
+      return done();
     }
 
     const referrer = clamp(body.ref, 500);

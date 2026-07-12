@@ -17,6 +17,7 @@ import {
   type MyBilling,
 } from "@/app/actions/billing";
 import { formatCurrency } from "@/lib/utils";
+import { trackEvent } from "@/components/analytics/tracker";
 
 export default function SettingsPage() {
   return (
@@ -74,6 +75,11 @@ function BillingSection() {
     key: string,
     fn: () => Promise<{ ok: true; url: string } | { ok: false; reason: string }>,
   ) {
+    // Capture the buying intent BEFORE the redirect, so the admin live feed
+    // sees the attempt even if checkout later fails. "portal" is an existing
+    // subscriber managing their plan, not a purchase — skip it.
+    if (key === "subscribe") trackEvent("subscribe_click");
+    else if (key !== "portal") trackEvent("credit_topup_click");
     setBusy(key);
     setError(null);
     try {

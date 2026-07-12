@@ -92,6 +92,26 @@ function send(payload: Record<string, unknown>) {
   }).catch(() => {});
 }
 
+/** Fire a named high-intent event (e.g. a subscribe click) from anywhere in
+ *  the client. Reuses the same anonymous session/visitor ids as pageviews,
+ *  so the admin live feed can attribute it. Fire-and-forget; safe on the
+ *  server (no-ops) and if the beacon fails. Names must be in KNOWN_EVENTS
+ *  (lib/analytics.ts) or the server drops them. */
+export function trackEvent(name: string, path?: string) {
+  if (typeof window === "undefined") return;
+  try {
+    send({
+      type: "event",
+      name,
+      sid: sessionId(),
+      vid: visitorId(),
+      path: path ?? window.location.pathname,
+    });
+  } catch {
+    // analytics must never break a user action
+  }
+}
+
 function utmFromLocation(): {
   utm: Record<string, string> | undefined;
   click: boolean;

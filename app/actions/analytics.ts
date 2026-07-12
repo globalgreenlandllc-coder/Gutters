@@ -4,9 +4,15 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import {
   CHANNEL_LABELS,
+  classifyIntent,
+  eventLabel,
+  friendlyPath,
+  INTENT_RANK,
+  LIVE_ACTIVITY_WINDOW_MS,
   LIVE_WINDOW_MS,
   segmentForPath,
   type Channel,
+  type Intent,
   type Segment,
 } from "@/lib/analytics";
 
@@ -30,6 +36,11 @@ export type LiveSession = {
   startedAt: string;
   lastSeenAt: string;
   pageviews: number;
+  // The friendly-labelled pages this session has moved through, oldest →
+  // newest (last few), so you see where they're clicking, not just where
+  // they are now. Intent = the strongest buying signal in that journey.
+  journey: string[];
+  intent: Intent;
 };
 
 export type LiveNow = {
@@ -37,6 +48,26 @@ export type LiveNow = {
   total: number;
   bySegment: Record<Segment, number>;
   sessions: LiveSession[];
+};
+
+export type LiveActivityItem = {
+  id: string;
+  at: string;
+  kind: "view" | "event";
+  sessionId: string;
+  userEmail: string | null;
+  country: string | null;
+  device: string | null;
+  path: string;
+  label: string; // friendly page name or event label
+  intent: Intent;
+};
+
+export type LiveActivity = {
+  generatedAt: string;
+  items: LiveActivityItem[];
+  // Rollup for the "smart" banner: how many subscribe attempts just happened.
+  subscribeAttempts: number;
 };
 
 export type DayStat = {
@@ -135,6 +166,7 @@ async function requireAdminReader(): Promise<void> {
 }
 
 const n = (v: bigint | number | null | undefined): number => Number(v ?? 0);
+const rankIntent = (i: Intent): number => INTENT_RANK[i];
 
 export async function getLiveNow(): Promise<LiveNow> {
   await requireAdminReader();
@@ -158,14 +190,43 @@ export async function getLiveNow(): Promise<LiveNow> {
     },
   });
 
+  const sessionIds = rows.map((r) => r.id);
   const userIds = [...new Set(rows.map((r) => r.userId).filter(Boolean))] as string[];
-  const users = userIds.length
-    ? await db.user.findMany({
-        where: { id: { in: userIds } },
-        select: { id: true, email: true },
-      })
-    : [];
+  const [users, recentViews] = await Promise.all([
+    userIds.length
+      ? db.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, email: true },
+        })
+      : Promise.resolve([]),
+    // Recent pageviews for these live sessions → per-session journey.
+    sessionIds.length
+      ? db.pageView.findMany({
+          where: { sessionId: { in: sessionIds } },
+          orderBy: { createdAt: "desc" },
+          take: 600,
+          select: { sessionId: true, path: true },
+        })
+      : Promise.resolve([]),
+  ]);
   const emailById = new Map(users.map((u) => [u.id, u.email]));
+
+  // Build oldest→newest friendly journeys (last 5 pages) per session, and
+  // track the strongest intent across the FULL recent history (not just the
+  // 5 shown) so a high-intent page that scrolled out still flags the session.
+  const pathsBySession = new Map<string, string[]>();
+  const intentBySession = new Map<string, Intent>();
+  for (const v of recentViews) {
+    const arr = pathsBySession.get(v.sessionId);
+    if (arr) {
+      if (arr.length < 5) arr.push(v.path); // desc order → capped at 5 most recent
+    } else {
+      pathsBySession.set(v.sessionId, [v.path]);
+    }
+    const cur = intentBySession.get(v.sessionId) ?? "normal";
+    const cand = classifyIntent(v.path);
+    if (rankIntent(cand) > rankIntent(cur)) intentBySession.set(v.sessionId, cand);
+  }
 
   const bySegment: Record<Segment, number> = {
     marketing: 0,
@@ -176,6 +237,11 @@ export async function getLiveNow(): Promise<LiveNow> {
   const sessions: LiveSession[] = rows.map((r) => {
     const segment = segmentForPath(r.lastPath);
     bySegment[segment] += 1;
+    const rawPaths = (pathsBySession.get(r.id) ?? [r.lastPath]).slice().reverse();
+    const journey = rawPaths.map(friendlyPath);
+    // Strongest intent across the whole recent visit (computed above over the
+    // uncapped history) — falls back to the current page for a fresh session.
+    const intent = intentBySession.get(r.id) ?? classifyIntent(r.lastPath);
     return {
       id: r.id,
       path: r.lastPath,
@@ -188,6 +254,8 @@ export async function getLiveNow(): Promise<LiveNow> {
       startedAt: r.startedAt.toISOString(),
       lastSeenAt: r.lastSeenAt.toISOString(),
       pageviews: r.pageviews,
+      journey,
+      intent,
     };
   });
 
@@ -196,6 +264,83 @@ export async function getLiveNow(): Promise<LiveNow> {
     total: sessions.length,
     bySegment,
     sessions,
+  };
+}
+
+/** Live activity stream: the most recent pageviews + custom events across
+ *  real (non-admin) sessions in the last few minutes, newest first, each
+ *  classified by intent so the feed can flag subscribe attempts in green.
+ *  Powers the "where are they clicking" feed on /admin/analytics. */
+export async function getLiveActivity(): Promise<LiveActivity> {
+  await requireAdminReader();
+  const since = new Date(Date.now() - LIVE_ACTIVITY_WINDOW_MS);
+
+  // One UNION over page_views + analytics_events, joined to the session for
+  // who/where context. LEFT JOIN users for the email. Admin traffic excluded.
+  const rows = await db.$queryRaw<
+    {
+      id: string;
+      created_at: Date;
+      kind: string;
+      session_id: string;
+      path: string;
+      event_name: string | null;
+      country: string | null;
+      device: string | null;
+      email: string | null;
+    }[]
+  >`
+    SELECT a.id, a.created_at, a.kind, a.session_id, a.path, a.event_name,
+           vs."country" AS country, vs."device" AS device, u."email" AS email
+    FROM (
+      SELECT pv.id, pv."createdAt" AS created_at, 'view' AS kind,
+             pv."sessionId" AS session_id, pv.path, NULL::text AS event_name
+      FROM "page_views" pv
+      WHERE pv."createdAt" >= ${since} AND pv.path NOT LIKE '/admin%'
+      UNION ALL
+      SELECT ev.id, ev."createdAt" AS created_at, 'event' AS kind,
+             ev."sessionId" AS session_id, ev.path, ev.name AS event_name
+      FROM "analytics_events" ev
+      WHERE ev."createdAt" >= ${since} AND ev.path NOT LIKE '/admin%'
+    ) a
+    -- LEFT JOIN so an event whose session row hasn't landed yet (beacons are
+    -- unordered) still shows instead of being silently dropped — losing a
+    -- subscribe signal is the worst failure for this feed.
+    LEFT JOIN "visitor_sessions" vs ON vs.id = a.session_id
+    LEFT JOIN "users" u ON u.id = vs."userId"
+    -- Exclude admin PEOPLE, not just /admin pages (an admin dogfooding the
+    -- marketing site entered on a non-admin segment). IS DISTINCT FROM keeps
+    -- orphan rows (null segment) in.
+    WHERE vs."segment" IS DISTINCT FROM 'admin'
+      AND (u."role" IS NULL OR u."role" <> 'SUPER_ADMIN')
+    ORDER BY a.created_at DESC
+    LIMIT 30`;
+
+  // Count subscribe attempts by distinct SESSION, not raw rows — so a burst
+  // of forged/duplicate subscribe events from one session can't inflate the
+  // headline "N trying to subscribe".
+  const subscribeSessions = new Set<string>();
+  const items: LiveActivityItem[] = rows.map((r) => {
+    const intent = classifyIntent(r.path, r.event_name);
+    if (intent === "subscribe") subscribeSessions.add(r.session_id);
+    return {
+      id: r.id,
+      at: r.created_at.toISOString(),
+      kind: r.kind === "event" ? "event" : "view",
+      sessionId: r.session_id,
+      userEmail: r.email,
+      country: r.country,
+      device: r.device,
+      path: r.path,
+      label: r.event_name ? eventLabel(r.event_name) : friendlyPath(r.path),
+      intent,
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    items,
+    subscribeAttempts: subscribeSessions.size,
   };
 }
 

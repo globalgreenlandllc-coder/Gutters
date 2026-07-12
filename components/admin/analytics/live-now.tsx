@@ -24,6 +24,16 @@ const SEGMENT_META: Record<
   admin: { label: "Admins", tone: "neutral" },
 };
 
+const INTENT_BADGE: Record<
+  string,
+  { label: string; tone: "emerald" | "sky" | "accent" } | null
+> = {
+  subscribe: { label: "Subscribing", tone: "emerald" },
+  signup: { label: "Signing up", tone: "sky" },
+  trial: { label: "Trialing", tone: "accent" },
+  normal: null,
+};
+
 const MAX_ROWS = 12;
 
 export function LiveNowCard({ live, nowMs }: { live: LiveNow; nowMs: number }) {
@@ -84,7 +94,9 @@ export function LiveNowCard({ live, nowMs }: { live: LiveNow; nowMs: number }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="font-label text-left text-[11px] text-zinc-400">
-                <th className="px-5 py-2.5 font-medium sm:px-6">Viewing</th>
+                <th className="px-5 py-2.5 font-medium sm:px-6">
+                  Journey · where they&apos;re clicking
+                </th>
                 <th className="px-3 py-2.5 font-medium">Who</th>
                 <th className="px-3 py-2.5 font-medium">Segment</th>
                 <th className="px-3 py-2.5 font-medium">Source</th>
@@ -103,8 +115,36 @@ export function LiveNowCard({ live, nowMs }: { live: LiveNow; nowMs: number }) {
                     key={s.id}
                     className="border-t border-zinc-100 transition-smooth hover:bg-zinc-50/60"
                   >
-                    <td className="max-w-[220px] truncate px-5 py-2.5 font-medium text-zinc-900 sm:px-6">
-                      {s.path}
+                    <td className="max-w-[300px] px-5 py-2.5 sm:px-6">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-zinc-500">
+                          {s.journey.map((page, i) => {
+                            const last = i === s.journey.length - 1;
+                            return (
+                              <span key={i}>
+                                {i > 0 && (
+                                  <span className="mx-1 text-zinc-300">›</span>
+                                )}
+                                <span
+                                  className={
+                                    last ? "font-medium text-zinc-900" : undefined
+                                  }
+                                >
+                                  {page}
+                                </span>
+                              </span>
+                            );
+                          })}
+                        </span>
+                        {INTENT_BADGE[s.intent] && (
+                          <Badge
+                            tone={INTENT_BADGE[s.intent]!.tone}
+                            className="shrink-0"
+                          >
+                            {INTENT_BADGE[s.intent]!.label}
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="max-w-[180px] truncate px-3 py-2.5 text-zinc-600">
                       {s.userEmail ? (

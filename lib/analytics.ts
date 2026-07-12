@@ -9,6 +9,11 @@
  *  dropped beacons before someone reads as offline. */
 export const LIVE_WINDOW_MS = 60_000;
 
+/** How far back the live activity feed looks. Wider than the "online now"
+ *  window so the feed still has content between clicks (a quiet minute
+ *  shouldn't blank it), but recent enough to read as "happening now". */
+export const LIVE_ACTIVITY_WINDOW_MS = 5 * 60_000;
+
 /** Client rolls a new session after this much inactivity (industry-standard 30m). */
 export const SESSION_IDLE_MS = 30 * 60_000;
 
@@ -30,6 +35,101 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   email: "Email",
   referral: "Referral",
 };
+
+/* ------------------------------------------------------------------ */
+/*  Custom events + intent (the "smart" live activity layer)           */
+/* ------------------------------------------------------------------ */
+
+/** Named custom events the client may fire via trackEvent(). Bounded so a
+ *  forged beacon can't invent arbitrary event names. */
+export const KNOWN_EVENTS = new Set([
+  "subscribe_click", // clicked "Upgrade to Pro" (Stripe checkout start)
+  "checkout_start", // reserved for future checkout surfaces
+  "credit_topup_click", // clicked a credit pack
+]);
+
+/** How much buying intent an activity item shows. `subscribe` is the loud
+ *  one — the green alert. `purchase` is a credit top-up (real revenue, but
+ *  NOT a subscription attempt, so it never inflates the subscribe count).
+ *  Ordered by strength for sorting/rollups. */
+export type Intent = "subscribe" | "purchase" | "signup" | "trial" | "normal";
+
+export const INTENT_RANK: Record<Intent, number> = {
+  subscribe: 4,
+  purchase: 3,
+  signup: 2,
+  trial: 1,
+  normal: 0,
+};
+
+/** Classify a live activity item (a pageview or a custom event) by buying
+ *  intent. Explicit subscribe/checkout events are the strongest signal;
+ *  otherwise the destination path is the tell. This is what lets the feed
+ *  flag "trying to subscribe" without a human reading every row. */
+export function classifyIntent(
+  path: string,
+  eventName?: string | null,
+): Intent {
+  if (eventName === "subscribe_click" || eventName === "checkout_start") {
+    return "subscribe";
+  }
+  // A credit top-up is revenue but NOT a subscription attempt — its own tier
+  // so it never gets counted/badged as "trying to subscribe".
+  if (eventName === "credit_topup_click") return "purchase";
+  if (path.startsWith("/sign-up")) return "signup";
+  if (
+    path.startsWith("/estimate") ||
+    path.startsWith("/demo") ||
+    path.startsWith("/dashboard/proposals/new")
+  ) {
+    return "trial";
+  }
+  return "normal";
+}
+
+/** Human label for a path in the activity feed ("/dashboard/settings" →
+ *  "Billing & settings"). Falls back to the raw path for anything unmapped. */
+export function friendlyPath(path: string): string {
+  const clean = path.split("?")[0].replace(/\/+$/, "") || "/";
+  const exact: Record<string, string> = {
+    "/": "Landing page",
+    "/sign-up": "Sign-up",
+    "/sign-in": "Sign-in",
+    "/demo": "Demo",
+    "/demo/satellite": "Satellite demo",
+    "/demo/blueprint": "Blueprint demo",
+    "/estimate": "Address takeoff",
+    "/dashboard": "Dashboard",
+    "/dashboard/settings": "Billing & settings",
+    "/dashboard/proposals/new": "New proposal",
+    "/dashboard/blueprints": "Blueprints",
+    "/dashboard/blueprints/new": "New blueprint",
+    "/dashboard/clients": "Clients",
+    "/pricing": "Pricing",
+    "/privacy": "Privacy",
+    "/terms": "Terms",
+  };
+  if (exact[clean]) return exact[clean];
+  if (clean.startsWith("/p/")) return "Proposal (homeowner)";
+  if (clean.startsWith("/dashboard/blueprints/")) return "Blueprint";
+  if (clean.startsWith("/dashboard/proposals/")) return "Proposal";
+  if (clean.startsWith("/worker")) return "Worker portal";
+  if (clean.startsWith("/admin")) return "Admin";
+  return clean;
+}
+
+/** Label for a custom event name in the feed. */
+export function eventLabel(name: string): string {
+  switch (name) {
+    case "subscribe_click":
+    case "checkout_start":
+      return "Started checkout — trying to subscribe";
+    case "credit_topup_click":
+      return "Buying credits";
+    default:
+      return name.replace(/_/g, " ");
+  }
+}
 
 /** Which product area a path belongs to. `marketing` = the public
  *  acquisition surface (landing, demo, sign-in/up, legal); `portal` =

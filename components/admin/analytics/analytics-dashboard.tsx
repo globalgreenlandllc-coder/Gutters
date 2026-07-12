@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   getAnalyticsOverview,
+  getLiveActivity,
   getLiveNow,
   type AnalyticsOverview,
+  type LiveActivity,
   type LiveNow,
 } from "@/app/actions/analytics";
 import { StatTile } from "@/components/dashboard/stat-tile";
@@ -13,6 +15,7 @@ import { BusinessCard } from "./business-card";
 import { CampaignsCard, ChannelsCard } from "./channels-card";
 import { compact, countryFlag, countryName, duration } from "./format";
 import { FunnelCard } from "./funnel-card";
+import { LiveActivityFeed } from "./live-activity";
 import { LiveNowCard } from "./live-now";
 import { RankList } from "./rank-list";
 import { SignupsChart } from "./signups-chart";
@@ -38,12 +41,15 @@ const RANGES: { days: number; label: string }[] = [
 export function AnalyticsDashboard({
   initialOverview,
   initialLive,
+  initialActivity,
 }: {
   initialOverview: AnalyticsOverview;
   initialLive: LiveNow;
+  initialActivity: LiveActivity;
 }) {
   const [overview, setOverview] = useState(initialOverview);
   const [live, setLive] = useState(initialLive);
+  const [activity, setActivity] = useState(initialActivity);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
 
@@ -52,9 +58,14 @@ export function AnalyticsDashboard({
     const poll = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const next = await getLiveNow();
+        // Live presence + activity refresh together on each tick.
+        const [nextLive, nextActivity] = await Promise.all([
+          getLiveNow(),
+          getLiveActivity(),
+        ]);
         if (!cancelled) {
-          setLive(next);
+          setLive(nextLive);
+          setActivity(nextActivity);
           setNowMs(Date.now());
         }
       } catch {
@@ -86,6 +97,8 @@ export function AnalyticsDashboard({
   return (
     <div className="space-y-6">
       <LiveNowCard live={live} nowMs={nowMs} />
+
+      <LiveActivityFeed activity={activity} nowMs={nowMs} />
 
       {/* One filter row — scopes every card below it */}
       <div className="flex flex-wrap items-center justify-between gap-3">

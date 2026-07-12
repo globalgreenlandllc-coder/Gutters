@@ -947,6 +947,25 @@ model PageView {
   @@map("page_views")
 }
 
+// High-intent custom events (distinct from raw pageviews) — e.g. a click on
+// "Upgrade to Pro". Written by the beacon on `type:"event"`; read by the
+// admin live activity feed, which classifies intent (lib/analytics.ts
+// classifyIntent) and flags subscribe attempts. Kept separate from
+// page_views so it never inflates pageview/bounce counts.
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  visitorId String
+  userId    String?
+  name      String // e.g. "subscribe_click"
+  path      String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([name, createdAt])
+  @@map("analytics_events")
+}
+
 // A crew member an owner (contractor) invites. Before the person signs up,
 // `userId` is null and only email/inviteToken exist; when they open the invite
 // link and accept, their Clerk-backed User is linked and status flips to ACTIVE.

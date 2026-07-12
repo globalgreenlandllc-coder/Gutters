@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import { getAnalyticsOverview, getLiveNow } from "@/app/actions/analytics";
+import {
+  getAnalyticsOverview,
+  getLiveActivity,
+  getLiveNow,
+} from "@/app/actions/analytics";
 import { AnalyticsDashboard } from "@/components/admin/analytics/analytics-dashboard";
 import { Logo } from "@/components/ui/logo";
 
@@ -22,9 +26,10 @@ export default async function AdminAnalyticsPage({
   const { view } = await searchParams;
   const standalone = view === "standalone";
 
-  const [overview, live] = await Promise.all([
+  const [overview, live, activity] = await Promise.all([
     getAnalyticsOverview(7),
     getLiveNow(),
+    getLiveActivity(),
   ]);
 
   if (standalone) {
@@ -48,7 +53,11 @@ export default async function AdminAnalyticsPage({
               Back to admin
             </Link>
           </header>
-          <AnalyticsDashboard initialOverview={overview} initialLive={live} />
+          <AnalyticsDashboard
+            initialOverview={overview}
+            initialLive={live}
+            initialActivity={activity}
+          />
         </div>
       </div>
     );
@@ -76,7 +85,11 @@ export default async function AdminAnalyticsPage({
           Pop out
         </Link>
       </header>
-      <AnalyticsDashboard initialOverview={overview} initialLive={live} />
+      <AnalyticsDashboard
+        initialOverview={overview}
+        initialLive={live}
+        initialActivity={activity}
+      />
     </div>
   );
 }
