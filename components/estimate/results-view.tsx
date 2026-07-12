@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { TopBar } from "./top-bar";
 import { AerialCanvas, lineLengthFt } from "./aerial-canvas";
+import { GutterDiagram } from "./gutter-diagram";
 import { Massing3D } from "./massing-3d";
 import { PdfPlanView } from "./pdf-plan-view";
 import { ElevationsView } from "./elevations-view";
@@ -45,9 +46,14 @@ export function ResultsView({
   const reduce = useReducedMotion();
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
+  // Satellite (address) estimates get a clean "Diagram" view as the default
+  // — the drafting sheet is the deliverable. Plan estimates keep the roof
+  // plan / sheet / elevations flow.
+  const isSatelliteEstimate =
+    !!initial.aerial?.imageDataUrl && !initial.planSource;
   const [viewMode, setViewMode] = useState<
-    "plan" | "sheet" | "elevations" | "3d"
-  >("plan");
+    "diagram" | "plan" | "sheet" | "elevations" | "3d"
+  >(isSatelliteEstimate ? "diagram" : "plan");
   // When the Elevations view hands off to the trace tool, it carries the
   // page to open the Plan-sheet on.
   const [sheetInitialPage, setSheetInitialPage] = useState<number | null>(null);
@@ -70,6 +76,12 @@ export function ResultsView({
   // (they're in the old projected space and would misalign); per-edge gable
   // marking on the outline repopulates them.
   const [rakes, setRakes] = useState(initial.rakes);
+  // Suggested interior gutter runs (un-priced tier-break hints). Kept in
+  // their own state so they NEVER enter the priced `eaves` sum. Accepting
+  // one (tap-to-add) moves it out of here and into `eaves`.
+  const [suggestedEaves, setSuggestedEaves] = useState(
+    initial.suggestedEaves ?? [],
+  );
   // Gable flags per traced-outline edge (true = rake/gable, no gutter).
   const [planOutlineGables, setPlanOutlineGables] = useState<boolean[]>([]);
   const setOutline = (o: { x: number; y: number }[]) => {
@@ -203,9 +215,21 @@ export function ResultsView({
     eaves,
     rakes,
     downspouts,
+    suggestedEaves,
     roofStructure,
     aerial: initial.aerial,
     canvasPxPerFt,
+  };
+
+  // Promote a suggested interior gutter into the priced eaves. LF is only
+  // added here, on this explicit action — measurements.eaveLF recomputes
+  // from `eaves` below, so suggestions stay money-safe until accepted.
+  const handleAcceptSuggested = (line: EditableLine) => {
+    setEaves((prev) => [
+      ...prev,
+      { ...line, id: `eave-from-${line.id}`, kind: "eave" },
+    ]);
+    setSuggestedEaves((prev) => prev.filter((s) => s.id !== line.id));
   };
 
   return (
@@ -243,10 +267,18 @@ export function ResultsView({
                 quality={traceQuality}
                 hasLines={eaves.length > 0}
                 onDrawFresh={() => {
+                  // Drop the user onto the editable canvas — the drawing
+                  // tool lives in AerialCanvas ("Photo & edit"), which is
+                  // NOT mounted on the default satellite Diagram view, so
+                  // arming drawNonce alone would do nothing there.
                   setEaves([]);
+                  setViewMode("plan");
                   setDrawNonce((n) => n + 1);
                 }}
-                onKeepAndEdit={() => setDrawNonce((n) => n + 1)}
+                onKeepAndEdit={() => {
+                  setViewMode("plan");
+                  setDrawNonce((n) => n + 1);
+                }}
               />
             )}
             <motion.div variants={fadeInUp} className="min-h-[520px] flex-1">
@@ -256,24 +288,29 @@ export function ResultsView({
               <div className="mb-2 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                 {(
                   [
+                    isSatelliteEstimate ? "diagram" : null,
                     "plan",
                     hasSheet ? "sheet" : null,
                     hasSheet ? "elevations" : null,
                     "3d",
                   ].filter(Boolean) as Array<
-                    "plan" | "sheet" | "elevations" | "3d"
+                    "diagram" | "plan" | "sheet" | "elevations" | "3d"
                   >
                 ).map((m) => {
                   const active = viewMode === m;
                   const disabled = m === "3d" && !can3d;
                   const label =
-                    m === "plan"
-                      ? "Roof plan"
-                      : m === "sheet"
-                        ? "Plan sheet"
-                        : m === "elevations"
-                          ? "Elevations"
-                          : "3D";
+                    m === "diagram"
+                      ? "Diagram"
+                      : m === "plan"
+                        ? isSatelliteEstimate
+                          ? "Photo & edit"
+                          : "Roof plan"
+                        : m === "sheet"
+                          ? "Plan sheet"
+                          : m === "elevations"
+                            ? "Elevations"
+                            : "3D";
                   return (
                     <button
                       key={m}
@@ -350,6 +387,20 @@ export function ResultsView({
                   planSource={initial.planSource}
                   stories={stories}
                 />
+              ) : viewMode === "diagram" ? (
+                <div className="aspect-[16/10] w-full overflow-hidden rounded-xl">
+                  <GutterDiagram
+                    eaves={eaves}
+                    rakes={rakes}
+                    downspouts={downspouts}
+                    suggestedEaves={suggestedEaves}
+                    roofStructure={roofStructure}
+                    pxPerFt={canvasPxPerFt}
+                    address={address}
+                    confidence={roofStructure?.confidence}
+                    onAcceptSuggested={handleAcceptSuggested}
+                  />
+                </div>
               ) : (
                 <AerialCanvas
                   eaves={eaves}

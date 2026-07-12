@@ -44,6 +44,10 @@ export interface EstimateHandoff {
   rakes: EditableLine[];
   /** Downspout pins to render on the canvas. */
   downspouts: Downspout[];
+  /** Suggested interior gutter runs (un-priced tier-break hints). Carried
+   *  so the proposal diagram can draw them dashed + tap-to-add. NEVER
+   *  counted in measurements.eaveLF. */
+  suggestedEaves?: EditableLine[];
   /** Roof outline + ridge/hip/valley lines for the read-only overlay.
    *  Optional — older payloads and satellite estimates may omit it. */
   roofStructure?: RoofStructure;
@@ -101,6 +105,9 @@ export function readEstimateHandoff(): EstimateHandoff | null {
       eaves: Array.isArray(parsed.eaves) ? parsed.eaves : [],
       rakes: Array.isArray(parsed.rakes) ? parsed.rakes : [],
       downspouts: Array.isArray(parsed.downspouts) ? parsed.downspouts : [],
+      suggestedEaves: Array.isArray(parsed.suggestedEaves)
+        ? parsed.suggestedEaves
+        : [],
       roofStructure: parsed.roofStructure,
       aerial: parsed.aerial,
       canvasPxPerFt:

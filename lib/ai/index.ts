@@ -113,6 +113,15 @@ export type EstimateResult = {
    *  draw it yourself" banner on the results screen. Absent for plan
    *  takeoffs (their geometry comes from the PDF, not image tracing). */
   traceQuality?: TraceQuality;
+  /** Suggested INTERIOR gutter runs — the downhill edges of elevated
+   *  Solar roof tiers ("upper roof drops onto lower roof"), which the
+   *  outer-perimeter trace structurally can't see. These are UN-PRICED
+   *  hints only: they are NEVER summed into measurements.eaveLF and never
+   *  auto-merged into `eaves`. The canvas/diagram draws them dashed with a
+   *  tap-to-add affordance; accepting one moves it into the priced eaves.
+   *  Canvas (900×580) space, same as `eaves`. Empty when no tier-breaks
+   *  were detected (or no Solar coverage). */
+  suggestedEaves?: EditableLine[];
 };
 
 /**
@@ -763,6 +772,11 @@ export async function runAIEstimatePipeline(
   // into trace-quality — a multi-tier roof whose interior gutters weren't
   // auto-drawn must never ship as "ok / no adjustment needed."
   let interiorTiersDetected = 0;
+  // Un-priced "suggested interior gutter" hints, projected to canvas space.
+  // Populated from the tier-break detector below; carried on EstimateResult
+  // so the diagram/canvas can draw them dashed with a tap-to-add affordance.
+  // NEVER summed into eaveLF (money-safe by construction).
+  let suggestedEaves: EditableLine[] = [];
   if (solarRoofSegments.length > 0) {
     const perimeterEdges = (classifiedEaveLatLng ?? []).map((e) => ({
       a: e.a,
@@ -773,6 +787,37 @@ export async function runAIEstimatePipeline(
       perimeterEdges,
     );
     interiorTiersDetected = tierBreaks.length;
+    // Project each tier-break edge (lat/lng) into canvas space using the
+    // SAME transform as the perimeter eaves/rakes (latLngToImagePixel →
+    // transformToCanvas). Guarded on `image` (the projection needs the
+    // tile dims); on the rare no-image path these stay empty.
+    if (image && tierBreaks.length > 0) {
+      suggestedEaves = tierBreaks.map((c, i) => {
+        const a = latLngToImagePixel(
+          c.edge.a.lat,
+          c.edge.a.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        const b = latLngToImagePixel(
+          c.edge.b.lat,
+          c.edge.b.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        return {
+          id: `suggested-tier-${i}`,
+          kind: "eave" as const,
+          points: transformToCanvas([a, b], image.width, image.height),
+        };
+      });
+    }
     if (tierBreaks.length > 0) {
       const meanStepFt =
         (tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
@@ -978,6 +1023,45 @@ export async function runAIEstimatePipeline(
       }
     }
 
+    // Over-trace signal (parity with the GPT-4o vision path's √area gate).
+    // The primary SAM path is accepted purely on areaFraction ≥ 0.15,
+    // which catches UNDER-trace (SAM locked onto one wing) but NOT
+    // OVER-trace: SAM can grab roof + cast shadow, or roof + an adjacent
+    // slab/driveway, swallowing the perimeter — that inflated LF would
+    // otherwise ship as priced eaveLF marked "ok / no adjustment". Cross-
+    // check the traced eave LF against Solar's reported roof area (a real
+    // residential perimeter is ~5–8× √area). On an implausible ratio we
+    // FLAG the trace UNUSABLE so the loud "bad pic — draw it yourself"
+    // banner fires and the contractor redraws.
+    //
+    // We deliberately do NOT drop/zero the trace here. Solar area can be
+    // PARTIAL (it reports a subset of planes), which understates the
+    // denominator and inflates this ratio for a perfectly correct trace.
+    // The vision fallback path divides by the SAME Solar area and THROWS
+    // at >11, so zeroing-and-falling-through could compound the two
+    // correlated gates into a hard address error on a good trace. Flagging
+    // (not dropping) keeps the address available and is money-safe: an
+    // over-trace ships loudly flagged for redraw, never silently as trusted.
+    let polygonOvertrace = false;
+    const overtraceSolarAreaM2 = solarRoofSegments.reduce(
+      (s, seg) => s + (seg.areaMeters2 ?? 0),
+      0,
+    );
+    if (eaves.length > 0 && overtraceSolarAreaM2 > 30) {
+      const solarAreaSqft = overtraceSolarAreaM2 * 10.7639;
+      const ratio = totalEaveLF / Math.sqrt(solarAreaSqft);
+      if (ratio > 11) {
+        polygonOvertrace = true;
+        notes.push(
+          `Polygon over-trace: ${totalEaveLF.toFixed(0)} LF / √(${solarAreaSqft.toFixed(
+            0,
+          )} sqft) = ${ratio.toFixed(
+            1,
+          )}× (max 11) — the traced outline may include shadow/pavement; flagged for redraw`,
+        );
+      }
+    }
+
     // Bumped from ≥3 to ≥5. Three eaves on a residential roof almost
     // never represents a real takeoff — it's an L-shape stub at best.
     // Below this floor we'd rather fall through to GPT-4o vision than
@@ -1085,7 +1169,7 @@ export async function runAIEstimatePipeline(
         ),
         traceQuality: (() => {
           const fp = solarFootprintCanvas(solarRoofSegments, geocoded, image);
-          return assessSatelliteTrace({
+          const q = assessSatelliteTrace({
             source: "ai",
             eaves,
             totalEaveLF,
@@ -1094,8 +1178,23 @@ export async function runAIEstimatePipeline(
             interiorTiersDetected,
             segmentCount: solarRoofSegments.length,
           });
+          // An over-traced perimeter (swallowed shadow/pavement) must fire
+          // the loud "draw it yourself" banner even if the other signals
+          // read "ok" — the assessed ratio otherwise only reaches "low".
+          if (polygonOvertrace) {
+            return {
+              status: "unusable" as const,
+              confidence: Math.min(q.confidence, 0.3),
+              reasons: [
+                ...q.reasons,
+                "Traced outline appears to include roof shadow or pavement (perimeter far exceeds roof area) — redraw the outline to price accurately.",
+              ],
+            };
+          }
+          return q;
         })(),
         roofStructure,
+        suggestedEaves,
       };
     }
     notes.push(
@@ -1295,6 +1394,7 @@ export async function runAIEstimatePipeline(
           });
         })(),
         roofStructure,
+        suggestedEaves,
       };
     }
     notes.push(

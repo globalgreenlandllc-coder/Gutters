@@ -123,6 +123,7 @@ function Inner() {
             eaves: handoff.eaves,
             rakes: handoff.rakes,
             downspouts: handoff.downspouts,
+            suggestedEaves: handoff.suggestedEaves,
             roofStructure: handoff.roofStructure,
             aerial: handoff.aerial,
             canvasPxPerFt: handoff.canvasPxPerFt,
