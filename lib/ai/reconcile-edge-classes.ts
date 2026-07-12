@@ -37,12 +37,31 @@ import {
   type FaceNormals,
 } from "./plan-orientation";
 
+/** A projecting roof mass (open porch/patio/garage on posts or a beam) whose
+ *  gable maps onto a base-line house wall but whose OWN eaves/gutters sit
+ *  beyond the traced wall outline — so they are never in the edge ring and
+ *  price at $0. Emitted so the estimate assembler can synthesize an
+ *  ESTIMATED gutter line from the roof-area schedule (area ÷ span) instead of
+ *  dropping the LF on the floor. See the posts/beam gate below. */
+export type DroppedProjection = {
+  face: Side;
+  /** porch | patio | entry | garage | dormer | main | other (from the read). */
+  kind: string;
+  supportedOn: "posts" | "beam";
+  /** Gable span (the projecting mass's WIDTH along the wall), if the
+   *  elevation read it — the divisor in depth = area ÷ span. */
+  spanFt: number | null;
+};
+
 export type ReconcileResult = {
   classes: EdgeClass[];
   notes: string[];
   promoted: number;
   demoted: number;
   unknowns: number;
+  /** Projecting masses whose own gutters are outside the traced outline —
+   *  candidates for an estimated-LF synthesis downstream (never priced here). */
+  droppedProjections: DroppedProjection[];
 };
 
 type Side = "front" | "back" | "left" | "right";
@@ -146,6 +165,7 @@ export function reconcileEdgeClasses(opts: {
     promoted: 0,
     demoted: 0,
     unknowns: 0,
+    droppedProjections: [],
   });
   try {
     const { outline, edges, perFace } = opts;
@@ -160,6 +180,7 @@ export function reconcileEdgeClasses(opts: {
     for (const f of faces) faceForSide.set(sideOfNormal(normals[f]), f);
 
     const classes = opts.classes.map((c) => ({ ...c }));
+    const droppedProjections: DroppedProjection[] = [];
     const byId = new Map(classes.map((c) => [c.id, c]));
     const fieldParallel = opts.fieldParallel ?? new Set<string>();
     const fieldEave = opts.fieldEave ?? new Set<string>();
@@ -382,8 +403,14 @@ export function reconcileEdgeClasses(opts: {
           (g.supported_on === "posts" || g.supported_on === "beam") &&
           !isProtrusion(hit.e, edges, outline, opts.ptPerFt)
         ) {
+          droppedProjections.push({
+            face: side,
+            kind: g.kind ?? "other",
+            supportedOn: g.supported_on,
+            spanFt: typeof g.span_ft === "number" ? g.span_ft : null,
+          });
           notes.push(
-            `🧭 ${face} elevation: the ${g.kind ?? "gable"} roof sits on ${g.supported_on} and projects beyond this wall — its own eaves/gutters are NOT in the wall outline. Review that structure separately.`,
+            `🧭 ${face} elevation: the ${g.kind ?? "gable"} roof sits on ${g.supported_on} and projects beyond this wall — its own eaves/gutters are NOT in the wall outline. Estimated separately from the roof-area schedule where available (verify).`,
           );
           continue;
         }
@@ -728,7 +755,7 @@ export function reconcileEdgeClasses(opts: {
         `🧭 Edge↔elevation reconcile: ${promoted} promoted to rake, ${demoted} demoted to eave, ${unknowns} set unknown (elevations are the gable budget).`,
       );
     }
-    return { classes, notes, promoted, demoted, unknowns };
+    return { classes, notes, promoted, demoted, unknowns, droppedProjections };
   } catch (e) {
     return noop(
       `🧭 Edge↔elevation reconcile skipped (${e instanceof Error ? e.message : "error"}).`,

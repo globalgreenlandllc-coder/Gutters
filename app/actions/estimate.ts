@@ -329,6 +329,11 @@ export async function runEstimateFromPlan(
   // missing → v1 path unchanged.
   let edgeApplied = false;
   let edgeLayout: RoofLayout | null = null;
+  // Projecting masses (porch/patio/garage on posts/beam) whose own gutters
+  // sit beyond the traced outline — passed to the estimate assembler so it
+  // can synthesize an ESTIMATED gutter line from the roof-area schedule
+  // instead of dropping the LF (the Woodinville garage-jog hole).
+  let droppedProjections: NonNullable<EdgeClassification["droppedProjections"]> = [];
   if (edgeTakeoffEnabled()) {
     try {
       const stash = (row.analysisJson as { _edgeTakeoff?: EdgeClassification })
@@ -386,6 +391,9 @@ export async function runEstimateFromPlan(
             `${t.downspouts.length} D.S. @ ${Math.round(stash.ptPerFt * 100) / 100} pt/ft`,
         );
         edgeApplied = true;
+        if (Array.isArray(stash.droppedProjections)) {
+          droppedProjections = stash.droppedProjections;
+        }
         // Interior geometry: ONLY the classifier-time layout. It was computed
         // WITH the sheet's vectors, so the evidence gate (discard a skeleton
         // the sheet contradicts) had its say — recomputing here without the
@@ -818,6 +826,7 @@ export async function runEstimateFromPlan(
       perimeterOnly: perimeterOnlyEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
+      droppedProjections,
       faceNormals: orientation?.normals ?? null,
       edgeLayout: edgeApplied && edgeLayout?.ok
         ? {

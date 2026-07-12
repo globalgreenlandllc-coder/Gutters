@@ -14,7 +14,7 @@ import { findDimSpanCandidates, solvePtPerFt } from "./dim-scale";
 import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
 import { buildRoofLayout, type RoofLayout } from "./roof-layout";
-import { reconcileEdgeClasses } from "./reconcile-edge-classes";
+import { reconcileEdgeClasses, type DroppedProjection } from "./reconcile-edge-classes";
 import { applyTrussFieldDemotions, deriveTrussField } from "./truss-field";
 import type { FaceReadingRaw } from "./face-merge";
 
@@ -60,6 +60,11 @@ export type EdgeClassification = {
    *  perimeter (straight skeleton, rakes as stationary gable walls) and
    *  evidence-checked against the roof sheet's own 45° linework. */
   layout?: RoofLayout | null;
+  /** Projecting masses (open porch/patio/garage on posts/beam) whose own
+   *  gutters sit beyond the traced outline — the estimate assembler turns
+   *  these into ESTIMATED gutter lines from the roof-area schedule so the LF
+   *  isn't silently dropped. Empty on every path but the elevation-reconcile. */
+  droppedProjections?: DroppedProjection[];
 };
 
 const EDGE_SYSTEM = `
@@ -632,6 +637,7 @@ export async function classifyPerimeterEdges(opts: {
       model: MODEL,
       notes,
       layout,
+      droppedProjections: reconcile.droppedProjections,
     };
   } catch (e) {
     return empty(e instanceof Error ? e.message : "edge classification failed");

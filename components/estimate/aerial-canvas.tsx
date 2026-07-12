@@ -43,6 +43,7 @@ import {
   fitViewBox,
   PX_PER_FT,
 } from "./aerial-shared";
+import { gableWingFaces } from "@/lib/roof-skeleton";
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
 
@@ -1043,10 +1044,13 @@ export function AerialCanvas({
             const my = (a.y + b.y) / 2;
             const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
             const tac = theme === "tactical";
-            // Inward apex: perpendicular from the edge midpoint, pointed at the
-            // footprint interior (perimeter centroid). Falls back to no glyph
-            // when there's no perimeter to orient against.
-            const peak = (() => {
+            // Draw the gable as a real WING seen from above — two sloped roof
+            // planes meeting at a ridge that runs inward from the gable end —
+            // instead of a faint tent glyph, so a front/garage/entry gable
+            // reads as an actual gable roof. The inward direction points at the
+            // footprint interior (perimeter centroid); depth ≈ half the span
+            // (a ~45° roof), capped so it never shoots across the roof.
+            const wing = (() => {
               const perim = roofStructure?.perimeter;
               if (!perim || perim.length < 3 || lenPx < 12) return null;
               let cx = 0, cy = 0;
@@ -1056,20 +1060,50 @@ export function AerialCanvas({
               let nx = -(b.y - a.y) / lenPx;
               let ny = (b.x - a.x) / lenPx;
               if ((cx - mx) * nx + (cy - my) * ny < 0) { nx = -nx; ny = -ny; }
-              const h = Math.min(lenPx * 0.32, 24 * renderScale);
-              return { x: mx + nx * h, y: my + ny * h };
+              const toC = Math.hypot(cx - mx, cy - my);
+              const depth = Math.min(lenPx * 0.5, toC * 0.7, 46 * renderScale);
+              if (!(depth > 3)) return null;
+              return gableWingFaces(a, b, { x: nx, y: ny }, depth);
             })();
+            const ridgeStroke = tac ? "#cbd5e1" : "#94a3b8";
             return (
               <g key={line.id} pointerEvents="none">
-                {peak && (
-                  <polygon
-                    points={`${a.x},${a.y} ${peak.x},${peak.y} ${b.x},${b.y}`}
-                    fill={tac ? "rgba(148,163,184,0.14)" : "rgba(100,116,139,0.10)"}
-                    stroke={tac ? "rgba(148,163,184,0.55)" : "rgba(100,116,139,0.45)"}
-                    strokeWidth={1.2 * renderScale}
-                    strokeLinejoin="round"
+                {wing &&
+                  wing.faces.map((f, j) =>
+                    f.polygon.length >= 3 ? (
+                      <polygon
+                        key={`wf-${j}`}
+                        points={f.polygon.map((p) => `${p.x},${p.y}`).join(" ")}
+                        // Two planes at slightly different opacity read as a
+                        // pitched roof (one face catches more light).
+                        fill={
+                          tac
+                            ? j === 0
+                              ? "rgba(148,163,184,0.28)"
+                              : "rgba(148,163,184,0.15)"
+                            : j === 0
+                              ? "rgba(100,116,139,0.24)"
+                              : "rgba(100,116,139,0.13)"
+                        }
+                        stroke={tac ? "rgba(148,163,184,0.6)" : "rgba(100,116,139,0.5)"}
+                        strokeWidth={0.8 * renderScale}
+                        strokeLinejoin="round"
+                      />
+                    ) : null,
+                  )}
+                {wing && wing.ridge.points.length >= 2 && (
+                  <line
+                    x1={wing.ridge.points[0].x}
+                    y1={wing.ridge.points[0].y}
+                    x2={wing.ridge.points[1].x}
+                    y2={wing.ridge.points[1].y}
+                    stroke={ridgeStroke}
+                    strokeWidth={1.4 * renderScale}
+                    strokeLinecap="round"
+                    opacity={0.85}
                   />
                 )}
+                {/* The gable END (base on the wall) — dashed to read "no gutter here". */}
                 <path
                   d={pathFor(line)}
                   stroke={tac ? "#94a3b8" : "#64748b"}
@@ -1077,8 +1111,26 @@ export function AerialCanvas({
                   strokeDasharray={`${6 * renderScale} ${5 * renderScale}`}
                   strokeLinecap="round"
                   fill="none"
-                  opacity={0.75}
+                  opacity={0.8}
                 />
+                {/* Gable width label — gray so it reads distinct from the cyan
+                    eave LF pills; lets the contractor sanity-check the span. */}
+                {showLfLabels && lenPx >= 26 && pxPerFt ? (
+                  <text
+                    x={mx}
+                    y={my - 3 * renderScale}
+                    textAnchor="middle"
+                    fontSize={9 * renderScale}
+                    fontWeight={700}
+                    fill={tac ? "#cbd5e1" : "#64748b"}
+                    stroke={tac ? "rgba(2,6,23,0.7)" : "rgba(255,255,255,0.85)"}
+                    strokeWidth={2.4 * renderScale}
+                    paintOrder="stroke"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    {`gable ${Math.round(lineLengthFt(line, pxPerFt))}′`}
+                  </text>
+                ) : null}
               </g>
             );
           })}
@@ -1957,6 +2009,7 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
         <Key color="#cbd5e1" label="Ridge" />
         <Key color="#7dd3fc" label="Hip" />
         <Key color="#c4b5fd" dashed label="Valley" />
+        <Key color="#94a3b8" dashed label="Gable (no gutter)" />
         <span className="h-3 w-px bg-white/20" />
         <span className={cn(lowConfidence ? "text-amber-300" : "text-white/60")}>
           {lowConfidence ? "Schematic — verify" : "Schematic"}

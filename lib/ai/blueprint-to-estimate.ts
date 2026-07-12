@@ -26,6 +26,8 @@ import type { FaceReadingRaw } from "./face-merge";
 import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
 import { filterRoofDiagramLines } from "./roof-diagram-filter";
 import type { RoofMassArea } from "./to-masses";
+import type { DroppedProjection } from "./reconcile-edge-classes";
+import { synthesizeProjectionGutterLF } from "./projection-lf";
 
 /**
  * Bridge between the plan-vision pipeline (Claude) and the address-vision
@@ -474,6 +476,12 @@ export function blueprintToEstimateResult(
     /** Per-mass roof areas (analysisJson._engine.roofMasses) so a projecting
      *  gable's depth = roof area ÷ span (LAW 2), not a schematic guess. */
     roofMasses?: RoofMassArea[] | null;
+    /** Projecting masses (porch/patio/garage on posts/beam) the elevation
+     *  reconcile found whose OWN gutters sit beyond the traced outline. When a
+     *  matching roof-area mass exists, an ESTIMATED gutter line is synthesized
+     *  (2 side returns × area÷span) and added to eaveLF instead of the LF being
+     *  silently dropped. Tagged "estimated — verify"; no-op when empty. */
+    droppedProjections?: DroppedProjection[] | null;
     /** Compass→canvas normals derived from the plan's own elevation titles
      *  (plan-orientation.ts) so per-face gables land on the right canvas side
      *  when the sheet isn't drawn north-up. Null → legacy north-up default. */
@@ -1015,6 +1023,17 @@ export function blueprintToEstimateResult(
     eaveLF = Math.round(targetEaveLF);
   }
 
+  // Recover the gutters on projecting masses (porch/patio/garage on posts or a
+  // beam) whose own eaves sit beyond the traced outline — the elevation
+  // reconcile flagged them but their LF was previously dropped. Synthesized
+  // ONLY when the roof-area schedule gives the mass a real area, and always
+  // tagged "estimated — verify" (see notes below). No-op otherwise.
+  const projectionSynth = synthesizeProjectionGutterLF(
+    opts?.droppedProjections,
+    opts?.roofMasses,
+  );
+  eaveLF += projectionSynth.addedLF;
+
   // We don't get rake length from Claude — excluded_edges only has
   // endpoints, no source-feet conversion. Estimate rakeLF as the
   // average eave-run length times the rake count so the measurement
@@ -1056,6 +1075,7 @@ export function blueprintToEstimateResult(
     );
   }
   for (const n of analysis.notes) notes.push(n);
+  for (const n of projectionSynth.notes) notes.push(n);
 
   if (engineBundle) {
     const eaveCount = engineBundle.takeoff.masses.flatMap((m) => m.edges).filter((e) => e.gutter).length;
@@ -1071,19 +1091,30 @@ export function blueprintToEstimateResult(
         `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s) + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
       );
     }
-    // Surface the engine (footprint-perimeter) LF next to the AI's measured-run
-    // LF so a big gap — the UNDER-billing risk — is visible, not silent. The
-    // engine prices guttered PERIMETER edges; the runs sum the AI's measured
-    // lengths. A hip-dominant roof should gutter most of its perimeter.
-    const freehandLf = Math.round(analysis.gutter_runs.reduce((s, r) => s + (r.length_ft ?? 0), 0));
-    if (freehandLf > 0) {
-      const gapPct = Math.abs(engineBundle.eaveLfFt - freehandLf) / freehandLf;
-      notes.push(
-        `⚖ Engine LF ${engineBundle.eaveLfFt} vs AI-measured-run LF ${freehandLf}` +
-          (gapPct > 0.15
-            ? ` — a ${(gapPct * 100).toFixed(0)}% gap. VERIFY against the real roof: the engine may be under-counting eaves (edges classed as gable rakes, or runs not on the perimeter) on a hip-dominant roof.`
-            : " — within 15%, consistent."),
-      );
+    // Surface the engine (footprint-perimeter) LF next to what we actually
+    // PRICE so a big gap is visible, not silent. The compare is against the
+    // final priced eaveLF (incl. any estimated projection LF), so this doesn't
+    // re-warn about gutters already recovered above. Direction matters: when
+    // the engine DREW more guttered eave than we bill — the classic
+    // projecting-side-eave draw/price mismatch the contractor can see on the
+    // canvas but that adds $0 — say "drawn but not priced". When it drew less,
+    // it may be under-counting a hip-dominant perimeter.
+    if (eaveLF > 0 && engineBundle.eaveLfFt > 0) {
+      const diff = engineBundle.eaveLfFt - eaveLF;
+      const gapPct = Math.abs(diff) / eaveLF;
+      if (gapPct <= 0.15) {
+        notes.push(
+          `⚖ Engine LF ${engineBundle.eaveLfFt} vs priced LF ${eaveLF} — within 15%, consistent.`,
+        );
+      } else if (diff > 0 && !enginePrices) {
+        notes.push(
+          `⚖ Engine drew ~${diff} LF MORE guttered eave than is priced (${engineBundle.eaveLfFt} drawn vs ${eaveLF} billed, a ${(gapPct * 100).toFixed(0)}% gap). Likely projecting side-eaves (porch/garage/entry gable returns) the measured runs missed — they show on the canvas but add $0. VERIFY and add them if real.`,
+        );
+      } else {
+        notes.push(
+          `⚖ Engine LF ${engineBundle.eaveLfFt} vs priced LF ${eaveLF} — a ${(gapPct * 100).toFixed(0)}% gap. VERIFY against the real roof: the engine may be under-counting eaves (edges classed as gable rakes, or runs not on the perimeter) on a hip-dominant roof.`,
+        );
+      }
     }
     notes.push(
       "⚠ Engine-drawn geometry is for VERIFICATION — eyeball it against the real roof before quoting. It won't over-bill (flush ≤ projecting by construction) but pop-out depths/positions are schematic until confirmed.",

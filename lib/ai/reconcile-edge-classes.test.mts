@@ -324,6 +324,12 @@ test("reconcile: a posts-supported gable never consumes a base-line house wall",
     r.notes.some((n) => n.includes("projects beyond this wall")),
     "the projecting roof is surfaced for review",
   );
+  // NEW: the drop is now also emitted as a structured signal so the estimate
+  // assembler can synthesize an estimated gutter line instead of losing the LF.
+  assert.equal(r.droppedProjections.length, 1, "one dropped projection recorded");
+  assert.equal(r.droppedProjections[0].kind, "porch");
+  assert.equal(r.droppedProjections[0].supportedOn, "posts");
+  assert.equal(r.droppedProjections[0].spanFt, 10);
 });
 
 test("reconcile: a truss-field parallel hint promotes when the face shows a gable", () => {
