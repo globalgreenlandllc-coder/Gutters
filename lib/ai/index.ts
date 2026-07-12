@@ -11,7 +11,7 @@ import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
 
 import { classifyEdgeWithAzimuth, ringCentroid } from "./edge-classifier";
-import { cropSatImageToBox, upscaleSatImage } from "./crop";
+import { cropSatImageToBox } from "./crop";
 import { rectifyOutline } from "./rectify-outline";
 import { segmentEavesViaVision } from "./vision";
 import {
@@ -539,46 +539,13 @@ export async function runAIEstimatePipeline(
         samBox = { x_min: bx1, y_min: by1, x_max: bx2, y_max: by2 };
       }
     }
-    // Trace at 2× resolution: SAM's mask is quantized to input pixels, so
-    // upscaling the crop halves the vertex quantization error on eave
-    // corners. Prompts scale UP into the enlarged frame; the returned
-    // outline scales back DOWN so every downstream coordinate (translate,
-    // simplify epsilon, Mercator LF math) stays in original tile pixels.
-    const { image: samImage, scale: samScale } = upscaleSatImage(workImage);
-    const samPointUp = samPoint
-      ? { x: Math.round(samPoint.x * samScale), y: Math.round(samPoint.y * samScale) }
-      : undefined;
-    const samBoxUp = samBox
-      ? {
-          x_min: samBox.x_min * samScale,
-          y_min: samBox.y_min * samScale,
-          x_max: samBox.x_max * samScale,
-          y_max: samBox.y_max * samScale,
-        }
-      : undefined;
-    const samOutcomeRaw = await segmentRoofViaSam(samImage, samPointUp, samBoxUp);
-    const samOutcome =
-      samOutcomeRaw.ok && samScale !== 1
-        ? {
-            ok: true as const,
-            polygon: {
-              points: samOutcomeRaw.polygon.points.map((p) => ({
-                x: p.x / samScale,
-                y: p.y / samScale,
-              })),
-              bbox: {
-                x: Math.round(samOutcomeRaw.polygon.bbox.x / samScale),
-                y: Math.round(samOutcomeRaw.polygon.bbox.y / samScale),
-                width: Math.round(samOutcomeRaw.polygon.bbox.width / samScale),
-                height: Math.round(samOutcomeRaw.polygon.bbox.height / samScale),
-              },
-              areaFraction: samOutcomeRaw.polygon.areaFraction,
-            },
-          }
-        : samOutcomeRaw;
-    if (samScale !== 1) {
-      notes.push(`SAM traced at ${samScale.toFixed(2)}× upscale (${samImage.width}×${samImage.height})`);
-    }
+    // SAM runs at the crop's NATIVE resolution. A prior 2× upscale (for
+    // sub-pixel corner accuracy) quadrupled the fal.ai payload and pushed
+    // requests past fal's 35s server timeout — SAM would then hard-fail and
+    // the trace fell all the way through to the crude vision rectangle. The
+    // marginal corner gain isn't worth regressing the PRIMARY tracer into a
+    // total miss; the rectify pass below recovers clean corners for free.
+    const samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
     // Gate SAM acceptance on areaFraction. A real residential roof, tightly
     // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
     // locked onto a sub-region (one gable, a high-contrast plane, a
