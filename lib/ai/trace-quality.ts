@@ -54,6 +54,16 @@ export function assessSatelliteTrace(args: {
   interiorTiersDetected?: number;
   /** Count of Solar roof segments — diagnostics only. */
   segmentCount?: number;
+  /** The outline came from the GPT-4o VISION fallback — reached only when
+   *  SAM 2 AND the Solar mask both failed to lock on. Vision is the least
+   *  reliable tracer: it can return a plausibly-sized box that still misses
+   *  a whole wing (every point sits inside the Solar bbox, so the
+   *  containment + LF-ratio checks above pass). Such a trace must never
+   *  read as "ok". */
+  fromVisionFallback?: boolean;
+  /** Vision itself called this a multi-level roof — an extra complexity
+   *  signal for the vision-fallback guardrail. */
+  roofLevelsMulti?: boolean;
 }): TraceQuality {
   // 1. No real trace at all — the pipeline fell through to mock geometry.
   if (args.source === "mock") {
@@ -124,7 +134,7 @@ export function assessSatelliteTrace(args: {
     score -= 0.2;
   }
 
-  const confidence = Math.max(0, Math.min(1, score));
+  let confidence = Math.max(0, Math.min(1, score));
   let status: TraceQuality["status"] =
     confidence < 0.45 ? "unusable" : confidence < 0.8 ? "low" : "ok";
 
@@ -146,6 +156,36 @@ export function assessSatelliteTrace(args: {
     tierReasons.push(
       `${tiers} upper roof tier${tiers === 1 ? "" : "s"} detected — add the interior gutters with the drawing tool.`,
     );
+  }
+
+  // 7. Provenance guardrail. When the outline came from the GPT-4o vision
+  //    fallback (SAM 2 + Solar mask both failed to lock on), it is the
+  //    weakest tracer and must never read as "ok" — the geometric checks
+  //    above can't catch a plausibly-sized box that still misses a wing,
+  //    because all its points sit inside the Solar footprint. On a COMPLEX
+  //    roof (many Solar planes, an interior tier, or vision's own
+  //    multi-level call) vision is unreliable enough to mark "unusable" and
+  //    route straight to the manual drawing tool. Otherwise a plain "low"
+  //    warning: keep the lines, but tell them to verify the outline.
+  if (args.fromVisionFallback) {
+    const complexRoof =
+      (args.segmentCount ?? 0) >= 5 || tiers > 0 || args.roofLevelsMulti === true;
+    // unshift, not push: the banner surfaces reasons[0], and this
+    // provenance message is the most actionable one for a vision trace —
+    // it must lead any earlier generic reason.
+    if (complexRoof && status !== "unusable") {
+      status = "unusable";
+      confidence = Math.min(confidence, 0.3);
+      tierReasons.unshift(
+        "The precise roof-outline pass couldn't lock on, so this was traced from the photo by AI vision — and on a complex, multi-section roof like this it often misses a wing. Draw the outline to price it accurately.",
+      );
+    } else if (status === "ok") {
+      status = "low";
+      confidence = Math.min(confidence, 0.7);
+      tierReasons.unshift(
+        "Traced from the photo by AI vision (the precise roof-outline pass didn't lock on). Double-check the outline against the image before pricing.",
+      );
+    }
   }
 
   return {

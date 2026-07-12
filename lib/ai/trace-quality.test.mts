@@ -56,3 +56,65 @@ test("tiers never rescue a degenerate (too-short) trace", () => {
   });
   assert.equal(q.status, "unusable");
 });
+
+// --- vision-fallback provenance guardrail (the 6220 Lake Stevens case) ---
+
+test("non-vision trace with the same signals stays 'ok' (no false alarm)", () => {
+  const q = assessSatelliteTrace({ ...okArgs, segmentCount: 6 });
+  assert.equal(q.status, "ok");
+});
+
+test("vision fallback on a SIMPLE roof floors an ok trace to 'low' with a verify reason", () => {
+  const q = assessSatelliteTrace({
+    ...okArgs,
+    segmentCount: 2,
+    fromVisionFallback: true,
+  });
+  assert.equal(q.status, "low");
+  assert.ok(q.reasons.some((r) => /vision/i.test(r) && /double-check|verify/i.test(r)));
+  assert.ok(q.confidence <= 0.7);
+});
+
+test("vision fallback on a COMPLEX roof (>=5 Solar segments) → 'unusable' + draw-it reason", () => {
+  const q = assessSatelliteTrace({
+    ...okArgs,
+    segmentCount: 6,
+    fromVisionFallback: true,
+  });
+  assert.equal(q.status, "unusable");
+  assert.ok(q.reasons.some((r) => /draw the outline/i.test(r)));
+  assert.ok(q.confidence <= 0.3);
+});
+
+test("vision fallback + vision-reported multi-level → 'unusable' even with few segments", () => {
+  const q = assessSatelliteTrace({
+    ...okArgs,
+    segmentCount: 2,
+    fromVisionFallback: true,
+    roofLevelsMulti: true,
+  });
+  assert.equal(q.status, "unusable");
+});
+
+test("vision fallback + interior tiers → 'unusable' (complex)", () => {
+  const q = assessSatelliteTrace({
+    ...okArgs,
+    segmentCount: 2,
+    fromVisionFallback: true,
+    interiorTiersDetected: 1,
+  });
+  assert.equal(q.status, "unusable");
+});
+
+test("vision flag never rescues a mock/degenerate trace back up", () => {
+  const q = assessSatelliteTrace({
+    source: "mock",
+    eaves: [],
+    totalEaveLF: 0,
+    footprintAreaFt2: null,
+    footprintBboxCanvas: null,
+    fromVisionFallback: true,
+    segmentCount: 2, // simple → would be "low", must stay "unusable"
+  });
+  assert.equal(q.status, "unusable");
+});

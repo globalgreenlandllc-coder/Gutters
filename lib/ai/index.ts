@@ -1391,6 +1391,10 @@ export async function runAIEstimatePipeline(
             footprintBboxCanvas: fp?.bbox ?? null,
             interiorTiersDetected,
             segmentCount: solarRoofSegments.length,
+            // This is the weak vision fallback (SAM + Solar mask both
+            // failed) — never let it read as a trustworthy "ok".
+            fromVisionFallback: true,
+            roofLevelsMulti: segmentation.roofLevels === "multi_level",
           });
         })(),
         roofStructure,
