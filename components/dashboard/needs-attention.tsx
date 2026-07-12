@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
+  BadgePercent,
   Bell,
   CheckCircle2,
   Clock,
@@ -22,6 +23,7 @@ const KIND_ICON: Record<
   overdue_payment: AlertTriangle,
   awaiting_deposit: Hourglass,
   pending_change_order: FileDiff,
+  price_request: BadgePercent,
   expiring_proposal: Clock,
   stale_draft: Mail,
   unopened_proposal: Mail,

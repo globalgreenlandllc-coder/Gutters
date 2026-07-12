@@ -7,6 +7,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowUpRight,
+  BadgePercent,
   Bell,
   ChevronRight,
   Eye,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/dashboard-mock";
 import { SendModal } from "@/components/proposal/send-modal";
 import { PaymentsDrawer } from "@/components/dashboard/payments-drawer";
+import { DiscountDrawer } from "@/components/dashboard/discount-drawer";
 import { getMyProposal } from "@/app/actions/dashboard";
 import { deleteProposal } from "@/app/actions/proposals";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -92,12 +94,18 @@ export function ProposalsTable({
   // change orders). Auto-opens when the URL carries ?pay=<proposalId> —
   // the Overview needs-attention feed links here.
   const [payFor, setPayFor] = useState<string | null>(null);
+  // Contractor's price-negotiation drawer for a SENT/VIEWED proposal with
+  // a live discount request. Auto-opens on ?deal=<proposalId> — the
+  // needs-attention feed + notification emails link here.
+  const [dealFor, setDealFor] = useState<string | null>(null);
   // Reactive to soft navigations too — the sidebar "Done jobs" link
   // lands on this same route with ?filter=done, without a remount.
   const searchParams = useSearchParams();
   useEffect(() => {
     const id = searchParams.get("pay");
     if (id) setPayFor(id);
+    const deal = searchParams.get("deal");
+    if (deal) setDealFor(deal);
     const f = searchParams.get("filter");
     if (f && FILTERS.some((x) => x.id === f)) setFilter(f as FilterId);
   }, [searchParams]);
@@ -373,6 +381,30 @@ export function ProposalsTable({
                         {pendingCOs} CO
                       </button>
                     )}
+                    {(p.openDiscountRequests ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDealFor(p.id);
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset",
+                          p.discountNeedsResponse
+                            ? "bg-accent-50 text-accent-700 ring-accent-200"
+                            : "bg-sky-50 text-sky-600 ring-sky-200",
+                        )}
+                        title={
+                          p.discountNeedsResponse
+                            ? "Price request — respond to the client"
+                            : "Your counter is with the client"
+                        }
+                      >
+                        <BadgePercent className="h-3 w-3" />
+                        {p.discountNeedsResponse ? "Price ask" : "Countered"}
+                      </button>
+                    )}
                   </div>
 
                   {/* TOTAL · COLLECTED — accepted jobs show the money
@@ -545,6 +577,9 @@ export function ProposalsTable({
       )}
       {payFor && (
         <PaymentsDrawer proposalId={payFor} onClose={() => setPayFor(null)} />
+      )}
+      {dealFor && (
+        <DiscountDrawer proposalId={dealFor} onClose={() => setDealFor(null)} />
       )}
     </div>
   );

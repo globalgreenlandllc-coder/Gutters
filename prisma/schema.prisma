@@ -341,6 +341,7 @@ model Proposal {
   jobAssignments JobAssignment[]
   installments   PaymentInstallment[]
   changeOrders   ChangeOrder[]
+  discountRequests DiscountRequest[]
 
   @@index([userId, status])
   @@index([publicToken])
@@ -361,6 +362,12 @@ enum ProposalEventKind {
   CHANGE_ORDER_APPROVED
   CHANGE_ORDER_DECLINED
   COMPLETED
+  // Client-initiated price negotiation (see DiscountRequest below).
+  DISCOUNT_REQUESTED
+  DISCOUNT_COUNTERED
+  DISCOUNT_AGREED
+  DISCOUNT_DECLINED
+  DISCOUNT_WITHDRAWN
 }
 
 model ProposalEvent {
@@ -466,6 +473,99 @@ model ChangeOrder {
   @@unique([proposalId, number])
   @@index([proposalId, status])
   @@map("change_orders")
+}
+
+// -----------------------------------------------------------------------
+// Discount requests — client-initiated price negotiation
+//
+// The mirror of a change order: instead of the contractor asking the
+// client for more money, the CLIENT (from the token-gated /p/[token]
+// portal, before accepting) asks for a lower price. The contractor can
+// agree, counter, or decline; on a counter the client can accept,
+// counter back, or withdraw — a full multi-round back-and-forth, each
+// move recorded as a DiscountOffer so the thread renders both sides.
+//
+// A negotiation is always anchored to ONE reference package (the tier
+// the client was looking at). When a deal is struck (status AGREED) the
+// resolved price is converted to a proposal-wide discountPct written
+// into the proposal's `data` blob — the SAME lever the pricing pipeline,
+// acceptance flow and payment schedule already read, so nothing else in
+// the money path changes. `currentCents` is the amount on the table from
+// whoever moved last; `turn` says whose move it is.
+// -----------------------------------------------------------------------
+
+enum DiscountRequestStatus {
+  OPEN        // client asked (or countered back) → contractor's move
+  COUNTERED   // contractor countered → client's move
+  AGREED      // deal struck → discount applied to the proposal
+  DECLINED    // contractor declined; list price stands
+  WITHDRAWN   // client walked away; list price stands
+  EXPIRED
+}
+
+enum DiscountTurn {
+  CONTRACTOR // waiting on the contractor to respond
+  CLIENT     // waiting on the client to respond
+  NONE       // resolved (agreed / declined / withdrawn / expired)
+}
+
+enum DiscountOfferParty {
+  CLIENT
+  CONTRACTOR
+}
+
+model DiscountRequest {
+  id          String                @id @default(cuid())
+  proposalId  String
+  // Reference package the negotiation is anchored to.
+  packageId   String
+  packageName String
+  // Snapshot of the reference package's listed total (post-discount, at
+  // request time) in cents — the "before" number the thread shows.
+  listedCents Int
+  // Contractor cost basis (pre-markup subtotal) for the reference
+  // package, snapshotted so the margin coach is stable even if the
+  // proposal is edited mid-negotiation. cents.
+  costCents   Int
+  // Lowest price the discount lever can represent = 50% off the
+  // UNDISCOUNTED base (packageTotal clamps discountPct to [0,50]).
+  // Snapshotted so a promo-discounted proposal can't let a client agree
+  // to a price the lever would silently clamp up. cents.
+  floorCents  Int                   @default(0)
+  // Current amount on the table (whoever moved last). cents.
+  currentCents Int
+  status      DiscountRequestStatus @default(OPEN)
+  turn        DiscountTurn          @default(CONTRACTOR)
+  // Set when AGREED — the resolved price + the proposal-wide discountPct
+  // it was converted into.
+  resolvedCents Int?
+  resolvedPct   Float?
+  declineReason String?             @db.Text
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  decidedAt   DateTime?
+  expiresAt   DateTime?
+
+  proposal Proposal        @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  offers   DiscountOffer[]
+
+  @@index([proposalId, status])
+  @@map("discount_requests")
+}
+
+model DiscountOffer {
+  id          String             @id @default(cuid())
+  requestId   String
+  party       DiscountOfferParty
+  // The price this party is proposing for the reference package. cents.
+  amountCents Int
+  message     String?            @db.Text
+  createdAt   DateTime           @default(now())
+
+  request DiscountRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("discount_offers")
 }
 
 // -----------------------------------------------------------------------

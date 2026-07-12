@@ -10,6 +10,7 @@ import { DUR, EASE } from "@/lib/motion";
 export function AcceptBar({
   packageName,
   total,
+  listTotal,
   depositPct,
   paymentChoice,
   onPaymentChoice,
@@ -19,6 +20,9 @@ export function AcceptBar({
 }: {
   packageName: string;
   total: number;
+  /** Pre-discount list total. When present and above `total`, the bar
+   *  shows it struck through — a negotiated win, visible at commit time. */
+  listTotal?: number;
   depositPct: number;
   paymentChoice: "deposit" | "full";
   onPaymentChoice: (c: "deposit" | "full") => void;
@@ -28,6 +32,8 @@ export function AcceptBar({
 }) {
   const deposit = total * (depositPct / 100);
   const due = paymentChoice === "deposit" ? deposit : total;
+  const discounted = typeof listTotal === "number" && listTotal > total + 0.5;
+  const saved = discounted ? listTotal! - total : 0;
   const reduce = useReducedMotion();
 
   return (
@@ -39,11 +45,27 @@ export function AcceptBar({
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center">
         <div className="flex-1">
-          <div className="font-label text-[11px] text-zinc-500">
-            Selected · {packageName}
+          <div className="flex items-center gap-2">
+            <div className="font-label text-[11px] text-zinc-500">
+              Selected · {packageName}
+            </div>
+            {discounted && (
+              <Badge tone="emerald" className="anim-enter-fade">
+                You saved {formatCurrency(saved)}
+              </Badge>
+            )}
           </div>
           <div className="flex items-baseline gap-2 text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
             {formatCurrency(due)}
+            {discounted && (
+              <span className="text-sm font-normal text-zinc-400 line-through">
+                {formatCurrency(
+                  paymentChoice === "deposit"
+                    ? listTotal! * (depositPct / 100)
+                    : listTotal!,
+                )}
+              </span>
+            )}
             <span className="text-xs font-normal text-zinc-500">
               {paymentChoice === "deposit"
                 ? `due today · ${formatCurrency(total - deposit)} on completion`

@@ -15,21 +15,26 @@ import { SignaturePad } from "./signature-pad";
 import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
 import { PaymentHub } from "./payment-hub";
+import { DiscountThread } from "./discount-thread";
 import { packageTotal, type Proposal } from "@/lib/proposal-mock";
 import { DUR, EASE } from "@/lib/motion";
 import { acceptProposalByToken } from "@/app/actions/proposals";
 import type { PortalPaymentState } from "@/app/actions/payments";
+import type { DiscountThreadDto } from "@/app/actions/discounts";
 
 export function ClientPortalView({
   proposal,
   previewMode,
   portal,
+  discountThread,
 }: {
   proposal: Proposal;
   previewMode?: boolean;
   /** Post-acceptance payment state (schedule, change orders). When set,
    *  the portal renders the payment hub instead of the accept flow. */
   portal?: PortalPaymentState | null;
+  /** Pre-acceptance price-negotiation state. Null in preview/demo mode. */
+  discountThread?: DiscountThreadDto | null;
 }) {
   const recommended =
     proposal.packages.find((p) => p.recommended)?.id ??
@@ -56,6 +61,12 @@ export function ClientPortalView({
     proposal.measurements,
     proposal.discountPct ?? 0,
   );
+  // List price at zero discount — drives the accept-bar strikethrough so a
+  // negotiated win is visible right where the client commits.
+  const hasDiscount = (proposal.discountPct ?? 0) > 0;
+  const listTotal = hasDiscount
+    ? packageTotal(selected, proposal.measurements, 0).total
+    : undefined;
 
   const canAccept =
     !!signature &&
@@ -128,6 +139,15 @@ export function ClientPortalView({
             onSelectPackage={setSelectedId}
           />
 
+          {discountThread && !previewMode && (
+            <DiscountThread
+              token={proposal.token}
+              initial={discountThread}
+              selectedPackageId={selectedId}
+              companyName={proposal.contractor.company || "your contractor"}
+            />
+          )}
+
           <PhotosSection
             proposal={proposal}
             onChange={() => undefined}
@@ -173,6 +193,7 @@ export function ClientPortalView({
       <AcceptBar
         packageName={selected.name}
         total={totals.total}
+        listTotal={listTotal}
         depositPct={proposal.depositPct}
         paymentChoice={paymentChoice}
         onPaymentChoice={setPaymentChoice}

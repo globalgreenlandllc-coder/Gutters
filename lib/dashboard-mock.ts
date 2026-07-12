@@ -36,6 +36,10 @@ export type ProposalListItem = {
   pendingChangeOrders?: number;
   /** Overdue pending installments (due date in the past). */
   overdueInstallments?: number;
+  /** Live price negotiations (status OPEN or COUNTERED). */
+  openDiscountRequests?: number;
+  /** A live price request is waiting on the contractor to respond. */
+  discountNeedsResponse?: boolean;
 };
 
 /** Derived job stage for accepted proposals: collecting vs fully paid. */

@@ -110,6 +110,22 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
       },
     },
   });
+
+  // Live price negotiations, one lightweight query for the whole list.
+  // (A second filtered _count on the same relation isn't expressible, so
+  // we aggregate proposalId → {open, needsResponse} here.)
+  const liveDiscounts = await db.discountRequest.findMany({
+    where: { proposal: { userId: me.user.id }, status: { in: ["OPEN", "COUNTERED"] } },
+    select: { proposalId: true, turn: true },
+  });
+  const discountByProposal = new Map<string, { open: number; needs: boolean }>();
+  for (const d of liveDiscounts) {
+    const cur = discountByProposal.get(d.proposalId) ?? { open: 0, needs: false };
+    cur.open += 1;
+    if (d.turn === "CONTRACTOR") cur.needs = true;
+    discountByProposal.set(d.proposalId, cur);
+  }
+
   return rows.map((r) => {
     const viewEvents = r.events;
     // Derive the dollar total from the data blob when the row's
@@ -134,6 +150,8 @@ export async function listMyProposals(): Promise<MyProposalRow[]> {
       completedAt: r.completedAt?.toISOString(),
       pendingChangeOrders: r._count.changeOrders,
       overdueInstallments: r._count.installments,
+      openDiscountRequests: discountByProposal.get(r.id)?.open ?? 0,
+      discountNeedsResponse: discountByProposal.get(r.id)?.needs ?? false,
     };
   });
 }
@@ -303,10 +321,16 @@ function mapEventKind(
     case "CHANGE_ORDER_SENT":
       return "sent";
     case "CHANGE_ORDER_APPROVED":
+    case "DISCOUNT_AGREED":
       return "accepted";
     case "CHANGE_ORDER_DECLINED":
     case "DECLINED":
+    case "DISCOUNT_DECLINED":
+    case "DISCOUNT_WITHDRAWN":
       return "declined";
+    case "DISCOUNT_REQUESTED":
+    case "DISCOUNT_COUNTERED":
+      return "sent";
     case "EXPIRED":
       return "expired";
     default:
@@ -613,6 +637,16 @@ function messageForEvent(kind: string, address: string, client: string): string 
       return `${client} approved a change order`;
     case "CHANGE_ORDER_DECLINED":
       return `${client} declined a change order`;
+    case "DISCOUNT_REQUESTED":
+      return `${client} asked for a better price`;
+    case "DISCOUNT_COUNTERED":
+      return `Price counter-offer · ${client}`;
+    case "DISCOUNT_AGREED":
+      return `Price agreed with ${client}`;
+    case "DISCOUNT_DECLINED":
+      return `Price request declined · ${client}`;
+    case "DISCOUNT_WITHDRAWN":
+      return `${client} withdrew a price request`;
     case "DECLINED":
       return `Declined · ${address}`;
     case "EXPIRED":

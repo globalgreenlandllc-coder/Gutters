@@ -3,6 +3,7 @@ import { sampleProposal } from "@/lib/proposal-mock";
 import { ClientPortalView } from "@/components/client-portal/client-portal-view";
 import { getProposalByToken } from "@/app/actions/proposals";
 import { getPortalStateByToken } from "@/app/actions/payments";
+import { getDiscountThreadByToken } from "@/app/actions/discounts";
 
 export default async function PublicProposalPage({
   params,
@@ -20,7 +21,16 @@ export default async function PublicProposalPage({
     // hub (schedule, progress, change-order approvals). Null for
     // proposals that aren't accepted yet.
     const portal = await getPortalStateByToken(token);
-    return <ClientPortalView proposal={{ ...real, token }} portal={portal} />;
+    // Price negotiation lives in the pre-acceptance flow only; skip the
+    // read once the payment hub has taken over.
+    const discountThread = portal ? null : await getDiscountThreadByToken(token);
+    return (
+      <ClientPortalView
+        proposal={{ ...real, token }}
+        portal={portal}
+        discountThread={discountThread}
+      />
+    );
   }
 
   // Demo fallback: tokens not backed by a real proposal still render the

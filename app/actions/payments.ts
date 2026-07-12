@@ -1446,6 +1446,7 @@ export type AttentionItem = {
     | "overdue_payment"
     | "awaiting_deposit"
     | "pending_change_order"
+    | "price_request"
     | "expiring_proposal"
     | "stale_draft"
     | "unopened_proposal";
@@ -1468,7 +1469,7 @@ export async function getNeedsAttention(): Promise<AttentionItem[]> {
   const days = (n: number) => new Date(now.getTime() - n * 86400_000);
   const ahead = (n: number) => new Date(now.getTime() + n * 86400_000);
 
-  const [overdueInstallments, pendingCOs, expiring, staleDrafts, unopened] =
+  const [overdueInstallments, pendingCOs, openDiscounts, expiring, staleDrafts, unopened] =
     await Promise.all([
       db.paymentInstallment.findMany({
         where: {
@@ -1488,6 +1489,14 @@ export async function getNeedsAttention(): Promise<AttentionItem[]> {
           proposal: { select: { id: true, address: true, clientName: true } },
         },
         orderBy: { sentAt: "asc" },
+        take: 8,
+      }),
+      db.discountRequest.findMany({
+        where: { proposal: { userId }, status: "OPEN", turn: "CONTRACTOR" },
+        include: {
+          proposal: { select: { id: true, address: true, clientName: true } },
+        },
+        orderBy: { createdAt: "asc" },
         take: 8,
       }),
       db.proposal.findMany({
@@ -1552,6 +1561,21 @@ export async function getNeedsAttention(): Promise<AttentionItem[]> {
       href: `/dashboard/proposals?pay=${c.proposal.id}`,
       urgency: daysOut >= 3 ? "medium" : "low",
       proposalId: c.proposal.id,
+    });
+  }
+
+  for (const d of openDiscounts) {
+    const daysOut = Math.floor(
+      (now.getTime() - d.createdAt.getTime()) / 86400_000,
+    );
+    items.push({
+      id: `disc-${d.id}`,
+      kind: "price_request",
+      title: `Price request — ${money(d.currentCents)} asked`,
+      detail: `${d.proposal.clientName || d.proposal.address} · was ${money(d.listedCents)} · ${daysOut === 0 ? "today" : `${daysOut}d ago`}`,
+      href: `/dashboard/proposals?deal=${d.proposal.id}`,
+      urgency: daysOut >= 2 ? "high" : "medium",
+      proposalId: d.proposal.id,
     });
   }
 

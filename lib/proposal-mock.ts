@@ -86,6 +86,10 @@ export type ProposalTakeoff = {
   eaves: EditableLine[];
   rakes: EditableLine[];
   downspouts: Downspout[];
+  /** Suggested interior gutter runs (un-priced tier-break hints). Drawn
+   *  dashed on the diagram with a tap-to-add affordance; never counted in
+   *  the priced eave LF until the contractor accepts one. */
+  suggestedEaves?: EditableLine[];
   /** Roof outline + ridge/hip/valley lines for the read-only overlay. */
   roofStructure?: RoofStructure;
   aerial?: {
@@ -437,4 +441,61 @@ export function markupPctForTarget(
   const ratio =
     targetTotal / (subtotal * (1 - d) * (1 + EFFECTIVE_TAX_RATE));
   return (ratio - 1) * 100;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Price-negotiation helpers (discount requests)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The proposal-wide `discountPct` that makes a reference package's total
+ * land on `targetTotal`. Inverse of `packageTotal`'s discount lever:
+ *   total(d) = total(0) · (1 − d)   ⇒   d = 1 − target / total(0)
+ * `total(0)` is the package priced at zero discount (markup + tax only).
+ * Clamped to [0, 50] to match `packageTotal`'s own clamp — a client can't
+ * negotiate below 50% off through this path even if they ask to. Returns
+ * 0 for a non-positive base (malformed measurements).
+ */
+export function discountPctForTargetTotal(
+  p: Package,
+  measurements: Measurements,
+  targetTotal: number,
+): number {
+  const base = packageTotal(p, measurements, 0).total;
+  if (base <= 0) return 0;
+  const pct = (1 - targetTotal / base) * 100;
+  return Math.max(0, Math.min(50, pct));
+}
+
+export type MarginBreakdown = {
+  /** Sale price ex-tax (what actually lands in the contractor's pocket). */
+  revenueCents: number;
+  /** Contractor cost basis (pre-markup subtotal incl. add-ons). */
+  costCents: number;
+  /** revenue − cost. Negative = selling below cost. */
+  marginCents: number;
+  /** margin / revenue, 0..1 (0 when revenue is non-positive). */
+  marginPct: number;
+  belowCost: boolean;
+};
+
+/**
+ * Margin left at a given sale total, for the contractor's counter coach.
+ * The sale total is post-tax (the number both sides negotiate over), so
+ * we strip the effective tax back out before comparing to cost. All
+ * inputs/outputs in cents so the UI never re-rounds.
+ */
+export function marginForSaleTotalCents(
+  saleTotalCents: number,
+  costCents: number,
+): MarginBreakdown {
+  const revenueCents = Math.round(saleTotalCents / (1 + EFFECTIVE_TAX_RATE));
+  const marginCents = revenueCents - costCents;
+  return {
+    revenueCents,
+    costCents,
+    marginCents,
+    marginPct: revenueCents > 0 ? marginCents / revenueCents : 0,
+    belowCost: marginCents < 0,
+  };
 }

@@ -626,6 +626,18 @@ export async function acceptProposalByToken(args: {
       },
     });
 
+    // Close out any live price negotiation — the price is locked now, so a
+    // still-OPEN/COUNTERED request would linger in the contractor's queue.
+    // Best-effort: acceptance must never fail on this bookkeeping.
+    try {
+      await db.discountRequest.updateMany({
+        where: { proposalId: row.id, status: { in: ["OPEN", "COUNTERED"] } },
+        data: { status: "EXPIRED", turn: "NONE", decidedAt: now },
+      });
+    } catch (e) {
+      console.warn("[acceptProposalByToken] discount cleanup failed", e);
+    }
+
     // Best-effort contractor notification.
     let contractorNotified = false;
     const contractorEmail = row.user?.contractorProfile?.email ?? row.user?.email;

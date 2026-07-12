@@ -140,6 +140,16 @@ export const POLICIES = {
     "Too many attempts on this change order — please try again later.",
   ),
 
+  /** Unauthenticated portal writes (/p/[token] price-request + counter) — per proposal token.
+   *  A real negotiation is a handful of moves; this only ever bites a loop. */
+  portalDiscount: make(
+    "portal.discount",
+    "ABUSE_LIMIT_PORTAL_DISCOUNT",
+    [{ limit: 20, windowSec: DAY }],
+    "open",
+    "Too many price-request updates on this proposal — please try again later or contact your contractor.",
+  ),
+
   /** All unauthenticated portal writes from one IP, across tokens. */
   portalIp: make(
     "portal.ip",
