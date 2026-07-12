@@ -282,16 +282,22 @@ export function PaymentsDrawer({
                 <div className="font-label mb-2 text-[11px] text-zinc-400">
                   Payment schedule
                 </div>
-                <ul className="overflow-hidden rounded-xl border border-zinc-200">
+                {/* No overflow-hidden: it would clip the "Mark paid" method
+                    menu on the LAST row (the final payment), which opens below
+                    the button and past the list's bottom edge — the exact
+                    reason the final payment couldn't be marked paid. Rounded
+                    corners still read fine without it (rows have no fill). */}
+                <ul className="rounded-xl border border-zinc-200">
                   {overview.installments.length === 0 && (
                     <li className="px-4 py-6 text-center text-sm text-zinc-500">
                       No payments scheduled yet — add one below.
                     </li>
                   )}
-                  {overview.installments.map((inst) => (
+                  {overview.installments.map((inst, i) => (
                     <InstallmentRow
                       key={inst.id}
                       inst={inst}
+                      isLast={i === overview.installments.length - 1}
                       busy={busyId === inst.id}
                       onMarkPaid={(method) =>
                         run(
@@ -471,6 +477,7 @@ export function PaymentsDrawer({
 
 function InstallmentRow({
   inst,
+  isLast,
   busy,
   onMarkPaid,
   onRemind,
@@ -479,6 +486,9 @@ function InstallmentRow({
   onDelete,
 }: {
   inst: PaymentOverview["installments"][number];
+  /** Last row in the schedule — its method menu flips UP so it isn't cut off
+   *  at the bottom of the list / the scrolled drawer (the final-payment bug). */
+  isLast: boolean;
   busy: boolean;
   onMarkPaid: (method: PaymentMethodId) => void;
   onRemind: () => void;
@@ -562,7 +572,14 @@ function InstallmentRow({
                     className="fixed inset-0 z-10"
                     onClick={() => setPickerOpen(false)}
                   />
-                  <div className="anim-pop origin-top-left absolute left-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-elevated">
+                  <div
+                    className={cn(
+                      "anim-pop absolute left-0 z-20 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-elevated",
+                      isLast
+                        ? "origin-bottom-left bottom-full mb-1"
+                        : "origin-top-left top-full mt-1",
+                    )}
+                  >
                     {METHODS.map((m) => (
                       <button
                         key={m.id}
