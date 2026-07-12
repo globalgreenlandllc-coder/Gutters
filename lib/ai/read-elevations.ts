@@ -343,6 +343,24 @@ function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
   };
 }
 
+/** How each face is usually TITLED, so the reader knows what to look for and
+ *  never invents a nonsensical "FRONT/FRONT". House-relative words are the
+ *  common residential label; a compass bearing, when printed, is appended. */
+function titleHintFor(face: ElevationFaceName): string {
+  switch (face) {
+    case "front":
+      return `The FRONT is the street-facing facade (main entry / garage), usually titled "FRONT ELEVATION" — sometimes "FRONT/NORTH ELEVATION" if a compass bearing is printed.`;
+    case "rear":
+      return `The REAR is the back of the house, usually titled "REAR ELEVATION" — sometimes "REAR/SOUTH ELEVATION".`;
+    case "left":
+      return `The LEFT side (as you face the FRONT) is usually titled "LEFT ELEVATION" or "LEFT SIDE ELEVATION" — sometimes "LEFT/EAST ELEVATION".`;
+    case "right":
+      return `The RIGHT side (as you face the FRONT) is usually titled "RIGHT ELEVATION" or "RIGHT SIDE ELEVATION" — sometimes "RIGHT/WEST ELEVATION".`;
+    default:
+      return `It may be titled "${face.toUpperCase()} ELEVATION" or paired with a house-relative word.`;
+  }
+}
+
 /** Read ONE elevation face in its own model call. Never throws — a failure
  *  returns an unreadable face. */
 export async function readElevationFace(
@@ -376,12 +394,13 @@ export async function readElevationFace(
               type: "text",
               text:
                 `Find and read the ${spec.face.toUpperCase()} exterior elevation — in isolation. ` +
+                `${titleHintFor(spec.face)} ` +
                 (spec.pages.length
-                  ? `The elevation sheets in this set are page(s) ${spec.pages.join(", ")}, and a single sheet often holds TWO elevations side by side, so look at ALL of them and pick the ${spec.face.toUpperCase()} one. It may be titled plainly "${spec.face.toUpperCase()} ELEVATION" or "${spec.face.toUpperCase()} SIDE ELEVATION", or paired with a compass bearing like "FRONT/${spec.face.toUpperCase()}". A plain house-relative title (FRONT / REAR / LEFT SIDE / RIGHT SIDE) with NO compass is normal and fully readable — do NOT mark it unreadable just because no N/S/E/W bearing is printed. `
+                  ? `The elevation sheets in this set are page(s) ${spec.pages.join(", ")}, and a single sheet often holds TWO elevations side by side, so look at ALL of them and pick the ${spec.face.toUpperCase()} one. A plain house-relative title with NO compass bearing is normal and FULLY READABLE — never mark a legible elevation unreadable just because no N/S/E/W is printed. `
                   : `Locate the ${spec.face.toUpperCase()} elevation anywhere in the set. `) +
                 `Read ONLY the ${spec.face.toUpperCase()} elevation; ignore every other elevation and face, and do NOT assume any other face looks like this one. ` +
                 `If there is genuinely no ${spec.face.toUpperCase()} elevation in the set, set readable:false. ` +
-                `Report sheet_title with the elevation's printed title EXACTLY as it appears (e.g. "${spec.face.toUpperCase()} ELEVATION") — it anchors the plan's orientation. ` +
+                `Report sheet_title with the elevation's printed title EXACTLY as it appears — it anchors the plan's orientation. ` +
                 `Enumerate its gables, classify its eave/rake edges, note any projection cues, and call record_face_reading with face:"${spec.face}".`,
             },
             sourceBlock(source),
@@ -454,24 +473,21 @@ export async function readAllElevations(
       ),
     );
 
-    // Pick the face VOCABULARY from what the sheets are actually titled. Many
-    // sets (esp. contemporary/prairie plans like the Mascord catalog) title
-    // their elevations FRONT / RIGHT SIDE / REAR / LEFT SIDE with NO compass
-    // bearing anywhere. Reading those as north/south/east/west forces every
-    // face to readable:false — the fully-legible hip elevations get discarded,
-    // and downstream falls back to a gable-biased guess. House-relative names
-    // map 1:1 onto the footprint sides (front=bottom edge, rear=top, …) with
-    // no compass needed, so when the classifier saw no cardinal side, read the
-    // faces house-relative instead. Compass sets keep the cardinal read.
-    const hasCompassSide = sheets.some(
-      (s) =>
-        s.sheet_type === "elevation" &&
-        typeof s.elevation_side === "string" &&
-        ["north", "south", "east", "west"].includes(s.elevation_side),
-    );
-    const FACES: ElevationFaceName[] = hasCompassSide
-      ? ["north", "south", "east", "west"]
-      : ["front", "rear", "left", "right"];
+    // Read the four HOUSE-RELATIVE faces (front / rear / left / right), always.
+    // They are present and unambiguous on essentially every residential set —
+    // whether titled plainly "FRONT ELEVATION" or with a compass bearing
+    // "FRONT/NORTH ELEVATION" (the bearing is still captured in sheet_title,
+    // and the reconciler maps a house-relative face 1:1 onto its footprint
+    // side, no compass needed). The old cardinal (N/S/E/W) read was a trap:
+    // the Stage-1 classifier's elevation_side enum is compass-only and its
+    // prompt MAPS a house-relative "FRONT ELEVATION" to a guessed compass side,
+    // so hasCompassSide fired on plans that print no bearing at all — forcing a
+    // cardinal read the per-face model then (correctly) refused to guess,
+    // discarding every legible elevation (the 1168G-DA BIDSET failure: all four
+    // faces "unreadable — no NORTH elevation", roof left to a gable-biased AI
+    // trace). A genuinely compass-only set (no FRONT/REAR words) still resolves:
+    // "find the FRONT elevation" lands on the street/entry facade.
+    const FACES: ElevationFaceName[] = ["front", "rear", "left", "right"];
     const specs = FACES.map((face) => ({ face, pages: elevationPages }));
 
     const results = await Promise.all(specs.map((spec) => readElevationFace(source, spec)));
