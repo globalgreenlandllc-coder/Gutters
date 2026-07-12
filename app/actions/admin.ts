@@ -91,8 +91,11 @@ export type AdminUserRow = {
 };
 
 /** Collapse the five subscription statuses to the three tiers the admin
- *  cares about. Matches the user-facing settings badge, where TRIALING /
- *  CANCELED / INCOMPLETE / no-row all read as "Free plan". */
+ *  cares about. Unlike the user-facing settings badge (which lumps
+ *  TRIALING / CANCELED / INCOMPLETE / no-row all into "Free plan"), the
+ *  admin surfaces TRIALING separately as "trial" for trial tracking.
+ *  PAST_DUE maps to "pro" here but the users table renders it as a
+ *  distinct "Payment failed" badge off subscriptionStatus. */
 function tierOf(status: string | null | undefined): UserTier {
   if (status === "ACTIVE" || status === "PAST_DUE") return "pro";
   if (status === "TRIALING") return "trial";
@@ -293,15 +296,25 @@ export async function setUserTier(
   });
   if (!user) throw new Error("User not found");
 
-  await db.subscription.upsert({
-    where: { userId },
-    create: { userId, status: next.status, planId: next.planId },
-    update: { status: next.status, planId: next.planId },
-  });
+  if (tier === "free") {
+    // Free = NO subscription row, not a CANCELED one. Analytics treats
+    // "free users" as having no row and counts CANCELED as genuine paid
+    // churn — persisting CANCELED here would misreport a comp/downgrade as
+    // churn and drop them out of the free bucket. deleteMany is a no-op
+    // when there's no row; the stripeSubscriptionId guard above already
+    // protected live Stripe rows from deletion.
+    await db.subscription.deleteMany({ where: { userId } });
+  } else {
+    await db.subscription.upsert({
+      where: { userId },
+      create: { userId, status: next.status, planId: next.planId },
+      update: { status: next.status, planId: next.planId },
+    });
+  }
   await logAction(me.user.id, "USER_PLAN_CHANGED", "User", userId, {
     tier,
-    status: next.status,
-    planId: next.planId,
+    status: tier === "free" ? null : next.status,
+    planId: tier === "free" ? null : next.planId,
     prior: before?.status ?? null,
   });
   revalidatePath("/admin/users");

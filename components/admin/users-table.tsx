@@ -194,9 +194,18 @@ export function UsersTable({
                   </div>
 
                   <div className="text-xs text-zinc-600">
-                    <Badge tone={TIER_META[u.tier].tone}>
-                      {TIER_META[u.tier].label}
-                    </Badge>
+                    {u.subscriptionStatus === "PAST_DUE" ? (
+                      // A declining card reads as an at-risk account, not a
+                      // healthy "Pro" — matches the user's own settings badge.
+                      <Badge tone="amber">
+                        <AlertTriangle className="h-3 w-3" />
+                        Payment failed
+                      </Badge>
+                    ) : (
+                      <Badge tone={TIER_META[u.tier].tone}>
+                        {TIER_META[u.tier].label}
+                      </Badge>
+                    )}
                     <div className="mt-1 text-zinc-400">
                       Joined{" "}
                       {new Date(u.createdAt).toLocaleDateString("en-US", {
@@ -826,13 +835,14 @@ function PlanDialog({
       try {
         await setUserTier(user.id, tier);
         // Mirror the server's tier -> status/planId mapping for the
-        // optimistic row so the badge updates without a refetch.
+        // optimistic row so the badge updates without a refetch. Free
+        // deletes the row server-side, so it becomes a null subscription.
         const mapped =
           tier === "pro"
             ? { subscriptionStatus: "ACTIVE" as const, planId: "pro_monthly" }
             : tier === "trial"
               ? { subscriptionStatus: "TRIALING" as const, planId: "pro_monthly" }
-              : { subscriptionStatus: "CANCELED" as const, planId: "free" };
+              : { subscriptionStatus: null, planId: null };
         onApplied({ ...user, tier, ...mapped });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not change plan");

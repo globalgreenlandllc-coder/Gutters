@@ -4,9 +4,12 @@ import { UsersTable } from "@/components/admin/users-table";
 export default async function AdminUsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  // A repeated key (?q=a&q=b) parses to string[] in the App Router — coerce
+  // to a single string so it can't reach the client filter as an array.
+  searchParams: Promise<{ q?: string | string[] }>;
 }) {
   const [{ q }, rows] = await Promise.all([searchParams, listUsersForAdmin()]);
+  const initialQuery = Array.isArray(q) ? (q[0] ?? "") : (q ?? "");
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
@@ -25,7 +28,10 @@ export default async function AdminUsersPage({
         </div>
       </header>
 
-      <UsersTable rows={rows} initialQuery={q ?? ""} />
+      {/* key on the seed so a soft nav that changes ?q (e.g. sidebar
+          "Users" clearing it) remounts the table and re-seeds the box —
+          otherwise the useState seed would leave a stale filter. */}
+      <UsersTable key={initialQuery} rows={rows} initialQuery={initialQuery} />
     </div>
   );
 }
