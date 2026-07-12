@@ -284,65 +284,136 @@ export function buildEdgeTakeoff(opts: {
       }
       if (cur.length > 0) chains.push(cur);
     }
-    // Guttered pt-length of an edge (full, minus any gable spans) and a
-    // mapper from a guttered offset → the actual point on the gutter, so a
-    // partial-gable edge is never measured or dropped-on over its gable.
+    // Place each chain's drops at the gutter's OUTSIDE CORNERS (where water
+    // turns down) and its ends, then fill any long straight gap — the trade
+    // pattern, and the fix for drops floating mid-wall on a gable-broken
+    // perimeter. ~1 drop per 35 ft.
     const intervalsOf = (id: string) =>
       gutteredIntervals.get(id) ?? [{ u0: 0, u1: 1 }];
-    const gutteredPt = (i: number) => {
-      const e = edges[i];
-      return intervalsOf(e.id).reduce((s, iv) => s + (iv.u1 - iv.u0) * e.lenPt, 0);
-    };
-    // offsetPt measured along the edge's GUTTERED length → fraction u.
-    const uAtGutteredOffset = (i: number, offsetPt: number): number => {
-      const e = edges[i];
-      let rem = offsetPt;
-      const ivs = intervalsOf(e.id);
-      for (const iv of ivs) {
-        const segPt = (iv.u1 - iv.u0) * e.lenPt;
-        if (rem <= segPt || iv === ivs[ivs.length - 1]) {
-          return iv.u0 + Math.max(0, Math.min(segPt, rem)) / e.lenPt;
-        }
-        rem -= segPt;
-      }
-      return 0.5;
+    const SPACING_PT = 40 * ptPerFt;
+    const MERGE_PT = 3 * ptPerFt; // dedupe / min-spacing threshold
+    type GSeg = {
+      a: OverlayPt;
+      b: OverlayPt;
+      len: number;
+      edgeId: string;
+      tier: EdgeClass["tier"];
+      side: EdgeTakeoffResult["gutter_runs"][number]["side"];
     };
     for (const chain of chains) {
-      if (chain.length === 0) continue;
-      const lenPts = chain.map((i) => gutteredPt(i));
-      const totalPt = lenPts.reduce((s, l) => s + l, 0);
-      const lf = totalPt / ptPerFt;
+      // The chain's guttered sub-segments, in ring order (a partial-gable
+      // edge contributes only its guttered intervals).
+      const segs: GSeg[] = [];
+      for (const i of chain) {
+        const e = edges[i];
+        const tier = byId.get(e.id)?.tier ?? null;
+        const side = sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior";
+        for (const iv of intervalsOf(e.id)) {
+          const a = lerp(e, iv.u0);
+          const b = lerp(e, iv.u1);
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          if (len < 1e-6) continue;
+          segs.push({ a, b, len, edgeId: e.id, tier, side });
+        }
+      }
+      if (segs.length === 0) continue;
+      const cum = [0];
+      for (const g of segs) cum.push(cum[cum.length - 1] + g.len);
+      const L = cum[cum.length - 1];
+      const lf = L / ptPerFt;
       if (!Number.isFinite(lf) || lf <= 0) continue;
       // Tiny isolated stubs (short bay jogs between rakes) don't warrant
       // their own drop unless they're all the roof has.
       if (lf < 6 && chains.length > 1) continue;
-      const count = Math.min(20, Math.max(1, Math.ceil(lf / 40)));
-      for (let d = 0; d < count; d++) {
-        let target = ((d + 0.5) / count) * totalPt;
-        let ci = 0;
-        while (ci < chain.length - 1 && target > lenPts[ci]) {
-          target -= lenPts[ci];
-          ci++;
+
+      // Candidate anchors: chain ends + outside corners where the gutter
+      // physically reaches the vertex (contiguous sub-segments).
+      const anchors: number[] = [0, L];
+      for (let k = 0; k < segs.length - 1; k++) {
+        const g0 = segs[k];
+        const g1 = segs[k + 1];
+        const gapPt = Math.hypot(g1.a.x - g0.b.x, g1.a.y - g0.b.y);
+        if (gapPt > MERGE_PT) continue; // gutter breaks here — not a corner
+        if (cross(g0.a, g0.b, g1.b) * orient > 1e-9) anchors.push(cum[k + 1]);
+      }
+      anchors.sort((p, q) => p - q);
+      const merged: number[] = [];
+      for (const p of anchors) {
+        if (!merged.length || p - merged[merged.length - 1] > MERGE_PT)
+          merged.push(p);
+      }
+
+      // Target count on the 40 ft rule. Two clean branches (no coincident
+      // points): with enough anchors, pick `target` of them spread evenly
+      // by arc position; with too few, keep every corner and fill the
+      // largest straight gaps until the count is met.
+      const target = Math.min(20, Math.max(1, Math.round(L / SPACING_PT)));
+      let chosen: number[];
+      if (merged.length >= target) {
+        chosen = [];
+        const used = new Set<number>();
+        for (let s = 0; s < target; s++) {
+          const ideal = ((s + 0.5) / target) * L;
+          let best = -1;
+          let bestD = Infinity;
+          for (let a = 0; a < merged.length; a++) {
+            if (used.has(a)) continue;
+            const d = Math.abs(merged[a] - ideal);
+            if (d < bestD) {
+              bestD = d;
+              best = a;
+            }
+          }
+          used.add(best);
+          chosen.push(merged[best]);
         }
-        const e = edges[chain[ci]];
-        const u = uAtGutteredOffset(chain[ci], target);
-        const f = Math.max(0.05, Math.min(0.95, u));
-        const tier = byId.get(e.id)?.tier;
+      } else {
+        chosen = [...merged];
+        while (chosen.length < target) {
+          chosen.sort((p, q) => p - q);
+          let gi = 0;
+          let gmax = -1;
+          for (let i = 0; i < chosen.length - 1; i++) {
+            const gap = chosen[i + 1] - chosen[i];
+            if (gap > gmax) {
+              gmax = gap;
+              gi = i;
+            }
+          }
+          if (gmax <= MERGE_PT) break; // nothing left to subdivide
+          chosen.splice(gi + 1, 0, (chosen[gi] + chosen[gi + 1]) / 2);
+        }
+      }
+      chosen.sort((p, q) => p - q);
+
+      // Sit end-drops just INSIDE the corner miter, and keep a minimum
+      // spacing so a corner + a nearby fill don't stack.
+      const inset = Math.min(2 * ptPerFt, L * 0.15);
+      let lastT = -Infinity;
+      for (const raw of chosen) {
+        const t = Math.max(inset, Math.min(L - inset, raw));
+        if (t - lastT < MERGE_PT) continue;
+        lastT = t;
+        let rem = t;
+        let gi = 0;
+        while (gi < segs.length - 1 && rem > segs[gi].len) {
+          rem -= segs[gi].len;
+          gi++;
+        }
+        const g = segs[gi];
+        const f = g.len > 0 ? Math.max(0, Math.min(1, rem / g.len)) : 0;
         downspouts.push({
-          at: {
-            x: e.p1.x + (e.p2.x - e.p1.x) * f,
-            y: e.p1.y + (e.p2.y - e.p1.y) * f,
-          },
+          at: { x: g.a.x + (g.b.x - g.a.x) * f, y: g.a.y + (g.b.y - g.a.y) * f },
           drop_height_ft:
-            tier === "lower" ? tierHeights.lower : tierHeights.upper,
-          edge_id: e.id,
-          side: sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior",
+            g.tier === "lower" ? tierHeights.lower : tierHeights.upper,
+          edge_id: g.edgeId,
+          side: g.side,
         });
       }
     }
     if (downspouts.length > 0) {
       notes.push(
-        `⚠ No usable D.S. marks read from the plan — ${downspouts.length} downspout(s) placed by the 1-per-40 ft spacing rule. Verify locations against the plan.`,
+        `⚠ No usable D.S. marks read from the plan — ${downspouts.length} downspout(s) placed at the gutter's outside corners on the 1-per-40 ft rule. Verify locations against the plan.`,
       );
     }
   } else if (downspouts.length > 0 && ptPerFt > 0) {

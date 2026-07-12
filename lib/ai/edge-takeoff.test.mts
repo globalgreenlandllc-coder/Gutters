@@ -142,7 +142,11 @@ test("downspout synthesis: zero marks → ceil(LF/40) per chain, loudly noted", 
     downspouts: [],
   });
   assert.equal(r.totals.downspouts, 7);
-  assert.ok(r.notes.some((n) => n.includes("1-per-40 ft spacing rule")));
+  assert.ok(
+    r.notes.some(
+      (n) => n.includes("outside corners") && n.includes("1-per-40 ft"),
+    ),
+  );
 });
 
 test("downspout synthesis: marked downspouts suppress synthesis; a short read is warned", () => {
@@ -326,4 +330,32 @@ test("buildEdgeTakeoff: synthesized downspouts measure guttered length only and 
       `drop at f=${f.toFixed(3)} must sit on gutter, not the [0.3,0.86] gable`,
     );
   }
+});
+
+test("downspout synthesis: a single drop lands AT the run's outside corner, not mid-wall", () => {
+  // 20×20 ft body, top + right walls eave (one L-chain, 40 ft → 1 drop),
+  // bottom + left rakes. The drop must sit at the top-right corner where
+  // the gutter turns down — not floating in the middle of a wall.
+  const outline = [
+    { x: 0, y: 0 },
+    { x: 20, y: 0 },
+    { x: 20, y: 20 },
+    { x: 0, y: 20 },
+  ];
+  const edges = outlineEdges(outline);
+  const classes = edges.map((e) => ({
+    id: e.id,
+    edge_class:
+      e.id === "E1" || e.id === "E2" ? ("eave" as const) : ("rake" as const),
+    tier: null,
+    feature: null,
+  }));
+  const r = buildEdgeTakeoff({ outline, edges, classes, ptPerFt: 1, downspouts: [] });
+  assert.equal(r.totals.downspouts, 1);
+  const d = r.downspouts[0];
+  assert.ok(
+    Math.hypot(d.at.x - 20, d.at.y - 0) < 2,
+    `drop should sit at the (20,0) corner, got ${JSON.stringify(d.at)}`,
+  );
+  assert.ok(r.notes.some((n) => n.includes("outside corners")));
 });
