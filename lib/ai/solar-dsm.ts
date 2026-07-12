@@ -2,6 +2,7 @@ import "server-only";
 import { fromArrayBuffer } from "geotiff";
 import proj4 from "proj4";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type DsmOutcome =
   | {
@@ -52,7 +53,7 @@ export async function getDsmFromSolar(
 
   let dlData: { dsmUrl?: string; error?: { message?: string } };
   try {
-    const res = await fetch(dlUrl, { cache: "no-store" });
+    const res = await fetchWithTimeout(dlUrl, { cache: "no-store" }, AI_TIMEOUTS.solarDsm);
     if (!res.ok) {
       return { ok: false, reason: `Solar dataLayers HTTP ${res.status}` };
     }
@@ -74,7 +75,7 @@ export async function getDsmFromSolar(
   const dsmUrl = `${dlData.dsmUrl}${sep}key=${encodeURIComponent(key)}`;
   let tiffBytes: ArrayBuffer;
   try {
-    const r = await fetch(dsmUrl, { cache: "no-store" });
+    const r = await fetchWithTimeout(dsmUrl, { cache: "no-store" }, AI_TIMEOUTS.solarDsm);
     if (!r.ok) return { ok: false, reason: `DSM HTTP ${r.status}` };
     tiffBytes = await r.arrayBuffer();
   } catch (e) {

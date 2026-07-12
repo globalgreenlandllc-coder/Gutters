@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type GeocodeResult = {
   formatted: string;
@@ -27,7 +28,7 @@ export async function geocodeAddress(
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
       address,
     )}&key=${encodeURIComponent(key)}`;
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetchWithTimeout(url, { cache: "no-store" }, AI_TIMEOUTS.geocode);
     if (!res.ok) {
       throw new Error(`Geocoding HTTP ${res.status}`);
     }

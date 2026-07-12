@@ -1,6 +1,7 @@
 import "server-only";
 import { PNG } from "pngjs";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 import { largestConnectedComponent } from "./roof-geom";
 import type { SatImage } from "./static-map";
 
@@ -81,7 +82,7 @@ export async function segmentRoofViaSam(
 
   let res: Response;
   try {
-    res = await fetch("https://fal.run/fal-ai/sam2/image", {
+    res = await fetchWithTimeout("https://fal.run/fal-ai/sam2/image", {
       method: "POST",
       headers: {
         Authorization: `Key ${key}`,
@@ -101,7 +102,7 @@ export async function segmentRoofViaSam(
         ],
       }),
       cache: "no-store",
-    });
+    }, AI_TIMEOUTS.sam);
   } catch (e) {
     return {
       ok: false,
@@ -189,7 +190,7 @@ export async function segmentRoofViaSam(
       const b64 = maskRef.split(",", 2)[1] ?? "";
       maskBytes = Buffer.from(b64, "base64");
     } else {
-      const maskRes = await fetch(maskRef, { cache: "no-store" });
+      const maskRes = await fetchWithTimeout(maskRef, { cache: "no-store" }, AI_TIMEOUTS.imagery);
       if (!maskRes.ok) {
         return { ok: false, reason: `mask download HTTP ${maskRes.status}` };
       }

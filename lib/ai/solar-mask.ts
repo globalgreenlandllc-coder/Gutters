@@ -2,6 +2,7 @@ import "server-only";
 import { fromArrayBuffer, type GeoTIFFImage } from "geotiff";
 import proj4 from "proj4";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type SolarMaskOutcome =
   | {
@@ -72,7 +73,7 @@ export async function getRoofMaskFromSolar(
 
   let dlData: DataLayersResponse;
   try {
-    const res = await fetch(dlUrl, { cache: "no-store" });
+    const res = await fetchWithTimeout(dlUrl, { cache: "no-store" }, AI_TIMEOUTS.solarMask);
     if (!res.ok) {
       return {
         ok: false,
@@ -101,7 +102,7 @@ export async function getRoofMaskFromSolar(
 
   let tiffBytes: ArrayBuffer;
   try {
-    const res = await fetch(maskUrl, { cache: "no-store" });
+    const res = await fetchWithTimeout(maskUrl, { cache: "no-store" }, AI_TIMEOUTS.solarMask);
     if (!res.ok) {
       return { ok: false, reason: `mask GeoTIFF HTTP ${res.status}` };
     }

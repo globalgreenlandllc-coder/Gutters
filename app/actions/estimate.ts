@@ -91,6 +91,29 @@ export type RunEstimateResponse =
 const TWENTY_FOUR_HOURS = 24 * 3600 * 1000;
 const SAME_ADDRESS_DAILY_LIMIT = 10;
 
+// Whole-pipeline deadline. Each upstream call is individually bounded
+// (lib/ai/http.ts), but a run where several are slow at once could still
+// stack past the 90s Vercel maxDuration and be killed mid-flight — which
+// surfaces to the user as an opaque 504 / "we couldn't run that estimate".
+// Racing against a deadline a comfortable margin under 90s guarantees we
+// return a clean, retryable error instead. The orphaned pipeline promise is
+// harmless: the function is torn down at maxDuration regardless, and a
+// failed run is already spend-ledgered below.
+const PIPELINE_DEADLINE_MS = 82_000;
+const PIPELINE_DEADLINE_MESSAGE =
+  "The estimate took too long and was stopped before finishing — usually a " +
+  "temporarily slow imagery or AI service. Please try again.";
+
+function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  // clearTimeout so a fast success doesn't leave the timer holding the
+  // serverless function alive until it fires.
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 export async function runEstimate(
   address: string,
 ): Promise<RunEstimateResponse> {
@@ -175,7 +198,11 @@ export async function runEstimate(
 
   let result: EstimateResult;
   try {
-    result = await runAIEstimatePipeline(trimmed);
+    result = await withDeadline(
+      runAIEstimatePipeline(trimmed),
+      PIPELINE_DEADLINE_MS,
+      PIPELINE_DEADLINE_MESSAGE,
+    );
   } catch (e) {
     // A failed pipeline still burned geocode/Solar/tile/SAM-2 calls —
     // ledger it so a bot fishing with bad addresses can't spend for free.

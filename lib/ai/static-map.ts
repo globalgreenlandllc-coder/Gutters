@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type SatImage = {
   base64: string;
@@ -89,7 +90,7 @@ async function fetchFromMapbox(
 
   let res: Response;
   try {
-    res = await fetch(url, { cache: "no-store" });
+    res = await fetchWithTimeout(url, { cache: "no-store" }, AI_TIMEOUTS.imagery);
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     console.warn("[mapbox-static] Fetch failed:", reason);
@@ -156,7 +157,7 @@ async function fetchFromGoogle(
     `&key=${encodeURIComponent(key)}`;
 
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetchWithTimeout(url, { cache: "no-store" }, AI_TIMEOUTS.imagery);
     if (!res.ok) {
       let detail = "";
       const errHeader = res.headers.get("x-staticmap-api-warning");
