@@ -281,3 +281,68 @@ test("buildEngineTakeoff: null when EVERY edge is marked a rake (nothing to pric
   });
   assert.equal(buildEngineTakeoff(allRakes), null);
 });
+
+// ── Unanimous-hip guard (1168G-DA BIDSET: phantom gable wings on a hip roof) ──
+const hipFace = (face: string, over: Record<string, unknown> = {}) =>
+  ({
+    face,
+    sheet_title: `${face} elevation`,
+    readable: true,
+    unreadable_reason: null,
+    roof_form: null,
+    gable_count: 0,
+    continuous_eave: true,
+    gables: [],
+    projections: [],
+    projection_cues: [],
+    confidence: "high",
+    ...over,
+  }) as unknown as import("./face-merge.ts").FaceReadingRaw;
+
+test("engine-takeoff: unanimous-hip faces suppress freehand rake marks (all-hip draw)", () => {
+  const perFace = {
+    front: hipFace("front"),
+    rear: hipFace("rear"),
+    left: hipFace("left"),
+    right: hipFace("right"),
+  };
+  // The freehand trace mis-tagged the right wall as a rake.
+  const a = analysis({
+    excluded_edges: [{ kind: "rake", start: { x: 100, y: 0 }, end: { x: 100, y: 80 } }],
+  });
+  const bundle = buildEngineTakeoff(a, perFace);
+  assert.ok(bundle, "bundle built");
+  const rakeEdges = bundle!.takeoff.masses
+    .flatMap((m) => m.edges)
+    .filter((e) => e.type === "rake");
+  assert.equal(rakeEdges.length, 0, "no gable rakes on a unanimous-hip roof");
+  assert.ok(bundle!.placementNotes.some((n) => n.includes("all-hip")));
+});
+
+test("engine-takeoff: one gable face keeps the freehand rake (not unanimous hip)", () => {
+  const perFace = {
+    front: hipFace("front"),
+    rear: hipFace("rear"),
+    left: hipFace("left"),
+    right: hipFace("right", { continuous_eave: false, gable_count: 1 }),
+  };
+  const a = analysis({
+    excluded_edges: [{ kind: "rake", start: { x: 100, y: 0 }, end: { x: 100, y: 80 } }],
+  });
+  const bundle = buildEngineTakeoff(a, perFace);
+  assert.ok(bundle);
+  assert.ok(
+    !bundle!.placementNotes.some((n) => n.includes("all-hip")),
+    "a gable read blocks the all-hip suppression",
+  );
+});
+
+test("engine-takeoff: a partial read (only 2 faces) can't force all-hip", () => {
+  const perFace = { front: hipFace("front"), rear: hipFace("rear") };
+  const a = analysis({
+    excluded_edges: [{ kind: "rake", start: { x: 100, y: 0 }, end: { x: 100, y: 80 } }],
+  });
+  const bundle = buildEngineTakeoff(a, perFace);
+  assert.ok(bundle);
+  assert.ok(!bundle!.placementNotes.some((n) => n.includes("all-hip")));
+});

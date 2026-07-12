@@ -198,10 +198,33 @@ export function buildEngineTakeoff(
     // routinely DROP eaves (and never mark the eave that continues BENEATH a
     // cross-gable) — keying off gutter_run coverage under-counted the LF. This
     // matches the spec's "default to including every eave; flag the exceptions".
-    const rakeSegs = (analysis.excluded_edges ?? [])
-      .filter((e) => e.kind === "rake" || e.kind === "dormer_rake" || e.kind === "eave_no_gutter")
-      .map((e) => ({ a: e.start as Pt, b: e.end as Pt }))
-      .filter((s) => isFinitePt(s.a) && isFinitePt(s.b));
+    // UNANIMOUS HIP: elevations are the gable budget. When every readable
+    // face reads a continuous eave line with NO gable, the roof has no gable
+    // ends at all — so ignore any rake edges the freehand trace marked. On a
+    // vectorless (raster) plan the AI trace mis-tags diagonal hip/ridge
+    // strokes as rakes and the draw sprouts phantom gable wings on a plain
+    // hip roof (the 1168G-DA BIDSET). Key-agnostic (works for compass OR
+    // house-relative perFace keys); needs ≥3 readable faces so a partial read
+    // can't force it.
+    const readableFaces = perFace
+      ? Object.values(perFace).filter(
+          (r): r is FaceReadingRaw => !!r && r.readable !== false,
+        )
+      : [];
+    const unanimousHip =
+      readableFaces.length >= 3 &&
+      readableFaces.every(
+        (r) =>
+          r.continuous_eave !== false &&
+          !(typeof r.gable_count === "number" && r.gable_count > 0) &&
+          (r.gables?.length ?? 0) === 0,
+      );
+    const rakeSegs = unanimousHip
+      ? []
+      : (analysis.excluded_edges ?? [])
+          .filter((e) => e.kind === "rake" || e.kind === "dormer_rake" || e.kind === "eave_no_gutter")
+          .map((e) => ({ a: e.start as Pt, b: e.end as Pt }))
+          .filter((s) => isFinitePt(s.a) && isFinitePt(s.b));
     const eaveTol = Math.max(2, span * 0.02);
     const eaveEdges: number[] = [];
     for (let i = 0; i < outline.length; i++) {
@@ -285,7 +308,12 @@ export function buildEngineTakeoff(
       eaveLfFt,
       outlinePx: outline,
       massInputs,
-      placementNotes: placed.notes,
+      placementNotes: unanimousHip
+        ? [
+            ...placed.notes,
+            "⚙ All four elevations read a continuous eave with no gable — drawn all-hip; the freehand trace's rake marks were ignored (elevations are the gable budget).",
+          ]
+        : placed.notes,
     };
   } catch {
     return null;
