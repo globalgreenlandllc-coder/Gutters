@@ -602,10 +602,66 @@ export async function runAIEstimatePipeline(
         if (retryCoverage > boxCoverage) samOutcome = retry;
       }
     }
+    // OFF-BUILDING QUALITY GATE. Coverage ≠ correctness: the multi-wing
+    // retry can hit 42% area by grabbing shadow/pavement/neighbor roof, so
+    // its boundary wanders far off the actual building (a jagged mess of
+    // eave stubs in the yard). Measure what fraction of the SAM outline
+    // falls outside the Google Solar footprint bbox (projected to image
+    // px); if most of it is off-building, REJECT the trace so we fall to
+    // the deterministic Solar-segment outline instead of shipping garbage.
+    // Only gates when Solar gave us a footprint to check against.
+    const SAM_MAX_OFF_BUILDING = 0.35;
+    let samOffBuildingFrac = 0;
+    if (samOutcome.ok && samOutcome.polygon.points.length >= 8) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const s of solarRoofSegments) {
+        for (const ll of [s.boundingBoxNE, s.boundingBoxSW, s.center]) {
+          if (!ll) continue;
+          const px = latLngToImagePixel(
+            ll.lat,
+            ll.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          minX = Math.min(minX, px.x);
+          minY = Math.min(minY, px.y);
+          maxX = Math.max(maxX, px.x);
+          maxY = Math.max(maxY, px.y);
+        }
+      }
+      if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
+        // ~15% overhang pad so real eaves just past the wall aren't counted off.
+        const padX = (maxX - minX) * 0.15;
+        const padY = (maxY - minY) * 0.15;
+        const lo = { x: minX - padX, y: minY - padY };
+        const hi = { x: maxX + padX, y: maxY + padY };
+        const tp = samOutcome.polygon.points.map(translatePoint);
+        const off = tp.filter(
+          (p) => p.x < lo.x || p.x > hi.x || p.y < lo.y || p.y > hi.y,
+        ).length;
+        samOffBuildingFrac = tp.length > 0 ? off / tp.length : 0;
+      }
+    }
+    if (
+      samOutcome.ok &&
+      samOffBuildingFrac > SAM_MAX_OFF_BUILDING &&
+      solarRoofSegments.length >= 4
+    ) {
+      notes.push(
+        `SAM trace rejected: ${(samOffBuildingFrac * 100).toFixed(0)}% of the outline fell outside the Google Solar footprint (the mask grabbed shadow/yard). Using the deterministic Solar-segment outline instead.`,
+      );
+    }
     if (
       samOutcome.ok &&
       samOutcome.polygon.points.length >= 8 &&
-      samOutcome.polygon.areaFraction >= SAM_MIN_AREA_FRACTION
+      samOutcome.polygon.areaFraction >= SAM_MIN_AREA_FRACTION &&
+      !(samOffBuildingFrac > SAM_MAX_OFF_BUILDING && solarRoofSegments.length >= 4)
     ) {
       const translatedPoints = samOutcome.polygon.points.map(translatePoint);
       // Collapse the SAM mask's pixel-stair jaggies into architectural
