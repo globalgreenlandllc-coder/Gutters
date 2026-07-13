@@ -90,47 +90,21 @@ export async function GET(
     );
   }
 
-  const apiKey =
+  const openaiKey =
     (await getActiveApiKey("OPENAI")) ?? process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const geminiKey =
+    (await getActiveApiKey("GEMINI")) ?? process.env.GEMINI_API_KEY;
+  if (!openaiKey && !geminiKey) {
     return NextResponse.json(
       { ok: false, reason: "Audio isn't set up yet — please read the proposal instead." },
       { status: 503 },
     );
   }
 
-  let audio: Buffer | null = null;
-  for (const candidate of TTS_CANDIDATES) {
-    const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: candidate.model,
-        voice: TTS_VOICE,
-        input: script,
-        ...(candidate.instructions
-          ? { instructions: candidate.instructions }
-          : {}),
-        response_format: "mp3",
-      }),
-    });
-    if (ttsRes.ok) {
-      audio = Buffer.from(await ttsRes.arrayBuffer());
-      break;
-    }
-    const detail = await ttsRes.text().catch(() => "");
-    console.error(
-      `[proposal-audio] TTS failed (${ttsRes.status}, ${candidate.model})`,
-      detail.slice(0, 500),
-    );
-    // Only a model-access rejection is worth retrying on the next
-    // candidate — a bad key / quota error will fail them all the same.
-    if (!detail.includes("model_not_found")) break;
-  }
-  if (!audio) {
+  let result: TtsResult | null = null;
+  if (openaiKey) result = await openAiTts(openaiKey, script);
+  if (!result && geminiKey) result = await geminiTts(geminiKey, script);
+  if (!result) {
     return NextResponse.json(
       { ok: false, reason: "Couldn't prepare the audio right now — please try again in a minute." },
       { status: 502 },
@@ -139,11 +113,15 @@ export async function GET(
 
   // addRandomSuffix keeps the public blob URL unguessable — same trust
   // model as the portal token itself.
-  const blob = await put(`proposal-audio/${row.id}/${hash}.mp3`, audio, {
-    access: "public",
-    contentType: "audio/mpeg",
-    addRandomSuffix: true,
-  });
+  const blob = await put(
+    `proposal-audio/${row.id}/${hash}.${result.ext}`,
+    result.audio,
+    {
+      access: "public",
+      contentType: result.contentType,
+      addRandomSuffix: true,
+    },
+  );
 
   // Two simultaneous first-plays can both generate; last write wins and
   // the loser's blob is orphaned — harmless at ~200 KB, not worth a lock.
@@ -162,6 +140,124 @@ export async function GET(
 
   await logListened(row.id, request, false);
   return NextResponse.json({ ok: true, url: blob.url });
+}
+
+type TtsResult = { audio: Buffer; contentType: string; ext: string };
+
+async function openAiTts(
+  apiKey: string,
+  script: string,
+): Promise<TtsResult | null> {
+  for (const candidate of TTS_CANDIDATES) {
+    const res = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: candidate.model,
+        voice: TTS_VOICE,
+        input: script,
+        ...(candidate.instructions
+          ? { instructions: candidate.instructions }
+          : {}),
+        response_format: "mp3",
+      }),
+    });
+    if (res.ok) {
+      return {
+        audio: Buffer.from(await res.arrayBuffer()),
+        contentType: "audio/mpeg",
+        ext: "mp3",
+      };
+    }
+    const detail = await res.text().catch(() => "");
+    console.error(
+      `[proposal-audio] TTS failed (${res.status}, ${candidate.model})`,
+      detail.slice(0, 500),
+    );
+    // Only a model-access rejection is worth retrying on the next
+    // candidate — a bad key / quota error will fail them all the same.
+    if (!detail.includes("model_not_found")) break;
+  }
+  return null;
+}
+
+/**
+ * Gemini TTS fallback — the deployed OpenAI project key has a model
+ * allowlist that rejects EVERY speech model (`model_not_found` on both
+ * gpt-4o-mini-tts and tts-1), while the Gemini key is already live for
+ * blueprint analysis. Gemini returns raw 16-bit mono PCM, so we wrap it
+ * in a WAV header for the <audio> element.
+ */
+async function geminiTts(
+  apiKey: string,
+  script: string,
+): Promise<TtsResult | null> {
+  const model = "gemini-2.5-flash-preview-tts";
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: script }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
+          },
+        },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    console.error(
+      `[proposal-audio] Gemini TTS failed (${res.status})`,
+      detail.slice(0, 500),
+    );
+    return null;
+  }
+  const body = (await res.json().catch(() => null)) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> };
+    }>;
+  } | null;
+  const inline = body?.candidates?.[0]?.content?.parts?.find(
+    (p) => p.inlineData?.data,
+  )?.inlineData;
+  if (!inline?.data) {
+    console.error("[proposal-audio] Gemini TTS returned no audio part");
+    return null;
+  }
+  const pcm = Buffer.from(inline.data, "base64");
+  const rate = parseInt(/rate=(\d+)/.exec(inline.mimeType ?? "")?.[1] ?? "", 10);
+  return {
+    audio: pcmToWav(pcm, Number.isFinite(rate) ? rate : 24000),
+    contentType: "audio/wav",
+    ext: "wav",
+  };
+}
+
+/** Minimal RIFF/WAV header around 16-bit mono PCM. */
+function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // fmt chunk size
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }
 
 /** Best-effort LISTENED event — analytics must never fail the play. */
