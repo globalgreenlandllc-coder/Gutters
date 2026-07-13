@@ -479,6 +479,12 @@ export async function runAIEstimatePipeline(
   // image tracers failed) — a coarse footprint that must be trace-quality
   // flagged so it never reads "ok".
   let usedCoarseFootprint = false;
+  // True when that coarse footprint is likely INFLATED: the roof sits
+  // off-cardinal, so the union of north-aligned plane bboxes over-covers
+  // the true footprint. Drives "unusable" (redraw) vs "low" (usable,
+  // verify) — a cardinal-aligned roof's bbox union is tight and fine to
+  // ballpark from.
+  let coarseFootprintInflated = false;
   type ClassifiedEdge = {
     a: { lat: number; lng: number };
     b: { lat: number; lng: number };
@@ -841,12 +847,33 @@ export async function runAIEstimatePipeline(
         image.width,
         image.height,
       );
-      if (result && result.polygon.points.length >= 8) {
+      if (result && result.polygon.points.length >= 4) {
         roofPolygon = result.polygon;
         usedCoarseFootprint = true;
-        classifiedEaveLatLng = classifyRingViaAzimuth(result.ringLatLng);
+        // Do NOT azimuth-classify a coarse AABB box — its axis-aligned
+        // edges don't correspond to real roof planes, so the classifier
+        // mislabels most of the perimeter as rake (this house: 5 of 8
+        // edges → only 3 eaves → discarded for vision garbage). The whole
+        // outline IS the eave perimeter on a simple roof; leave it null so
+        // the downstream path prices every edge as a candidate eave, and
+        // the contractor drops any that aren't.
+        classifiedEaveLatLng = null;
+        // Rotation of the roof off cardinal, from the Solar plane azimuths.
+        // Near-cardinal ⇒ the north-aligned bbox union is tight; far ⇒ it
+        // over-covers (up to ~40% long on a 45° roof) → inflated.
+        const azOffsets = solarRoofSegments
+          .map((s) => s.azimuthDegrees)
+          .filter((a) => Number.isFinite(a))
+          .map((a) => {
+            const m = ((a % 90) + 90) % 90;
+            return Math.min(m, 90 - m);
+          })
+          .sort((x, y) => x - y);
+        const medianOff =
+          azOffsets.length > 0 ? azOffsets[Math.floor(azOffsets.length / 2)] : 0;
+        coarseFootprintInflated = medianOff > 12;
         notes.push(
-          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert outline (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid). Coarse (plane bounding boxes) — verify the outline against the image before pricing.`,
+          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert perimeter (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid), whole outline priced as candidate eave. Roof sits ${medianOff.toFixed(0)}° off cardinal — ${coarseFootprintInflated ? "the box likely over-covers an angled roof, redraw before pricing" : "box is a close fit, verify the edges"}.`,
         );
       } else {
         notes.push(
@@ -1169,8 +1196,12 @@ export async function runAIEstimatePipeline(
     // Bumped from ≥3 to ≥5. Three eaves on a residential roof almost
     // never represents a real takeoff — it's an L-shape stub at best.
     // Below this floor we'd rather fall through to GPT-4o vision than
-    // ship a sparse answer the contractor can't trust.
-    if (eaves.length >= 5) {
+    // ship a sparse answer the contractor can't trust. EXCEPTION: the
+    // coarse Solar-segment footprint is a deterministic, closed building
+    // perimeter — always keep it over the vision fallback (vision on these
+    // hard roofs draws a worse mess than the clean box), even if it's a
+    // simple 4-edge outline.
+    if (eaves.length >= 5 || (usedCoarseFootprint && eaves.length >= 3)) {
       // Collapse runs that read as multiple segments on the canvas
       // (3 near-collinear vertices on one wall = one continuous eave)
       // before downspout placement and corner counting. Spacing math
@@ -1293,6 +1324,19 @@ export async function runAIEstimatePipeline(
               reasons: [
                 ...q.reasons,
                 "Traced outline appears to include roof shadow or pavement (perimeter far exceeds roof area) — redraw the outline to price accurately.",
+              ],
+            };
+          }
+          // A coarse footprint on an OFF-CARDINAL roof over-covers the true
+          // shape (~40% long at 45°), so escalate it to the loud redraw
+          // banner. A cardinal-aligned coarse box stays "low" (usable).
+          if (usedCoarseFootprint && coarseFootprintInflated && q.status !== "unusable") {
+            return {
+              status: "unusable" as const,
+              confidence: Math.min(q.confidence, 0.35),
+              reasons: [
+                "This roof sits at an angle, so the outline built from Google's roof-plane data reads as a box that's larger than the real roof. Redraw the outline along the actual eaves to price it accurately.",
+                ...q.reasons,
               ],
             };
           }
