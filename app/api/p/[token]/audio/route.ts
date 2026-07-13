@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { put, del } from "@vercel/blob";
+import { put, del, issueSignedToken, presignUrl } from "@vercel/blob";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getActiveApiKey } from "@/lib/api-keys";
@@ -71,9 +71,16 @@ export async function GET(
   const hash = audioScriptHash(script);
 
   // Cache hit: the stored audio was generated from this exact script.
+  // The store is private, so the raw blob URL is useless to the browser
+  // — mint a short-lived signed GET URL for this play.
   if (row.audioUrl && row.audioScriptHash === hash) {
-    await logListened(row.id, request, true);
-    return NextResponse.json({ ok: true, url: row.audioUrl });
+    const playUrl = await presignPlayUrl(row.audioUrl);
+    if (playUrl) {
+      await logListened(row.id, request, true);
+      return NextResponse.json({ ok: true, url: playUrl });
+    }
+    // Signing failed (missing token / deleted blob) — fall through and
+    // regenerate rather than dead-ending the play button.
   }
 
   // Cache miss — about to spend real TTS money on an unauthenticated
@@ -111,13 +118,13 @@ export async function GET(
     );
   }
 
-  // addRandomSuffix keeps the public blob URL unguessable — same trust
-  // model as the portal token itself.
+  // The Blob store is configured private, so the stored URL is only
+  // reachable through the presigned GET URLs this route mints per play.
   const blob = await put(
     `proposal-audio/${row.id}/${hash}.${result.ext}`,
     result.audio,
     {
-      access: "public",
+      access: "private",
       contentType: result.contentType,
       addRandomSuffix: true,
     },
@@ -138,8 +145,69 @@ export async function GET(
     }
   }
 
+  const playUrl = await presignPlayUrl(blob.url);
+  if (!playUrl) {
+    return NextResponse.json(
+      { ok: false, reason: "Couldn't prepare the audio right now — please try again in a minute." },
+      { status: 502 },
+    );
+  }
   await logListened(row.id, request, false);
-  return NextResponse.json({ ok: true, url: blob.url });
+  return NextResponse.json({ ok: true, url: playUrl });
+}
+
+/** Same env-scan the blueprint routes use — Vercel prefixes the token
+ *  name when the store is connected under a custom name. */
+function resolveBlobToken(): string | null {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!v) continue;
+    if (k.endsWith("_READ_WRITE_TOKEN") || k.endsWith("_BLOB_READ_WRITE_TOKEN")) {
+      return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * Short-lived signed GET URL for a private blob. One hour comfortably
+ * covers a listen session; the <audio> element keeps its src for
+ * replays, and a fresh play after expiry re-fetches this route for a
+ * new URL. Returns null (never throws) so callers can fall back.
+ */
+async function presignPlayUrl(blobUrl: string): Promise<string | null> {
+  try {
+    const token = resolveBlobToken();
+    if (!token) {
+      console.error("[proposal-audio] no blob token to presign with");
+      return null;
+    }
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(
+        new URL(blobUrl).pathname.replace(/^\/+/, ""),
+      );
+    } catch {
+      pathname = blobUrl.replace(/^\/+/, "");
+    }
+    const validUntil = Date.now() + 60 * 60 * 1000;
+    const signedToken = await issueSignedToken({
+      token,
+      pathname,
+      operations: ["get"],
+      validUntil,
+    });
+    const { presignedUrl } = await presignUrl(signedToken, {
+      operation: "get",
+      pathname,
+      access: "private",
+      validUntil,
+    });
+    return presignedUrl;
+  } catch (e) {
+    console.error("[proposal-audio] presign failed", e);
+    return null;
+  }
 }
 
 type TtsResult = { audio: Buffer; contentType: string; ext: string };
