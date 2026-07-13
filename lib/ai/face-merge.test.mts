@@ -102,3 +102,39 @@ test("two DIFFERENT one-sided jogs (garage east-only, patio west-only) → two f
   assert.ok(asym.some((f) => /garage/.test(f) && /the east elevation/.test(f)));
   assert.ok(asym.some((f) => /patio/.test(f) && /the west elevation/.test(f)));
 });
+
+// ── isUnanimousHip — the shared hip-unanimity predicate ──────────────────────
+import { isUnanimousHip } from "./face-merge.ts";
+
+const hipFace = (face: string): FaceReadingRaw => ({
+  face: face as FaceReadingRaw["face"],
+  readable: true,
+  unreadable_reason: null,
+  roof_form: "hipped",
+  gable_count: 0,
+  continuous_eave: true,
+  gables: [],
+  projections: [],
+  projection_cues: [],
+  confidence: "high",
+});
+
+test("isUnanimousHip: 4 hip faces → true; one gable breaks it; <3 readable → false", () => {
+  const four = Object.fromEntries(
+    ["front", "rear", "left", "right"].map((f) => [f, hipFace(f)]),
+  );
+  assert.equal(isUnanimousHip(four), true);
+
+  const withGable = { ...four, front: { ...hipFace("front"), gable_count: 1 } };
+  assert.equal(isUnanimousHip(withGable), false, "any gable kills unanimity");
+
+  const twoReadable = {
+    front: hipFace("front"),
+    rear: hipFace("rear"),
+    left: { ...hipFace("left"), readable: false },
+    right: { ...hipFace("right"), readable: false },
+  };
+  assert.equal(isUnanimousHip(twoReadable), false, "needs ≥3 readable faces");
+  assert.equal(isUnanimousHip(null), false);
+  assert.equal(isUnanimousHip({}), false);
+});

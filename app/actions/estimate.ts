@@ -12,6 +12,7 @@ import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
+import { isUnanimousHip } from "@/lib/ai/face-merge";
 import { polygonCloses } from "@/lib/roof-engine";
 import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
 import { outlineEdges } from "@/lib/ai/plan-overlay";
@@ -899,16 +900,30 @@ export async function runEstimateFromPlan(
   // an exterior edge with no gutter/rake classification is a silently-missed
   // eave (Woodinville priced 189 LF of a ~240 LF perimeter). Prices those
   // edges as eaves at the runs' own cross-validated scale, honoring gable-end
-  // face reads; loud note for review. AI-trace footprints keep the strict
-  // symmetric-twin-only reconcile from analysis time.
+  // face reads; loud note for review.
+  // HIP EXCEPTION for AI-trace (raster) footprints: normally they keep the
+  // strict symmetric-twin-only reconcile from analysis time, because an
+  // unclassified wall on a freehand ring might be an unmarked gable rake. But
+  // when every readable elevation reads a continuous eave with ZERO gables
+  // (isUnanimousHip — the 1168G BIDSET: all 4 faces hip, yet 7 walls / ~30 LF
+  // sat unpriced), that ambiguity is gone: a hip roof carries an eave on every
+  // exterior wall. Trace mode is additionally capped at the ring's own
+  // perimeter inside closeVectorPerimeter.
   // Closure is a v1 repair for freehand runs that under-cover the vector
   // outline. The v2 edge takeoff covers every edge explicitly (unknowns are
   // flagged UNPRICED on purpose) — running closure would re-introduce the
   // blind "continuous gutters" default it exists to remove. Skip it.
-  if (!edgeApplied && footprintSource !== "AI trace (best-of read)") {
+  const isAiTrace = footprintSource === "AI trace (best-of read)";
+  const hipClosureOk =
+    isAiTrace &&
+    isUnanimousHip(
+      perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
+    );
+  if (!edgeApplied && (!isAiTrace || hipClosureOk)) {
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
       perFace: perFace as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,
+      mode: isAiTrace ? "trace-hip" : "vector",
     });
     if (closed.reconcileNotes.length > 0) {
       analysis.gutter_runs = closed.analysis.gutter_runs;

@@ -219,6 +219,16 @@ gable that interrupts the eave line ⇒ continuous_eave = false. Frame-over/dorm
 gables ABOVE the line don't break it — those faces stay true.
 </edges>
 
+<stories>
+Report stories_visible: how many above-grade floor LEVELS of wall this
+elevation shows (1, 2, or 3). Read it from the wall, not the roof: one plate
+line / one band of windows ⇒ 1; stacked window bands or a floor line between
+levels ⇒ 2. A tall vaulted or clerestory single level is STILL 1 — a clerestory
+band riding ON the roof is not a second floor. This drives the downspout drop
+height (a 1-story home gets ~10 ft drops, not 20), so don't inflate it. Null
+only when genuinely unclear.
+</stories>
+
 <resolution_gate>
 If the image is too low-resolution to distinguish a horizontal eave from a
 sloped rake, or to judge a gable, DO NOT guess. Set readable:false and give
@@ -308,6 +318,11 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
         },
       },
       projection_cues: { type: "array", items: { type: "string" } },
+      stories_visible: {
+        type: ["integer", "null"],
+        description:
+          "Above-grade floor levels of WALL this elevation shows (1, 2, or 3). A tall vaulted / clerestory single level is still 1. Null when unclear. See <stories>.",
+      },
       confidence: { type: "string", enum: ["high", "medium", "low"] },
     },
     required: ["face", "readable", "gable_count", "continuous_eave", "gables", "confidence"],
@@ -339,6 +354,7 @@ function emptyFace(face: ElevationFaceName, reason: string): FaceReadingRaw {
     gables: [],
     projections: [],
     projection_cues: [],
+    stories_visible: null,
     confidence: "low",
   };
 }
@@ -433,6 +449,10 @@ export async function readElevationFace(
       gables: Array.isArray(raw.gables) ? raw.gables : [],
       projections: Array.isArray(raw.projections) ? raw.projections : [],
       projection_cues: Array.isArray(raw.projection_cues) ? raw.projection_cues : [],
+      stories_visible:
+        typeof raw.stories_visible === "number" && raw.stories_visible >= 1
+          ? Math.min(3, Math.round(raw.stories_visible))
+          : null,
       confidence: raw.confidence ?? "low",
     };
     return { reading, usage };

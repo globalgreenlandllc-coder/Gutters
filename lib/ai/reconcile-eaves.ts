@@ -313,9 +313,18 @@ export function closeVectorPerimeter(
   opts?: {
     faceNormals?: FaceNormals | null;
     perFace?: Record<string, { readable?: boolean; continuous_eave?: boolean } | undefined> | null;
+    /** "vector": the footprint is the plan's own CAD outline (default — the
+     *  original behavior). "trace-hip": the footprint is a squared AI trace on
+     *  a raster plan, allowed ONLY because the caller verified the elevations
+     *  are UNANIMOUSLY hip (isUnanimousHip) — a hip roof carries an eave on
+     *  every exterior wall, so "unmarked gable rake" is ruled out. Trace mode
+     *  additionally caps the closed total at the footprint's own perimeter
+     *  (+10%), since a freehand ring is less trustworthy than CAD linework. */
+    mode?: "vector" | "trace-hip";
   },
 ): ReconcileResult {
   const notes: string[] = [];
+  const mode = opts?.mode ?? "vector";
   try {
     const rawPoly = (analysis?.building_footprint ?? [])
       .map(asPt)
@@ -446,14 +455,16 @@ export function closeVectorPerimeter(
       const lenFt = round1(e.len * ftPerPx);
       if (lenFt < 2) return; // jog sliver — not worth a run
       newRuns.push({
-        id: `vclose-${newRuns.length + 1}`,
+        id: `${mode === "trace-hip" ? "hclose" : "vclose"}-${newRuns.length + 1}`,
         side: sideOf(outwardOf(e)),
         start: { x: e.a.x, y: e.a.y },
         end: { x: e.b.x, y: e.b.y },
         length_ft: lenFt,
         length_px: e.len,
         drains_to: [],
-        tier: "unknown",
+        // Trace-hip closes MAIN-ring walls (the footprint is the upper roof);
+        // vector mode keeps the honest "unknown".
+        tier: mode === "trace-hip" ? "upper" : "unknown",
       });
     });
 
@@ -465,6 +476,26 @@ export function closeVectorPerimeter(
     }
     if (newRuns.length === 0) return { analysis, reconcileNotes: notes };
 
+    // Trace-hip cap: on a squared AI trace the closed UPPER-tier total must not
+    // exceed the footprint's own perimeter (+10% slack for coverage overlap) —
+    // lower-tier porch/patio runs sit inside the ring, so they're excluded from
+    // the comparison. If the cap trips, the ring and the runs disagree too much
+    // to auto-price; leave the edges for review instead of forcing LF in.
+    if (mode === "trace-hip") {
+      const perimeterFt = edges.reduce((s, e) => s + e.len, 0) * ftPerPx;
+      const upperPricedFt = (analysis.gutter_runs ?? []).reduce(
+        (s, r) => s + (r.tier !== "lower" && r.length_ft != null && r.length_ft > 0 ? r.length_ft : 0),
+        0,
+      );
+      const addFt = newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0);
+      if (upperPricedFt + addFt > perimeterFt * 1.1) {
+        notes.push(
+          `Hip closure SKIPPED — adding ${round1(addFt)} LF would push the upper-tier total past the footprint's own ~${round1(perimeterFt)} ft perimeter; the trace and runs disagree. ${newRuns.length} unguttered edge(s) left UNPRICED for review.`,
+        );
+        return { analysis, reconcileNotes: notes };
+      }
+    }
+
     const addedFt = round1(newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0));
     const gutter_runs = [...analysis.gutter_runs, ...newRuns];
     const prevTotal = analysis.totals?.linear_feet_gutter;
@@ -474,13 +505,17 @@ export function closeVectorPerimeter(
         : analysis.totals;
 
     notes.push(
-      `Vector closure: the footprint is the plan's own vector outline, so its ${
-        newRuns.length
-      } unclassified exterior edge(s) priced as eaves (+${addedFt} LF at the runs' own ${(1 / ftPerPx).toFixed(1)} px/ft scale) per the "continuous gutters @ all eaves" default — VERIFY each against the elevations.${
-        skippedGableEnd > 0
-          ? ` ${skippedGableEnd} gable-end edge(s) (${gableEndFaces.join("/")}) left unguttered per the elevation read.`
-          : ""
-      }`,
+      mode === "trace-hip"
+        ? `Hip closure: every readable elevation shows a continuous eave with ZERO gables (fully hipped roof), so the footprint's ${
+            newRuns.length
+          } unguttered exterior wall(s) priced as eaves (+${addedFt} LF at the runs' own ${(1 / ftPerPx).toFixed(1)} px/ft scale) — a hip roof carries gutter on every exterior wall. VERIFY each on the canvas.`
+        : `Vector closure: the footprint is the plan's own vector outline, so its ${
+            newRuns.length
+          } unclassified exterior edge(s) priced as eaves (+${addedFt} LF at the runs' own ${(1 / ftPerPx).toFixed(1)} px/ft scale) per the "continuous gutters @ all eaves" default — VERIFY each against the elevations.${
+            skippedGableEnd > 0
+              ? ` ${skippedGableEnd} gable-end edge(s) (${gableEndFaces.join("/")}) left unguttered per the elevation read.`
+              : ""
+          }`,
     );
 
     return { analysis: { ...analysis, gutter_runs, totals }, reconcileNotes: notes };

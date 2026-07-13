@@ -289,3 +289,79 @@ test("vector closure: excluded (rake) edges and covered edges are not re-priced;
   assert.equal(r2.analysis.gutter_runs.length, 0);
   assert.equal(r2.reconcileNotes.length, 0);
 });
+
+// ── trace-hip closure — raster AI trace, unanimously hipped elevations ────────
+
+/** All four faces readable, continuous eave, zero gables — unanimous hip. */
+const HIP_FACES = Object.fromEntries(
+  ["front", "rear", "left", "right"].map((f) => [
+    f,
+    { readable: true, continuous_eave: true, gable_count: 0, gables: [] },
+  ]),
+);
+
+test("trace-hip closure: unguttered walls on a hip-unanimous raster trace price as UPPER eaves", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("left", [0, 0], [0, 120], 24),
+      run("right", [200, 0], [200, 120], 24),
+      // rear (bottom) wall unguttered — on a hip roof that's a missed eave.
+    ],
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+  });
+  assert.equal(analysis.gutter_runs.length, 4, "rear wall priced");
+  const added = analysis.gutter_runs[3];
+  assert.ok(added.id.startsWith("hclose-"), "trace-hip run id");
+  assert.equal(added.tier, "upper", "main-ring wall lands on the upper tier");
+  assert.equal(added.length_ft, 40, "priced at the runs' own ft/px scale (0.2 × 200)");
+  assert.ok(
+    reconcileNotes.some((n) => /Hip closure/.test(n) && /ZERO gables/.test(n)),
+    "note explains the hip-unanimity evidence",
+  );
+});
+
+test("trace-hip closure: cap trips when closing would exceed the ring's own perimeter", () => {
+  // A phantom double-traced run (10 px claiming 60 ft — its ratio is an
+  // outlier, so the median scale stays honest at 0.2 ft/px) already inflates
+  // the upper-tier total to 148 ft on a 128 ft perimeter. Closing the rear
+  // wall (+40 ft) would land at 188 ft ≫ perimeter × 1.1 — leave it unpriced
+  // instead of stacking auto-LF on top of a broken trace.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      { ...run("front", [0, 0], [200, 0], 40), tier: "upper" },
+      { ...run("left", [0, 0], [0, 120], 24), tier: "upper" },
+      { ...run("right", [200, 0], [200, 120], 24), tier: "upper" },
+      { ...run("front", [90, 0], [100, 0], 60), id: "phantom", tier: "upper" },
+    ],
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+  });
+  assert.equal(analysis.gutter_runs.length, 4, "nothing auto-priced past the cap");
+  assert.ok(
+    reconcileNotes.some((n) => /Hip closure SKIPPED/.test(n)),
+    "cap emits a loud skip note",
+  );
+});
+
+test("vector mode is unchanged: same fixture keeps the vclose id and unknown tier", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("left", [0, 0], [0, 120], 24),
+      run("right", [200, 0], [200, 120], 24),
+    ],
+  });
+  const { analysis } = closeVectorPerimeter(a, { perFace: HIP_FACES });
+  assert.equal(analysis.gutter_runs.length, 4);
+  assert.ok(analysis.gutter_runs[3].id.startsWith("vclose-"));
+  assert.equal(analysis.gutter_runs[3].tier, "unknown");
+});

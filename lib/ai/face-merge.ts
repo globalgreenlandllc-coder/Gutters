@@ -88,8 +88,43 @@ export type FaceReadingRaw = {
   /** Pop-outs seen IN PROFILE from this view, with depth (see FaceProjection). */
   projections: FaceProjection[];
   projection_cues: string[];
+  /** Above-grade floor levels of WALL this elevation shows (1/2/3). Drives the
+   *  downspout drop-height default (a 1-story plan must not price 2-story
+   *  drops). Optional (older reads omit) — null when unclear. */
+  stories_visible?: number | null;
   confidence: "high" | "medium" | "low";
 };
+
+/**
+ * UNANIMOUS HIP: every readable face reads a continuous eave with ZERO gables
+ * (≥3 readable faces so a partial read can't force it). Key-agnostic — works
+ * for compass OR house-relative perFace keys. On a unanimously hipped home the
+ * elevations are the gable budget: every exterior wall carries an eave, so a
+ * "rake" mark on the plan-view trace is a mis-tagged hip/ridge stroke and an
+ * unclassified wall is a missed eave, not a possible gable end. Shared by the
+ * engine draw (suppresses phantom gable wings) and the perimeter closure
+ * (prices unclassified walls on raster plans).
+ */
+export function isUnanimousHip(
+  perFace:
+    | Partial<Record<string, FaceReadingRaw | undefined>>
+    | null
+    | undefined,
+): boolean {
+  if (!perFace) return false;
+  const readable = Object.values(perFace).filter(
+    (r): r is FaceReadingRaw => !!r && r.readable !== false,
+  );
+  return (
+    readable.length >= 3 &&
+    readable.every(
+      (r) =>
+        r.continuous_eave !== false &&
+        !(typeof r.gable_count === "number" && r.gable_count > 0) &&
+        (r.gables?.length ?? 0) === 0,
+    )
+  );
+}
 
 export type MergedFaces = {
   per_face: Record<string, FaceReadingRaw>;

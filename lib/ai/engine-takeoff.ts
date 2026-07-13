@@ -25,7 +25,7 @@ import { polyArea, runRoofEngine, type MassInput, type RoofTakeoff } from "../ro
 import { decomposeMasses, matchTierAreas } from "../roof-mass-decompose";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { placeGablesFromFaces } from "./place-gables";
-import type { FaceReadingRaw } from "./face-merge";
+import { isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import type { RoofMassArea } from "./to-masses";
 import { DEFAULT_FACE_NORMALS, type FaceNormals } from "./plan-orientation";
 
@@ -206,19 +206,7 @@ export function buildEngineTakeoff(
     // hip roof (the 1168G-DA BIDSET). Key-agnostic (works for compass OR
     // house-relative perFace keys); needs ≥3 readable faces so a partial read
     // can't force it.
-    const readableFaces = perFace
-      ? Object.values(perFace).filter(
-          (r): r is FaceReadingRaw => !!r && r.readable !== false,
-        )
-      : [];
-    const unanimousHip =
-      readableFaces.length >= 3 &&
-      readableFaces.every(
-        (r) =>
-          r.continuous_eave !== false &&
-          !(typeof r.gable_count === "number" && r.gable_count > 0) &&
-          (r.gables?.length ?? 0) === 0,
-      );
+    const unanimousHip = isUnanimousHip(perFace);
     const rakeSegs = unanimousHip
       ? []
       : (analysis.excluded_edges ?? [])

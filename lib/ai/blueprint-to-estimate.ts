@@ -22,7 +22,7 @@ import type {
 // and the synthesized layout (blank canvas, "Eaves NaN LF").
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
-import type { FaceReadingRaw } from "./face-merge";
+import { isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
 import { filterRoofDiagramLines } from "./roof-diagram-filter";
 import type { RoofMassArea } from "./to-masses";
@@ -743,7 +743,19 @@ export function blueprintToEstimateResult(
   // Downspouts. Each one carries its source-run tier height when the
   // AI was able to derive tiers from the elevations (e.g. porch
   // downspouts at 10 ft, 2-story body downspouts at 20-26 ft).
-  // Fallback to 20 ft (2-story default) when tier info is missing.
+  // Height fallback when tier info is missing: what the ELEVATIONS show.
+  // The blind 20 ft (2-story) default priced every single-story plan as
+  // 2 stories (measurements.stories derives from the max drop — the
+  // 1168G single-story hip showed "stories 2"). The per-face reads carry
+  // stories_visible; use the max across readable faces, else keep 20.
+  const faceStories = Object.values(opts?.perFace ?? {}).reduce(
+    (m, r) =>
+      r && r.readable !== false && typeof r.stories_visible === "number" && r.stories_visible >= 1
+        ? Math.max(m, Math.min(3, Math.round(r.stories_visible)))
+        : m,
+    0,
+  );
+  const defaultDropFt = faceStories === 1 ? 10 : faceStories >= 3 ? 26 : 20;
   let downspouts: Downspout[] = analysis.downspouts
     .map((d, i): Downspout | null => {
       if (!isGoodPoint(d.at)) {
@@ -754,7 +766,7 @@ export function blueprintToEstimateResult(
       const heightFt =
         d.drop_height_ft != null && d.drop_height_ft > 0
           ? Math.round(d.drop_height_ft)
-          : 20;
+          : defaultDropFt;
       return { id: `plan-ds-${i}`, x: p.x, y: p.y, heightFt };
     })
     .filter((d): d is Downspout => d !== null);
@@ -1084,11 +1096,18 @@ export function blueprintToEstimateResult(
         `⚙ Engine takeoff (flag ON): ${engineBundle.eaveLfFt} LF across ${eaveCount} guttered edge(s), ${engineBundle.takeoff.downspouts.length} rule-placed downspout(s).`,
       );
     } else {
+      // A mass edge defaults to type "rake" whenever it simply has no gutter
+      // coverage (to-masses.ts) — that's "unguttered", not a confirmed gable.
+      // On a unanimous-hip read, calling those "gable rakes" contradicts the
+      // 4-face check ("15 gable rake(s)" on a zero-gable 1168G) — say what the
+      // elevations actually established.
       const rakeCount = engineBundle.takeoff.masses
         .flatMap((m) => m.edges)
         .filter((e) => e.type === "rake").length;
       notes.push(
-        `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s) + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
+        isUnanimousHip(opts?.perFace)
+          ? `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): all-hip per the 4-face reads (0 gables)${rakeCount > 0 ? `; ${rakeCount} unguttered edge(s) drawn as plain roof edges` : ""} + a clean straight-skeleton. Pricing stays on the measured-run LF.`
+          : `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s) + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
       );
     }
     // Surface the engine (footprint-perimeter) LF next to what we actually
