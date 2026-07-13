@@ -1334,6 +1334,12 @@ export type BlueprintRunOptions = {
    *  Scale-free, so a mere px→ft scale mislabel (which leaves the measured LF
    *  intact) is NOT penalized. */
   classification?: PlanClassification | null;
+  /** Learned-calibration prompt block (takeoff-calibration.ts) built from
+   *  this contractor's past corrected takeoffs. Injected into the USER
+   *  message (never the cached system prompt) as a soft prior — "your eave
+   *  totals have run ~12% high" — with an explicit instruction that the
+   *  current plan's printed dimensions always win. null/absent → no-op. */
+  learnedCalibration?: string | null;
 };
 
 /**
@@ -1458,6 +1464,7 @@ export async function blueprintFromPlanSources(
         "the gutter layout JSON per the schema.\n\n" +
         constraintsBlock +
         buildVectorBlock(opts.vectorGeometry) +
+        (opts.learnedCalibration ?? "") +
         "OUTPUT FORMAT: respond with a single JSON object only. No preamble, " +
         "no commentary, no markdown code fences. The response must start " +
         "with `{` and end with `}`. The downstream parser extracts the " +

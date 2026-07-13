@@ -23,6 +23,7 @@ import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
+import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
@@ -461,12 +462,18 @@ export async function POST(request: Request) {
       const geminiReaders = (await geminiAvailable())
         ? [() => geminiBlueprintFromPlan([source], { constraints, vectorGeometry })]
         : [];
+      // Learning loop: soft prior distilled from this contractor's past
+      // corrected takeoffs (PlanAnalysis.editedJson vs analysisJson pairs).
+      // Guidance-only — injected into the read's user message; null when
+      // there's no history or no actionable bias. Never throws.
+      const calibration = await getLearnedCalibration(user.id);
       const result = await blueprintFromPlanSourcesBestOf(
         [source],
         {
           constraints,
           vectorGeometry,
           classification: stage1 && stage1.ok ? stage1.classification : null,
+          learnedCalibration: calibration?.promptBlock ?? null,
         },
         3,
         geminiReaders,
@@ -535,6 +542,14 @@ export async function POST(request: Request) {
         console.log(
           `[/api/blueprints after()] engine gates: ${gates.reviewFlags.length} flag(s) — ${gates.notes[0]}`,
         );
+      }
+      if (calibration?.promptBlock) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📚 Learned calibration applied — ${calibration.sampleCount} past corrected takeoff(s) from this account ` +
+            `(median eave bias ${calibration.medianLfDeltaPct > 0 ? "+" : ""}${calibration.medianLfDeltaPct.toFixed(0)}%). ` +
+            `The read was told where its history ran high/low; this plan's printed dimensions still win.`,
+        ];
       }
 
       // Independent per-face elevation reads (started above, resolved now).

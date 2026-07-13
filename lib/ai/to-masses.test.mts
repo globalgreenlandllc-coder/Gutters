@@ -223,3 +223,24 @@ test("degenerate footprint → no mass, no throw", () => {
   assert.equal(v.mass, null);
   assert.deepEqual(v.reviewFlags, []);
 });
+
+test("OVERSIZED trace vs width×depth box → verdict names the oversize, not 'may not cover'", () => {
+  // Trace box = 2000 ft² (50×40 at 0.5 ft/px) vs stated 42×36 = 1512 ft² —
+  // 32% over. The old absolute-diff message claimed "the trace may not cover
+  // the full building", the exact opposite of an inflated trace/scale (the
+  // 1168G raster set: 4876 sf envelope vs a 3264 sf stated box).
+  const v = validateBlueprintGeometry(analysis(), classification(42, 36));
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "warn", "a 32% oversize still flags");
+  assert.ok(/OVERSIZED/.test(ag!.message), "verdict should name the oversize direction");
+  assert.ok(!/may not cover/.test(ag!.message), "must not claim under-coverage on an oversized trace");
+});
+
+test("UNDERSIZED trace vs width×depth box keeps the under-coverage verdict", () => {
+  // Trace box 2000 ft² vs stated 80×40 = 3200 ft² → 37.5% under.
+  const v = validateBlueprintGeometry(analysis(), classification(80, 40));
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "warn");
+  assert.ok(/may not cover/.test(ag!.message), "under-coverage verdict preserved");
+  assert.ok(!/OVERSIZED/.test(ag!.message));
+});

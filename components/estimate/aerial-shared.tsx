@@ -728,10 +728,18 @@ export function RoofStructureOverlay({
     // edges). A side draws a HIP only where a gutter runs; a side with a
     // rake — or no gutter — draws a flush GABLE end (ridge to the wall), so
     // the gable connects to the roof instead of floating as a separate stub.
+    // Explode each polyline into its constituent segments — NOT first+last.
+    // An eave that follows a wall jog (an L-shaped run) collapsed to a single
+    // diagonal chord that aligned with NO footprint side, so the skeleton's
+    // "this side is guttered → never a gable" veto missed the wall and the
+    // proposal diagram drew a phantom GABLE on a fully guttered hip side.
+    // Per-segment, each straight leg lands on its own wall and the veto holds.
     const toSegs = (ls: { points: { x: number; y: number }[] }[]) =>
       ls
         .filter((e) => e.points.length >= 2)
-        .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
+        .flatMap((e) =>
+          e.points.slice(1).map((p, i) => [e.points[i], p] as [Pt, Pt]),
+        );
     const eaveSegs = toSegs(eaves);
     const rakeSegs = toSegs(rakes);
     const base = deriveRoofSkeleton(structure.perimeter, {

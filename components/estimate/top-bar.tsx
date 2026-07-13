@@ -111,6 +111,10 @@ export function TopBar({
         totalCents: 0,
         existingId,
         jobType,
+        // Plan-flow estimates carry the PlanAnalysis id so the save also
+        // snapshots the (possibly edited) takeoff onto the plan row as
+        // learning ground truth. Absent for the aerial flow.
+        planId,
       });
       if (result.ok) {
         setSave({ kind: "saved", draftId: result.id, at: Date.now() });

@@ -23,6 +23,7 @@ import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
+import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
@@ -277,9 +278,19 @@ export async function POST(
               }),
           ]
         : [];
+      // Learned calibration — same wire-in as the upload path: a soft prior
+      // from this contractor's past corrected takeoffs, injected into the
+      // read's user message. Also pass the classification so the best-of
+      // scorer applies the same stated-area demotion the upload path does.
+      const calibration = await getLearnedCalibration(user.id);
       const result = await blueprintFromPlanSourcesBestOf(
         [finalSource],
-        { constraints, vectorGeometry },
+        {
+          constraints,
+          vectorGeometry,
+          classification: stage1 && stage1.ok ? stage1.classification : null,
+          learnedCalibration: calibration?.promptBlock ?? null,
+        },
         3,
         geminiReaders,
       );
@@ -322,6 +333,14 @@ export async function POST(
       });
       if (gates.notes.length > 0) {
         finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
+      }
+      if (calibration?.promptBlock) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📚 Learned calibration applied — ${calibration.sampleCount} past corrected takeoff(s) from this account ` +
+            `(median eave bias ${calibration.medianLfDeltaPct > 0 ? "+" : ""}${calibration.medianLfDeltaPct.toFixed(0)}%). ` +
+            `The read was told where its history ran high/low; this plan's printed dimensions still win.`,
+        ];
       }
 
       const elevations = await elevationsP;

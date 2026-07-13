@@ -382,14 +382,29 @@ export function validateBlueprintGeometry(
         });
       } else {
         const over = diff > 0.15;
+        // Direction matters for the verdict. diff is an ABSOLUTE ratio, so
+        // without the sign an OVERSIZED trace used to read as "may not cover
+        // the full building" — the opposite of what happened (a 1168G raster
+        // set flagged 49.4% with the trace 22% oversized in linear terms).
+        // UNDER stated → geometry may be missing; OVER stated → the trace or
+        // its px→ft scale is inflated by ~sqrt(ratio) linearly.
+        const oversized = gauge > stated;
+        const linearPct = Math.round((Math.sqrt(Math.max(gauge, 1) / stated) - 1) * 100);
+        const verdict = !over
+          ? "OK"
+          : oversized
+            ? `FLAG (the trace reads ~${linearPct}% OVERSIZED in linear terms — the px→ft scale may be too large; verify the LF against the printed overall dimensions)`
+            : vsBox
+              ? "FLAG (the trace may not cover the full building)"
+              : "FLAG (a plane, wing, or gable may be missing)";
         flags.push({
           code: "area_gate",
           severity: over ? "warn" : "info",
           mass: mass.name,
           message: vsBox
-            ? `[main] area gate: the trace spans a ${traceBoxFt.toFixed(0)} sf envelope (footprint ${computed.toFixed(0)} sf; the rest is normal articulation) vs the stated ${stated.toFixed(0)} sf width×depth box — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (the trace may not cover the full building)" : "OK"}.`
+            ? `[main] area gate: the trace spans a ${traceBoxFt.toFixed(0)} sf envelope (footprint ${computed.toFixed(0)} sf; the rest is normal articulation) vs the stated ${stated.toFixed(0)} sf width×depth box — ${(diff * 100).toFixed(1)}% off — ${verdict}.`
             : `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
-              `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${over ? "FLAG (a plane, wing, or gable may be missing)" : "OK"}.`,
+              `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${verdict}.`,
         });
       }
     } else {
