@@ -193,18 +193,20 @@ export function assessSatelliteTrace(args: {
     }
   }
 
-  // 8. Coarse-footprint guardrail. A segment-bbox footprint is the union
-  //    of NORTH-ALIGNED plane boxes. On a CARDINAL-aligned roof that union
-  //    is a tight, usable perimeter — worth showing as a "low" starting
-  //    estimate with a verify nudge. On an OFF-CARDINAL roof it over-covers
-  //    (eave LF ~40% long at 45°), so the caller escalates to "unusable"
-  //    via the inflated override (index.ts); here we only handle the tight
-  //    case. Downgrade an otherwise-"ok" trace to "low".
-  if (args.coarseFootprint && status === "ok") {
-    status = "low";
-    confidence = Math.min(confidence, 0.65);
+  // 8. Coarse-footprint guardrail. A segment-bbox footprint is built from
+  //    Google's per-plane roof data because SAM + the raster mask both
+  //    failed on the image. Two ways it goes wrong, and we can't tell which
+  //    from geometry alone: (a) Solar reports only SOME planes, so the
+  //    outline covers PART of the roof (under-bills); (b) the north-aligned
+  //    box over-covers an angled roof (over-bills). Either way it's a rough
+  //    STARTING outline, never a number to send — force "unusable" so the
+  //    prominent redraw prompt fires. The outline still renders as a
+  //    starting point the contractor edits or redraws.
+  if (args.coarseFootprint && status !== "unusable") {
+    status = "unusable";
+    confidence = Math.min(confidence, 0.4);
     tierReasons.unshift(
-      "This outline came from Google's roof-plane data (the photo was too unclear to trace). It's a close approximation of the roof perimeter — check the edges against the image before you send the price.",
+      "This outline came from Google's roof-plane data because the photo was too unclear to trace — it may not cover the whole roof. Use it as a starting point, but redraw the eaves along the actual roofline before you price it.",
     );
   }
 

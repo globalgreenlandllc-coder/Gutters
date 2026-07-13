@@ -873,7 +873,7 @@ export async function runAIEstimatePipeline(
           azOffsets.length > 0 ? azOffsets[Math.floor(azOffsets.length / 2)] : 0;
         coarseFootprintInflated = medianOff > 12;
         notes.push(
-          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert perimeter (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid), whole outline priced as candidate eave. Roof sits ${medianOff.toFixed(0)}° off cardinal — ${coarseFootprintInflated ? "the box likely over-covers an angled roof, redraw before pricing" : "box is a close fit, verify the edges"}.`,
+          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert perimeter (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid), whole outline priced as candidate eave. Roof sits ${medianOff.toFixed(0)}° off cardinal${coarseFootprintInflated ? " (angled — the box over-covers)" : ""}. Only covers the roof planes Solar reported, so it can miss sections — a starting outline to redraw, not a final price.`,
         );
       } else {
         notes.push(
@@ -1324,19 +1324,6 @@ export async function runAIEstimatePipeline(
               reasons: [
                 ...q.reasons,
                 "Traced outline appears to include roof shadow or pavement (perimeter far exceeds roof area) — redraw the outline to price accurately.",
-              ],
-            };
-          }
-          // A coarse footprint on an OFF-CARDINAL roof over-covers the true
-          // shape (~40% long at 45°), so escalate it to the loud redraw
-          // banner. A cardinal-aligned coarse box stays "low" (usable).
-          if (usedCoarseFootprint && coarseFootprintInflated && q.status !== "unusable") {
-            return {
-              status: "unusable" as const,
-              confidence: Math.min(q.confidence, 0.35),
-              reasons: [
-                "This roof sits at an angle, so the outline built from Google's roof-plane data reads as a box that's larger than the real roof. Redraw the outline along the actual eaves to price it accurately.",
-                ...q.reasons,
               ],
             };
           }

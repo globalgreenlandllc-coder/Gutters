@@ -119,11 +119,11 @@ test("vision flag never rescues a mock/degenerate trace back up", () => {
   assert.equal(q.status, "unusable");
 });
 
-test("coarse Solar-segment footprint downgrades 'ok' → 'low' with a verify nudge (cardinal roof; inflated case is escalated by the caller)", () => {
+test("coarse Solar-segment footprint is 'unusable' — a rough starting outline that can miss roof, never auto-priced", () => {
   const q = assessSatelliteTrace({ ...okArgs, interiorTiersDetected: 0, coarseFootprint: true });
-  assert.equal(q.status, "low");
+  assert.equal(q.status, "unusable");
   assert.ok(
-    q.reasons.some((r) => /roof-plane data/i.test(r) && /check the edges/i.test(r)),
-    "explains the coarse plane-box outline and says to verify",
+    q.reasons.some((r) => /roof-plane data/i.test(r) && /redraw/i.test(r)),
+    "explains the coarse plane-box outline and says to redraw",
   );
 });
