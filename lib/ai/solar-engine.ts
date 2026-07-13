@@ -267,6 +267,9 @@ export async function runSolarFirstEstimate(args: {
       (cleaned.cleanup.kind === "ortho"
         ? " (right-angle snap ✓)"
         : ` (${cleaned.cleanup.reason})`) +
+      (cleaned.squaredCorners > 0
+        ? `, squared ${cleaned.squaredCorners} chamfered corner${cleaned.squaredCorners === 1 ? "" : "s"} to 90°`
+        : "") +
       `, gutter line offset +${OVERHANG_M} m` +
       (traced.touchesEdge
         ? " ⚠ building touches the imagery window edge"

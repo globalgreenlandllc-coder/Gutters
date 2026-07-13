@@ -660,6 +660,8 @@ function traceMooreNeighbor(
 
 export type CleanedFootprint = {
   points: Pt[];
+  /** Chamfered corners squared away by dechamferPolygon. */
+  squaredCorners: number;
   cleanup:
     | { kind: "ortho"; vertCount: number }
     | { kind: "simplified"; vertCount: number; reason: string };
@@ -701,14 +703,24 @@ export function cleanFootprint(
     symmetricHausdorffPx(simplified, ortho) <= maxDriftPx;
 
   if (orthoOk) {
-    return { points: ortho, cleanup: { kind: "ortho", vertCount: ortho.length } };
+    // Global right-angle snap succeeded — corners are already square.
+    return {
+      points: ortho,
+      squaredCorners: 0,
+      cleanup: { kind: "ortho", vertCount: ortho.length },
+    };
   }
   if (!polygonSelfIntersects(simplified)) {
+    // Global snap failed (mixed-angle building) — square away the LOCAL
+    // chamfers the mask's rounded corners left behind, keeping genuine
+    // diagonal walls.
+    const dech = dechamferPolygon(simplified, metersPerPixel);
     return {
-      points: simplified,
+      points: dech.points,
+      squaredCorners: dech.squared,
       cleanup: {
         kind: "simplified",
-        vertCount: simplified.length,
+        vertCount: dech.points.length,
         reason:
           ortho.length < 4
             ? "ortho degenerate"
@@ -731,6 +743,82 @@ export function polygonArea(points: Pt[]): number {
     sum += a.x * b.y - b.x * a.y;
   }
   return Math.abs(sum) / 2;
+}
+
+/**
+ * Square away CHAMFERED corners. The mask's corners are rounded (pixel
+ * grid + Google's own smoothing); after Douglas-Peucker that rounding
+ * survives as a short diagonal "cut" across what is really a 90° corner
+ * — contractors immediately flag it ("this corner is 45° but should be
+ * square"). Replace each short edge whose NEIGHBORS meet at roughly a
+ * right angle with the neighbors' true intersection point.
+ *
+ * Deliberately conservative so real architecture survives:
+ *   • only edges shorter than `maxChamferPx` are candidates — a genuine
+ *     45° wall (angled garage wing, long bay facet) is longer and stays;
+ *   • the neighbors must meet at 55–125° (extending them produces a
+ *     believable corner, not a spike);
+ *   • the new corner must land within `maxExtendPx` of the chamfer;
+ *   • the polygon must stay simple (no self-intersection).
+ * Runs to fixpoint (max 4 passes). Returns the squared count for notes.
+ */
+export function dechamferPolygon(
+  points: Pt[],
+  metersPerPixel: number,
+  opts?: { maxChamferM?: number; maxExtendM?: number },
+): { points: Pt[]; squared: number } {
+  const maxChamferPx = (opts?.maxChamferM ?? 2.2) / metersPerPixel;
+  const maxExtendPx = (opts?.maxExtendM ?? 2.6) / metersPerPixel;
+  let pts = points;
+  let squared = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    // Rotate so a chamfer sitting across the array seam lands mid-array
+    // on a later pass (the splice below never wraps).
+    if (pass > 0 && pts.length > 4) {
+      pts = [...pts.slice(1), pts[0]];
+    }
+    let changed = false;
+    for (let i = 1; i < pts.length - 1 && pts.length > 4; i++) {
+      const n = pts.length;
+      const p0 = pts[i - 1];
+      const a = pts[i];
+      const b = pts[i + 1];
+      const p3 = pts[(i + 2) % n];
+      const chamferLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (chamferLen > maxChamferPx || chamferLen < 1e-6) continue;
+
+      // Direction of the neighbor edges.
+      const d1x = a.x - p0.x;
+      const d1y = a.y - p0.y;
+      const d2x = p3.x - b.x;
+      const d2y = p3.y - b.y;
+      const l1 = Math.hypot(d1x, d1y);
+      const l2 = Math.hypot(d2x, d2y);
+      if (l1 < 1e-6 || l2 < 1e-6) continue;
+      // Neighbors must themselves be substantial walls, or we'd square
+      // pixel noise into pixel noise.
+      if (l1 < chamferLen || l2 < chamferLen) continue;
+      const cosAng = (d1x * d2x + d1y * d2y) / (l1 * l2);
+      const angDeg = (Math.acos(Math.max(-1, Math.min(1, cosAng))) * 180) / Math.PI;
+      if (angDeg < 55 || angDeg > 125) continue;
+
+      const inter = lineIntersection(p0, a, b, p3);
+      if (!inter) continue;
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (Math.hypot(inter.x - mid.x, inter.y - mid.y) > maxExtendPx) continue;
+
+      const next = [...pts.slice(0, i), inter, ...pts.slice(i + 2)];
+      // Splice across the ring seam leaves <4 pts or broken order — guard.
+      if (next.length < 4) continue;
+      if (polygonSelfIntersects(next)) continue;
+      pts = next;
+      squared++;
+      changed = true;
+      i--; // re-examine around the new corner
+    }
+    if (!changed) break;
+  }
+  return { points: pts, squared };
 }
 
 /* ------------------------------------------------------------------ */

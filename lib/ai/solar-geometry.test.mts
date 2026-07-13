@@ -7,6 +7,7 @@ import {
   cropFloat32,
   cropUint8,
   cropWindowAround,
+  dechamferPolygon,
   expandWindowToAspect,
   estimateGroundHeightM,
   estimateRenderShift,
@@ -484,6 +485,83 @@ test("recoverAttachedRoofs picks up a porch the mask missed, skips trees and det
   assert.equal(rec.mask[200 * W + 130], 1, "porch recovered");
   assert.equal(rec.mask[100 * W + 30], 0, "tree rejected");
   assert.equal(rec.mask[230 * W + 220], 0, "detached shed rejected");
+});
+
+/* ------------------------------------------------------------------ */
+/*  De-chamfer                                                         */
+/* ------------------------------------------------------------------ */
+
+test("dechamferPolygon squares a mask-rounded corner cut", () => {
+  // 12 m × 8 m rectangle whose top-right corner is chamfered by a 1.4 m
+  // diagonal (the classic DP leftover of a rounded mask corner).
+  const mpp = 0.1;
+  const pts: Pt[] = [
+    { x: 20, y: 20 },
+    { x: 130, y: 20 }, // chamfer start
+    { x: 140, y: 30 }, // chamfer end (≈1.4 m cut)
+    { x: 140, y: 100 },
+    { x: 20, y: 100 },
+  ];
+  const r = dechamferPolygon(pts, mpp);
+  assert.equal(r.squared, 1);
+  assert.equal(r.points.length, 4);
+  // The squared corner is the neighbors' intersection: (140, 20).
+  assert.ok(
+    r.points.some((p) => Math.abs(p.x - 140) < 0.01 && Math.abs(p.y - 20) < 0.01),
+    `corner not squared: ${JSON.stringify(r.points)}`,
+  );
+});
+
+test("dechamferPolygon leaves a genuine 45° wing alone", () => {
+  const mpp = 0.1;
+  // Rectangle with a LONG diagonal wall (6 m — a real angled wing).
+  const pts: Pt[] = [
+    { x: 20, y: 20 },
+    { x: 100, y: 20 },
+    { x: 160, y: 80 }, // 6 m diagonal — architecture, not a chamfer
+    { x: 160, y: 140 },
+    { x: 20, y: 140 },
+  ];
+  const r = dechamferPolygon(pts, mpp);
+  assert.equal(r.squared, 0);
+  assert.equal(r.points.length, 5);
+});
+
+test("dechamferPolygon squares a chamfer sitting across the ring seam", () => {
+  const mpp = 0.1;
+  // Same rectangle+chamfer, rotated so the chamfer spans indices n-1 → 0.
+  const pts: Pt[] = [
+    { x: 140, y: 30 }, // chamfer end (index 0)
+    { x: 140, y: 100 },
+    { x: 20, y: 100 },
+    { x: 20, y: 20 },
+    { x: 130, y: 20 }, // chamfer start (index n-1)
+  ];
+  const r = dechamferPolygon(pts, mpp);
+  assert.equal(r.squared, 1);
+  assert.equal(r.points.length, 4);
+});
+
+test("porch recovery height band excludes ground-level decks", () => {
+  const { W, H, mpp, mask, dsm, rgb } = porchFixture();
+  // Unroofed DECK: smooth wood surface 0.4 m above grade, hugging the
+  // south wall. Below the 1.8 m roof-height floor → must not be added.
+  for (let y = 184; y < 224; y++) {
+    for (let x = 100; x < 160; x++) dsm[y * W + x] = 100.4;
+  }
+  const traced = traceMaskFootprint(mask, W, H)!;
+  const rec = recoverAttachedRoofs({
+    mask,
+    componentMask: traced.componentMask,
+    dsm,
+    dsmNoData: -9999,
+    rgb,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+    groundHeightM: 100,
+  });
+  assert.equal(rec.addedAreasM2.length, 0, "deck must not be recovered");
 });
 
 /* ------------------------------------------------------------------ */
