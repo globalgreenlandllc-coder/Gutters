@@ -36,6 +36,60 @@ export type Pt = { x: number; y: number };
  * the center component before/after and compare areas — a big jump means
  * the close swallowed something that isn't this house.
  */
+function morphPass(
+  src: Uint8Array,
+  width: number,
+  height: number,
+  r: number,
+  horizontal: boolean,
+  op: "max" | "min",
+): Uint8Array {
+  const out = new Uint8Array(width * height);
+  const outer = horizontal ? height : width;
+  const inner = horizontal ? width : height;
+  for (let o = 0; o < outer; o++) {
+    for (let i = 0; i < inner; i++) {
+      let v = op === "max" ? 0 : 1;
+      const lo = Math.max(0, i - r);
+      const hi = Math.min(inner - 1, i + r);
+      for (let k = lo; k <= hi; k++) {
+        const idx = horizontal ? o * width + k : k * width + o;
+        const s = src[idx] > 0 ? 1 : 0;
+        if (op === "max") {
+          if (s === 1) {
+            v = 1;
+            break;
+          }
+        } else if (s === 0) {
+          v = 0;
+          break;
+        }
+      }
+      out[horizontal ? o * width + i : i * width + o] = v;
+    }
+  }
+  return out;
+}
+
+/** Separable square dilation. */
+export function dilateMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radiusPx: number,
+): Uint8Array {
+  const r = Math.max(0, Math.round(radiusPx));
+  if (r === 0) return mask.slice();
+  return morphPass(
+    morphPass(mask, width, height, r, true, "max"),
+    width,
+    height,
+    r,
+    false,
+    "max",
+  );
+}
+
 export function closeMask(
   mask: Uint8Array,
   width: number,
@@ -44,43 +98,9 @@ export function closeMask(
 ): Uint8Array {
   const r = Math.max(0, Math.round(radiusPx));
   if (r === 0) return mask.slice();
-
-  const pass = (
-    src: Uint8Array,
-    horizontal: boolean,
-    op: "max" | "min",
-  ): Uint8Array => {
-    const out = new Uint8Array(width * height);
-    const outer = horizontal ? height : width;
-    const inner = horizontal ? width : height;
-    for (let o = 0; o < outer; o++) {
-      for (let i = 0; i < inner; i++) {
-        let v = op === "max" ? 0 : 1;
-        const lo = Math.max(0, i - r);
-        const hi = Math.min(inner - 1, i + r);
-        for (let k = lo; k <= hi; k++) {
-          const idx = horizontal ? o * width + k : k * width + o;
-          const s = src[idx] > 0 ? 1 : 0;
-          if (op === "max") {
-            if (s === 1) {
-              v = 1;
-              break;
-            }
-          } else if (s === 0) {
-            v = 0;
-            break;
-          }
-        }
-        out[horizontal ? o * width + i : i * width + o] = v;
-      }
-    }
-    return out;
-  };
-
-  let m = pass(mask, true, "max");
-  m = pass(m, false, "max");
-  m = pass(m, true, "min");
-  m = pass(m, false, "min");
+  let m = dilateMask(mask, width, height, r);
+  m = morphPass(m, width, height, r, true, "min");
+  m = morphPass(m, width, height, r, false, "min");
   return m;
 }
 
@@ -101,7 +121,13 @@ export function traceMaskFootprint(
   mask: Uint8Array,
   width: number,
   height: number,
-): { boundary: Pt[]; areaPx: number; touchesEdge: boolean } | null {
+): {
+  boundary: Pt[];
+  areaPx: number;
+  touchesEdge: boolean;
+  /** 1 = pixel belongs to the traced (center) component. */
+  componentMask: Uint8Array;
+} | null {
   const isFg = (x: number, y: number) => mask[y * width + x] > 0;
 
   const seed = findSeedNearCenter(width, height, isFg);
@@ -155,7 +181,308 @@ export function traceMaskFootprint(
     y: bestY,
   });
   if (boundary.length < 8) return null;
-  return { boundary, areaPx: count, touchesEdge };
+  return { boundary, areaPx: count, touchesEdge, componentMask: compMask };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ground height + attached-roof (porch/carport) recovery             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ground elevation near the building: low percentile of DSM samples in a
+ * band outside the component's bbox, mask-negative pixels only (so a
+ * neighbor's roof or a parked RV doesn't read as "ground").
+ */
+export function estimateGroundHeightM(args: {
+  mask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  width: number;
+  height: number;
+  bbox: { minX: number; minY: number; maxX: number; maxY: number };
+  metersPerPixel: number;
+}): number | null {
+  const { mask, dsm, dsmNoData, width, height, bbox, metersPerPixel } = args;
+  const bandPx = 8 / metersPerPixel;
+  const stepPx = Math.max(1, Math.round(1 / metersPerPixel));
+  const vals: number[] = [];
+  const take = (x: number, y: number) => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= width || yi >= height) return;
+    if (mask[yi * width + xi] > 0) return;
+    const v = dsm[yi * width + xi];
+    if (!Number.isFinite(v) || Math.abs(v - dsmNoData) < 0.001) return;
+    if (v < -450 || v > 9000) return;
+    vals.push(v);
+  };
+  for (let x = bbox.minX - bandPx; x <= bbox.maxX + bandPx; x += stepPx) {
+    for (const y of [
+      bbox.minY - bandPx / 2,
+      bbox.maxY + bandPx / 2,
+      bbox.minY - bandPx,
+      bbox.maxY + bandPx,
+    ]) {
+      take(x, y);
+    }
+  }
+  for (let y = bbox.minY - bandPx; y <= bbox.maxY + bandPx; y += stepPx) {
+    for (const x of [
+      bbox.minX - bandPx / 2,
+      bbox.maxX + bandPx / 2,
+      bbox.minX - bandPx,
+      bbox.maxX + bandPx,
+    ]) {
+      take(x, y);
+    }
+  }
+  if (vals.length < 12) return null;
+  vals.sort((a, b) => a - b);
+  return vals[Math.floor(vals.length * 0.15)];
+}
+
+/**
+ * Recover attached roofs the building mask missed. Google's mask maps
+ * the HEATED footprint — porches, covered entries and carports routinely
+ * fall outside it even though their roofs need gutters.
+ *
+ * A pixel is a candidate when it is
+ *   • outside the mask,
+ *   • 1.8–7.5 m above ground (roof-height band: above cars/fences,
+ *     below the tree canopy's upper story),
+ *   • NOT vegetation-green in the orthophoto, and
+ *   • locally SMOOTH in the DSM (roofs are planar; tree crowns are not).
+ *
+ * Candidate components are kept only when they are ≥3 m² and ≤90 m²,
+ * sit within `adjacencyM` of the main footprint (porches attach; the
+ * neighbor's house doesn't), and don't touch the raster edge. Total
+ * added area is capped at half the main footprint as a sanity brake.
+ */
+export function recoverAttachedRoofs(args: {
+  mask: Uint8Array;
+  componentMask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  rgb: Uint8Array;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  groundHeightM: number;
+  adjacencyM?: number;
+}): { mask: Uint8Array; addedAreasM2: number[]; addedPx: number } {
+  const {
+    mask,
+    componentMask,
+    dsm,
+    dsmNoData,
+    rgb,
+    width,
+    height,
+    metersPerPixel,
+    groundHeightM,
+  } = args;
+  const adjacencyPx = (args.adjacencyM ?? 0.7) / metersPerPixel;
+  const m2PerPx = metersPerPixel * metersPerPixel;
+
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  // Per-pixel candidate test.
+  const candidates = new Uint8Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      if (mask[i] > 0) continue;
+      const h = dsm[i];
+      if (!validH(h)) continue;
+      const above = h - groundHeightM;
+      if (above < 1.8 || above > 7.5) continue;
+      // Vegetation: green-dominant in the orthophoto. Slightly loose on
+      // purpose — shadowed foliage barely reads green, so the DSM
+      // roughness + RGB texture tests below carry those cases.
+      const r = rgb[i * 3];
+      const g = rgb[i * 3 + 1];
+      const b = rgb[i * 3 + 2];
+      if (g > r + 6 && g > b + 6) continue;
+      // Roughness: local 3×3 height range. A porch roof is planar — even
+      // a 45° pitch only changes ~0.3 m across the window; hedge/tree
+      // crowns (including dark SHADOWED ones the green test misses) jump
+      // half a meter or more.
+      let lo = h;
+      let hi = h;
+      let bad = false;
+      for (let dy = -1; dy <= 1 && !bad; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const v = dsm[(y + dy) * width + (x + dx)];
+          if (!validH(v)) {
+            bad = true;
+            break;
+          }
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+      }
+      if (bad || hi - lo > 0.5) continue;
+      // Photo texture: roof surfaces are tonally uniform; canopy is
+      // speckled even in shadow. Local 3×3 luminance spread.
+      let lLo = 255;
+      let lHi = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const j = ((y + dy) * width + (x + dx)) * 3;
+          const lum = (rgb[j] + rgb[j + 1] + rgb[j + 2]) / 3;
+          if (lum < lLo) lLo = lum;
+          if (lum > lHi) lHi = lum;
+        }
+      }
+      if (lHi - lLo > 52) continue;
+      candidates[i] = 1;
+    }
+  }
+
+  // Adjacency zone: main footprint dilated.
+  const nearMain = dilateMask(componentMask, width, height, adjacencyPx);
+
+  // Connected components over the candidates; accept porch-sized ones
+  // that touch the adjacency zone and stay off the raster edge.
+  const out = mask.slice();
+  const visited = new Uint8Array(width * height);
+  const addedAreasM2: number[] = [];
+  let mainArea = 0;
+  for (let i = 0; i < componentMask.length; i++) mainArea += componentMask[i];
+  let addedTotalPx = 0;
+
+  for (let start = 0; start < candidates.length; start++) {
+    if (candidates[start] === 0 || visited[start]) continue;
+    const queue = [start];
+    visited[start] = 1;
+    let head = 0;
+    const px: number[] = [];
+    let touchesMain = false;
+    let touchesEdge = false;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    while (head < queue.length) {
+      const idx = queue[head++];
+      px.push(idx);
+      const x = idx % width;
+      const y = (idx - x) / width;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (x <= 1 || y <= 1 || x >= width - 2 || y >= height - 2) {
+        touchesEdge = true;
+      }
+      if (nearMain[idx] > 0) touchesMain = true;
+      const neighbors = [idx - 1, idx + 1, idx - width, idx + width];
+      for (const n of neighbors) {
+        if (n < 0 || n >= candidates.length) continue;
+        if (candidates[n] === 0 || visited[n]) continue;
+        visited[n] = 1;
+        queue.push(n);
+      }
+    }
+    const areaM2 = px.length * m2PerPx;
+    if (!touchesMain || touchesEdge) continue;
+    if (areaM2 < 3 || areaM2 > 90) continue;
+    // Shape: porches/carports are compact rectangles. A hedge row or a
+    // tree line that survived the pixel tests reads long, thin and
+    // sparse — low bbox fill, extreme aspect.
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    const bboxFill = px.length / (bw * bh);
+    const aspect = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
+    if (bboxFill < 0.55 || aspect > 5) continue;
+    if (addedTotalPx + px.length > mainArea * 0.5) continue;
+    addedTotalPx += px.length;
+    addedAreasM2.push(Math.round(areaM2));
+    for (const idx of px) out[idx] = 1;
+  }
+
+  return { mask: out, addedAreasM2, addedPx: addedTotalPx };
+}
+
+/**
+ * Liang-Barsky segment clip to the rect [0,W]×[0,H]. Solar-segment
+ * derived decorations (tier-break suggestions, ridges) come from plane
+ * bboxes that can poke past the cropped image — clip them so nothing
+ * lands outside the client canvas. Returns null when fully outside.
+ */
+export function clipSegmentToRect(
+  a: Pt,
+  b: Pt,
+  width: number,
+  height: number,
+): { a: Pt; b: Pt } | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, a.x], // x >= 0
+    [dx, width - a.x], // x <= width
+    [-dy, a.y], // y >= 0
+    [dy, height - a.y], // y <= height
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return null;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return null;
+      if (r < t1) t1 = r;
+    }
+  }
+  return {
+    a: { x: a.x + t0 * dx, y: a.y + t0 * dy },
+    b: { x: a.x + t1 * dx, y: a.y + t1 * dy },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Crop-window aspect normalization                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Expand a crop window to a target aspect ratio (w/h), centered, clamped
+ * to the raster. The engine's aerial crop becomes the client's 900×580
+ * COVER-fit canvas background — when the crop aspect matches the canvas,
+ * cover-fit ≡ contain-fit, so no traced geometry can land outside the
+ * canvas (which clipped the proposal diagram) and the photo fills the
+ * frame with no letterbox bands.
+ */
+export function expandWindowToAspect(
+  win: CropWindow,
+  aspect: number,
+  width: number,
+  height: number,
+): CropWindow {
+  let w = win.width;
+  let h = win.height;
+  if (w / h < aspect) {
+    w = Math.min(width, Math.ceil(h * aspect));
+    // Raster too narrow for the aspect at this height → shrink height
+    // toward the aspect instead of silently keeping a tall window.
+    if (w / h < aspect) h = Math.max(win.height, Math.ceil(w / aspect));
+    h = Math.min(h, height);
+  } else {
+    h = Math.min(height, Math.ceil(w / aspect));
+    if (w / h > aspect) w = Math.max(win.width, Math.ceil(h * aspect));
+    w = Math.min(w, width);
+  }
+  let x = Math.round(win.x + win.width / 2 - w / 2);
+  let y = Math.round(win.y + win.height / 2 - h / 2);
+  x = Math.max(0, Math.min(width - w, x));
+  y = Math.max(0, Math.min(height - h, y));
+  return { x, y, width: w, height: h };
 }
 
 function findSeedNearCenter(
@@ -748,6 +1075,68 @@ export function cropWindowAround(
   const x1 = Math.min(width, Math.ceil(bbox.maxX + marginPx));
   const y1 = Math.min(height, Math.ceil(bbox.maxY + marginPx));
   return { x: x0, y: y0, width: Math.max(1, x1 - x0), height: Math.max(1, y1 - y0) };
+}
+
+/**
+ * Pad cropped rasters to an exact aspect ratio when the source raster
+ * couldn't supply enough pixels (building near the dataLayers window
+ * edge). The pad is inert data — RGB gets a dark neutral, DSM gets
+ * no-data, mask gets background — and `offX/offY` tell the caller how
+ * far the original crop shifted inside the padded frame. Guarantees the
+ * cover-fit ≡ contain-fit invariant that keeps traced geometry inside
+ * the client's 900×580 canvas.
+ */
+export function padToAspect(args: {
+  rgb: Uint8Array;
+  dsm: Float32Array;
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  aspect: number;
+  dsmNoData: number;
+}): {
+  rgb: Uint8Array;
+  dsm: Float32Array;
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  offX: number;
+  offY: number;
+} {
+  const { width, height, aspect, dsmNoData } = args;
+  const cur = width / height;
+  if (Math.abs(cur - aspect) / aspect < 0.01) {
+    return { ...args, offX: 0, offY: 0 };
+  }
+  const W = cur < aspect ? Math.ceil(height * aspect) : width;
+  const H = cur < aspect ? height : Math.ceil(width / aspect);
+  const offX = Math.floor((W - width) / 2);
+  const offY = Math.floor((H - height) / 2);
+
+  const rgb = new Uint8Array(W * H * 3);
+  // Dark neutral — reads as "beyond imagery", not as content.
+  for (let i = 0; i < W * H; i++) {
+    rgb[i * 3] = 16;
+    rgb[i * 3 + 1] = 22;
+    rgb[i * 3 + 2] = 28;
+  }
+  const dsm = new Float32Array(W * H).fill(dsmNoData);
+  const mask = new Uint8Array(W * H);
+  for (let y = 0; y < height; y++) {
+    rgb.set(
+      args.rgb.subarray(y * width * 3, (y + 1) * width * 3),
+      ((y + offY) * W + offX) * 3,
+    );
+    dsm.set(
+      args.dsm.subarray(y * width, (y + 1) * width),
+      (y + offY) * W + offX,
+    );
+    mask.set(
+      args.mask.subarray(y * width, (y + 1) * width),
+      (y + offY) * W + offX,
+    );
+  }
+  return { rgb, dsm, mask, width: W, height: H, offX, offY };
 }
 
 export function cropUint8(

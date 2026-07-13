@@ -180,6 +180,38 @@ console.log(
 console.log(`aerial: ${result.aerial.width}×${result.aerial.height}, canvasPxPerFt=${result.canvasPxPerFt.toFixed(2)}`);
 console.log(`durationMs: ${Date.now() - t0}`);
 
+// Canvas-bounds check: every drawn point must live inside the 900×580
+// viewBox, or the proposal diagram / 3D tabs clip it.
+{
+  const all = [
+    ...result.eaves.flatMap((e) => e.points),
+    ...result.rakes.flatMap((e) => e.points),
+    ...result.suggestedEaves.flatMap((e) => e.points),
+    ...result.roofStructure.perimeter,
+    ...result.downspouts.map((d) => ({ x: d.x, y: d.y })),
+  ];
+  const out = all.filter(
+    (p) => p.x < -1 || p.y < -1 || p.x > 901 || p.y > 581,
+  );
+  console.log(
+    out.length === 0
+      ? "bounds: ✓ all geometry inside the 900×580 canvas"
+      : `bounds: ✗ ${out.length}/${all.length} points OUTSIDE the canvas`,
+  );
+  if (out.length > 0) {
+    const bucket = (pts: {x:number;y:number}[], name: string) => {
+      const o = pts.filter((p) => p.x < -1 || p.y < -1 || p.x > 901 || p.y > 581);
+      if (o.length) console.log(`  ${name}: ${o.length} out — e.g.`, o.slice(0, 3));
+    };
+    bucket(result.eaves.flatMap((e) => e.points), "eaves");
+    bucket(result.rakes.flatMap((e) => e.points), "rakes");
+    bucket(result.suggestedEaves.flatMap((e) => e.points), "suggested");
+    bucket(result.roofStructure.perimeter, "perimeter");
+    bucket(result.roofStructure.ridges.flatMap((r) => r.points), "ridges");
+    bucket(result.downspouts.map((d) => ({ x: d.x, y: d.y })), "downspouts");
+  }
+}
+
 // Composite overlay
 const b64 = result.aerial.imageDataUrl.split(",")[1];
 const png = PNG.sync.read(Buffer.from(b64, "base64"));

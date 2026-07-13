@@ -7,6 +7,9 @@ import {
   cropFloat32,
   cropUint8,
   cropWindowAround,
+  expandWindowToAspect,
+  estimateGroundHeightM,
+  recoverAttachedRoofs,
   eaveHeightAboveGroundM,
   interiorNormal,
   offsetPolygonOutward,
@@ -401,6 +404,116 @@ test("eaveHeightAboveGroundM reads a 2-story eave height", () => {
   // (≤14 / ≤24 ft) absorb that overshoot by design.
   const ft = h / 0.3048;
   assert.ok(ft > 18 && ft < 24, `expected a 2-story reading, got ${ft.toFixed(1)} ft`);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Attached-roof (porch) recovery                                     */
+/* ------------------------------------------------------------------ */
+
+function porchFixture() {
+  const W = 300;
+  const H = 300;
+  const mpp = 0.1;
+  // Main house 20×12 m; ground at 100 m; roof surface ~104.
+  const mask = rectMask(W, H, [{ x: 60, y: 60, w: 200, h: 120 }]);
+  const dsm = new Float32Array(W * H).fill(100);
+  const rgb = new Uint8Array(W * H * 3);
+  // Neutral gray everywhere.
+  for (let i = 0; i < W * H; i++) {
+    rgb[i * 3] = 120;
+    rgb[i * 3 + 1] = 118;
+    rgb[i * 3 + 2] = 115;
+  }
+  for (let y = 60; y < 180; y++) {
+    for (let x = 60; x < 260; x++) dsm[y * W + x] = 104;
+  }
+  return { W, H, mpp, mask, dsm, rgb };
+}
+
+test("recoverAttachedRoofs picks up a porch the mask missed, skips trees and detached sheds", () => {
+  const { W, H, mpp, mask, dsm, rgb } = porchFixture();
+  // PORCH: 6×4 m smooth roof at 102.6 m, 0.4 m gap below the south wall.
+  for (let y = 184; y < 224; y++) {
+    for (let x = 100; x < 160; x++) dsm[y * W + x] = 102.6;
+  }
+  // TREE: elevated + smooth-ish center but GREEN, west of the house.
+  for (let y = 80; y < 130; y++) {
+    for (let x = 10; x < 50; x++) {
+      dsm[y * W + x] = 103.5;
+      const i = y * W + x;
+      rgb[i * 3] = 60;
+      rgb[i * 3 + 1] = 110;
+      rgb[i * 3 + 2] = 55;
+    }
+  }
+  // DETACHED SHED: smooth gray roof 3 m from the house (not adjacent).
+  for (let y = 214; y < 254; y++) {
+    for (let x = 200; x < 240; x++) dsm[y * W + x] = 102.8;
+  }
+
+  const traced = traceMaskFootprint(mask, W, H)!;
+  const ground = estimateGroundHeightM({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    width: W,
+    height: H,
+    bbox: { minX: 60, minY: 60, maxX: 260, maxY: 180 },
+    metersPerPixel: mpp,
+  });
+  assert.ok(ground != null && Math.abs(ground - 100) < 0.2, `ground=${ground}`);
+
+  const rec = recoverAttachedRoofs({
+    mask,
+    componentMask: traced.componentMask,
+    dsm,
+    dsmNoData: -9999,
+    rgb,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+    groundHeightM: ground!,
+  });
+  assert.equal(rec.addedAreasM2.length, 1, `added: ${rec.addedAreasM2.join(",")}`);
+  assert.ok(
+    rec.addedAreasM2[0] >= 18 && rec.addedAreasM2[0] <= 26,
+    `porch ≈ 24 m², got ${rec.addedAreasM2[0]}`,
+  );
+  // Porch pixels joined the mask; tree + shed pixels did not.
+  assert.equal(rec.mask[200 * W + 130], 1, "porch recovered");
+  assert.equal(rec.mask[100 * W + 30], 0, "tree rejected");
+  assert.equal(rec.mask[230 * W + 220], 0, "detached shed rejected");
+});
+
+/* ------------------------------------------------------------------ */
+/*  Aspect window                                                      */
+/* ------------------------------------------------------------------ */
+
+test("expandWindowToAspect widens a tall window to the canvas aspect", () => {
+  const win = expandWindowToAspect(
+    { x: 400, y: 300, width: 200, height: 300 },
+    900 / 580,
+    1000,
+    1000,
+  );
+  assert.ok(Math.abs(win.width / win.height - 900 / 580) < 0.02, `${win.width}×${win.height}`);
+  // Original window stays inside the expanded one.
+  assert.ok(win.x <= 400 && win.x + win.width >= 600);
+  assert.ok(win.y <= 300 && win.y + win.height >= 600);
+  assert.ok(win.x >= 0 && win.y >= 0 && win.x + win.width <= 1000 && win.y + win.height <= 1000);
+});
+
+test("expandWindowToAspect clamps at the raster edge without losing the subject", () => {
+  const win = expandWindowToAspect(
+    { x: 0, y: 0, width: 180, height: 300 },
+    900 / 580,
+    500,
+    320,
+  );
+  assert.ok(win.x >= 0 && win.y >= 0);
+  assert.ok(win.x + win.width <= 500 && win.y + win.height <= 320);
+  // Still contains the original subject horizontally.
+  assert.ok(win.x <= 0 + 1 && win.x + win.width >= 180);
 });
 
 /* ------------------------------------------------------------------ */

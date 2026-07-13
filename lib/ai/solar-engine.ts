@@ -9,17 +9,22 @@ import {
 import {
   classifyEdgeByDsm,
   cleanFootprint,
+  clipSegmentToRect,
   closeMask,
   cropFloat32,
   cropUint8,
   cropWindowAround,
   eaveHeightAboveGroundM,
+  estimateGroundHeightM,
+  expandWindowToAspect,
   interiorNormal,
   median,
   offsetPolygonOutward,
   outwardNormalAzimuthDeg,
+  padToAspect,
   polygonArea,
   polygonCentroid,
+  recoverAttachedRoofs,
   traceMaskFootprint,
   type DsmSampler,
   type Pt,
@@ -150,11 +155,6 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Footprint ---------------------------------------------------
-  // Close sub-meter wall notches first: where two wings meet, the walls
-  // step in but the roofs above merge — without this the trace grows
-  // notch edges that render as floating gutter stubs on the roof.
-  // Guard: if the closed component's area jumps, the close bridged a
-  // NEIGHBOR (shed, fence-line garage) — fall back to the raw mask.
   let traced = traceMaskFootprint(
     layers.mask,
     layers.grid.width,
@@ -164,10 +164,65 @@ export async function runSolarFirstEstimate(args: {
     notes.push("Building mask had no traceable footprint — legacy tracer");
     return null;
   }
+
+  // Recover attached roofs the mask missed. Google's mask maps the
+  // HEATED footprint — porches, covered entries and carports routinely
+  // sit outside it even though their roofs need gutters. The DSM knows
+  // they're there (smooth elevated surfaces hugging the house) and the
+  // orthophoto rules out tree canopy.
+  let workMask = layers.mask;
+  let expectedAreaPx = traced.areaPx;
+  // Pushed only after the close step actually welds the porch onto the
+  // footprint — a note about recovered roof that never landed would lie.
+  let porchNote: string | null = null;
+  let porchApplied = false;
+  {
+    const bxs = traced.boundary.map((p) => p.x);
+    const bys = traced.boundary.map((p) => p.y);
+    const ground = estimateGroundHeightM({
+      mask: layers.mask,
+      dsm: layers.dsm,
+      dsmNoData: layers.dsmNoData,
+      width: layers.grid.width,
+      height: layers.grid.height,
+      bbox: {
+        minX: Math.min(...bxs),
+        minY: Math.min(...bys),
+        maxX: Math.max(...bxs),
+        maxY: Math.max(...bys),
+      },
+      metersPerPixel: mpp,
+    });
+    if (ground != null) {
+      const rec = recoverAttachedRoofs({
+        mask: layers.mask,
+        componentMask: traced.componentMask,
+        dsm: layers.dsm,
+        dsmNoData: layers.dsmNoData,
+        rgb: layers.rgb,
+        width: layers.grid.width,
+        height: layers.grid.height,
+        metersPerPixel: mpp,
+        groundHeightM: ground,
+      });
+      if (rec.addedAreasM2.length > 0) {
+        workMask = rec.mask;
+        expectedAreaPx = traced.areaPx + rec.addedPx;
+        porchNote = `Recovered ${rec.addedAreasM2.length} attached roof${
+          rec.addedAreasM2.length === 1 ? "" : "s"
+        } the building mask missed (porch/carport/covered entry): ${rec.addedAreasM2.join(" + ")} m² — verify the new outline covers real roof`;
+      }
+    }
+  }
+
+  // Close sub-meter wall notches AND weld recovered porch roofs onto the
+  // main mass (they sit within ~0.7 m of it). Guard: if the closed
+  // component's area jumps past the expected main+porch total, the close
+  // bridged a NEIGHBOR (shed, fence-line garage) — fall back.
   {
     const CLOSE_RADIUS_M = 0.9;
     const closed = closeMask(
-      layers.mask,
+      workMask,
       layers.grid.width,
       layers.grid.height,
       CLOSE_RADIUS_M / mpp,
@@ -177,16 +232,22 @@ export async function runSolarFirstEstimate(args: {
       layers.grid.width,
       layers.grid.height,
     );
-    if (closedTrace && closedTrace.areaPx <= traced.areaPx * 1.12) {
-      if (closedTrace.areaPx > traced.areaPx * 1.005) {
+    if (closedTrace && closedTrace.areaPx <= expectedAreaPx * 1.12) {
+      if (porchNote && closedTrace.areaPx > traced.areaPx * 1.02) {
+        notes.push(porchNote);
+        porchApplied = true;
+      } else if (closedTrace.areaPx > traced.areaPx * 1.005) {
         notes.push(
           `Bridged sub-meter wall notches (roofs merge above them): footprint ${traced.areaPx} → ${closedTrace.areaPx} px²`,
         );
       }
       traced = closedTrace;
+      workMask = closed;
     } else if (closedTrace) {
       notes.push(
-        "Notch-bridging skipped — it would have merged a neighboring structure",
+        porchNote
+          ? "Attached-roof recovery skipped — welding it in would have merged a neighboring structure"
+          : "Notch-bridging skipped — it would have merged a neighboring structure",
       );
     }
   }
@@ -215,23 +276,54 @@ export async function runSolarFirstEstimate(args: {
   const xs = ringFull.map((p) => p.x);
   const ys = ringFull.map((p) => p.y);
   const marginPx = Math.round(6 / mpp);
-  const win = cropWindowAround(
-    {
-      minX: Math.min(...xs),
-      minY: Math.min(...ys),
-      maxX: Math.max(...xs),
-      maxY: Math.max(...ys),
-    },
-    marginPx,
+  // Expand the crop to the canvas aspect (900:580): the client COVER-fits
+  // this image into its viewBox, so a matching aspect means contain ≡
+  // cover — no traced geometry can land outside the canvas (which
+  // clipped the proposal diagram) and the photo fills the frame edge to
+  // edge instead of floating between letterbox bands.
+  const win = expandWindowToAspect(
+    cropWindowAround(
+      {
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys),
+      },
+      marginPx,
+      layers.grid.width,
+      layers.grid.height,
+    ),
+    CANVAS_W / CANVAS_H,
     layers.grid.width,
     layers.grid.height,
   );
-  const ring: Pt[] = ringFull.map((p) => ({ x: p.x - win.x, y: p.y - win.y }));
-  const rgb = cropUint8(layers.rgb, layers.grid.width, win, 3);
-  const dsm = cropFloat32(layers.dsm, layers.grid.width, win);
-  const maskCrop = cropUint8(layers.mask, layers.grid.width, win, 1);
-  const W = win.width;
-  const H = win.height;
+  // The WORKING mask (porches recovered + notches welded) — interior
+  // DSM samples and ground sampling must see the same footprint the
+  // trace came from. If the raster couldn't cover the full canvas
+  // aspect (building near the window edge), pad with inert data so the
+  // cover-fit invariant still holds.
+  const padded = padToAspect({
+    rgb: cropUint8(layers.rgb, layers.grid.width, win, 3),
+    dsm: cropFloat32(layers.dsm, layers.grid.width, win),
+    mask: cropUint8(workMask, layers.grid.width, win, 1),
+    width: win.width,
+    height: win.height,
+    aspect: CANVAS_W / CANVAS_H,
+    dsmNoData: layers.dsmNoData,
+  });
+  // Clamp to the padded raster: when the building touches the data-window
+  // edge, the overhang offset can push the ring past where imagery exists
+  // (negative coords → clipped in every client view). The trace there is
+  // approximate anyway and the edge-touch flag already demotes trust.
+  const ring: Pt[] = ringFull.map((p) => ({
+    x: Math.max(0, Math.min(padded.width, p.x - win.x + padded.offX)),
+    y: Math.max(0, Math.min(padded.height, p.y - win.y + padded.offY)),
+  }));
+  const rgb = padded.rgb;
+  const dsm = padded.dsm;
+  const maskCrop = padded.mask;
+  const W = padded.width;
+  const H = padded.height;
 
   const noData = layers.dsmNoData;
   const sample: DsmSampler = (x, y) => {
@@ -245,11 +337,15 @@ export async function runSolarFirstEstimate(args: {
     return v;
   };
 
-  // Full-grid px → lat/lng and back, adjusted for the crop.
-  const toLatLng = (p: Pt) => layers.grid.toLatLng(p.x + win.x, p.y + win.y);
+  // Full-grid px → lat/lng and back, adjusted for the crop + pad.
+  const toLatLng = (p: Pt) =>
+    layers.grid.toLatLng(
+      p.x - padded.offX + win.x,
+      p.y - padded.offY + win.y,
+    );
   const fromLatLng = (lat: number, lng: number): Pt => {
     const g = layers.grid.fromLatLng(lat, lng);
-    return { x: g.x - win.x, y: g.y - win.y };
+    return { x: g.x - win.x + padded.offX, y: g.y - win.y + padded.offY };
   };
 
   // ---- Edge classification (DSM primary, azimuth tie-break) --------
@@ -422,8 +518,10 @@ export async function runSolarFirstEstimate(args: {
       const mid = { x: (r.a.x + r.b.x) / 2, y: (r.a.y + r.b.y) / 2 };
       return pointInPolygon(mid, ring);
     })
-    .map((r) => ({
-      id: r.id,
+    .map((r) => clipSegmentToRect(r.a, r.b, W, H))
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .map((r, i) => ({
+      id: `solar-ridge-${i}`,
       kind: "ridge" as const,
       points: transformToCanvas([r.a, r.b], W, H),
       label: "RIDGE",
@@ -478,15 +576,21 @@ export async function runSolarFirstEstimate(args: {
     }));
     const { candidates } = detectTierBreakEaves(segments, perimeterEavesLatLng);
     interiorTiersDetected = candidates.length;
-    suggestedEaves = candidates.map((c, i) => {
-      const a = fromLatLng(c.edge.a.lat, c.edge.a.lng);
-      const b = fromLatLng(c.edge.b.lat, c.edge.b.lng);
-      return {
+    suggestedEaves = candidates
+      .map((c) =>
+        clipSegmentToRect(
+          fromLatLng(c.edge.a.lat, c.edge.a.lng),
+          fromLatLng(c.edge.b.lat, c.edge.b.lng),
+          W,
+          H,
+        ),
+      )
+      .filter((s): s is NonNullable<typeof s> => s !== null)
+      .map((s, i) => ({
         id: `suggested-tier-${i}`,
         kind: "eave" as const,
-        points: transformToCanvas([a, b], W, H),
-      };
-    });
+        points: transformToCanvas([s.a, s.b], W, H),
+      }));
     if (candidates.length > 0) {
       const meanStepFt =
         (candidates.reduce((s, c) => s + c.stepMeters, 0) / candidates.length) /
@@ -546,6 +650,18 @@ export async function runSolarFirstEstimate(args: {
       confidence: Math.min(traceQuality.confidence, 0.7),
       reasons: [
         "The building reaches the edge of the imagery window — verify no wing was cut off.",
+      ],
+    };
+  }
+  // Recovered porch/carport roof is the least-certain part of the trace
+  // (inferred from heights + photo, not Google's mask) — never let a run
+  // that used it read as fully trusted.
+  if (porchApplied && traceQuality.status === "ok") {
+    traceQuality = {
+      status: "low",
+      confidence: Math.min(traceQuality.confidence, 0.75),
+      reasons: [
+        "A porch/carport roof missing from the building data was added from height analysis — verify that part of the outline before pricing.",
       ],
     };
   }

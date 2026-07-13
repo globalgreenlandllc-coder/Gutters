@@ -102,16 +102,73 @@ export function GutterDiagram({
   onAcceptSuggested?: (line: EditableLine) => void;
   className?: string;
 }) {
-  const scale = Number.isFinite(pxPerFt) && (pxPerFt ?? 0) > 0 ? pxPerFt! : PX_PER_FT;
+  const rawScale = Number.isFinite(pxPerFt) && (pxPerFt ?? 0) > 0 ? pxPerFt! : PX_PER_FT;
 
-  const perimeter = roofStructure?.perimeter ?? [];
+  const rawPerimeter = roofStructure?.perimeter ?? [];
+
+  // CONTAIN-FIT the content onto the sheet when it overflows. Geometry
+  // arrives in the 900×580 canvas space, but a COVER-fit source image
+  // whose aspect isn't 900:580 (tight solar crops, older saved
+  // proposals) legally places points outside the viewBox — without this
+  // the roof clips at the sheet edge. Identity when everything already
+  // fits, so plan-mode diagrams render exactly as before. pxPerFt is
+  // scaled by the same factor, so every LF label and the scale bar stay
+  // true.
+  const fit = useMemo(() => {
+    const pts: Pt[] = [
+      ...rawPerimeter,
+      ...eaves.flatMap((e) => e.points),
+      ...rakes.flatMap((e) => e.points),
+      ...suggestedEaves.flatMap((e) => e.points),
+      ...downspouts.map((d) => ({ x: d.x, y: d.y })),
+    ].filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const bb = bboxOfPoints(pts);
+    if (!bb) return { s: 1, tx: 0, ty: 0 };
+    const inside =
+      bb.minX >= 0 &&
+      bb.minY >= 0 &&
+      bb.maxX <= VIEWBOX_W &&
+      bb.maxY <= VIEWBOX_H;
+    if (inside) return { s: 1, tx: 0, ty: 0 };
+    const M = 56; // clear the sheet frame + HTML overlay chips
+    const w = Math.max(1, bb.maxX - bb.minX);
+    const h = Math.max(1, bb.maxY - bb.minY);
+    const s = Math.min((VIEWBOX_W - 2 * M) / w, (VIEWBOX_H - 2 * M) / h, 1);
+    const cx = (bb.minX + bb.maxX) / 2;
+    const cy = (bb.minY + bb.maxY) / 2;
+    return { s, tx: VIEWBOX_W / 2 - cx * s, ty: VIEWBOX_H / 2 - cy * s };
+  }, [rawPerimeter, eaves, rakes, suggestedEaves, downspouts]);
+
+  const tp = useMemo(() => {
+    const { s, tx, ty } = fit;
+    return (p: Pt): Pt => ({ x: p.x * s + tx, y: p.y * s + ty });
+  }, [fit]);
+  const scale = rawScale * fit.s;
+
+  const nEaves = useMemo(
+    () => eaves.map((e) => ({ ...e, points: e.points.map(tp) })),
+    [eaves, tp],
+  );
+  const nRakes = useMemo(
+    () => rakes.map((e) => ({ ...e, points: e.points.map(tp) })),
+    [rakes, tp],
+  );
+  const nSuggested = useMemo(
+    () => suggestedEaves.map((e) => ({ ...e, points: e.points.map(tp) })),
+    [suggestedEaves, tp],
+  );
+  const nDownspouts = useMemo(
+    () => downspouts.map((d) => ({ ...d, ...tp({ x: d.x, y: d.y }) })),
+    [downspouts, tp],
+  );
+  const perimeter = useMemo(() => rawPerimeter.map(tp), [rawPerimeter, tp]);
   const hasPerimeter = perimeter.length >= 3;
 
   const bbox: DBBox | null = useMemo(() => {
     if (hasPerimeter) return bboxOfPoints(perimeter);
-    const pts = eaves.flatMap((e) => e.points);
+    const pts = nEaves.flatMap((e) => e.points);
     return bboxOfPoints(pts);
-  }, [hasPerimeter, perimeter, eaves]);
+  }, [hasPerimeter, perimeter, nEaves]);
 
   const centroid: Pt = useMemo(() => {
     if (bbox) return { x: (bbox.minX + bbox.maxX) / 2, y: (bbox.minY + bbox.maxY) / 2 };
@@ -124,16 +181,16 @@ export function GutterDiagram({
   );
 
   const totalEaveLF = useMemo(
-    () => Math.round(eaves.reduce((s, e) => s + polylineLengthFt(e.points, scale), 0)),
-    [eaves, scale],
+    () => Math.round(nEaves.reduce((s, e) => s + polylineLengthFt(e.points, scale), 0)),
+    [nEaves, scale],
   );
 
   const suggestedLF = useMemo(
     () =>
       Math.round(
-        suggestedEaves.reduce((s, e) => s + polylineLengthFt(e.points, scale), 0),
+        nSuggested.reduce((s, e) => s + polylineLengthFt(e.points, scale), 0),
       ),
-    [suggestedEaves, scale],
+    [nSuggested, scale],
   );
 
   // Scale bar: a 10 ft segment at the trace's px/ft (clamped so it never
@@ -142,8 +199,8 @@ export function GutterDiagram({
 
   // Real detected roof seams (decorative, faint). Satellite has no hips.
   const skeleton: { pts: Pt[]; dash: boolean }[] = [
-    ...(roofStructure?.ridges ?? []).map((l) => ({ pts: l.points, dash: false })),
-    ...(roofStructure?.valleys ?? []).map((l) => ({ pts: l.points, dash: true })),
+    ...(roofStructure?.ridges ?? []).map((l) => ({ pts: l.points.map(tp), dash: false })),
+    ...(roofStructure?.valleys ?? []).map((l) => ({ pts: l.points.map(tp), dash: true })),
   ].filter((l) => l.pts.length >= 2);
 
   const orientationChips: { label: string; at: Pt }[] = bbox
@@ -202,7 +259,7 @@ export function GutterDiagram({
         ))}
 
         {/* Rakes — de-emphasized dashed "no gutter" gable edges */}
-        {rakes.map((line) => (
+        {nRakes.map((line) => (
           <path
             key={line.id}
             d={pathD(line.points)}
@@ -216,10 +273,13 @@ export function GutterDiagram({
         ))}
 
         {/* Suggested interior gutters — un-priced amber dashed hints */}
-        {suggestedEaves.map((line) => {
+        {nSuggested.map((line, si) => {
           if (line.points.length < 2) return null;
           const m = midpointOf(line.points);
           const clickable = !!onAcceptSuggested;
+          // Promote the ORIGINAL canvas-space line — the editor stores
+          // accepted eaves in raw canvas coords, not sheet-fitted ones.
+          const original = suggestedEaves[si] ?? line;
           return (
             <g key={line.id}>
               <path
@@ -232,7 +292,7 @@ export function GutterDiagram({
               />
               {/* Tap-to-add affordance */}
               <g
-                onClick={clickable ? () => onAcceptSuggested!(line) : undefined}
+                onClick={clickable ? () => onAcceptSuggested!(original) : undefined}
                 style={{ cursor: clickable ? "pointer" : "default" }}
               >
                 <circle cx={m.x} cy={m.y} r={9} fill={C.suggestBg} stroke={C.suggest} strokeWidth={1.2} />
@@ -248,7 +308,7 @@ export function GutterDiagram({
         })}
 
         {/* Eaves — the hero. Bold water-blue with LF labels. */}
-        {eaves.map((line) => (
+        {nEaves.map((line) => (
           <path
             key={line.id}
             d={pathD(line.points)}
@@ -259,7 +319,7 @@ export function GutterDiagram({
             strokeLinejoin="round"
           />
         ))}
-        {eaves.map((line) => (
+        {nEaves.map((line) => (
           <EaveLabel key={`lbl-${line.id}`} line={line} pxPerFt={scale} centroid={centroid} />
         ))}
 
@@ -278,7 +338,7 @@ export function GutterDiagram({
         ))}
 
         {/* Downspouts — numbered coral drops */}
-        {downspouts.map((d, i) => (
+        {nDownspouts.map((d, i) => (
           <g key={d.id}>
             <circle cx={d.x} cy={d.y} r={8} fill={C.drop} stroke="#fff" strokeWidth={1.8} />
             <text
