@@ -7,6 +7,7 @@ import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import { engineDrawEnabled, engineTakeoffEnabled, perimeterOnlyEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
+import { rectifyPlanFootprint } from "@/lib/ai/rectify-plan-takeoff";
 import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
@@ -730,6 +731,67 @@ export async function runEstimateFromPlan(
     vecTrace.push(`vector swap threw: ${e instanceof Error ? e.message : String(e)}`);
     // keep the AI geometry on any failure
   }
+
+  // SQUARE UP the raw-vision footprint. On a scanned/flattened PDF none of the
+  // vector swaps above can fire, so the footprint is a pure VISION trace — which
+  // comes back nearly rectilinear but with a wall or two a few degrees off,
+  // rendering as a "totally wrong" diagonal eave (and the runs + downspouts,
+  // traced in the same space, inherit the skew). This squares the outline onto
+  // true H/V walls and carries the gutter runs, excluded edges and downspouts
+  // onto the cleaned perimeter. It only ever CLEANS (hard-gated: bails on a
+  // genuinely diagonal roof or any real area/corner drift) and it does NOT
+  // touch length_ft — the priced eave LF is unchanged, only the geometry is
+  // straightened. STRICTLY the AI-trace fallback: a vector-derived outline is
+  // already clean and must not be re-squared.
+  if (
+    footprintSource === "AI trace (best-of read)" &&
+    Array.isArray(analysis.building_footprint) &&
+    analysis.building_footprint.length >= 4
+  ) {
+    try {
+      const runs = analysis.gutter_runs ?? [];
+      const exEdges = analysis.excluded_edges ?? [];
+      const dss = analysis.downspouts ?? [];
+      // Flatten every point traced in the footprint's space, in a fixed order.
+      const followers: { x: number; y: number }[] = [];
+      for (const r of runs) followers.push(r.start, r.end);
+      for (const e of exEdges) followers.push(e.start, e.end);
+      for (const d of dss) followers.push(d.at);
+      const sq = rectifyPlanFootprint(analysis.building_footprint, followers);
+      if (sq.applied) {
+        analysis.building_footprint = sq.footprint;
+        let k = 0;
+        analysis.gutter_runs = runs.map((r) => {
+          const start = sq.followers[k++];
+          const end = sq.followers[k++];
+          // Recompute the PIXEL length to match the moved endpoints; leave
+          // length_ft (the priced value) exactly as the AI read it.
+          return {
+            ...r,
+            start,
+            end,
+            length_px: Math.hypot(end.x - start.x, end.y - start.y),
+          };
+        });
+        analysis.excluded_edges = exEdges.map((e) => {
+          const start = sq.followers[k++];
+          const end = sq.followers[k++];
+          return { ...e, start, end };
+        });
+        analysis.downspouts = dss.map((d) => ({ ...d, at: sq.followers[k++] }));
+        analysis.notes = [
+          ...(analysis.notes ?? []),
+          `📐 Squared the vision footprint onto true horizontal/vertical walls and snapped the gutter runs + downspouts onto the cleaned perimeter (a diagonal eave / a floating downspout on a scanned plan is a trace artifact, not a real roofline). Priced LF unchanged.`,
+        ];
+        vecTrace.push(`✓ squared vision footprint (${analysis.building_footprint.length} corners, ${sq.angleDeg.toFixed(1)}° off-axis)`);
+      } else {
+        vecTrace.push(`vision footprint not squared: ${sq.reason}`);
+      }
+    } catch (e) {
+      vecTrace.push(`square threw: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   // Surface the whole decision: console for logs + a note so the takeoff panel
   // shows which footprint won and, when it's the AI trace, exactly why the
   // vector outline didn't. This is what turns a silent no-op into a diagnosis.
