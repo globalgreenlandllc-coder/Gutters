@@ -124,11 +124,6 @@ export function AerialCanvas({
   // reads cleanly under the takeoff. Critical when squinting at a
   // pixelated roof edge to decide where the gutter actually sits.
   const [lowGlow, setLowGlow] = useState(false);
-  // First-time coach mark — fades in after the trace lands so the
-  // contractor knows the AI handed off to them and how to fix it.
-  // Once dismissed, stays dismissed for this canvas mount; can be
-  // re-shown on a fresh estimate run if needed.
-  const [coachOpen, setCoachOpen] = useState(true);
   // Pan + zoom on the satellite image. `view` is the visible viewBox
   // window over the full VIEWBOX_W × VIEWBOX_H content space. Wheel
   // scales (toward cursor), space+drag or right-click+drag pans.
@@ -843,72 +838,6 @@ export function AerialCanvas({
           <Maximize2 className="h-3.5 w-3.5" />
         </button>
       </div>
-
-      {coachOpen && (
-        <motion.div
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6, duration: 0.4 }}
-          className={cn(
-            "absolute left-1/2 top-3 z-10 -translate-x-1/2 max-w-[92%]",
-          )}
-        >
-          <div
-            className={cn(
-              "flex items-start gap-2.5 rounded-xl border px-3 py-2 shadow-elevated backdrop-blur",
-              theme === "tactical"
-                ? "border-cyan-400/40 bg-slate-950/85 text-cyan-50"
-                : "border-zinc-200 bg-white/95 text-zinc-800",
-            )}
-          >
-            <span
-              className={cn(
-                "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                theme === "tactical"
-                  ? "bg-cyan-400/20 text-cyan-200 ring-1 ring-inset ring-cyan-300/40"
-                  : "bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200",
-              )}
-            >
-              AI
-            </span>
-            <div className="text-[12px] leading-snug">
-              <div className="font-semibold">
-                AI traced your gutters — finish in the drawing tools.
-              </div>
-              <div
-                className={cn(
-                  "mt-0.5 text-[11px]",
-                  theme === "tactical"
-                    ? "text-cyan-200/85"
-                    : "text-zinc-500",
-                )}
-              >
-                <strong>Select a line</strong>, drag the body to slide it
-                or grab a corner to extend. <strong>Double-click</strong> a
-                line to split it. Selected an eave that&apos;s really a gable
-                end? Hit <strong>No gutter (gable)</strong> — its LF drops and
-                that side redraws as a gable. <strong>Add eave</strong>: click
-                once to start, click again to finish. <strong>Scroll</strong>{" "}
-                to zoom, <strong>drag empty space</strong> to pan,{" "}
-                <strong>Delete</strong> removes the selected line. Totals
-                re-price as you edit.
-              </div>
-            </div>
-            <button
-              onClick={() => setCoachOpen(false)}
-              className={cn(
-                "ml-1 mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition",
-                theme === "tactical"
-                  ? "text-cyan-200/70 hover:bg-cyan-400/15 hover:text-cyan-100"
-                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700",
-              )}
-              aria-label="Dismiss coach mark"
-            >
-              ×
-            </button>
-          </div>
-        </motion.div>
-      )}
 
       <svg
         ref={svgRef}

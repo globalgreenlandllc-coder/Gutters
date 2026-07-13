@@ -16,6 +16,7 @@ import {
   cropWindowAround,
   eaveHeightAboveGroundM,
   estimateGroundHeightM,
+  estimateRenderShift,
   expandWindowToAspect,
   interiorNormal,
   median,
@@ -337,6 +338,30 @@ export async function runSolarFirstEstimate(args: {
     return v;
   };
 
+  // PHOTO-LEAN REGISTRATION. The mask/DSM are true-position; the RGB
+  // orthophoto renders roofs displaced by height × off-nadir (~1 m).
+  // Estimate that shift from the photo's edges and apply it to every
+  // DRAWN point — the contractor sees the outline ON the roof — while
+  // all measurement math stays at true position (lengths are shift-
+  // invariant anyway).
+  const renderShift = estimateRenderShift({
+    rgb,
+    width: W,
+    height: H,
+    ring,
+    metersPerPixel: mpp,
+  });
+  const S = (p: Pt): Pt => ({
+    x: Math.max(0, Math.min(W, p.x + renderShift.dx)),
+    y: Math.max(0, Math.min(H, p.y + renderShift.dy)),
+  });
+  if (renderShift.dx !== 0 || renderShift.dy !== 0) {
+    const shiftM = Math.hypot(renderShift.dx, renderShift.dy) * mpp;
+    notes.push(
+      `Aligned the outline to the photo: roofs lean ~${shiftM.toFixed(1)} m in this orthophoto (true-position data vs ground-rectified image) — drawn geometry shifted to match, measurements unchanged`,
+    );
+  }
+
   // Full-grid px → lat/lng and back, adjusted for the crop + pad.
   const toLatLng = (p: Pt) =>
     layers.grid.toLatLng(
@@ -465,12 +490,12 @@ export async function runSolarFirstEstimate(args: {
   let eaves: EditableLine[] = eaveEdges.map((e, i) => ({
     id: `solar-eave-${i}`,
     kind: "eave" as const,
-    points: transformToCanvas([e.a, e.b], W, H),
+    points: transformToCanvas([S(e.a), S(e.b)], W, H),
   }));
   const rakes: EditableLine[] = rakeEdges.map((e, i) => ({
     id: `solar-rake-${i}`,
     kind: "rake" as const,
-    points: transformToCanvas([e.a, e.b], W, H),
+    points: transformToCanvas([S(e.a), S(e.b)], W, H),
   }));
 
   const beforeMerge = eaves.length;
@@ -528,7 +553,7 @@ export async function runSolarFirstEstimate(args: {
       const mid = { x: (r.a.x + r.b.x) / 2, y: (r.a.y + r.b.y) / 2 };
       return pointInPolygon(mid, ring);
     })
-    .map((r) => clipSegmentToRect(r.a, r.b, W, H))
+    .map((r) => clipSegmentToRect(S(r.a), S(r.b), W, H))
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .map((r, i) => ({
       id: `solar-ridge-${i}`,
@@ -536,7 +561,7 @@ export async function runSolarFirstEstimate(args: {
       points: transformToCanvas([r.a, r.b], W, H),
       label: "RIDGE",
     }));
-  const canvasRing = transformToCanvas(ring, W, H);
+  const canvasRing = transformToCanvas(ring.map(S), W, H);
   const roofStructure: RoofStructure = {
     perimeter: canvasRing,
     ridges: ridgeLines,
@@ -550,11 +575,12 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Downspouts ----------------------------------------------------
+  const ringRender = ring.map(S);
   const roofPolygon = {
-    points: ring,
+    points: ringRender,
     bbox: (() => {
-      const bxs = ring.map((p) => p.x);
-      const bys = ring.map((p) => p.y);
+      const bxs = ringRender.map((p) => p.x);
+      const bys = ringRender.map((p) => p.y);
       const minX = Math.min(...bxs);
       const minY = Math.min(...bys);
       return {
@@ -564,7 +590,7 @@ export async function runSolarFirstEstimate(args: {
         height: Math.round(Math.max(...bys) - minY),
       };
     })(),
-    areaFraction: polygonArea(ring) / (W * H),
+    areaFraction: polygonArea(ringRender) / (W * H),
   };
   const downspouts = placeDownspoutsOnPolygon(
     roofPolygon,
@@ -589,8 +615,8 @@ export async function runSolarFirstEstimate(args: {
     suggestedEaves = candidates
       .map((c) =>
         clipSegmentToRect(
-          fromLatLng(c.edge.a.lat, c.edge.a.lng),
-          fromLatLng(c.edge.b.lat, c.edge.b.lng),
+          S(fromLatLng(c.edge.a.lat, c.edge.a.lng)),
+          S(fromLatLng(c.edge.b.lat, c.edge.b.lng)),
           W,
           H,
         ),

@@ -9,6 +9,7 @@ import {
   cropWindowAround,
   expandWindowToAspect,
   estimateGroundHeightM,
+  estimateRenderShift,
   recoverAttachedRoofs,
   eaveHeightAboveGroundM,
   interiorNormal,
@@ -483,6 +484,49 @@ test("recoverAttachedRoofs picks up a porch the mask missed, skips trees and det
   assert.equal(rec.mask[200 * W + 130], 1, "porch recovered");
   assert.equal(rec.mask[100 * W + 30], 0, "tree rejected");
   assert.equal(rec.mask[230 * W + 220], 0, "detached shed rejected");
+});
+
+/* ------------------------------------------------------------------ */
+/*  Photo-lean registration                                            */
+/* ------------------------------------------------------------------ */
+
+test("estimateRenderShift finds the photo's roof displaced from true position", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  // True-position ring (what the mask says).
+  const ring = [
+    { x: 80, y: 50 },
+    { x: 220, y: 50 },
+    { x: 220, y: 140 },
+    { x: 80, y: 140 },
+  ];
+  // Photo: the roof rectangle rendered LEANING +7 px east, +5 px south.
+  const rgb = new Uint8Array(W * H * 3).fill(60);
+  for (let y = 55; y <= 145; y++) {
+    for (let x = 87; x <= 227; x++) {
+      const i = (y * W + x) * 3;
+      rgb[i] = 170;
+      rgb[i + 1] = 165;
+      rgb[i + 2] = 160;
+    }
+  }
+  const s = estimateRenderShift({ rgb, width: W, height: H, ring, metersPerPixel: mpp });
+  assert.ok(Math.abs(s.dx - 7) <= 1 && Math.abs(s.dy - 5) <= 1, `got ${s.dx},${s.dy}`);
+});
+
+test("estimateRenderShift stays put on a featureless photo", () => {
+  const W = 200;
+  const H = 140;
+  const rgb = new Uint8Array(W * H * 3).fill(90);
+  const ring = [
+    { x: 50, y: 40 },
+    { x: 150, y: 40 },
+    { x: 150, y: 100 },
+    { x: 50, y: 100 },
+  ];
+  const s = estimateRenderShift({ rgb, width: W, height: H, ring, metersPerPixel: 0.1 });
+  assert.deepEqual(s, { dx: 0, dy: 0 });
 });
 
 /* ------------------------------------------------------------------ */

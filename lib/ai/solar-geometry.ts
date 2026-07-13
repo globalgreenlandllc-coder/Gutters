@@ -405,6 +405,99 @@ export function recoverAttachedRoofs(args: {
   return { mask: out, addedAreasM2, addedPx: addedTotalPx };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Photo-lean registration                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Google's mask/DSM are TRUE-POSITION (orthorectified to the ground),
+ * but the RGB orthophoto is rectified with a ground-level terrain model
+ * — so a 4–6 m-tall ROOF renders displaced from its true position by
+ * height × tan(off-nadir), commonly ~1 m. A geometrically-correct trace
+ * therefore floats just off the photo's roof, which reads as "wrong" to
+ * a contractor even though the lengths are right.
+ *
+ * Estimate that apparent shift by sliding the footprint ring over the
+ * photo's edge-energy map (|∇luminance|) and keeping the offset that
+ * maximizes edge agreement. Small-shift prior + a do-nothing floor keep
+ * it from chasing noise. The caller applies the shift to DRAWN geometry
+ * only — measurement math stays in true meters.
+ */
+export function estimateRenderShift(args: {
+  rgb: Uint8Array;
+  width: number;
+  height: number;
+  ring: Pt[];
+  metersPerPixel: number;
+  maxShiftM?: number;
+}): { dx: number; dy: number } {
+  const { rgb, width, height, ring, metersPerPixel } = args;
+  if (ring.length < 3) return { dx: 0, dy: 0 };
+  const S = Math.max(2, Math.round((args.maxShiftM ?? 2) / metersPerPixel));
+
+  // Edge-energy map: |∇| of luminance, central differences.
+  const lum = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    lum[i] = (rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 3;
+  }
+  const grad = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      grad[i] =
+        Math.abs(lum[i + 1] - lum[i - 1]) +
+        Math.abs(lum[i + width] - lum[i - width]);
+    }
+  }
+
+  // Densify the ring into sample stations (~ every 3 px).
+  const samples: Pt[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.floor(len / 3));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  if (samples.length < 24) return { dx: 0, dy: 0 };
+
+  const scoreAt = (dx: number, dy: number): number => {
+    let s = 0;
+    for (const p of samples) {
+      const x = Math.round(p.x + dx);
+      const y = Math.round(p.y + dy);
+      if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
+      s += grad[y * width + x];
+    }
+    // Small-shift prior: prefer staying near true position when edge
+    // evidence is comparable.
+    return s / (1 + 0.02 * Math.hypot(dx, dy));
+  };
+
+  const zero = scoreAt(0, 0);
+  let bestDx = 0;
+  let bestDy = 0;
+  let best = zero;
+  for (let dy = -S; dy <= S; dy++) {
+    for (let dx = -S; dx <= S; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const s = scoreAt(dx, dy);
+      if (s > best) {
+        best = s;
+        bestDx = dx;
+        bestDy = dy;
+      }
+    }
+  }
+  // Do-nothing floor: only move when the aligned position is clearly
+  // better than true position.
+  if (best < zero * 1.08) return { dx: 0, dy: 0 };
+  return { dx: bestDx, dy: bestDy };
+}
+
 /**
  * Liang-Barsky segment clip to the rect [0,W]×[0,H]. Solar-segment
  * derived decorations (tier-break suggestions, ridges) come from plane
