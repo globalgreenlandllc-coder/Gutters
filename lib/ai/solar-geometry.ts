@@ -429,11 +429,15 @@ export function estimateRenderShift(args: {
   height: number;
   ring: Pt[];
   metersPerPixel: number;
+  /** True-position building mask (same crop) — anchors the roof's
+   *  appearance so the search can't lock onto a sidewalk/driveway edge
+   *  (bright pavement borders out-gradient real rooflines). */
+  mask?: Uint8Array;
   maxShiftM?: number;
 }): { dx: number; dy: number } {
-  const { rgb, width, height, ring, metersPerPixel } = args;
+  const { rgb, width, height, ring, metersPerPixel, mask } = args;
   if (ring.length < 3) return { dx: 0, dy: 0 };
-  const S = Math.max(2, Math.round((args.maxShiftM ?? 2) / metersPerPixel));
+  const S = Math.max(2, Math.round((args.maxShiftM ?? 1.5) / metersPerPixel));
 
   // Edge-energy map: |∇| of luminance, central differences.
   const lum = new Float32Array(width * height);
@@ -450,27 +454,72 @@ export function estimateRenderShift(args: {
     }
   }
 
-  // Densify the ring into sample stations (~ every 3 px).
-  const samples: Pt[] = [];
+  // What does THIS roof look like? Median luminance over the mask
+  // interior (2-neighborhood erosion so boundary mixels don't dilute).
+  let roofLum: number | null = null;
+  if (mask) {
+    const vals: number[] = [];
+    const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 4000)));
+    const e = Math.max(2, Math.round(0.5 / metersPerPixel));
+    for (let y = e; y < height - e; y += step) {
+      for (let x = e; x < width - e; x += step) {
+        const i = y * width + x;
+        if (
+          mask[i] > 0 &&
+          mask[i - e] > 0 &&
+          mask[i + e] > 0 &&
+          mask[i - e * width] > 0 &&
+          mask[i + e * width] > 0
+        ) {
+          vals.push(lum[i]);
+        }
+      }
+    }
+    if (vals.length >= 40) roofLum = median(vals);
+  }
+
+  // Densify the ring into sample stations (~ every 3 px), each carrying
+  // its inward normal so we can ask "is there ROOF just inside here?".
+  const centroid = polygonCentroid(ring);
+  const samples: { x: number; y: number; nx: number; ny: number }[] = [];
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
     const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const nrm = interiorNormal(a, b, centroid);
     const n = Math.max(1, Math.floor(len / 3));
     for (let k = 0; k < n; k++) {
       const t = k / n;
-      samples.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      samples.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        nx: nrm.nx,
+        ny: nrm.ny,
+      });
     }
   }
   if (samples.length < 24) return { dx: 0, dy: 0 };
 
+  const insidePx = 0.7 / metersPerPixel;
   const scoreAt = (dx: number, dy: number): number => {
     let s = 0;
     for (const p of samples) {
       const x = Math.round(p.x + dx);
       const y = Math.round(p.y + dy);
       if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
-      s += grad[y * width + x];
+      let g = grad[y * width + x];
+      if (roofLum != null && g > 0) {
+        // Down-weight stations whose INSIDE pixel doesn't look like this
+        // roof — a sidewalk border has a strong edge but pavement, not
+        // shingle, inside it.
+        const ix = Math.round(p.x + dx + p.nx * insidePx);
+        const iy = Math.round(p.y + dy + p.ny * insidePx);
+        if (ix >= 0 && iy >= 0 && ix < width && iy < height) {
+          const dLum = Math.abs(lum[iy * width + ix] - roofLum);
+          g *= dLum <= 34 ? 1 : 0.2;
+        }
+      }
+      s += g;
     }
     // Small-shift prior: prefer staying near true position when edge
     // evidence is comparable.
@@ -494,7 +543,7 @@ export function estimateRenderShift(args: {
   }
   // Do-nothing floor: only move when the aligned position is clearly
   // better than true position.
-  if (best < zero * 1.08) return { dx: 0, dy: 0 };
+  if (best < zero * 1.1) return { dx: 0, dy: 0 };
   return { dx: bestDx, dy: bestDy };
 }
 

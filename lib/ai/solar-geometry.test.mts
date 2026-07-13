@@ -568,17 +568,18 @@ test("porch recovery height band excludes ground-level decks", () => {
 /*  Photo-lean registration                                            */
 /* ------------------------------------------------------------------ */
 
-test("estimateRenderShift finds the photo's roof displaced from true position", () => {
+function leanFixture() {
   const W = 300;
   const H = 200;
   const mpp = 0.1;
-  // True-position ring (what the mask says).
+  // True-position ring + mask (what Google's data says).
   const ring = [
     { x: 80, y: 50 },
     { x: 220, y: 50 },
     { x: 220, y: 140 },
     { x: 80, y: 140 },
   ];
+  const mask = rectMask(W, H, [{ x: 80, y: 50, w: 140, h: 90 }]);
   // Photo: the roof rectangle rendered LEANING +7 px east, +5 px south.
   const rgb = new Uint8Array(W * H * 3).fill(60);
   for (let y = 55; y <= 145; y++) {
@@ -589,8 +590,32 @@ test("estimateRenderShift finds the photo's roof displaced from true position", 
       rgb[i + 2] = 160;
     }
   }
-  const s = estimateRenderShift({ rgb, width: W, height: H, ring, metersPerPixel: mpp });
+  return { W, H, mpp, ring, mask, rgb };
+}
+
+test("estimateRenderShift finds the photo's roof displaced from true position", () => {
+  const { W, H, mpp, ring, mask, rgb } = leanFixture();
+  const s = estimateRenderShift({ rgb, width: W, height: H, ring, mask, metersPerPixel: mpp });
   assert.ok(Math.abs(s.dx - 7) <= 1 && Math.abs(s.dy - 5) <= 1, `got ${s.dx},${s.dy}`);
+});
+
+test("estimateRenderShift ignores a bright sidewalk border stronger than the roofline", () => {
+  const { W, H, mpp, ring, mask, rgb } = leanFixture();
+  // Bright concrete walkway strip 1.2 m west of the true wall — a much
+  // stronger luminance edge than roof-vs-ground, but PAVEMENT inside.
+  for (let y = 40; y <= 150; y++) {
+    for (let x = 60; x <= 68; x++) {
+      const i = (y * W + x) * 3;
+      rgb[i] = 235;
+      rgb[i + 1] = 235;
+      rgb[i + 2] = 230;
+    }
+  }
+  const s = estimateRenderShift({ rgb, width: W, height: H, ring, mask, metersPerPixel: mpp });
+  // Must still lock onto the ROOF's lean (+7,+5), not slide west to the
+  // walkway edge (negative dx).
+  assert.ok(s.dx >= 0, `slid onto the sidewalk: dx=${s.dx}`);
+  assert.ok(Math.abs(s.dx - 7) <= 2 && Math.abs(s.dy - 5) <= 2, `got ${s.dx},${s.dy}`);
 });
 
 test("estimateRenderShift stays put on a featureless photo", () => {
@@ -603,7 +628,8 @@ test("estimateRenderShift stays put on a featureless photo", () => {
     { x: 150, y: 100 },
     { x: 50, y: 100 },
   ];
-  const s = estimateRenderShift({ rgb, width: W, height: H, ring, metersPerPixel: 0.1 });
+  const mask = rectMask(W, H, [{ x: 50, y: 40, w: 100, h: 60 }]);
+  const s = estimateRenderShift({ rgb, width: W, height: H, ring, mask, metersPerPixel: 0.1 });
   assert.deepEqual(s, { dx: 0, dy: 0 });
 });
 

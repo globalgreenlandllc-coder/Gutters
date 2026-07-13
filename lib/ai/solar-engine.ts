@@ -353,6 +353,10 @@ export async function runSolarFirstEstimate(args: {
     height: H,
     ring,
     metersPerPixel: mpp,
+    // Anchors the search to THIS roof's appearance — without it a bright
+    // sidewalk/driveway border out-gradients the real roofline and drags
+    // the outline onto pavement.
+    mask: maskCrop,
   });
   const S = (p: Pt): Pt => ({
     x: Math.max(0, Math.min(W, p.x + renderShift.dx)),
