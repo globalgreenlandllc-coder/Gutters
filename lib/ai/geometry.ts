@@ -1,9 +1,14 @@
-import "server-only";
+// NOTE: deliberately NOT "server-only". This module is pure coordinate
+// math (no keys, no fetch) — the node test suite and other pure modules
+// (solar-geometry.ts) import it directly. Nothing here is secret; the
+// server-only guard lives in the modules that hold keys and make calls.
 import type { SegmentedEavePolyline } from "./vision";
 import type { RoofPolygon } from "./sam";
 import { isArchitecturalCorner } from "./roof-geom";
-import { STORY_HEIGHT_FT } from "@/lib/types";
-import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
+// Relative (not "@/") so the node test runner resolves it without the
+// Next.js tsconfig path alias.
+import { STORY_HEIGHT_FT } from "../types";
+import type { EditableLine, Downspout, Measurements, Stories } from "../types";
 
 const METERS_PER_FOOT = 0.3048;
 

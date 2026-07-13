@@ -1,4 +1,6 @@
-import "server-only";
+// Pure math (no keys, no fetch) — importable from tests and other pure
+// modules. The Mercator-tile entry point below is one projector choice;
+// the solar-first engine injects a UTM-grid projector instead.
 import type { RoofSegment } from "./solar";
 import { latLngToImagePixel } from "./geometry";
 
@@ -37,6 +39,36 @@ export function buildSegmentRidges(
   imageHeight: number,
   options: { minPitchDeg?: number; minAreaM2?: number } = {},
 ): SegmentRidge[] {
+  return buildSegmentRidgesProjected(
+    segments,
+    (lat, lng) =>
+      latLngToImagePixel(
+        lat,
+        lng,
+        geocoded.lat,
+        geocoded.lng,
+        zoom,
+        imageWidth,
+        imageHeight,
+      ),
+    options,
+  );
+}
+
+/**
+ * Projector-agnostic core: the caller supplies lat/lng → pixel-space
+ * mapping. The Mercator-tile wrapper above uses latLngToImagePixel; the
+ * solar-first engine uses the dataLayers UTM grid (uniform meters/px),
+ * where the same ridge math is exact instead of approximate.
+ *
+ * NOTE the azimuth→direction conversion below assumes the pixel grid is
+ * north-up (x → east, y → south). Both current projectors satisfy that.
+ */
+export function buildSegmentRidgesProjected(
+  segments: RoofSegment[],
+  project: (lat: number, lng: number) => { x: number; y: number },
+  options: { minPitchDeg?: number; minAreaM2?: number } = {},
+): SegmentRidge[] {
   const minPitch = options.minPitchDeg ?? 8;
   const minArea = options.minAreaM2 ?? 6;
 
@@ -46,33 +78,9 @@ export function buildSegmentRidges(
     if (seg.areaMeters2 < minArea) return;
     if (!seg.center || !seg.boundingBoxNE || !seg.boundingBoxSW) return;
 
-    const center = latLngToImagePixel(
-      seg.center.lat,
-      seg.center.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
-    const ne = latLngToImagePixel(
-      seg.boundingBoxNE.lat,
-      seg.boundingBoxNE.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
-    const sw = latLngToImagePixel(
-      seg.boundingBoxSW.lat,
-      seg.boundingBoxSW.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
+    const center = project(seg.center.lat, seg.center.lng);
+    const ne = project(seg.boundingBoxNE.lat, seg.boundingBoxNE.lng);
+    const sw = project(seg.boundingBoxSW.lat, seg.boundingBoxSW.lng);
 
     // Bounding box width/height in IMAGE PIXELS. SW.y > NE.y in image
     // space because image-y grows downward but lat grows northward.

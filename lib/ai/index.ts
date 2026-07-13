@@ -4,8 +4,10 @@ import { fetchSatelliteImage, type SatImage } from "./static-map";
 import {
   estimateStoriesFromInsights,
   getBuildingInsights,
+  type BuildingInsights,
   type RoofSegment,
 } from "./solar";
+import { runSolarFirstEstimate } from "./solar-engine";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
@@ -291,7 +293,48 @@ export async function runAIEstimatePipeline(
       : `Geocoded via mock — ${geocoded.fallbackReason ?? "Google Maps unavailable"}`,
   );
 
-  // 2. Aerial imagery (only if we have a real geocode)
+  // 2. SOLAR-FIRST ENGINE. Google Solar dataLayers returns the building
+  // mask, the DSM, and the aerial ORTHOPHOTO co-registered on one UTM
+  // grid from one capture — a deterministic footprint + eave/rake read
+  // with the photo the contractor sees, aligned by construction. When it
+  // succeeds we're done; every path below is the legacy fallback for
+  // addresses without (usable) Solar coverage.
+  let insights: BuildingInsights | null = null;
+  if (geocoded.source === "google") {
+    insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
+    if (insights) {
+      notes.push(
+        `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
+          insights.totalRoofAreaMeters2,
+        )} m² total`,
+      );
+    } else {
+      notes.push("Solar API: no coverage / unavailable for this location");
+    }
+    try {
+      const solar = await runSolarFirstEstimate({
+        lat: geocoded.lat,
+        lng: geocoded.lng,
+        insights,
+        notes,
+      });
+      if (solar) {
+        return {
+          geocoded,
+          ...solar,
+          source: "ai",
+          durationMs: Date.now() - t0,
+          notes,
+        };
+      }
+    } catch (e) {
+      notes.push(
+        `Solar-first engine errored (${e instanceof Error ? e.message : String(e)}) — falling back to the legacy tile pipeline`,
+      );
+    }
+  }
+
+  // 2b. Aerial imagery (legacy path; only if we have a real geocode)
   let image: SatImage | null = null;
   if (geocoded.source === "google") {
     const imgOutcome = await fetchSatelliteImage(geocoded.lat, geocoded.lng, {
@@ -328,15 +371,11 @@ export async function runAIEstimatePipeline(
     | null = null;
   let solarRoofSegments: RoofSegment[] = [];
   if (image) {
-    const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
+    // Insights already fetched by the solar-first attempt above — reuse.
     if (insights) {
       solarRoofSegments = insights.roofSegments;
       estimatedStories = estimateStoriesFromInsights(insights);
-      notes.push(
-        `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
-          insights.totalRoofAreaMeters2,
-        )} m² total · est. ${estimatedStories}-story`,
-      );
+      notes.push(`Legacy tracer: est. ${estimatedStories}-story from Solar footprint heuristic`);
 
       // Project the building's lat/lng bbox onto image pixel space.
       const ne = latLngToImagePixel(
@@ -374,8 +413,6 @@ export async function runAIEstimatePipeline(
           `Building offset from geocode by ${offsetPx}px — pointing AI at actual house`,
         );
       }
-    } else {
-      notes.push("Solar API: no coverage / unavailable for this location");
     }
   }
 

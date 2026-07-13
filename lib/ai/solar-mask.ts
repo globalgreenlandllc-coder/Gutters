@@ -62,7 +62,9 @@ export async function getRoofMaskFromSolar(
     `&radiusMeters=${radiusMeters}` +
     `&view=FULL_LAYERS` +
     `&requiredQuality=LOW` +
-    `&pixelSizeMeters=0.5` +
+    // 0.25 (was 0.5): 4× the pixels per wall. The solar-first engine
+    // fetches at 0.1; this module only serves the legacy fallback now.
+    `&pixelSizeMeters=0.25` +
     `&key=${encodeURIComponent(key)}`;
 
   type DataLayersResponse = {

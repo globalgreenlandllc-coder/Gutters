@@ -47,6 +47,9 @@ export const AI_TIMEOUTS = {
   solar: 12_000,
   solarMask: 12_000,
   solarDsm: 12_000,
+  /** Per-GeoTIFF download in the solar-first engine (DSM is ~4 MB at
+   *  0.1 m/px over a 100 m window — bigger than the old 0.5 m mask). */
+  solarLayers: 20_000,
   sam: 35_000,
   vision: 45_000,
 } as const;
