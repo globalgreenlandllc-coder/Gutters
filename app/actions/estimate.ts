@@ -734,6 +734,27 @@ export async function runEstimateFromPlan(
   // shows which footprint won and, when it's the AI trace, exactly why the
   // vector outline didn't. This is what turns a silent no-op into a diagnosis.
   console.log(`[vector-swap] footprint = ${footprintSource} | ${vecTrace.join(" | ")}`);
+  // When NO sheet yielded vector linework and we fell to the AI vision trace,
+  // say so plainly at the TOP. A crisp-looking plan with zero vectors on every
+  // page is a scanned or flattened PDF (common on "FOR PRICING PURPOSES ONLY"
+  // sets) — the precise engine can't run, the footprint SHAPE is a vision
+  // estimate, and the fix is to verify/edit it on the canvas or supply the CAD
+  // (vector) PDF. Without this the takeoff just "looks wrong" with no reason.
+  const vgAny = (row.analysisJson as { _vectorGeometry?: { roof?: { segments?: unknown[] }; footprint?: { segments?: unknown[] } } } | null)?._vectorGeometry;
+  const roofSegN = Array.isArray(vgAny?.roof?.segments) ? vgAny!.roof!.segments!.length : 0;
+  const fpSegN = Array.isArray(vgAny?.footprint?.segments) ? vgAny!.footprint!.segments!.length : 0;
+  if (
+    !edgeApplied &&
+    !roofApplied &&
+    footprintSource === "AI trace (best-of read)" &&
+    roofSegN < 4 &&
+    fpSegN < 4
+  ) {
+    analysis.notes = [
+      "⚠ SCANNED / FLATTENED PDF — no sheet in this set has extractable vector linework (common on 'FOR PRICING PURPOSES ONLY' plans, which are exported as images). The precise vector engine can't run, so the footprint SHAPE below is a VISION estimate: the total LF is in range, but verify the outline against the roof plan and refine the jogs/wings on the canvas before quoting. For an exact trace, supply the CAD (vector) PDF.",
+      ...(analysis.notes ?? []),
+    ];
+  }
   analysis.notes = [
     ...(analysis.notes ?? []),
     `🧭 Footprint source: ${footprintSource}. Vector-outline trace: ${vecTrace.join(" → ")}.`,
