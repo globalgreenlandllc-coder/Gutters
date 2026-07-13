@@ -23,12 +23,20 @@ import type { Proposal } from "@/lib/proposal-mock";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TTS_MODEL = "gpt-4o-mini-tts";
 const TTS_VOICE = "nova";
 const TTS_INSTRUCTIONS =
   "Warm, friendly, and professional — a contractor's assistant reading a " +
   "written quote to a homeowner who is listening in the car. Easy pace, " +
   "speak the prices clearly.";
+
+// Best model first, but OpenAI project keys can restrict the model list
+// (ours 403s `model_not_found` on gpt-4o-mini-tts) — fall through to the
+// classic tts-1, which every project has. `instructions` is only
+// supported by the gpt-4o-* speech models, so it's per-candidate.
+const TTS_CANDIDATES: Array<{ model: string; instructions?: string }> = [
+  { model: "gpt-4o-mini-tts", instructions: TTS_INSTRUCTIONS },
+  { model: "tts-1" },
+];
 
 export async function GET(
   request: Request,
@@ -91,32 +99,43 @@ export async function GET(
     );
   }
 
-  const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: TTS_MODEL,
-      voice: TTS_VOICE,
-      input: script,
-      instructions: TTS_INSTRUCTIONS,
-      response_format: "mp3",
-    }),
-  });
-  if (!ttsRes.ok) {
+  let audio: Buffer | null = null;
+  for (const candidate of TTS_CANDIDATES) {
+    const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: candidate.model,
+        voice: TTS_VOICE,
+        input: script,
+        ...(candidate.instructions
+          ? { instructions: candidate.instructions }
+          : {}),
+        response_format: "mp3",
+      }),
+    });
+    if (ttsRes.ok) {
+      audio = Buffer.from(await ttsRes.arrayBuffer());
+      break;
+    }
     const detail = await ttsRes.text().catch(() => "");
     console.error(
-      `[proposal-audio] TTS failed (${ttsRes.status})`,
+      `[proposal-audio] TTS failed (${ttsRes.status}, ${candidate.model})`,
       detail.slice(0, 500),
     );
+    // Only a model-access rejection is worth retrying on the next
+    // candidate — a bad key / quota error will fail them all the same.
+    if (!detail.includes("model_not_found")) break;
+  }
+  if (!audio) {
     return NextResponse.json(
       { ok: false, reason: "Couldn't prepare the audio right now — please try again in a minute." },
       { status: 502 },
     );
   }
-  const audio = Buffer.from(await ttsRes.arrayBuffer());
 
   // addRandomSuffix keeps the public blob URL unguessable — same trust
   // model as the portal token itself.
