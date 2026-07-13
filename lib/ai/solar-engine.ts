@@ -511,8 +511,18 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Roof structure overlay (deterministic ridges) ----------------
-  const ridgeLines = buildSegmentRidgesProjected(segments, (lat, lng) =>
-    fromLatLng(lat, lng),
+  const ridgeLines = buildSegmentRidgesProjected(
+    segments,
+    (lat, lng) => fromLatLng(lat, lng),
+    {
+      // Meter-based merge tolerances on THIS grid — the px defaults were
+      // tuned for the legacy Mercator tile and would weld separate roof
+      // masses into one long ridge at 0.1 m/px.
+      mergePerpPx: 0.8 / mpp,
+      mergeGapPx: 1.2 / mpp,
+      minLenPx: 1.0 / mpp,
+      pairMaxDistPx: 8 / mpp,
+    },
   )
     .filter((r) => {
       const mid = { x: (r.a.x + r.b.x) / 2, y: (r.a.y + r.b.y) / 2 };
