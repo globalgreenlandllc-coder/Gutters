@@ -11,6 +11,9 @@ export type ProposalEmailVars = {
   portalUrl: string;
   /** Free-form note from the contractor's "compose" textarea. */
   message: string;
+  /** Portal deep link that scrolls to the "Listen to this quote" TTS
+   *  player (portalUrl + ?listen=1). Omit to hide the listen line. */
+  listenUrl?: string;
 };
 
 /**
@@ -65,6 +68,13 @@ export function renderProposalEmail(v: ProposalEmailVars): {
                 <div style="margin-top:10px;font-size:12px;color:#71717a;">
                   Three packages · digital signature · pay your deposit in one click
                 </div>
+                ${
+                  v.listenUrl
+                    ? `<div style="margin-top:14px;font-size:13px;color:#52525b;">
+                  🎧 On the road? <a href="${escapeAttr(v.listenUrl)}" style="color:#14688C;font-weight:600;">Listen to a one-minute summary</a> of your quote.
+                </div>`
+                    : ""
+                }
               </td>
             </tr>
 
@@ -98,6 +108,9 @@ export function renderProposalEmail(v: ProposalEmailVars): {
     v.message,
     "",
     `Review and accept: ${v.portalUrl}`,
+    ...(v.listenUrl
+      ? ["", `On the road? Listen to a one-minute audio summary: ${v.listenUrl}`]
+      : []),
     "",
     `Questions? Reply to this email or call ${v.contractorName} at ${v.contractorPhone}.`,
   ].join("\n");

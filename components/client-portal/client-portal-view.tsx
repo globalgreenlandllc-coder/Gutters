@@ -12,6 +12,7 @@ import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
 import { TermsSection } from "@/components/proposal/terms-section";
 import { SignaturePad } from "./signature-pad";
+import { ListenCard } from "./listen-card";
 import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
 import { PaymentHub } from "./payment-hub";
@@ -27,6 +28,7 @@ export function ClientPortalView({
   previewMode,
   portal,
   discountThread,
+  audioEnabled,
 }: {
   proposal: Proposal;
   previewMode?: boolean;
@@ -35,6 +37,10 @@ export function ClientPortalView({
   portal?: PortalPaymentState | null;
   /** Pre-acceptance price-negotiation state. Null in preview/demo mode. */
   discountThread?: DiscountThreadDto | null;
+  /** Shows the "Listen to this quote" TTS player. Only set for real
+   *  persisted proposals — the demo/sample portal has no row to cache
+   *  audio on, and preview mode shouldn't burn TTS on drafts. */
+  audioEnabled?: boolean;
 }) {
   const recommended =
     proposal.packages.find((p) => p.recommended)?.id ??
@@ -128,6 +134,14 @@ export function ClientPortalView({
           className="space-y-8"
         >
           <Header proposal={proposal} />
+
+          {audioEnabled && !previewMode && (
+            <ListenCard
+              token={proposal.token}
+              address={proposal.address}
+              company={proposal.contractor.company || "Your contractor"}
+            />
+          )}
 
           <AerialSection proposal={proposal} />
 

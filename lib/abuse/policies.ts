@@ -150,6 +150,19 @@ export const POLICIES = {
     "Too many price-request updates on this proposal — please try again later or contact your contractor.",
   ),
 
+  /** Audio-summary TTS generation (/api/p/[token]/audio cache misses) —
+   *  per proposal token. Replays hit the cached blob and never consume
+   *  this; a regeneration only happens when the proposal content
+   *  changes, so a handful per day covers any real negotiation. Closed:
+   *  every miss spends real OpenAI money. */
+  portalAudio: make(
+    "portal.audio",
+    "ABUSE_LIMIT_PORTAL_AUDIO",
+    [{ limit: 8, windowSec: DAY }],
+    "closed",
+    "The audio summary is taking a break — please read the proposal, or try again tomorrow.",
+  ),
+
   /** All unauthenticated portal writes from one IP, across tokens. */
   portalIp: make(
     "portal.ip",

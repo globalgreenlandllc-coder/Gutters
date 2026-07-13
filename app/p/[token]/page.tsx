@@ -29,6 +29,7 @@ export default async function PublicProposalPage({
         proposal={{ ...real, token }}
         portal={portal}
         discountThread={discountThread}
+        audioEnabled
       />
     );
   }

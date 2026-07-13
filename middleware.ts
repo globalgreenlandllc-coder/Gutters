@@ -7,6 +7,9 @@ const isPublic = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/p/(.*)",
+  // Portal audio summary — homeowners play it logged-out; the route is
+  // token-gated + rate-limited internally like the portal page itself.
+  "/api/p/(.*)",
   // Legal pages must be reachable logged-out — Google's OAuth app
   // verification crawls the privacy policy without a session.
   "/privacy(.*)",
@@ -61,7 +64,11 @@ function hit(map: Map<string, Bucket>, key: string, windowMs: number): number {
 /** Requests allowed per IP per minute, by route class. */
 function limitFor(pathname: string): { limit: number; cls: string } {
   // Unauthenticated portal — homeowners click links here; bots probe here.
-  if (pathname.startsWith("/p/")) return { limit: 40, cls: "portal" };
+  // Includes the portal API (/api/p/[token]/audio): same anonymous
+  // audience, same strict budget.
+  if (pathname.startsWith("/p/") || pathname.startsWith("/api/p/")) {
+    return { limit: 40, cls: "portal" };
+  }
   // Signature/secret-gated machine endpoints. Stripe retries are modest;
   // anything hammering these is brute-forcing the secret.
   if (pathname.startsWith("/api/webhooks/")) return { limit: 120, cls: "webhook" };

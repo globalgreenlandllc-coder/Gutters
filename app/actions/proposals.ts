@@ -16,6 +16,7 @@ import {
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
 import { checkUserEmailBudget, checkPortalWrite } from "@/lib/abuse/guards";
 import { POLICIES } from "@/lib/abuse/policies";
+import { captureTakeoffCorrection } from "@/lib/ai/takeoff-corrections";
 import { getMe } from "./me";
 import { createDefaultSchedule } from "./payments";
 
@@ -113,6 +114,7 @@ export async function sendProposal(args: {
     validDays: proposal.validDays || 30,
     portalUrl,
     message,
+    listenUrl: `${portalUrl}?listen=1`,
   });
 
   const result = await sendEmailViaResend({
@@ -250,6 +252,10 @@ export async function saveDraftFromEstimate(args: {
   /** Whether this is a new-construction job or a replacement. Stored on
    *  the proposal JSON blob so the scope-of-work language can branch. */
   jobType?: "new" | "replacement";
+  /** PlanAnalysis row id when this estimate came from a plan upload. Links
+   *  the saved (possibly contractor-edited) takeoff back to the AI output
+   *  that produced it — the ground-truth pair the learning loop trains on. */
+  planId?: string;
 }): Promise<SaveDraftResult> {
   try {
     return await saveDraftFromEstimateImpl(args);
@@ -279,6 +285,7 @@ async function saveDraftFromEstimateImpl(args: {
   totalCents?: number;
   existingId?: string;
   jobType?: "new" | "replacement";
+  planId?: string;
 }): Promise<SaveDraftResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
@@ -294,10 +301,16 @@ async function saveDraftFromEstimateImpl(args: {
   // accessible via `data.jobType` in any downstream code that wants to
   // branch scope-of-work text on it.
   const blank = blankProposal();
-  const draft: Proposal & { jobType?: "new" | "replacement" } = {
+  const draft: Proposal & {
+    jobType?: "new" | "replacement";
+    planId?: string;
+  } = {
     ...blank,
     token: randomBytes(12).toString("hex"),
     jobType: args.jobType ?? "replacement",
+    // Source-plan link (extra JSON key, same pattern as jobType) so a
+    // proposal's corrected takeoff can be traced back to its PlanAnalysis.
+    planId: args.planId,
     address: args.address,
     measurements: args.measurements,
     takeoff: {
@@ -385,6 +398,24 @@ async function saveDraftFromEstimateImpl(args: {
       });
 
   revalidatePath("/dashboard/proposals");
+
+  // Learning loop: snapshot the saved takeoff onto the source PlanAnalysis
+  // row (editedJson) as the contractor-verified counterpart to the AI's
+  // analysisJson. Fire-and-forget semantics — capture failure never fails
+  // the save (captureTakeoffCorrection swallows its own errors).
+  if (args.planId) {
+    await captureTakeoffCorrection({
+      userId: me.user.id,
+      planId: args.planId,
+      takeoff: {
+        eaves: args.eaves,
+        rakes: args.rakes,
+        downspouts: args.downspouts,
+        measurements: args.measurements,
+      },
+      source: "estimate-draft-save",
+    });
+  }
 
   return { ok: true, id: row.id, token: row.publicToken, status: "DRAFT" };
 }

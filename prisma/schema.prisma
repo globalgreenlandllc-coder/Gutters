@@ -333,6 +333,13 @@ model Proposal {
   // "Done jobs" in the dashboard = ACCEPTED + completedAt != null.
   // Cleared automatically if an approved change order reopens a balance.
   completedAt       DateTime?
+  // Cached TTS audio summary for the client portal's "Listen" button.
+  // audioScriptHash is the hash of the spoken script the file was
+  // generated from — when the proposal content changes (price edit,
+  // negotiated discount) the hash stops matching and /api/p/[token]/audio
+  // regenerates. Both null until the first listen.
+  audioUrl          String?
+  audioScriptHash   String?
 
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   events         ProposalEvent[]
@@ -352,6 +359,7 @@ enum ProposalEventKind {
   DRAFTED
   SENT
   VIEWED
+  LISTENED
   PACKAGE_SELECTED
   SIGNED
   ACCEPTED
