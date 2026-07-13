@@ -147,6 +147,38 @@ export function AerialCanvas({
      *  pointer up, treat the gesture as a click (deselect) instead. */
     moved: boolean;
   } | null>(null);
+  // Two-finger pinch (tablets in the field). Anchored on the image point
+  // under the initial finger midpoint so pinch-zoom and two-finger pan
+  // compose naturally. Tracked via pointer events; entering a pinch
+  // cancels any in-flight pan so the two gestures never fight.
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(
+    new Map(),
+  );
+  const [pinch, setPinch] = useState<{
+    d0: number;
+    w0: number;
+    h0: number;
+    imgMidX: number;
+    imgMidY: number;
+  } | null>(null);
+  // Mirror of `view` for the native (non-passive) wheel listener — React
+  // attaches `onWheel` passively, so preventDefault() there is ignored
+  // and the page scrolls while zooming. The native listener needs the
+  // current view without re-binding every render.
+  const viewRef = useRef({ x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
+  // Keep the visible window overlapping the content: at least ~20% of
+  // the window must cover the 900×580 canvas so a wild drag or pinch
+  // can't fling the photo off-screen with no way back.
+  const clampView = (v: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => ({
+    ...v,
+    x: Math.min(VIEWBOX_W - v.width * 0.2, Math.max(-v.width * 0.8, v.x)),
+    y: Math.min(VIEWBOX_H - v.height * 0.2, Math.max(-v.height * 0.8, v.y)),
+  });
   // Every point the trace occupies — eaves, rakes, and downspouts —
   // used to frame the camera tight around the takeoff.
   const contentPoints = useMemo(() => {
@@ -235,6 +267,39 @@ export function AerialCanvas({
   // handles balloon up at 5× zoom and cover the roof corners you're
   // trying to align to.
   const renderScale = view.width / VIEWBOX_W;
+  viewRef.current = view;
+
+  // Wheel zoom via a NATIVE non-passive listener. React's onWheel is
+  // attached passively, so its preventDefault() is ignored — the page
+  // scrolled while the canvas zoomed (worst in fullscreen). Bound once;
+  // reads the live view through viewRef.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const v = viewRef.current;
+      const rect = svg.getBoundingClientRect();
+      const cursorVX = v.x + ((e.clientX - rect.left) / rect.width) * v.width;
+      const cursorVY = v.y + ((e.clientY - rect.top) / rect.height) * v.height;
+      const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+      const minW = VIEWBOX_W / 5;
+      const maxW = VIEWBOX_W * 4;
+      const nextW = Math.max(minW, Math.min(maxW, v.width * factor));
+      const nextH = nextW * (v.height / v.width);
+      setView(
+        clampView({
+          x: cursorVX - ((e.clientX - rect.left) / rect.width) * nextW,
+          y: cursorVY - ((e.clientY - rect.top) / rect.height) * nextH,
+          width: nextW,
+          height: nextH,
+        }),
+      );
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Roof centroid in viewBox coords — computed once from all eave
   // endpoints and passed to every label so each label can push itself
@@ -850,20 +915,53 @@ export function AerialCanvas({
         viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
         preserveAspectRatio="xMidYMid slice"
         onPointerDown={(e) => {
-          // Pan on empty-space drag. Three triggers:
-          //   1. right-click + drag
-          //   2. shift + drag
-          //   3. plain left-drag while in select mode AND we're zoomed
-          //      in (view < full). At full extent we don't pan because
-          //      there's nowhere to go and we'd swallow a deselect click.
+          // Track every pointer for the two-finger pinch. A second
+          // finger landing on empty space upgrades the gesture to a
+          // pinch and cancels any in-flight pan. A PRIMARY pointer
+          // starts a fresh gesture — clear any stale entries left by
+          // pointers that ended off-SVG without capture, so a later
+          // single finger can't fake a two-finger pinch.
+          if (e.isPrimary) pointersRef.current.clear();
+          pointersRef.current.set(e.pointerId, {
+            x: e.clientX,
+            y: e.clientY,
+          });
+          if (pointersRef.current.size === 2 && svgRef.current) {
+            const [p1, p2] = [...pointersRef.current.values()];
+            const rect = svgRef.current.getBoundingClientRect();
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            setPinch({
+              d0: Math.max(12, Math.hypot(p2.x - p1.x, p2.y - p1.y)),
+              w0: view.width,
+              h0: view.height,
+              imgMidX:
+                view.x + ((midX - rect.left) / rect.width) * view.width,
+              imgMidY:
+                view.y + ((midY - rect.top) / rect.height) * view.height,
+            });
+            setPanning(null);
+            setDrag(null);
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              // Some browsers throw on capture for non-mouse pointers.
+            }
+            return;
+          }
+          // Pan on empty-space drag: plain left-drag, right-click, or
+          // shift+drag — at ANY zoom level. A tap that never moves is
+          // still a deselect click (see onPointerUp's `moved` check), so
+          // panning no longer needs the old "only when zoomed in" gate —
+          // which also blocked panning after zooming OUT and in
+          // fullscreen, where cover-fit crops content off-screen.
           // Drags that originate on an eave / vertex / downspout don't
           // reach here — their handlers stopPropagation() — so this
           // never hijacks a real selection or vertex grab.
-          const zoomedIn = view.width < VIEWBOX_W * 0.98;
           if (
             tool === "select" &&
             !drag &&
-            (e.button === 2 || e.shiftKey || zoomedIn)
+            (e.button === 0 || e.button === 2 || e.shiftKey)
           ) {
             e.preventDefault();
             setPanning({
@@ -885,6 +983,35 @@ export function AerialCanvas({
           handlePointerDown(e);
         }}
         onPointerMove={(e) => {
+          if (pointersRef.current.has(e.pointerId)) {
+            pointersRef.current.set(e.pointerId, {
+              x: e.clientX,
+              y: e.clientY,
+            });
+          }
+          if (pinch && pointersRef.current.size >= 2 && svgRef.current) {
+            const [p1, p2] = [...pointersRef.current.values()];
+            const rect = svgRef.current.getBoundingClientRect();
+            const d1 = Math.max(12, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            const minW = VIEWBOX_W / 5;
+            const maxW = VIEWBOX_W * 4;
+            const nextW = Math.max(
+              minW,
+              Math.min(maxW, pinch.w0 * (pinch.d0 / d1)),
+            );
+            const nextH = nextW * (pinch.h0 / pinch.w0);
+            setView(
+              clampView({
+                x: pinch.imgMidX - ((midX - rect.left) / rect.width) * nextW,
+                y: pinch.imgMidY - ((midY - rect.top) / rect.height) * nextH,
+                width: nextW,
+                height: nextH,
+              }),
+            );
+            return;
+          }
           if (panning && svgRef.current) {
             const dxRaw = e.clientX - panning.sx;
             const dyRaw = e.clientY - panning.sy;
@@ -898,16 +1025,23 @@ export function AerialCanvas({
             const rect = svgRef.current.getBoundingClientRect();
             const scaleX = view.width / rect.width;
             const scaleY = view.height / rect.height;
-            setView((v) => ({
-              ...v,
-              x: panning.vx - dxRaw * scaleX,
-              y: panning.vy - dyRaw * scaleY,
-            }));
+            setView((v) =>
+              clampView({
+                ...v,
+                x: panning.vx - dxRaw * scaleX,
+                y: panning.vy - dyRaw * scaleY,
+              }),
+            );
             return;
           }
           handlePointerMove(e);
         }}
-        onPointerUp={() => {
+        onPointerUp={(e) => {
+          pointersRef.current.delete(e.pointerId);
+          if (pinch) {
+            if (pointersRef.current.size < 2) setPinch(null);
+            return;
+          }
           if (panning) {
             // No real movement → user tapped empty space. Deselect so
             // the contractor can dismiss a selection without having to
@@ -920,29 +1054,17 @@ export function AerialCanvas({
           }
           handlePointerUp();
         }}
-        onContextMenu={(e) => e.preventDefault()}
-        onWheel={(e) => {
-          // Zoom toward the cursor. Wheel up = zoom in, down = out.
-          // Clamp to 0.25× – 5× so the user can't get lost.
-          if (!svgRef.current) return;
-          e.preventDefault();
-          const rect = svgRef.current.getBoundingClientRect();
-          const cursorVX = view.x + ((e.clientX - rect.left) / rect.width) * view.width;
-          const cursorVY = view.y + ((e.clientY - rect.top) / rect.height) * view.height;
-          const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-          const minW = VIEWBOX_W / 5;
-          const maxW = VIEWBOX_W * 4;
-          const nextW = Math.max(minW, Math.min(maxW, view.width * factor));
-          const nextH = nextW * (view.height / view.width);
-          // Anchor the cursor at the same image point post-zoom.
-          const nextX = cursorVX - ((e.clientX - rect.left) / rect.width) * nextW;
-          const nextY = cursorVY - ((e.clientY - rect.top) / rect.height) * nextH;
-          setView({ x: nextX, y: nextY, width: nextW, height: nextH });
+        onPointerCancel={(e) => {
+          pointersRef.current.delete(e.pointerId);
+          setPinch(null);
+          setPanning(null);
         }}
+        onContextMenu={(e) => e.preventDefault()}
         className={cn(
           "h-full w-full touch-none select-none",
           (tool === "add-eave" || tool === "add-gable") && "cursor-crosshair",
           tool === "add-downspout" && "cursor-copy",
+          tool === "select" && !panning && "cursor-grab",
           panning && "cursor-grabbing",
         )}
         style={{ minHeight: 420 }}

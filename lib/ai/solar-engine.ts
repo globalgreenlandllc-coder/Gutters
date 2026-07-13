@@ -9,6 +9,7 @@ import {
 import {
   classifyEdgeByDsm,
   cleanFootprint,
+  closeMask,
   cropFloat32,
   cropUint8,
   cropWindowAround,
@@ -149,7 +150,12 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Footprint ---------------------------------------------------
-  const traced = traceMaskFootprint(
+  // Close sub-meter wall notches first: where two wings meet, the walls
+  // step in but the roofs above merge — without this the trace grows
+  // notch edges that render as floating gutter stubs on the roof.
+  // Guard: if the closed component's area jumps, the close bridged a
+  // NEIGHBOR (shed, fence-line garage) — fall back to the raw mask.
+  let traced = traceMaskFootprint(
     layers.mask,
     layers.grid.width,
     layers.grid.height,
@@ -157,6 +163,32 @@ export async function runSolarFirstEstimate(args: {
   if (!traced) {
     notes.push("Building mask had no traceable footprint — legacy tracer");
     return null;
+  }
+  {
+    const CLOSE_RADIUS_M = 0.9;
+    const closed = closeMask(
+      layers.mask,
+      layers.grid.width,
+      layers.grid.height,
+      CLOSE_RADIUS_M / mpp,
+    );
+    const closedTrace = traceMaskFootprint(
+      closed,
+      layers.grid.width,
+      layers.grid.height,
+    );
+    if (closedTrace && closedTrace.areaPx <= traced.areaPx * 1.12) {
+      if (closedTrace.areaPx > traced.areaPx * 1.005) {
+        notes.push(
+          `Bridged sub-meter wall notches (roofs merge above them): footprint ${traced.areaPx} → ${closedTrace.areaPx} px²`,
+        );
+      }
+      traced = closedTrace;
+    } else if (closedTrace) {
+      notes.push(
+        "Notch-bridging skipped — it would have merged a neighboring structure",
+      );
+    }
   }
 
   const cleaned = cleanFootprint(traced.boundary, mpp);

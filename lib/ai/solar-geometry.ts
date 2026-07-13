@@ -17,6 +17,74 @@ import { symmetricHausdorffPx } from "./roof-geom";
 export type Pt = { x: number; y: number };
 
 /* ------------------------------------------------------------------ */
+/*  Mask cleanup: morphological close                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Close (dilate then erode, square kernel) the building mask. The Solar
+ * mask traces WALLS, so where two wings meet at a reentrant notch the
+ * walls step in even though the ROOFS above merge — the traced footprint
+ * then grows sub-meter notch edges that render as floating gutter stubs
+ * on top of the visible roof. Closing bridges gaps up to ~2·radius and
+ * leaves genuine courtyards/steps (wider than that) alone.
+ *
+ * Separable implementation: two 1-D dilate passes then two 1-D erode
+ * passes — O(W·H·r), fine at 1000×1000 / r≈9.
+ *
+ * CALLER MUST GUARD against bridging to a NEIGHBOR building (the reason
+ * an earlier morphological close was reverted in the legacy path): pick
+ * the center component before/after and compare areas — a big jump means
+ * the close swallowed something that isn't this house.
+ */
+export function closeMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radiusPx: number,
+): Uint8Array {
+  const r = Math.max(0, Math.round(radiusPx));
+  if (r === 0) return mask.slice();
+
+  const pass = (
+    src: Uint8Array,
+    horizontal: boolean,
+    op: "max" | "min",
+  ): Uint8Array => {
+    const out = new Uint8Array(width * height);
+    const outer = horizontal ? height : width;
+    const inner = horizontal ? width : height;
+    for (let o = 0; o < outer; o++) {
+      for (let i = 0; i < inner; i++) {
+        let v = op === "max" ? 0 : 1;
+        const lo = Math.max(0, i - r);
+        const hi = Math.min(inner - 1, i + r);
+        for (let k = lo; k <= hi; k++) {
+          const idx = horizontal ? o * width + k : k * width + o;
+          const s = src[idx] > 0 ? 1 : 0;
+          if (op === "max") {
+            if (s === 1) {
+              v = 1;
+              break;
+            }
+          } else if (s === 0) {
+            v = 0;
+            break;
+          }
+        }
+        out[horizontal ? o * width + i : i * width + o] = v;
+      }
+    }
+    return out;
+  };
+
+  let m = pass(mask, true, "max");
+  m = pass(m, false, "max");
+  m = pass(m, true, "min");
+  m = pass(m, false, "min");
+  return m;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Mask → footprint boundary                                          */
 /* ------------------------------------------------------------------ */
 
@@ -292,11 +360,13 @@ export function offsetPolygonOutward(points: Pt[], offsetPx: number): Pt[] {
       const e2 = off(curr, next);
       if (!e1 || !e2) continue;
       const inter = lineIntersection(e1.a, e1.b, e2.a, e2.b);
-      // Miter cap: a near-parallel joint shoots the intersection to
-      // infinity — clamp to the average of the two offset endpoints.
+      // Miter cap at 2× the offset: covers a right angle (√2×) with
+      // margin, but bevels acute corners — where wings meet at odd
+      // angles a longer miter shoots a spike past the real roof corner
+      // (the "eave endpoint hanging over the driveway" artifact).
       if (
         inter &&
-        Math.hypot(inter.x - curr.x, inter.y - curr.y) <= offsetPx * 4
+        Math.hypot(inter.x - curr.x, inter.y - curr.y) <= offsetPx * 2
       ) {
         out.push(inter);
       } else {

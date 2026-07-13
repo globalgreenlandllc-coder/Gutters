@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   classifyEdgeByDsm,
   cleanFootprint,
+  closeMask,
   cropFloat32,
   cropUint8,
   cropWindowAround,
@@ -99,6 +100,51 @@ test("cleanFootprint collapses a pixel-staircase L-shape to ~6 corners", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Morphological close                                                */
+/* ------------------------------------------------------------------ */
+
+test("closeMask bridges a sub-meter wall notch but not a real courtyard", () => {
+  const W = 200;
+  const H = 200;
+  // Two 40-wide wings joined at the back, separated in front by a
+  // 12 px notch (1.2 m at 0.1 m/px) — the wings' roofs would merge.
+  const mask = rectMask(W, H, [
+    { x: 40, y: 40, w: 120, h: 40 }, // back bar (joins the wings)
+    { x: 40, y: 80, w: 54, h: 60 }, // left wing
+    { x: 106, y: 80, w: 54, h: 60 }, // right wing (12 px gap: 94..106)
+  ]);
+  const closed = closeMask(mask, W, H, 9); // 0.9 m at 0.1 m/px
+  // A pixel in the middle of the notch is now foreground.
+  assert.equal(closed[110 * W + 100], 1, "notch bridged");
+
+  // A 30 px (3 m) courtyard must survive.
+  const mask2 = rectMask(W, H, [
+    { x: 40, y: 40, w: 120, h: 40 },
+    { x: 40, y: 80, w: 45, h: 60 },
+    { x: 115, y: 80, w: 45, h: 60 }, // 30 px gap: 85..115
+  ]);
+  const closed2 = closeMask(mask2, W, H, 9);
+  assert.equal(closed2[110 * W + 100], 0, "courtyard preserved");
+});
+
+test("closeMask can merge neighbors — the engine's area guard must catch it", () => {
+  const W = 120;
+  const H = 120;
+  // House + shed 10 px (1 m) apart: a 9 px close bridges them.
+  const mask = rectMask(W, H, [
+    { x: 30, y: 30, w: 40, h: 40 },
+    { x: 80, y: 30, w: 20, h: 40 },
+  ]);
+  const closed = closeMask(mask, W, H, 9);
+  const before = traceMaskFootprint(mask, W, H);
+  const after = traceMaskFootprint(closed, W, H);
+  assert.ok(before && after);
+  // Merged component is far bigger than the raw center component —
+  // exactly the signal the engine's 1.12× guard rejects.
+  assert.ok(after.areaPx > before.areaPx * 1.12);
+});
+
+/* ------------------------------------------------------------------ */
 /*  Outward offset                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -131,6 +177,26 @@ test("offsetPolygonOutward keeps an L-shape simple (no self-intersection)", () =
   const out = offsetPolygonOutward(L, 5);
   assert.equal(out.length, 6);
   assert.ok(polygonArea(out) > polygonArea(L));
+});
+
+test("offsetPolygonOutward bevels acute corners instead of spiking", () => {
+  // Sharp 26° wedge: a full miter at the tip would land ~4.4× the
+  // offset away. The 2× cap must bevel it.
+  const wedge: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 0, y: 50 },
+  ];
+  const out = offsetPolygonOutward(wedge, 6);
+  for (const p of out) {
+    const nearest = Math.min(
+      ...wedge.map((w) => Math.hypot(w.x - p.x, w.y - p.y)),
+    );
+    assert.ok(
+      nearest <= 6 * 2 + 1e-6,
+      `vertex spiked ${nearest.toFixed(1)}px from the polygon (cap is 12)`,
+    );
+  }
 });
 
 test("offsetPolygonOutward is winding-agnostic", () => {
