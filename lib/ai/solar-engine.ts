@@ -18,6 +18,8 @@ import {
   estimateGroundHeightM,
   estimateRenderShift,
   expandWindowToAspect,
+  findTierEdges,
+  growRoofMask,
   interiorNormal,
   median,
   offsetPolygonOutward,
@@ -26,6 +28,7 @@ import {
   polygonArea,
   polygonCentroid,
   recoverAttachedRoofs,
+  refineEdgesToPhoto,
   traceMaskFootprint,
   type DsmSampler,
   type Pt,
@@ -177,6 +180,8 @@ export async function runSolarFirstEstimate(args: {
   // footprint — a note about recovered roof that never landed would lie.
   let porchNote: string | null = null;
   let porchApplied = false;
+  let dripEdgeGrown = false;
+  let groundM: number | null = null;
   {
     const bxs = traced.boundary.map((p) => p.x);
     const bys = traced.boundary.map((p) => p.y);
@@ -195,8 +200,42 @@ export async function runSolarFirstEstimate(args: {
       metersPerPixel: mpp,
     });
     if (ground != null) {
-      const rec = recoverAttachedRoofs({
+      groundM = ground;
+      // Grow the footprint along the DSM to the TRUE drip edge. The
+      // mask's ML boundary smooths stepped corners into diagonals and
+      // hugs the walls; the height data carries the real jogs and 90°
+      // corners, and its boundary IS the gutter line (so the blanket
+      // overhang offset shrinks to a safety margin below).
+      const grown = growRoofMask({
         mask: layers.mask,
+        dsm: layers.dsm,
+        dsmNoData: layers.dsmNoData,
+        rgb: layers.rgb,
+        width: layers.grid.width,
+        height: layers.grid.height,
+        metersPerPixel: mpp,
+        groundHeightM: ground,
+      });
+      let growMask = layers.mask;
+      if (grown.grownPx > 0) {
+        const regrow = traceMaskFootprint(
+          grown.mask,
+          layers.grid.width,
+          layers.grid.height,
+        );
+        if (regrow && regrow.areaPx <= traced.areaPx * 1.45) {
+          growMask = grown.mask;
+          workMask = grown.mask;
+          traced = regrow;
+          expectedAreaPx = regrow.areaPx;
+          dripEdgeGrown = true;
+          notes.push(
+            `Drip-edge trace: footprint grown +${Math.round(grown.grownPx * mpp * mpp)} m² along the height data to the real roof edge (recovers jogs and square corners the building mask smoothed away)`,
+          );
+        }
+      }
+      const rec = recoverAttachedRoofs({
+        mask: growMask,
         componentMask: traced.componentMask,
         dsm: layers.dsm,
         dsmNoData: layers.dsmNoData,
@@ -208,7 +247,7 @@ export async function runSolarFirstEstimate(args: {
       });
       if (rec.addedAreasM2.length > 0) {
         workMask = rec.mask;
-        expectedAreaPx = traced.areaPx + rec.addedPx;
+        expectedAreaPx = expectedAreaPx + rec.addedPx;
         porchNote = `Recovered ${rec.addedAreasM2.length} attached roof${
           rec.addedAreasM2.length === 1 ? "" : "s"
         } the building mask missed (porch/carport/covered entry): ${rec.addedAreasM2.join(" + ")} m² — verify the new outline covers real roof`;
@@ -259,8 +298,11 @@ export async function runSolarFirstEstimate(args: {
     return null;
   }
 
-  // Overhang: mask traces the WALL line; gutters hang past it.
-  const ringFull = offsetPolygonOutward(cleaned.points, OVERHANG_M / mpp);
+  // Overhang: the raw mask traces the WALL line, so gutters hang past
+  // it; after drip-edge growth the boundary already IS the gutter line
+  // and only a small safety margin remains.
+  const overhangM = dripEdgeGrown ? 0.15 : OVERHANG_M;
+  const ringFull = offsetPolygonOutward(cleaned.points, overhangM / mpp);
 
   notes.push(
     `Footprint from Google's building mask: ${traced.boundary.length} boundary px → ${cleaned.points.length} corners` +
@@ -270,7 +312,7 @@ export async function runSolarFirstEstimate(args: {
       (cleaned.squaredCorners > 0
         ? `, squared ${cleaned.squaredCorners} chamfered corner${cleaned.squaredCorners === 1 ? "" : "s"} to 90°`
         : "") +
-      `, gutter line offset +${OVERHANG_M} m` +
+      `, gutter line offset +${overhangM} m` +
       (traced.touchesEdge
         ? " ⚠ building touches the imagery window edge"
         : ""),
@@ -369,6 +411,28 @@ export async function runSolarFirstEstimate(args: {
     );
   }
 
+  // PER-EDGE SNAP: after the global shift, each wall slides individually
+  // onto the photo's roof edge and every corner is rebuilt as the
+  // intersection of its two refined walls — squares corners and removes
+  // the per-edge residual a single global shift can't fix.
+  const refineOut = refineEdgesToPhoto({
+    ring: ring.map(S),
+    rgb,
+    mask: maskCrop,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  const renderRing: Pt[] = refineOut.ring.map((p) => ({
+    x: Math.max(0, Math.min(W, p.x)),
+    y: Math.max(0, Math.min(H, p.y)),
+  }));
+  if (refineOut.refined > 0) {
+    notes.push(
+      `Snapped ${refineOut.refined} wall${refineOut.refined === 1 ? "" : "s"} onto the photo's roof edges and re-squared their corners`,
+    );
+  }
+
   // Full-grid px → lat/lng and back, adjusted for the crop + pad.
   const toLatLng = (p: Pt) =>
     layers.grid.toLatLng(
@@ -433,6 +497,8 @@ export async function runSolarFirstEstimate(args: {
   type ClassifiedEdge = {
     a: Pt;
     b: Pt;
+    /** Index into `ring` (and renderRing) of this edge's first vertex. */
+    idx: number;
     kind: "eave" | "rake";
     lengthFt: number;
     via: string;
@@ -476,7 +542,7 @@ export async function runSolarFirstEstimate(args: {
         defaultedToEave++;
       }
     }
-    classified.push({ a, b, kind, lengthFt, via });
+    classified.push({ a, b, idx: i, kind, lengthFt, via });
   }
 
   const eaveEdges = classified.filter((e) => e.kind === "eave");
@@ -494,15 +560,19 @@ export async function runSolarFirstEstimate(args: {
   );
 
   // ---- Canvas-space geometry ---------------------------------------
+  const renderEdge = (e: { idx: number; a: Pt; b: Pt }): [Pt, Pt] => [
+    renderRing[e.idx] ?? S(e.a),
+    renderRing[(e.idx + 1) % ring.length] ?? S(e.b),
+  ];
   let eaves: EditableLine[] = eaveEdges.map((e, i) => ({
     id: `solar-eave-${i}`,
     kind: "eave" as const,
-    points: transformToCanvas([S(e.a), S(e.b)], W, H),
+    points: transformToCanvas(renderEdge(e), W, H),
   }));
   const rakes: EditableLine[] = rakeEdges.map((e, i) => ({
     id: `solar-rake-${i}`,
     kind: "rake" as const,
-    points: transformToCanvas([S(e.a), S(e.b)], W, H),
+    points: transformToCanvas(renderEdge(e), W, H),
   }));
 
   const beforeMerge = eaves.length;
@@ -568,7 +638,7 @@ export async function runSolarFirstEstimate(args: {
       points: transformToCanvas([r.a, r.b], W, H),
       label: "RIDGE",
     }));
-  const canvasRing = transformToCanvas(ring.map(S), W, H);
+  const canvasRing = transformToCanvas(renderRing, W, H);
   const roofStructure: RoofStructure = {
     perimeter: canvasRing,
     ridges: ridgeLines,
@@ -582,7 +652,7 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Downspouts ----------------------------------------------------
-  const ringRender = ring.map(S);
+  const ringRender = renderRing;
   const roofPolygon = {
     points: ringRender,
     bbox: (() => {
@@ -612,7 +682,31 @@ export async function runSolarFirstEstimate(args: {
   // ---- Interior-tier suggestions (unpriced) --------------------------
   let suggestedEaves: EditableLine[] = [];
   let interiorTiersDetected = 0;
-  if (segments.length > 0) {
+  // TRUE interior tier edges from the DSM: where an upper roof drops ≥1 m
+  // onto a lower roof, the height cliff lands exactly on the upper eave
+  // line — far more accurate than the Solar-segment bbox chords below.
+  const dsmTiers = findTierEdges({
+    mask: maskCrop,
+    dsm,
+    dsmNoData: noData,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  if (dsmTiers.length > 0) {
+    interiorTiersDetected = dsmTiers.length;
+    suggestedEaves = dsmTiers
+      .map((t) => clipSegmentToRect(S(t.a), S(t.b), W, H))
+      .filter((t): t is NonNullable<typeof t> => t !== null)
+      .map((t, i) => ({
+        id: `suggested-tier-${i}`,
+        kind: "eave" as const,
+        points: transformToCanvas([t.a, t.b], W, H),
+      }));
+    notes.push(
+      `Upper-roof eaves: ${dsmTiers.length} interior drop edge${dsmTiers.length === 1 ? "" : "s"} traced from the height data (roof above a roof) — shown as tap-to-add interior gutters`,
+    );
+  } else if (segments.length > 0) {
     const perimeterEavesLatLng = eaveEdges.map((e) => ({
       a: toLatLng(e.a),
       b: toLatLng(e.b),

@@ -406,6 +406,404 @@ export function recoverAttachedRoofs(args: {
 }
 
 /* ------------------------------------------------------------------ */
+/*  DSM footprint growth — the "zoomed-in eave" tracer                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Grow the building mask along the HEIGHT data to the true drip edge.
+ *
+ * Google's mask is an ML footprint product: stepped corners get smoothed
+ * into long diagonals and the boundary sits near the walls. The DSM is
+ * sharper truth — the roof surface ends in a ~3 m cliff at the eave, and
+ * that cliff carries every jog and square corner the mask blurred away.
+ * Starting from the mask (so we can't wander onto a neighbor), BFS-grow
+ * into adjacent pixels that read as ROOF (elevated, planar, not
+ * vegetation, tonally uniform), up to `maxGrowM` from the original mask.
+ *
+ * The grown boundary IS the drip edge, so the caller should use a much
+ * smaller overhang offset when growth applies.
+ */
+export function growRoofMask(args: {
+  mask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  rgb: Uint8Array;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  groundHeightM: number;
+  maxGrowM?: number;
+}): { mask: Uint8Array; grownPx: number } {
+  const { mask, dsm, dsmNoData, rgb, width, height, metersPerPixel, groundHeightM } = args;
+  const maxSteps = Math.max(1, Math.round((args.maxGrowM ?? 3) / metersPerPixel));
+
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  const roofLike = (x: number, y: number): boolean => {
+    if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return false;
+    const i = y * width + x;
+    const h = dsm[i];
+    if (!validH(h)) return false;
+    const above = h - groundHeightM;
+    if (above < 2.0 || above > 13) return false;
+    const r = rgb[i * 3];
+    const g = rgb[i * 3 + 1];
+    const b = rgb[i * 3 + 2];
+    if (g > r + 6 && g > b + 6) return false; // vegetation
+    let lo = h;
+    let hi = h;
+    let lLo = 255;
+    let lHi = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const j = (y + dy) * width + (x + dx);
+        const v = dsm[j];
+        if (!validH(v)) return false;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        const lum = (rgb[j * 3] + rgb[j * 3 + 1] + rgb[j * 3 + 2]) / 3;
+        if (lum < lLo) lLo = lum;
+        if (lum > lHi) lHi = lum;
+      }
+    }
+    if (hi - lo > 0.55) return false; // tree crowns / cliffs
+    if (lHi - lLo > 52) return false; // canopy speckle
+    return true;
+  };
+
+  const out = mask.slice();
+  // Multi-source BFS from the mask boundary with a step budget.
+  let frontier: number[] = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      if (mask[i] === 0) continue;
+      if (
+        mask[i - 1] === 0 ||
+        mask[i + 1] === 0 ||
+        mask[i - width] === 0 ||
+        mask[i + width] === 0
+      ) {
+        frontier.push(i);
+      }
+    }
+  }
+  let grownPx = 0;
+  let maskArea = 0;
+  for (let i = 0; i < mask.length; i++) maskArea += mask[i];
+  const growCap = Math.round(maskArea * 0.45);
+
+  for (let step = 0; step < maxSteps && frontier.length > 0; step++) {
+    const next: number[] = [];
+    for (const idx of frontier) {
+      const x = idx % width;
+      const y = (idx - x) / width;
+      for (const [nx, ny] of [
+        [x - 1, y],
+        [x + 1, y],
+        [x, y - 1],
+        [x, y + 1],
+      ] as const) {
+        const ni = ny * width + nx;
+        if (nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1) continue;
+        if (out[ni] > 0) continue;
+        if (!roofLike(nx, ny)) continue;
+        out[ni] = 1;
+        grownPx++;
+        if (grownPx > growCap) return { mask, grownPx: 0 }; // runaway — distrust
+        next.push(ni);
+      }
+    }
+    frontier = next;
+  }
+  return { mask: out, grownPx };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interior tier edges — real "roof above a roof" eave lines           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Find the eave lines of UPPER roof tiers from the DSM: pixels inside
+ * the footprint where the surface steps DOWN ≥ `minStepM` onto more roof
+ * (both sides in-mask, so the outer perimeter doesn't count). Elongated
+ * runs of such pixels are fitted to straight segments via PCA — the
+ * result lands exactly on the upper roof's drip line, unlike the old
+ * Solar-segment bbox chords.
+ */
+export function findTierEdges(args: {
+  mask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  minStepM?: number;
+}): { a: Pt; b: Pt }[] {
+  const { mask, dsm, dsmNoData, width, height, metersPerPixel } = args;
+  const minStep = args.minStepM ?? 1.0;
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  // Step pixels: on the HIGH side of an interior height cliff.
+  const step = new Uint8Array(width * height);
+  const reachPx = Math.max(2, Math.round(0.4 / metersPerPixel));
+  for (let y = reachPx; y < height - reachPx; y++) {
+    for (let x = reachPx; x < width - reachPx; x++) {
+      const i = y * width + x;
+      if (mask[i] === 0) continue;
+      const h = dsm[i];
+      if (!validH(h)) continue;
+      for (const [dx, dy] of [
+        [reachPx, 0],
+        [-reachPx, 0],
+        [0, reachPx],
+        [0, -reachPx],
+      ] as const) {
+        const j = (y + dy) * width + (x + dx);
+        if (mask[j] === 0) continue; // perimeter, not interior
+        const v = dsm[j];
+        if (!validH(v)) continue;
+        if (h - v >= minStep) {
+          step[i] = 1;
+          break;
+        }
+      }
+    }
+  }
+
+  // Connected components → PCA line fit for elongated ones.
+  const visited = new Uint8Array(width * height);
+  const out: { a: Pt; b: Pt }[] = [];
+  const minLenPx = 1.8 / metersPerPixel;
+  for (let start = 0; start < step.length && out.length < 8; start++) {
+    if (step[start] === 0 || visited[start]) continue;
+    const queue = [start];
+    visited[start] = 1;
+    let head = 0;
+    const px: Pt[] = [];
+    while (head < queue.length) {
+      const idx = queue[head++];
+      const x = idx % width;
+      const y = (idx - x) / width;
+      px.push({ x, y });
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const ni = ny * width + nx;
+          if (step[ni] === 0 || visited[ni]) continue;
+          visited[ni] = 1;
+          queue.push(ni);
+        }
+      }
+    }
+    if (px.length < minLenPx) continue;
+    // PCA: dominant direction + spread.
+    let mx = 0;
+    let my = 0;
+    for (const p of px) {
+      mx += p.x;
+      my += p.y;
+    }
+    mx /= px.length;
+    my /= px.length;
+    let sxx = 0;
+    let sxy = 0;
+    let syy = 0;
+    for (const p of px) {
+      const ux = p.x - mx;
+      const uy = p.y - my;
+      sxx += ux * ux;
+      sxy += ux * uy;
+      syy += uy * uy;
+    }
+    const tr = sxx + syy;
+    const det = sxx * syy - sxy * sxy;
+    const l1 = tr / 2 + Math.sqrt(Math.max(0, (tr * tr) / 4 - det));
+    const l2 = tr - l1;
+    if (l2 > 0 && l1 / Math.max(1e-6, l2) < 6) continue; // blobby, not a line
+    const ang = Math.atan2(l1 - sxx, sxy) === 0 && sxy === 0
+      ? (sxx >= syy ? 0 : Math.PI / 2)
+      : Math.atan2(l1 - sxx, sxy);
+    const dx = Math.cos(ang);
+    const dyv = Math.sin(ang);
+    let tMin = Infinity;
+    let tMax = -Infinity;
+    for (const p of px) {
+      const t = (p.x - mx) * dx + (p.y - my) * dyv;
+      if (t < tMin) tMin = t;
+      if (t > tMax) tMax = t;
+    }
+    if (tMax - tMin < minLenPx) continue;
+    out.push({
+      a: { x: mx + dx * tMin, y: my + dyv * tMin },
+      b: { x: mx + dx * tMax, y: my + dyv * tMax },
+    });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Per-edge photo snapping                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Slide each wall line independently onto the photo's roof edge, then
+ * rebuild every corner as the INTERSECTION of its two refined walls.
+ * Fixes what a single global shift can't (per-edge residual error from
+ * the mask) and re-squares corners by construction — the intersection
+ * of two perpendicular refined lines is a true 90° corner.
+ *
+ * Same roof-aware scoring as the global registration: a candidate
+ * offset only scores where the pixel just inside still looks like this
+ * roof. Guards: per-edge slide ≤ maxSlideM, corners move ≤ 2.5 m,
+ * polygon stays simple, area within ±12% — else the input is returned.
+ */
+export function refineEdgesToPhoto(args: {
+  ring: Pt[];
+  rgb: Uint8Array;
+  mask?: Uint8Array;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  maxSlideM?: number;
+}): { ring: Pt[]; refined: number } {
+  const { ring, rgb, mask, width, height, metersPerPixel } = args;
+  if (ring.length < 4) return { ring, refined: 0 };
+  const maxSlidePx = Math.max(2, Math.round((args.maxSlideM ?? 0.9) / metersPerPixel));
+
+  // Shared luminance / gradient / roof-tone prep (small vs the search).
+  const lum = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    lum[i] = (rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 3;
+  }
+  const grad = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      grad[i] =
+        Math.abs(lum[i + 1] - lum[i - 1]) +
+        Math.abs(lum[i + width] - lum[i - width]);
+    }
+  }
+  let roofLum: number | null = null;
+  if (mask) {
+    const vals: number[] = [];
+    const stepPx = Math.max(1, Math.floor(Math.sqrt((width * height) / 4000)));
+    const e = Math.max(2, Math.round(0.5 / metersPerPixel));
+    for (let y = e; y < height - e; y += stepPx) {
+      for (let x = e; x < width - e; x += stepPx) {
+        const i = y * width + x;
+        if (
+          mask[i] > 0 &&
+          mask[i - e] > 0 &&
+          mask[i + e] > 0 &&
+          mask[i - e * width] > 0 &&
+          mask[i + e * width] > 0
+        ) {
+          vals.push(lum[i]);
+        }
+      }
+    }
+    if (vals.length >= 40) roofLum = median(vals);
+  }
+
+  const centroid = polygonCentroid(ring);
+  const n = ring.length;
+  const insidePx = 0.7 / metersPerPixel;
+
+  // Refine each edge's perpendicular offset.
+  type Line = { p: Pt; d: Pt };
+  const lines: Line[] = [];
+  let refined = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const d = { x: (b.x - a.x) / (len || 1), y: (b.y - a.y) / (len || 1) };
+    if (len * metersPerPixel < 1.6) {
+      lines.push({ p: a, d });
+      continue;
+    }
+    const nrm = interiorNormal(a, b, centroid); // inward
+    const stations = Math.max(3, Math.min(14, Math.round((len * metersPerPixel) / 1.2)));
+    const scoreAt = (o: number): number => {
+      let s = 0;
+      for (let k = 0; k < stations; k++) {
+        const t = 0.12 + (0.76 * k) / Math.max(1, stations - 1);
+        const px = a.x + (b.x - a.x) * t - nrm.nx * o;
+        const py = a.y + (b.y - a.y) * t - nrm.ny * o;
+        const x = Math.round(px);
+        const y = Math.round(py);
+        if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
+        let g = grad[y * width + x];
+        if (roofLum != null && g > 0) {
+          const ix = Math.round(px + nrm.nx * insidePx);
+          const iy = Math.round(py + nrm.ny * insidePx);
+          if (ix >= 0 && iy >= 0 && ix < width && iy < height) {
+            const dL = Math.abs(lum[iy * width + ix] - roofLum);
+            g *= dL <= 34 ? 1 : 0.2;
+          }
+        }
+        s += g;
+      }
+      return s / (1 + 0.03 * Math.abs(o));
+    };
+    const zero = scoreAt(0);
+    let bestO = 0;
+    let best = zero;
+    for (let o = -maxSlidePx; o <= maxSlidePx; o++) {
+      if (o === 0) continue;
+      const s = scoreAt(o);
+      if (s > best) {
+        best = s;
+        bestO = o;
+      }
+    }
+    if (bestO !== 0 && best >= zero * 1.12) {
+      lines.push({
+        p: { x: a.x - nrm.nx * bestO, y: a.y - nrm.ny * bestO },
+        d,
+      });
+      refined++;
+    } else {
+      lines.push({ p: a, d });
+    }
+  }
+  if (refined === 0) return { ring, refined: 0 };
+
+  // Rebuild corners as neighbor-line intersections.
+  const maxCornerMovePx = 2.5 / metersPerPixel;
+  const next: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = lines[(i - 1 + n) % n];
+    const curr = lines[i];
+    const inter = lineIntersection(
+      prev.p,
+      { x: prev.p.x + prev.d.x, y: prev.p.y + prev.d.y },
+      curr.p,
+      { x: curr.p.x + curr.d.x, y: curr.p.y + curr.d.y },
+    );
+    if (inter && Math.hypot(inter.x - ring[i].x, inter.y - ring[i].y) <= maxCornerMovePx) {
+      next.push(inter);
+    } else {
+      // Near-parallel neighbors (collinear walls) — project the old
+      // corner onto the current refined line instead.
+      const t =
+        (ring[i].x - curr.p.x) * curr.d.x + (ring[i].y - curr.p.y) * curr.d.y;
+      next.push({ x: curr.p.x + curr.d.x * t, y: curr.p.y + curr.d.y * t });
+    }
+  }
+  const areaRatio = polygonArea(next) / Math.max(1, polygonArea(ring));
+  if (areaRatio < 0.88 || areaRatio > 1.12) return { ring, refined: 0 };
+  if (polygonSelfIntersects(next)) return { ring, refined: 0 };
+  return { ring: next, refined };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Photo-lean registration                                            */
 /* ------------------------------------------------------------------ */
 
@@ -820,11 +1218,14 @@ export function dechamferPolygon(
   const maxExtendPx = (opts?.maxExtendM ?? 2.6) / metersPerPixel;
   let pts = points;
   let squared = 0;
-  for (let pass = 0; pass < 4; pass++) {
+  let stale = 0;
+  for (let pass = 0; pass < 6 && stale < 2; pass++) {
     // Rotate so a chamfer sitting across the array seam lands mid-array
-    // on a later pass (the splice below never wraps).
+    // on some pass (the splice below never wraps). Two consecutive
+    // no-change passes — i.e. two different rotations — mean fixpoint.
     if (pass > 0 && pts.length > 4) {
-      pts = [...pts.slice(1), pts[0]];
+      const third = Math.max(1, Math.floor(pts.length / 3));
+      pts = [...pts.slice(third), ...pts.slice(0, third)];
     }
     let changed = false;
     for (let i = 1; i < pts.length - 1 && pts.length > 4; i++) {
@@ -865,7 +1266,7 @@ export function dechamferPolygon(
       changed = true;
       i--; // re-examine around the new corner
     }
-    if (!changed) break;
+    stale = changed ? 0 : stale + 1;
   }
   return { points: pts, squared };
 }
@@ -1243,10 +1644,12 @@ export function eaveHeightAboveGroundM(args: {
     }
   }
   if (eaveHs.length < 4) return null;
-  // 25th percentile ≈ the LOW eave line (upper-story eaves and ridgey
-  // samples pull the median up; gutters hang at the low line).
+  // 18th percentile ≈ the LOW eave line (upper-story eaves and ridgey
+  // samples pull the median up; gutters hang at the LOW line — and the
+  // story bucket that prices downspout drops should follow it, not the
+  // tall entry gables).
   eaveHs.sort((a, b) => a - b);
-  const eaveH = eaveHs[Math.floor(eaveHs.length * 0.25)];
+  const eaveH = eaveHs[Math.floor(eaveHs.length * 0.18)];
 
   // Ground ring: sample a band 2–8 m outside the polygon bbox edges,
   // keeping only mask-negative pixels.

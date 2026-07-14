@@ -11,6 +11,9 @@ import {
   expandWindowToAspect,
   estimateGroundHeightM,
   estimateRenderShift,
+  refineEdgesToPhoto,
+  growRoofMask,
+  findTierEdges,
   recoverAttachedRoofs,
   eaveHeightAboveGroundM,
   interiorNormal,
@@ -485,6 +488,163 @@ test("recoverAttachedRoofs picks up a porch the mask missed, skips trees and det
   assert.equal(rec.mask[200 * W + 130], 1, "porch recovered");
   assert.equal(rec.mask[100 * W + 30], 0, "tree rejected");
   assert.equal(rec.mask[230 * W + 220], 0, "detached shed rejected");
+});
+
+/* ------------------------------------------------------------------ */
+/*  DSM drip-edge growth                                               */
+/* ------------------------------------------------------------------ */
+
+test("growRoofMask recovers the square jog the mask smoothed away", () => {
+  const W = 300;
+  const H = 300;
+  const mpp = 0.1;
+  // TRUE roof (DSM): L-shape — main 16×10 m plus a 6×4 m jog SE.
+  const dsm = new Float32Array(W * H).fill(100);
+  const roofAt = (x: number, y: number) =>
+    (x >= 60 && x < 220 && y >= 60 && y < 160) ||
+    (x >= 160 && x < 220 && y >= 160 && y < 200);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (roofAt(x, y)) dsm[y * W + x] = 104;
+    }
+  }
+  // MASK: only the main rectangle — the jog was smoothed off.
+  const mask = rectMask(W, H, [{ x: 60, y: 60, w: 160, h: 100 }]);
+  const rgb = new Uint8Array(W * H * 3).fill(120);
+
+  const grown = growRoofMask({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    rgb,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+    groundHeightM: 100,
+  });
+  assert.ok(grown.grownPx > 1500, `grew ${grown.grownPx}px`);
+  // Middle of the jog is now footprint; yard is not.
+  assert.equal(grown.mask[180 * W + 190], 1, "jog recovered");
+  assert.equal(grown.mask[180 * W + 100], 0, "yard untouched");
+});
+
+test("growRoofMask refuses runaway growth (bad ground estimate)", () => {
+  const W = 200;
+  const H = 200;
+  // Everything reads "elevated": ground estimate way off.
+  const dsm = new Float32Array(W * H).fill(104);
+  const mask = rectMask(W, H, [{ x: 80, y: 80, w: 40, h: 40 }]);
+  const rgb = new Uint8Array(W * H * 3).fill(120);
+  const grown = growRoofMask({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    rgb,
+    width: W,
+    height: H,
+    metersPerPixel: 0.1,
+    groundHeightM: 100,
+  });
+  assert.equal(grown.grownPx, 0, "runaway growth must be rejected");
+});
+
+/* ------------------------------------------------------------------ */
+/*  Interior tier edges                                                */
+/* ------------------------------------------------------------------ */
+
+test("findTierEdges traces the upper roof's drop line onto the lower roof", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  const mask = rectMask(W, H, [{ x: 40, y: 40, w: 220, h: 120 }]);
+  // Left half of the roof is 3 m higher — the drop line runs vertically
+  // at x = 150.
+  const dsm = new Float32Array(W * H).fill(100);
+  for (let y = 40; y < 160; y++) {
+    for (let x = 40; x < 260; x++) {
+      dsm[y * W + x] = x < 150 ? 107 : 104;
+    }
+  }
+  const edges = findTierEdges({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  assert.equal(edges.length, 1, `found ${edges.length}`);
+  const e = edges[0];
+  // Vertical line near x=150 spanning most of the roof depth.
+  assert.ok(Math.abs(e.a.x - 150) < 6 && Math.abs(e.b.x - 150) < 6, JSON.stringify(e));
+  assert.ok(Math.abs(e.b.y - e.a.y) > 80, "spans the tier break");
+});
+
+test("findTierEdges ignores the outer perimeter and flat roofs", () => {
+  const W = 200;
+  const H = 200;
+  const mask = rectMask(W, H, [{ x: 60, y: 60, w: 80, h: 80 }]);
+  const dsm = new Float32Array(W * H).fill(100);
+  for (let y = 60; y < 140; y++) {
+    for (let x = 60; x < 140; x++) dsm[y * W + x] = 105;
+  }
+  const edges = findTierEdges({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    width: W,
+    height: H,
+    metersPerPixel: 0.1,
+  });
+  assert.equal(edges.length, 0);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Per-edge photo snapping                                            */
+/* ------------------------------------------------------------------ */
+
+test("refineEdgesToPhoto slides one offset wall onto the photo edge and keeps corners square", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  // Photo: bright roof rectangle 80..220 × 50..140.
+  const rgb = new Uint8Array(W * H * 3).fill(60);
+  for (let y = 50; y <= 140; y++) {
+    for (let x = 80; x <= 220; x++) {
+      const i = (y * W + x) * 3;
+      rgb[i] = 170;
+      rgb[i + 1] = 165;
+      rgb[i + 2] = 160;
+    }
+  }
+  const mask = rectMask(W, H, [{ x: 80, y: 50, w: 140, h: 90 }]);
+  // Ring: correct except the WEST wall sits 6 px too far west.
+  const ring: Pt[] = [
+    { x: 74, y: 50 },
+    { x: 220, y: 50 },
+    { x: 220, y: 140 },
+    { x: 74, y: 140 },
+  ];
+  const r = refineEdgesToPhoto({
+    ring,
+    rgb,
+    mask,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  assert.ok(r.refined >= 1, "refined the west wall");
+  const westXs = r.ring.filter((p) => p.x < 150).map((p) => p.x);
+  for (const x of westXs) {
+    assert.ok(Math.abs(x - 80) <= 2, `west wall at ${x}, expected ≈80`);
+  }
+  // Corners stay square: every vertex y is ≈50 or ≈140.
+  for (const p of r.ring) {
+    assert.ok(
+      Math.abs(p.y - 50) <= 2 || Math.abs(p.y - 140) <= 2,
+      `corner drifted: ${JSON.stringify(p)}`,
+    );
+  }
 });
 
 /* ------------------------------------------------------------------ */
