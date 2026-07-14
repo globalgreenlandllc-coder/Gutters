@@ -11,7 +11,7 @@
  * functions with synthetic masks and DSMs.
  */
 
-import { simplify, orthogonalizePolygon, polygonSelfIntersects, ensureCCW } from "./geometry";
+import { simplify, orthogonalizePolygon, polygonSelfIntersects, ensureCCW, pointInPolygon } from "./geometry";
 import { symmetricHausdorffPx } from "./roof-geom";
 
 export type Pt = { x: number; y: number };
@@ -1604,6 +1604,28 @@ export function classifyEdgeByDsm(
   const monoFrac =
     up + down > 0 ? dominant / (up + down) : 1;
 
+  // 0. NEAR-TOTAL continuous climb → rake, checked BEFORE the drainage
+  //    votes. On a gable-end drip line (post drip-edge growth the traced
+  //    edge is the rake overhang itself) the surface just inside RISES
+  //    toward the ridge, so the votes read "eave" — but EVERY station
+  //    also climbs ALONG the edge, which no gutter line does. The gate
+  //    is deliberately strict (≥85% of stations rising, none falling):
+  //    a stepped two-tier wall, a hip TRANSITION between tiers, or a
+  //    DSM-smeared step climbs only through its middle section and has
+  //    flat plateaus, so it falls through to the votes and stays an
+  //    eave (adversarial review: the looser 60% version silently
+  //    flipped ~30 LF perimeter eaves to rake with no resurface path).
+  const steps = Math.max(1, profile.length - 1);
+  // ≥75% rising with at most ONE falling station: strict enough that a
+  // tier transition with flat plateaus (rising ~60-70%) stays an eave,
+  // loose enough that one noisy DSM station can't hide a true gable.
+  if (alongDelta > 1.2 && up >= 4 && down <= 1 && up / steps >= 0.75) {
+    return {
+      kind: "rake",
+      reason: `climbs ${alongDelta.toFixed(2)}m continuously (${up}/${steps} stations rising)`,
+    };
+  }
+
   // 1. Most of the edge drains here → gutter, even when the wall steps
   //    across tiers or the total climb is large.
   if (votes.length >= 2 && eaveVoteFrac >= 0.6) {
@@ -1711,6 +1733,58 @@ export function interiorNormal(a: Pt, b: Pt, centroid: Pt): { nx: number; ny: nu
   return { nx, ny };
 }
 
+/**
+ * Inward unit normal of edge (a→b) for an arbitrary (possibly CONCAVE)
+ * ring: probe both candidate normals with a point-in-polygon test at two
+ * depths. The centroid heuristic (interiorNormal) points the wrong way on
+ * U/L-shaped rings whose centroid falls outside the region — which
+ * inverted the tier engine's inside-vs-outside height test.
+ */
+export function inwardNormalForRing(
+  a: Pt,
+  b: Pt,
+  ringPoly: Pt[],
+  probePx = 4,
+): { nx: number; ny: number } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const n1 = { nx: -dy / len, ny: dx / len };
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  let score1 = 0;
+  let score2 = 0;
+  for (const d of [probePx, probePx * 2.5]) {
+    if (pointInPolygon({ x: mx + n1.nx * d, y: my + n1.ny * d }, ringPoly)) score1++;
+    if (pointInPolygon({ x: mx - n1.nx * d, y: my - n1.ny * d }, ringPoly)) score2++;
+  }
+  if (score1 === score2) {
+    // Degenerate (needle region) — fall back to the centroid heuristic.
+    return interiorNormal(a, b, polygonCentroid(ringPoly));
+  }
+  return score1 > score2 ? n1 : { nx: -n1.nx, ny: -n1.ny };
+}
+
+/** Distance from a point to the nearest segment of an OPEN polyline
+ *  (no phantom closing edge — use distToRing for closed rings). */
+export function distToPolyline(p: Pt, pts: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t =
+      len2 > 0
+        ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+        : 0;
+    const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 export function polygonCentroid(points: Pt[]): Pt {
   let sx = 0;
   let sy = 0;
@@ -1750,7 +1824,8 @@ export function eaveHeightAboveGroundM(args: {
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
-    const nrm = interiorNormal(a, b, centroid);
+    // Probe-based: the centroid heuristic flips on concave footprints.
+    const nrm = inwardNormalForRing(a, b, ring, 0.4 / metersPerPixel);
     const dPx = 0.7 / metersPerPixel;
     for (const t of [0.3, 0.5, 0.7]) {
       const v = sample(

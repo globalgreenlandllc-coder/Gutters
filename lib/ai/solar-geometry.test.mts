@@ -11,6 +11,8 @@ import {
   expandWindowToAspect,
   estimateGroundHeightM,
   estimateRenderShift,
+  inwardNormalForRing,
+  distToPolyline,
   tierRegionRings,
   distToRing,
   refineEdgesToPhoto,
@@ -599,6 +601,76 @@ test("findTierEdges ignores the outer perimeter and flat roofs", () => {
     metersPerPixel: 0.1,
   });
   assert.equal(edges.length, 0);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Review regressions                                                 */
+/* ------------------------------------------------------------------ */
+
+test("gradual hip-transition between tiers stays an EAVE (case 0 must not fire)", () => {
+  // 10 m wall: 1-story wing (104.3 m) and 2-story main (107 m) joined by
+  // a gradual transition over the middle 4 m — flats at both ends. The
+  // interior rises at EVERY station (unanimous eave votes). The looser
+  // climb check flipped this to rake and silently under-billed ~33 LF.
+  const mpp = 0.1;
+  const a: Pt = { x: 20, y: 100 };
+  const b: Pt = { x: 120, y: 100 };
+  const nrm = { nx: 0, ny: -1 };
+  const sample: DsmSampler = (x, y) => {
+    const t = Math.max(0, Math.min(1, (x - 20) / 100));
+    const base =
+      t < 0.3 ? 104.3 : t > 0.7 ? 107.0 : 104.3 + ((t - 0.3) / 0.4) * 2.7;
+    const depth = 100 - y;
+    return base + Math.max(0, depth) * 0.03; // interior rises everywhere
+  };
+  const v = classifyEdgeByDsm(a, b, nrm, sample, mpp);
+  assert.equal(v.kind, "eave", v.reason);
+});
+
+test("full continuous climb (gable-end drip line) is still a RAKE", () => {
+  const mpp = 0.1;
+  const a: Pt = { x: 20, y: 100 };
+  const b: Pt = { x: 120, y: 100 };
+  const nrm = { nx: 0, ny: -1 };
+  // Climbs the whole run: 10 m at ~28% slope; interior also rises (the
+  // votes would say eave — exactly the case the climb check exists for).
+  const sample: DsmSampler = (x, y) => {
+    const base = 104 + ((x - 20) / 100) * 2.8;
+    const depth = 100 - y;
+    return base + Math.max(0, depth) * 0.04;
+  };
+  const v = classifyEdgeByDsm(a, b, nrm, sample, mpp);
+  assert.equal(v.kind, "rake", v.reason);
+});
+
+test("inwardNormalForRing points INTO a concave (U-shaped) ring where the centroid lies outside", () => {
+  // U-shape: two 30-wide arms around a 40-wide courtyard.
+  const U: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 80 },
+    { x: 70, y: 80 },
+    { x: 70, y: 30 },
+    { x: 30, y: 30 },
+    { x: 30, y: 80 },
+    { x: 0, y: 80 },
+  ];
+  // Edge on the RIGHT arm's inner (courtyard) side: (70,80)→(70,30).
+  const n = inwardNormalForRing({ x: 70, y: 80 }, { x: 70, y: 30 }, U, 3);
+  // Interior of the right arm is at x > 70 → inward normal must point +x.
+  assert.ok(n.nx > 0.9, `normal points ${n.nx},${n.ny} — expected +x into the arm`);
+});
+
+test("distToPolyline measures segment distance without a phantom closing edge", () => {
+  const chain: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+  assert.ok(Math.abs(distToPolyline({ x: 50, y: 5 }, chain) - 5) < 1e-9);
+  // distToRing on the same points would wrap 100,0 → 0,0 (same segment
+  // here) — the polyline version must handle midpoints of long straight
+  // runs, which the vertex-only test missed.
+  assert.ok(distToPolyline({ x: 50, y: 0 }, chain) < 1e-9);
 });
 
 /* ------------------------------------------------------------------ */

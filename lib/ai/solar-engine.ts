@@ -14,6 +14,7 @@ import {
   cropFloat32,
   cropUint8,
   cropWindowAround,
+  distToPolyline,
   distToRing,
   eaveHeightAboveGroundM,
   estimateGroundHeightM,
@@ -22,6 +23,7 @@ import {
   findTierEdges,
   growRoofMask,
   interiorNormal,
+  inwardNormalForRing,
   median,
   offsetPolygonOutward,
   outwardNormalAzimuthDeg,
@@ -521,7 +523,9 @@ export async function runSolarFirstEstimate(args: {
     const b = ring[(i + 1) % ring.length];
     const lengthFt = (Math.hypot(b.x - a.x, b.y - a.y) * mpp) / METERS_PER_FOOT;
     if (lengthFt < MIN_EAVE_FT) continue;
-    const nrm = interiorNormal(a, b, centroid);
+    // Probe-based inward normal — the centroid heuristic points the wrong
+    // way along the courtyard edges of concave (U/L) footprints.
+    const nrm = inwardNormalForRing(a, b, ring, 0.4 / mpp);
     const dsmV = classifyEdgeByDsm(a, b, nrm, sample, mpp, {
       insideMask: (x, y) => {
         const xi = Math.round(x);
@@ -595,6 +599,7 @@ export async function runSolarFirstEstimate(args: {
   let tierEaveFt = 0;
   let tierEaveCount = 0;
   const tierRingsForMagnet: Pt[][] = [];
+  const rejectedTierSuggestions: { a: Pt; b: Pt }[] = [];
   {
     const regions = tierRegionRings({
       mask: maskCrop,
@@ -611,13 +616,34 @@ export async function runSolarFirstEstimate(args: {
       const yi = Math.round(y);
       return xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0;
     };
+    type TierChain = { points: Pt[]; ft: number };
+    const tierChains: TierChain[] = [];
+    const tierRakes: { a: Pt; b: Pt }[] = [];
+    // Geometry the quality gates REJECT still surfaces as unpriced amber
+    // suggestions — the adversarial review proved findTierEdges can't be
+    // the safety net (its PCA line fit rejects corner-wrapping cliffs),
+    // so every rejection path records its own segments here.
+    const rejectedTierSegs = rejectedTierSuggestions;
     for (let r = 0; r < regions.length; r++) {
       const reg = regions[r].ring;
       // A NEIGHBOR's building sliver inside the crop window forms its own
       // region — only tiers whose center lies inside OUR footprint count.
       if (!pointInPolygon(polygonCentroid(reg), ring)) continue;
+      // Degenerate-region gate: a needle-thin sliver (barrier artifacts
+      // between roof planes) produces spike rings that draw as random
+      // lines. Compactness 4πA/P² of a square ≈ 0.79; a 10:1 sliver
+      // ≈ 0.13; the phantom needles score < 0.05.
+      {
+        let per = 0;
+        for (let i = 0; i < reg.length; i++) {
+          const a = reg[i];
+          const b = reg[(i + 1) % reg.length];
+          per += Math.hypot(b.x - a.x, b.y - a.y);
+        }
+        const compactness = (4 * Math.PI * polygonArea(reg)) / Math.max(1, per * per);
+        if (compactness < 0.07 || regions[r].areaM2 < 12) continue;
+      }
       tierRingsForMagnet.push(reg);
-      const regCentroid = polygonCentroid(reg);
       // Judge every ring edge, then emit CONTIGUOUS CHAINS of kept edges
       // as single polyline runs — the loops a contractor draws — instead
       // of scattered per-edge stubs. A single skipped mini-edge (<4 ft,
@@ -631,13 +657,38 @@ export async function runSolarFirstEstimate(args: {
         const lengthFt = (Math.hypot(b.x - a.x, b.y - a.y) * mpp) / METERS_PER_FOOT;
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const nearOuter = distToRing(mid, ring) < nearOuterPx;
-        const nrm = interiorNormal(a, b, regCentroid);
+        // pointInPolygon-probed normal: the centroid heuristic points the
+        // WRONG WAY on concave (U/L) upper masses and inverted this test.
+        const nrm = inwardNormalForRing(a, b, reg, 0.4 / mpp);
         const hIn = sample(mid.x + nrm.nx * insetPx, mid.y + nrm.ny * insetPx);
         const hOut = sample(mid.x - nrm.nx * insetPx, mid.y - nrm.ny * insetPx);
         const upper = hIn != null && hOut != null && hIn - hOut >= 0.8;
         if (nearOuter || !upper) {
           judged.push({ a, b, lengthFt, keep: "skip", bridgeable: false });
           continue;
+        }
+        // LEVELNESS: a real gutter line is horizontal. A tier-ring edge
+        // that runs along a hip/valley or up a slope changes height along
+        // its run — those drew as the "random diagonal lines".
+        {
+          const hsAlong: number[] = [];
+          for (const t of [0.2, 0.4, 0.6, 0.8]) {
+            const v = sample(
+              a.x + (b.x - a.x) * t + nrm.nx * insetPx,
+              a.y + (b.y - a.y) * t + nrm.ny * insetPx,
+            );
+            if (v != null) hsAlong.push(v);
+          }
+          if (hsAlong.length < 3) {
+            judged.push({ a, b, lengthFt, keep: "skip", bridgeable: true });
+            continue;
+          }
+          const range = Math.max(...hsAlong) - Math.min(...hsAlong);
+          if (range > 0.9) {
+            if (lengthFt >= 4) rejectedTierSegs.push({ a, b });
+            judged.push({ a, b, lengthFt, keep: "skip", bridgeable: false });
+            continue;
+          }
         }
         if (lengthFt < 1.5) {
           judged.push({ a, b, lengthFt, keep: "skip", bridgeable: true });
@@ -668,17 +719,57 @@ export async function runSolarFirstEstimate(args: {
       let chain: Pt[] = [];
       let chainFt = 0;
       const flush = () => {
-        if (chain.length >= 2 && chainFt >= 2) {
-          eaves = [
-            ...eaves,
-            {
-              id: `tier-eave-${r}-${tierEaveCount}`,
-              kind: "eave" as const,
-              points: transformToCanvas(chain.map(S), W, H),
-            },
-          ];
-          tierEaveFt += chainFt;
-          tierEaveCount++;
+        // HAIRPIN: a vertex where the chain doubles back (turn > 150°) is
+        // a ring-needle artifact — SPLIT the chain there and keep both
+        // trustworthy flanks (dropping the whole run silently deleted a
+        // real 40 ft drip line minus a 1 m spike). MIN LENGTH per piece:
+        // a 2–5 ft orphan reads as a random tick, not a gutter run.
+        if (chain.length >= 2) {
+          const pieces: Pt[][] = [];
+          let cur: Pt[] = [chain[0]];
+          for (let i = 1; i < chain.length; i++) {
+            if (i + 1 < chain.length) {
+              const v1x = chain[i].x - chain[i - 1].x;
+              const v1y = chain[i].y - chain[i - 1].y;
+              const v2x = chain[i + 1].x - chain[i].x;
+              const v2y = chain[i + 1].y - chain[i].y;
+              const l1 = Math.hypot(v1x, v1y);
+              const l2 = Math.hypot(v2x, v2y);
+              const cos =
+                l1 > 1e-6 && l2 > 1e-6
+                  ? (v1x * v2x + v1y * v2y) / (l1 * l2)
+                  : 1;
+              if (cos < -0.87) {
+                cur.push(chain[i]);
+                pieces.push(cur);
+                cur = [chain[i + 1]]; // skip PAST the spike vertex
+                i++;
+                continue;
+              }
+            }
+            cur.push(chain[i]);
+          }
+          pieces.push(cur);
+          for (const piece of pieces) {
+            if (piece.length < 2) continue;
+            let ft = 0;
+            for (let i = 1; i < piece.length; i++) {
+              ft +=
+                (Math.hypot(
+                  piece[i].x - piece[i - 1].x,
+                  piece[i].y - piece[i - 1].y,
+                ) *
+                  mpp) /
+                METERS_PER_FOOT;
+            }
+            if (ft >= 6) {
+              tierChains.push({ points: piece, ft });
+            } else if (ft >= 4) {
+              for (let i = 1; i < piece.length; i++) {
+                rejectedTierSegs.push({ a: piece[i - 1], b: piece[i] });
+              }
+            }
+          }
         }
         chain = [];
         chainFt = 0;
@@ -691,19 +782,94 @@ export async function runSolarFirstEstimate(args: {
           chainFt += e.lengthFt;
         } else {
           if (e.keep === "rake") {
-            rakes = [
-              ...rakes,
-              {
-                id: `tier-rake-${r}-${k}`,
-                kind: "rake" as const,
-                points: transformToCanvas([S(e.a), S(e.b)], W, H),
-              },
-            ];
+            tierRakes.push({ a: e.a, b: e.b });
           }
           flush();
         }
       }
       flush();
+    }
+    // DEDUP: the same physical step line can yield near-coincident runs
+    // from two adjacent regions — keep the longest, drop a chain whose
+    // points mostly sit within ~0.8 m of an already-kept one.
+    tierChains.sort((x, y) => y.ft - x.ft);
+    const dupTolPx = 0.8 / mpp;
+    // Open-polyline distance — distToRing would add a phantom closing
+    // edge across the chain and over-trigger the dedup.
+    const distToChain = (p: Pt, pts: Pt[]): number => {
+      let best = Infinity;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        const t =
+          len2 > 0
+            ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+            : 0;
+        const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    // Densify to ~1 m stations so the 70% overlap test measures FOOTAGE,
+    // not vertex counts (a straight chain has only 2 vertices).
+    const densify = (pts: Pt[]): Pt[] => {
+      const out: Pt[] = [];
+      const stepPx = 1 / mpp;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const n = Math.max(1, Math.round(len / stepPx));
+        for (let k = 0; k < n; k++) {
+          out.push({
+            x: a.x + ((b.x - a.x) * k) / n,
+            y: a.y + ((b.y - a.y) * k) / n,
+          });
+        }
+      }
+      out.push(pts[pts.length - 1]);
+      return out;
+    };
+    const kept: TierChain[] = [];
+    for (const c of tierChains) {
+      let dup = false;
+      const stations = densify(c.points);
+      for (const k of kept) {
+        let near = 0;
+        for (const p of stations) {
+          if (distToChain(p, k.points) < dupTolPx) near++;
+        }
+        if (near / stations.length >= 0.7) {
+          dup = true;
+          break;
+        }
+      }
+      if (!dup) kept.push(c);
+    }
+    for (const c of kept) {
+      eaves = [
+        ...eaves,
+        {
+          id: `tier-eave-${tierEaveCount}`,
+          kind: "eave" as const,
+          points: transformToCanvas(c.points.map(S), W, H),
+        },
+      ];
+      tierEaveFt += c.ft;
+      tierEaveCount++;
+    }
+    for (let k = 0; k < tierRakes.length; k++) {
+      rakes = [
+        ...rakes,
+        {
+          id: `tier-rake-${k}`,
+          kind: "rake" as const,
+          points: transformToCanvas([S(tierRakes[k].a), S(tierRakes[k].b)], W, H),
+        },
+      ];
     }
     if (tierEaveCount > 0) {
       notes.push(
@@ -816,7 +982,11 @@ export async function runSolarFirstEstimate(args: {
   // TRUE interior tier edges from the DSM: where an upper roof drops ≥1 m
   // onto a lower roof, the height cliff lands exactly on the upper eave
   // line — far more accurate than the Solar-segment bbox chords below.
-  const dsmTiers = tierEaveCount > 0 ? [] : findTierEdges({
+  // Tier edges the quality gates DIDN'T auto-draw still surface as
+  // amber tap-to-add suggestions (precision governs pricing; recall
+  // survives as hints). Ones already covered by a drawn chain are
+  // filtered below.
+  const dsmTiers = findTierEdges({
     mask: maskCrop,
     dsm,
     dsmNoData: noData,
@@ -824,18 +994,52 @@ export async function runSolarFirstEstimate(args: {
     height: H,
     metersPerPixel: mpp,
   });
-  if (dsmTiers.length > 0) {
-    interiorTiersDetected = dsmTiers.length;
-    suggestedEaves = dsmTiers
-      .map((t) => clipSegmentToRect(S(t.a), S(t.b), W, H))
-      .filter((t): t is NonNullable<typeof t> => t !== null)
-      .map((t, i) => ({
-        id: `suggested-tier-${i}`,
-        kind: "eave" as const,
-        points: transformToCanvas([t.a, t.b], W, H),
-      }));
+  const drawnTierLines = eaves.filter((e) => e.id.startsWith("tier-eave-"));
+  // Coverage = point-to-SEGMENT distance against drawn runs (vertex-only
+  // testing let a suggestion sit ON TOP of a priced straight run — one
+  // tap double-billed the same footage) — checked at the midpoint AND
+  // both endpoints so a partially-covered edge still surfaces.
+  const coveredByDrawn = (aPx: Pt, bPx: Pt): boolean => {
+    if (drawnTierLines.length === 0) return false;
+    const [ca, cb, cm] = transformToCanvas(
+      [S(aPx), S(bPx), S({ x: (aPx.x + bPx.x) / 2, y: (aPx.y + bPx.y) / 2 })],
+      W,
+      H,
+    );
+    const near = (p: Pt) =>
+      drawnTierLines.some((l) => distToPolyline(p, l.points) < 15);
+    return near(cm) && near(ca) && near(cb);
+  };
+  // Pool: undiscovered height cliffs (findTierEdges) + the tier block's
+  // OWN gate-rejected segments (findTierEdges structurally misses
+  // corner-wrapping cliffs, so it can't be the only safety net).
+  const suggestionPool: { a: Pt; b: Pt }[] = [
+    ...dsmTiers,
+    ...rejectedTierSuggestions,
+  ].filter((t) => !coveredByDrawn(t.a, t.b));
+  // De-dup the pool against itself (rejected segments often coincide
+  // with a findTierEdges chord over the same cliff).
+  const poolKept: { a: Pt; b: Pt; canvas: Pt[] }[] = [];
+  for (const t of suggestionPool) {
+    const clipped = clipSegmentToRect(S(t.a), S(t.b), W, H);
+    if (!clipped) continue;
+    const canvasPts = transformToCanvas([clipped.a, clipped.b], W, H);
+    const mid = {
+      x: (canvasPts[0].x + canvasPts[1].x) / 2,
+      y: (canvasPts[0].y + canvasPts[1].y) / 2,
+    };
+    if (poolKept.some((k) => distToPolyline(mid, k.canvas) < 15)) continue;
+    poolKept.push({ a: t.a, b: t.b, canvas: canvasPts });
+  }
+  if (poolKept.length > 0) {
+    interiorTiersDetected = poolKept.length;
+    suggestedEaves = poolKept.map((t, i) => ({
+      id: `suggested-tier-${i}`,
+      kind: "eave" as const,
+      points: t.canvas,
+    }));
     notes.push(
-      `Upper-roof eaves: ${dsmTiers.length} interior drop edge${dsmTiers.length === 1 ? "" : "s"} traced from the height data (roof above a roof) — shown as tap-to-add interior gutters`,
+      `Upper-roof eaves: ${poolKept.length} more interior drop edge${poolKept.length === 1 ? "" : "s"} found in the height data — shown as tap-to-add interior gutters`,
     );
   } else if (tierEaveCount === 0 && segments.length > 0) {
     const perimeterEavesLatLng = eaveEdges.map((e) => ({
