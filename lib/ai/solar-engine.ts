@@ -90,6 +90,10 @@ export type SolarFirstResult = {
   traceQuality: TraceQuality;
   roofStructure: RoofStructure;
   suggestedEaves: EditableLine[];
+  /** The DETAILED drip-edge polyline (canvas coords, ~2 px spacing) —
+   *  the client's drawing tool snaps to it and can trace along it, so
+   *  manual fixes follow every real jog without vertex-by-vertex work. */
+  magnetPath: { x: number; y: number }[];
 };
 
 const METERS_PER_FOOT = 0.3048;
@@ -803,6 +807,19 @@ export async function runSolarFirstEstimate(args: {
     };
   }
 
+  // ---- Magnet path (detailed drip edge for the drawing tool) ------------
+  const magnetStepPx = Math.max(1, Math.round(0.25 / mpp));
+  const magnetPath: Pt[] = [];
+  for (let i = 0; i < traced.boundary.length; i += magnetStepPx) {
+    const p = traced.boundary[i];
+    const local = S({
+      x: p.x - win.x + padded.offX,
+      y: p.y - win.y + padded.offY,
+    });
+    magnetPath.push(local);
+  }
+  const magnetCanvas = transformToCanvas(magnetPath, W, H);
+
   // ---- RGB → PNG data URL ----------------------------------------------
   const png = new PNG({ width: W, height: H });
   for (let i = 0; i < W * H; i++) {
@@ -830,6 +847,7 @@ export async function runSolarFirstEstimate(args: {
     traceQuality,
     roofStructure,
     suggestedEaves,
+    magnetPath: magnetCanvas,
   };
 }
 

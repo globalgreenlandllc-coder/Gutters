@@ -44,6 +44,7 @@ import {
   PX_PER_FT,
 } from "./aerial-shared";
 import { gableWingFaces } from "@/lib/roof-skeleton";
+import { simplify } from "@/lib/ai/geometry";
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
 
@@ -61,6 +62,7 @@ export function AerialCanvas({
   roofStructure,
   pxPerFt,
   armDrawNonce,
+  magnetPath,
 }: {
   eaves: EditableLine[];
   /** Edges the classifier flagged as rakes (no-gutter). Rendered as
@@ -75,6 +77,10 @@ export function AerialCanvas({
   onRakesChange?: (next: EditableLine[]) => void;
   onDownspoutsChange: (next: Downspout[]) => void;
   aerialImageUrl?: string;
+  /** Detailed drip-edge polyline (canvas coords) from the solar engine.
+   *  Draw/drag points snap onto it; in draw mode, two clicks that both
+   *  land on it trace the whole stretch between them. */
+  magnetPath?: { x: number; y: number }[];
   /** Plan-based takeoffs: PDF reference for the canvas to rasterize as
    *  the background. Mutually exclusive with aerialImageUrl in practice
    *  — address mode sets aerialImageUrl, plan mode sets planSource. */
@@ -461,6 +467,43 @@ export function AerialCanvas({
   // Combined snap used while drawing/dragging: a nearby corner magnet WINS
   // (clean chaining); otherwise the right-angle lock relative to the segment's
   // fixed anchor keeps the run square.
+  /** Nearest magnet-path vertex within `tol` canvas px (screen-constant
+   *  via renderScale). Returns its index, or null. */
+  function nearestMagnetIndex(
+    p: { x: number; y: number },
+    tol: number,
+  ): number | null {
+    if (!magnetPath || magnetPath.length < 8) return null;
+    let best = -1;
+    let bestD = tol;
+    for (let i = 0; i < magnetPath.length; i++) {
+      const d = Math.hypot(magnetPath[i].x - p.x, magnetPath[i].y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best >= 0 ? best : null;
+  }
+
+  /** The magnet path's stretch between two vertex indices (shorter way
+   *  around the ring), simplified to architectural corners. */
+  function magnetArc(i0: number, i1: number): { x: number; y: number }[] | null {
+    if (!magnetPath) return null;
+    const n = magnetPath.length;
+    const fwd = (i1 - i0 + n) % n;
+    const bwd = (i0 - i1 + n) % n;
+    const arc: { x: number; y: number }[] = [];
+    if (fwd <= bwd) {
+      for (let k = 0; k <= fwd; k++) arc.push(magnetPath[(i0 + k) % n]);
+    } else {
+      for (let k = 0; k <= bwd; k++) arc.push(magnetPath[(i0 - k + n) % n]);
+    }
+    if (arc.length < 2) return null;
+    const simplified = simplify(arc, 2.5);
+    return simplified.length >= 2 ? simplified : arc;
+  }
+
   function snapPoint(
     p: { x: number; y: number },
     anchor: { x: number; y: number } | null,
@@ -468,6 +511,9 @@ export function AerialCanvas({
   ): { x: number; y: number } {
     const corner = snapToCorner(p, excludeLineId);
     if (dist(corner, p) > 1e-3) return corner; // a real corner snapped
+    // Magnetic roof edge: land exactly on the detected drip line.
+    const mi = nearestMagnetIndex(p, 10 * renderScale);
+    if (mi != null && magnetPath) return magnetPath[mi];
     return orthoSnap(p, anchor);
   }
 
@@ -485,10 +531,28 @@ export function AerialCanvas({
         const threshold = Math.max(3, view.width * 0.015);
         if (len > threshold) {
           const id = `eave-${Date.now()}`;
-          onEavesChange([
-            ...eaves,
-            { id, kind: "eave", points: [drawing.start, snapped] },
-          ]);
+          // EDGE-FOLLOW: when both clicks landed on the detected roof
+          // edge, trace the whole stretch between them — every jog and
+          // corner — instead of a straight chord. Falls back to the
+          // straight line when the path detours absurdly (>3× chord).
+          let pts: { x: number; y: number }[] = [drawing.start, snapped];
+          const tol = 10 * renderScale;
+          const i0 = nearestMagnetIndex(drawing.start, tol);
+          const i1 = nearestMagnetIndex(snapped, tol);
+          if (i0 != null && i1 != null && i0 !== i1) {
+            const arc = magnetArc(i0, i1);
+            if (arc) {
+              let arcLen = 0;
+              for (let k = 1; k < arc.length; k++) {
+                arcLen += Math.hypot(
+                  arc[k].x - arc[k - 1].x,
+                  arc[k].y - arc[k - 1].y,
+                );
+              }
+              if (arcLen <= len * 3) pts = arc;
+            }
+          }
+          onEavesChange([...eaves, { id, kind: "eave", points: pts }]);
           setSelectedId(id);
         }
         setDrawing(null);
@@ -1020,6 +1084,25 @@ export function AerialCanvas({
             width={VIEWBOX_W}
             height={VIEWBOX_H}
             fill={t.overlay}
+            pointerEvents="none"
+          />
+        )}
+
+        {/* Magnetic roof-edge guide — visible while drawing so the
+            contractor sees the line their clicks will snap to and the
+            path a two-click trace will follow. */}
+        {magnetPath && magnetPath.length > 8 && (tool === "add-eave" || tool === "add-gable") && (
+          <path
+            d={`M ${magnetPath[0].x} ${magnetPath[0].y} ` +
+              magnetPath
+                .slice(1)
+                .map((p) => `L ${p.x} ${p.y}`)
+                .join(" ") +
+              " Z"}
+            fill="none"
+            stroke={theme === "tactical" ? "rgba(103,232,249,0.5)" : "rgba(14,116,144,0.45)"}
+            strokeWidth={1.4 * renderScale}
+            strokeDasharray={`${3 * renderScale} ${4 * renderScale}`}
             pointerEvents="none"
           />
         )}

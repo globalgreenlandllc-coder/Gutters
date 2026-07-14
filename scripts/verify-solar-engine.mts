@@ -198,6 +198,9 @@ console.log(`durationMs: ${Date.now() - t0}`);
       ? "bounds: ✓ all geometry inside the 900×580 canvas"
       : `bounds: ✗ ${out.length}/${all.length} points OUTSIDE the canvas`,
   );
+  const mp = result.magnetPath ?? [];
+  const mpOut = mp.filter((p) => p.x < -1 || p.y < -1 || p.x > 901 || p.y > 581);
+  console.log(`magnetPath: ${mp.length} pts, ${mpOut.length} out of canvas`);
   if (out.length > 0) {
     const bucket = (pts: {x:number;y:number}[], name: string) => {
       const o = pts.filter((p) => p.x < -1 || p.y < -1 || p.x > 901 || p.y > 581);

@@ -125,6 +125,9 @@ export type EstimateResult = {
    *  Canvas (900×580) space, same as `eaves`. Empty when no tier-breaks
    *  were detected (or no Solar coverage). */
   suggestedEaves?: EditableLine[];
+  /** Solar-first engine only: the DETAILED drip-edge polyline in canvas
+   *  coords. The drawing tool snaps to it and traces along it. */
+  magnetPath?: { x: number; y: number }[];
 };
 
 /**

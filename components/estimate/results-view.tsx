@@ -423,6 +423,7 @@ export function ResultsView({
                   roofStructure={roofStructure}
                   pxPerFt={canvasPxPerFt}
                   armDrawNonce={drawNonce}
+                  magnetPath={initial.magnetPath}
                 />
               )}
             </motion.div>
