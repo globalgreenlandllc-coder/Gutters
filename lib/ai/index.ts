@@ -128,6 +128,8 @@ export type EstimateResult = {
   /** Solar-first engine only: the DETAILED drip-edge polyline in canvas
    *  coords. The drawing tool snaps to it and traces along it. */
   magnetPath?: { x: number; y: number }[];
+  /** Prefix of magnetPath that forms the closed outer ring. */
+  magnetRingCount?: number;
 };
 
 /**

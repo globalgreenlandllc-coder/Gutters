@@ -424,6 +424,7 @@ export function ResultsView({
                   pxPerFt={canvasPxPerFt}
                   armDrawNonce={drawNonce}
                   magnetPath={initial.magnetPath}
+                  magnetRingCount={initial.magnetRingCount}
                 />
               )}
             </motion.div>

@@ -63,6 +63,7 @@ export function AerialCanvas({
   pxPerFt,
   armDrawNonce,
   magnetPath,
+  magnetRingCount,
 }: {
   eaves: EditableLine[];
   /** Edges the classifier flagged as rakes (no-gutter). Rendered as
@@ -81,6 +82,9 @@ export function AerialCanvas({
    *  Draw/drag points snap onto it; in draw mode, two clicks that both
    *  land on it trace the whole stretch between them. */
   magnetPath?: { x: number; y: number }[];
+  /** Prefix of magnetPath forming the closed outer ring (arc-follow
+   *  works only inside it; interior tier points are snap-only). */
+  magnetRingCount?: number;
   /** Plan-based takeoffs: PDF reference for the canvas to rasterize as
    *  the background. Mutually exclusive with aerialImageUrl in practice
    *  — address mode sets aerialImageUrl, plan mode sets planSource. */
@@ -490,7 +494,10 @@ export function AerialCanvas({
    *  around the ring), simplified to architectural corners. */
   function magnetArc(i0: number, i1: number): { x: number; y: number }[] | null {
     if (!magnetPath) return null;
-    const n = magnetPath.length;
+    // Arc-following assumes a closed ring — only the outer-perimeter
+    // prefix qualifies; interior tier points are snap-only targets.
+    const n = Math.min(magnetRingCount ?? magnetPath.length, magnetPath.length);
+    if (i0 >= n || i1 >= n) return null;
     const fwd = (i1 - i0 + n) % n;
     const bwd = (i0 - i1 + n) % n;
     const arc: { x: number; y: number }[] = [];
@@ -1091,21 +1098,30 @@ export function AerialCanvas({
         {/* Magnetic roof-edge guide — visible while drawing so the
             contractor sees the line their clicks will snap to and the
             path a two-click trace will follow. */}
-        {magnetPath && magnetPath.length > 8 && (tool === "add-eave" || tool === "add-gable") && (
-          <path
-            d={`M ${magnetPath[0].x} ${magnetPath[0].y} ` +
-              magnetPath
-                .slice(1)
-                .map((p) => `L ${p.x} ${p.y}`)
-                .join(" ") +
-              " Z"}
-            fill="none"
-            stroke={theme === "tactical" ? "rgba(103,232,249,0.5)" : "rgba(14,116,144,0.45)"}
-            strokeWidth={1.4 * renderScale}
-            strokeDasharray={`${3 * renderScale} ${4 * renderScale}`}
-            pointerEvents="none"
-          />
-        )}
+        {magnetPath && magnetPath.length > 8 && (tool === "add-eave" || tool === "add-gable") && (() => {
+          const ringN = Math.min(magnetRingCount ?? magnetPath.length, magnetPath.length);
+          const ring = magnetPath.slice(0, ringN);
+          const interior = magnetPath.slice(ringN);
+          const guideC = theme === "tactical" ? "rgba(103,232,249,0.5)" : "rgba(14,116,144,0.45)";
+          return (
+            <g pointerEvents="none">
+              <path
+                d={`M ${ring[0].x} ${ring[0].y} ` +
+                  ring.slice(1).map((p) => `L ${p.x} ${p.y}`).join(" ") +
+                  " Z"}
+                fill="none"
+                stroke={guideC}
+                strokeWidth={1.4 * renderScale}
+                strokeDasharray={`${3 * renderScale} ${4 * renderScale}`}
+              />
+              {/* Interior tier snap targets — dots, not a connected path
+                  (multiple rings are concatenated without separators). */}
+              {interior.filter((_, i) => i % 3 === 0).map((p, i) => (
+                <circle key={`mg-${i}`} cx={p.x} cy={p.y} r={1.1 * renderScale} fill={guideC} />
+              ))}
+            </g>
+          );
+        })()}
 
         {roofStructure && showRoofStructure && (
           <RoofStructureOverlay

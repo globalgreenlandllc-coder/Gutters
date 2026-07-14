@@ -11,6 +11,8 @@ import {
   expandWindowToAspect,
   estimateGroundHeightM,
   estimateRenderShift,
+  tierRegionRings,
+  distToRing,
   refineEdgesToPhoto,
   growRoofMask,
   findTierEdges,
@@ -597,6 +599,52 @@ test("findTierEdges ignores the outer perimeter and flat roofs", () => {
     metersPerPixel: 0.1,
   });
   assert.equal(edges.length, 0);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Tier decomposition                                                 */
+/* ------------------------------------------------------------------ */
+
+test("tierRegionRings splits a two-tier roof into two clean rings", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  const mask = rectMask(W, H, [{ x: 40, y: 40, w: 220, h: 120 }]);
+  const dsm = new Float32Array(W * H).fill(100);
+  for (let y = 40; y < 160; y++) {
+    for (let x = 40; x < 260; x++) {
+      dsm[y * W + x] = x < 150 ? 107 : 104; // upper tier on the left
+    }
+  }
+  const regions = tierRegionRings({
+    mask,
+    dsm,
+    dsmNoData: -9999,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  assert.equal(regions.length, 2, `got ${regions.length} regions`);
+  // The upper region's ring has an edge along x≈150 far from the outer
+  // ring — the interior drip line the engine prices.
+  const outer = [
+    { x: 40, y: 40 },
+    { x: 260, y: 40 },
+    { x: 260, y: 160 },
+    { x: 40, y: 160 },
+  ];
+  const interiorEdges = regions.flatMap((r) =>
+    r.ring
+      .map((a, i) => {
+        const b = r.ring[(i + 1) % r.ring.length];
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      })
+      .filter((m) => distToRing(m, outer) > 9),
+  );
+  assert.ok(interiorEdges.length >= 1, "found an interior tier edge");
+  for (const m of interiorEdges) {
+    assert.ok(Math.abs(m.x - 150) < 8, `interior edge at x=${m.x}, want ≈150`);
+  }
 });
 
 /* ------------------------------------------------------------------ */

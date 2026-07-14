@@ -646,6 +646,123 @@ export function findTierEdges(args: {
   return out;
 }
 
+/**
+ * Decompose the roof into HEIGHT TIERS and return each substantial
+ * tier's cleaned boundary ring. A ≥`minStepM` cliff inside the footprint
+ * separates tiers (an upper roof mass over a lower one); each region's
+ * ring goes through the same DP → ortho/de-chamfer cleanup as the outer
+ * perimeter, so tier outlines come back with square corners.
+ *
+ * The caller decides which ring edges become PRICED interior eaves:
+ * edges far from the outer perimeter whose inside sits ≥~0.8 m above
+ * the outside are the upper roof's drip lines.
+ */
+export function tierRegionRings(args: {
+  mask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  minStepM?: number;
+  minAreaM2?: number;
+}): { ring: Pt[]; areaM2: number }[] {
+  const { mask, dsm, dsmNoData, width, height, metersPerPixel } = args;
+  const minStep = args.minStepM ?? 1.0;
+  const minAreaPx =
+    (args.minAreaM2 ?? 10) / (metersPerPixel * metersPerPixel);
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  // Barrier band on the HIGH side of every interior cliff (same detection
+  // as findTierEdges) — excluding it splits the footprint into tiers.
+  const barrier = new Uint8Array(width * height);
+  const reachPx = Math.max(2, Math.round(0.4 / metersPerPixel));
+  for (let y = reachPx; y < height - reachPx; y++) {
+    for (let x = reachPx; x < width - reachPx; x++) {
+      const i = y * width + x;
+      if (mask[i] === 0) continue;
+      const h = dsm[i];
+      if (!validH(h)) continue;
+      for (const [dx, dy] of [
+        [reachPx, 0],
+        [-reachPx, 0],
+        [0, reachPx],
+        [0, -reachPx],
+      ] as const) {
+        const j = (y + dy) * width + (x + dx);
+        if (mask[j] === 0) continue;
+        const v = dsm[j];
+        if (!validH(v)) continue;
+        if (h - v >= minStep) {
+          barrier[i] = 1;
+          break;
+        }
+      }
+    }
+  }
+
+  // Connected components of footprint minus barrier.
+  const visited = new Uint8Array(width * height);
+  const out: { ring: Pt[]; areaM2: number }[] = [];
+  for (let start = 0; start < mask.length && out.length < 6; start++) {
+    if (mask[start] === 0 || barrier[start] === 1 || visited[start]) continue;
+    const queue = [start];
+    visited[start] = 1;
+    let head = 0;
+    const regionMask = new Uint8Array(width * height);
+    let count = 0;
+    while (head < queue.length) {
+      const idx = queue[head++];
+      regionMask[idx] = 1;
+      count++;
+      const x = idx % width;
+      const y = (idx - x) / width;
+      for (const [nx, ny] of [
+        [x - 1, y],
+        [x + 1, y],
+        [x, y - 1],
+        [x, y + 1],
+      ] as const) {
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const ni = ny * width + nx;
+        if (mask[ni] === 0 || barrier[ni] === 1 || visited[ni]) continue;
+        visited[ni] = 1;
+        queue.push(ni);
+      }
+    }
+    if (count < minAreaPx) continue;
+    const traced = traceMaskFootprint(regionMask, width, height);
+    if (!traced) continue;
+    const cleaned = cleanFootprint(traced.boundary, metersPerPixel);
+    if (!cleaned || cleaned.points.length < 4) continue;
+    out.push({
+      ring: cleaned.points,
+      areaM2: count * metersPerPixel * metersPerPixel,
+    });
+  }
+  return out;
+}
+
+/** Distance from a point to the nearest edge of a closed ring (px). */
+export function distToRing(p: Pt, ring: Pt[]): number {
+  let best = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t =
+      len2 > 0
+        ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+        : 0;
+    const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Per-edge photo snapping                                            */
 /* ------------------------------------------------------------------ */

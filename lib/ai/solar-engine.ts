@@ -14,6 +14,7 @@ import {
   cropFloat32,
   cropUint8,
   cropWindowAround,
+  distToRing,
   eaveHeightAboveGroundM,
   estimateGroundHeightM,
   estimateRenderShift,
@@ -29,6 +30,7 @@ import {
   polygonCentroid,
   recoverAttachedRoofs,
   refineEdgesToPhoto,
+  tierRegionRings,
   traceMaskFootprint,
   type DsmSampler,
   type Pt,
@@ -94,6 +96,9 @@ export type SolarFirstResult = {
    *  the client's drawing tool snaps to it and can trace along it, so
    *  manual fixes follow every real jog without vertex-by-vertex work. */
   magnetPath: { x: number; y: number }[];
+  /** Prefix of magnetPath forming the closed OUTER ring — two-click
+   *  arc-following is only valid within it. */
+  magnetRingCount: number;
 };
 
 const METERS_PER_FOOT = 0.3048;
@@ -573,11 +578,81 @@ export async function runSolarFirstEstimate(args: {
     kind: "eave" as const,
     points: transformToCanvas(renderEdge(e), W, H),
   }));
-  const rakes: EditableLine[] = rakeEdges.map((e, i) => ({
+  let rakes: EditableLine[] = rakeEdges.map((e, i) => ({
     id: `solar-rake-${i}`,
     kind: "rake" as const,
     points: transformToCanvas(renderEdge(e), W, H),
   }));
+
+  // ---- INTERIOR TIER EAVES, auto-drawn as PRICED runs ----------------
+  // Decompose the roof into height tiers and trace each upper mass's own
+  // drip line — the loops a contractor draws around every roof-above-a-
+  // roof section. Edges that duplicate the outer perimeter are skipped;
+  // the rest are kept only when their inside sits ≥0.8 m above their
+  // outside (the upper roof's edge, not the lower roof's wall line), and
+  // each is eave/rake-classified with the same DSM drainage voting as
+  // the perimeter.
+  let tierEaveFt = 0;
+  let tierEaveCount = 0;
+  const tierRingsForMagnet: Pt[][] = [];
+  {
+    const regions = tierRegionRings({
+      mask: maskCrop,
+      dsm,
+      dsmNoData: noData,
+      width: W,
+      height: H,
+      metersPerPixel: mpp,
+    });
+    const nearOuterPx = 0.9 / mpp;
+    const insetPx = 0.7 / mpp;
+    for (let r = 0; r < regions.length; r++) {
+      const reg = regions[r].ring;
+      // A NEIGHBOR's building sliver inside the crop window forms its own
+      // region — only tiers whose center lies inside OUR footprint count.
+      if (!pointInPolygon(polygonCentroid(reg), ring)) continue;
+      tierRingsForMagnet.push(reg);
+      const regCentroid = polygonCentroid(reg);
+      for (let i = 0; i < reg.length; i++) {
+        const a = reg[i];
+        const b = reg[(i + 1) % reg.length];
+        const lengthFt =
+          (Math.hypot(b.x - a.x, b.y - a.y) * mpp) / METERS_PER_FOOT;
+        if (lengthFt < 3) continue;
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (distToRing(mid, ring) < nearOuterPx) continue; // outer covers it
+        const nrm = interiorNormal(a, b, regCentroid);
+        const hIn = sample(mid.x + nrm.nx * insetPx, mid.y + nrm.ny * insetPx);
+        const hOut = sample(mid.x - nrm.nx * insetPx, mid.y - nrm.ny * insetPx);
+        if (hIn == null || hOut == null) continue;
+        if (hIn - hOut < 0.8) continue; // lower side of the step
+        const verdict = classifyEdgeByDsm(a, b, nrm, sample, mpp, {
+          insideMask: (x, y) => {
+            const xi = Math.round(x);
+            const yi = Math.round(y);
+            return (
+              xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0
+            );
+          },
+        });
+        const pts = transformToCanvas([S(a), S(b)], W, H);
+        if (verdict.kind === "rake") {
+          rakes = [...rakes, { id: `tier-rake-${r}-${i}`, kind: "rake", points: pts }];
+        } else {
+          eaves = [...eaves, { id: `tier-eave-${r}-${i}`, kind: "eave", points: pts }];
+          tierEaveFt += lengthFt;
+          tierEaveCount++;
+        }
+      }
+    }
+    if (tierEaveCount > 0) {
+      notes.push(
+        `Interior upper-roof gutters auto-drawn: ${tierEaveCount} run${tierEaveCount === 1 ? "" : "s"} = ${Math.round(
+          tierEaveFt * WASTE_FACTOR,
+        )} LF traced around the height tiers (roof above a roof) — delete any run the customer doesn't want guttered`,
+      );
+    }
+  }
 
   const beforeMerge = eaves.length;
   eaves = mergeCollinearEaves(eaves);
@@ -588,7 +663,7 @@ export async function runSolarFirstEstimate(args: {
   }
 
   const totalEaveLF =
-    eaveEdges.reduce((s, e) => s + e.lengthFt, 0) * WASTE_FACTOR;
+    (eaveEdges.reduce((s, e) => s + e.lengthFt, 0) + tierEaveFt) * WASTE_FACTOR;
 
   const coverScale = Math.max(CANVAS_W / W, CANVAS_H / H);
   const canvasPxPerFt = (coverScale * METERS_PER_FOOT) / mpp;
@@ -689,7 +764,7 @@ export async function runSolarFirstEstimate(args: {
   // TRUE interior tier edges from the DSM: where an upper roof drops ≥1 m
   // onto a lower roof, the height cliff lands exactly on the upper eave
   // line — far more accurate than the Solar-segment bbox chords below.
-  const dsmTiers = findTierEdges({
+  const dsmTiers = tierEaveCount > 0 ? [] : findTierEdges({
     mask: maskCrop,
     dsm,
     dsmNoData: noData,
@@ -710,7 +785,7 @@ export async function runSolarFirstEstimate(args: {
     notes.push(
       `Upper-roof eaves: ${dsmTiers.length} interior drop edge${dsmTiers.length === 1 ? "" : "s"} traced from the height data (roof above a roof) — shown as tap-to-add interior gutters`,
     );
-  } else if (segments.length > 0) {
+  } else if (tierEaveCount === 0 && segments.length > 0) {
     const perimeterEavesLatLng = eaveEdges.map((e) => ({
       a: toLatLng(e.a),
       b: toLatLng(e.b),
@@ -794,6 +869,15 @@ export async function runSolarFirstEstimate(args: {
       ],
     };
   }
+  if (tierEaveCount > 0 && traceQuality.status === "ok") {
+    traceQuality = {
+      status: "low",
+      confidence: Math.min(traceQuality.confidence, 0.75),
+      reasons: [
+        "Interior upper-roof gutters were auto-drawn from the height tiers — verify them before pricing.",
+      ],
+    };
+  }
   // Recovered porch/carport roof is the least-certain part of the trace
   // (inferred from heights + photo, not Google's mask) — never let a run
   // that used it read as fully trusted.
@@ -817,6 +901,24 @@ export async function runSolarFirstEstimate(args: {
       y: p.y - win.y + padded.offY,
     });
     magnetPath.push(local);
+  }
+  // Two-click arc-following is only valid on the closed OUTER ring.
+  const magnetRingCount = magnetPath.length;
+  // Interior tier rings: snap targets for adjusting the auto-drawn
+  // upper-roof gutters (already in cropped px space; densify each edge).
+  for (const reg of tierRingsForMagnet) {
+    for (let i = 0; i < reg.length; i++) {
+      const a = reg[i];
+      const b = reg[(i + 1) % reg.length];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.floor(len / magnetStepPx));
+      for (let k = 0; k < n; k++) {
+        const t = k / n;
+        magnetPath.push(
+          S({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }),
+        );
+      }
+    }
   }
   const magnetCanvas = transformToCanvas(magnetPath, W, H);
 
@@ -848,6 +950,7 @@ export async function runSolarFirstEstimate(args: {
     roofStructure,
     suggestedEaves,
     magnetPath: magnetCanvas,
+    magnetRingCount,
   };
 }
 
