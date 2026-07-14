@@ -606,6 +606,11 @@ export async function runSolarFirstEstimate(args: {
     });
     const nearOuterPx = 0.9 / mpp;
     const insetPx = 0.7 / mpp;
+    const insideMask = (x: number, y: number) => {
+      const xi = Math.round(x);
+      const yi = Math.round(y);
+      return xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0;
+    };
     for (let r = 0; r < regions.length; r++) {
       const reg = regions[r].ring;
       // A NEIGHBOR's building sliver inside the crop window forms its own
@@ -613,37 +618,92 @@ export async function runSolarFirstEstimate(args: {
       if (!pointInPolygon(polygonCentroid(reg), ring)) continue;
       tierRingsForMagnet.push(reg);
       const regCentroid = polygonCentroid(reg);
+      // Judge every ring edge, then emit CONTIGUOUS CHAINS of kept edges
+      // as single polyline runs — the loops a contractor draws — instead
+      // of scattered per-edge stubs. A single skipped mini-edge (<4 ft,
+      // e.g. a corner nub or unknown-verdict sliver) is bridged so it
+      // can't break the chain.
+      type EdgeJudged = { a: Pt; b: Pt; lengthFt: number; keep: "eave" | "rake" | "skip"; bridgeable: boolean };
+      const judged: EdgeJudged[] = [];
       for (let i = 0; i < reg.length; i++) {
         const a = reg[i];
         const b = reg[(i + 1) % reg.length];
-        const lengthFt =
-          (Math.hypot(b.x - a.x, b.y - a.y) * mpp) / METERS_PER_FOOT;
-        if (lengthFt < 3) continue;
+        const lengthFt = (Math.hypot(b.x - a.x, b.y - a.y) * mpp) / METERS_PER_FOOT;
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-        if (distToRing(mid, ring) < nearOuterPx) continue; // outer covers it
+        const nearOuter = distToRing(mid, ring) < nearOuterPx;
         const nrm = interiorNormal(a, b, regCentroid);
         const hIn = sample(mid.x + nrm.nx * insetPx, mid.y + nrm.ny * insetPx);
         const hOut = sample(mid.x - nrm.nx * insetPx, mid.y - nrm.ny * insetPx);
-        if (hIn == null || hOut == null) continue;
-        if (hIn - hOut < 0.8) continue; // lower side of the step
-        const verdict = classifyEdgeByDsm(a, b, nrm, sample, mpp, {
-          insideMask: (x, y) => {
-            const xi = Math.round(x);
-            const yi = Math.round(y);
-            return (
-              xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0
-            );
-          },
-        });
-        const pts = transformToCanvas([S(a), S(b)], W, H);
-        if (verdict.kind === "rake") {
-          rakes = [...rakes, { id: `tier-rake-${r}-${i}`, kind: "rake", points: pts }];
+        const upper = hIn != null && hOut != null && hIn - hOut >= 0.8;
+        if (nearOuter || !upper) {
+          judged.push({ a, b, lengthFt, keep: "skip", bridgeable: false });
+          continue;
+        }
+        if (lengthFt < 1.5) {
+          judged.push({ a, b, lengthFt, keep: "skip", bridgeable: true });
+          continue;
+        }
+        const verdict = classifyEdgeByDsm(a, b, nrm, sample, mpp, { insideMask });
+        if (verdict.kind === "rake" && lengthFt >= 6) {
+          judged.push({ a, b, lengthFt, keep: "rake", bridgeable: false });
+        } else if (verdict.kind === "unknown" && lengthFt < 4) {
+          judged.push({ a, b, lengthFt, keep: "skip", bridgeable: true });
         } else {
-          eaves = [...eaves, { id: `tier-eave-${r}-${i}`, kind: "eave", points: pts }];
-          tierEaveFt += lengthFt;
-          tierEaveCount++;
+          judged.push({ a, b, lengthFt, keep: "eave", bridgeable: false });
         }
       }
+      // Bridge single skipped-but-bridgeable edges BETWEEN two eave edges.
+      const n = judged.length;
+      for (let i = 0; i < n; i++) {
+        if (judged[i].keep === "skip" && judged[i].bridgeable) {
+          const prev = judged[(i - 1 + n) % n];
+          const next = judged[(i + 1) % n];
+          if (prev.keep === "eave" && next.keep === "eave") judged[i].keep = "eave";
+        }
+      }
+      // Emit chains (ring-aware: rotate so index 0 isn't mid-chain).
+      let startAt = 0;
+      while (startAt < n && judged[startAt].keep === "eave") startAt++;
+      if (startAt === n) startAt = 0; // whole ring is one loop
+      let chain: Pt[] = [];
+      let chainFt = 0;
+      const flush = () => {
+        if (chain.length >= 2 && chainFt >= 2) {
+          eaves = [
+            ...eaves,
+            {
+              id: `tier-eave-${r}-${tierEaveCount}`,
+              kind: "eave" as const,
+              points: transformToCanvas(chain.map(S), W, H),
+            },
+          ];
+          tierEaveFt += chainFt;
+          tierEaveCount++;
+        }
+        chain = [];
+        chainFt = 0;
+      };
+      for (let k = 0; k < n; k++) {
+        const e = judged[(startAt + k) % n];
+        if (e.keep === "eave") {
+          if (chain.length === 0) chain.push(e.a);
+          chain.push(e.b);
+          chainFt += e.lengthFt;
+        } else {
+          if (e.keep === "rake") {
+            rakes = [
+              ...rakes,
+              {
+                id: `tier-rake-${r}-${k}`,
+                kind: "rake" as const,
+                points: transformToCanvas([S(e.a), S(e.b)], W, H),
+              },
+            ];
+          }
+          flush();
+        }
+      }
+      flush();
     }
     if (tierEaveCount > 0) {
       notes.push(
@@ -652,14 +712,6 @@ export async function runSolarFirstEstimate(args: {
         )} LF traced around the height tiers (roof above a roof) — delete any run the customer doesn't want guttered`,
       );
     }
-  }
-
-  const beforeMerge = eaves.length;
-  eaves = mergeCollinearEaves(eaves);
-  if (eaves.length < beforeMerge) {
-    notes.push(
-      `Merged collinear eaves: ${beforeMerge} → ${eaves.length} continuous runs`,
-    );
   }
 
   const totalEaveLF =
