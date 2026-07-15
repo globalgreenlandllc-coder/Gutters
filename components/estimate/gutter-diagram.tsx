@@ -84,6 +84,7 @@ export function GutterDiagram({
   address,
   confidence,
   onAcceptSuggested,
+  presentation,
   className,
 }: {
   eaves: EditableLine[];
@@ -100,6 +101,11 @@ export function GutterDiagram({
   confidence?: number;
   /** When provided, suggested runs become clickable to promote into eaves. */
   onAcceptSuggested?: (line: EditableLine) => void;
+  /** Client-deliverable mode (proposal preview + portal): only the
+   *  perimeter, priced gutter runs and downspouts render — no dashed
+   *  rakes, no dotted roof seams, no amber suggestions. The working
+   *  layers stay on the estimate page where the contractor needs them. */
+  presentation?: boolean;
   className?: string;
 }) {
   const rawScale = Number.isFinite(pxPerFt) && (pxPerFt ?? 0) > 0 ? pxPerFt! : PX_PER_FT;
@@ -118,8 +124,11 @@ export function GutterDiagram({
     const pts: Pt[] = [
       ...rawPerimeter,
       ...eaves.flatMap((e) => e.points),
-      ...rakes.flatMap((e) => e.points),
-      ...suggestedEaves.flatMap((e) => e.points),
+      // Hidden working layers must not influence the presentation fit —
+      // an off-roof suggestion would shrink the visible drawing for
+      // nothing.
+      ...(presentation ? [] : rakes.flatMap((e) => e.points)),
+      ...(presentation ? [] : suggestedEaves.flatMap((e) => e.points)),
       ...downspouts.map((d) => ({ x: d.x, y: d.y })),
     ].filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
     const bb = bboxOfPoints(pts);
@@ -137,7 +146,7 @@ export function GutterDiagram({
     const cx = (bb.minX + bb.maxX) / 2;
     const cy = (bb.minY + bb.maxY) / 2;
     return { s, tx: VIEWBOX_W / 2 - cx * s, ty: VIEWBOX_H / 2 - cy * s };
-  }, [rawPerimeter, eaves, rakes, suggestedEaves, downspouts]);
+  }, [rawPerimeter, eaves, rakes, suggestedEaves, downspouts, presentation]);
 
   const tp = useMemo(() => {
     const { s, tx, ty } = fit;
@@ -198,17 +207,21 @@ export function GutterDiagram({
   const scaleBarPx = Math.max(24, Math.min(180, 10 * scale));
 
   // Real detected roof seams (decorative, faint). Satellite has no hips.
-  const skeleton: { pts: Pt[]; dash: boolean }[] = [
-    ...(roofStructure?.ridges ?? []).map((l) => ({ pts: l.points.map(tp), dash: false })),
-    ...(roofStructure?.valleys ?? []).map((l) => ({ pts: l.points.map(tp), dash: true })),
-  ].filter((l) => l.pts.length >= 2);
+  const skeleton: { pts: Pt[]; dash: boolean }[] = presentation
+    ? []
+    : [
+        ...(roofStructure?.ridges ?? []).map((l) => ({ pts: l.points.map(tp), dash: false })),
+        ...(roofStructure?.valleys ?? []).map((l) => ({ pts: l.points.map(tp), dash: true })),
+      ].filter((l) => l.pts.length >= 2);
 
+  // Offsets clear the eave LF pills (which kick ~12px outward from the
+  // runs) so a side label never sits on top of a measurement.
   const orientationChips: { label: string; at: Pt }[] = bbox
     ? [
-        { label: "BACK", at: { x: (bbox.minX + bbox.maxX) / 2, y: bbox.minY - 16 } },
-        { label: "FRONT", at: { x: (bbox.minX + bbox.maxX) / 2, y: bbox.maxY + 16 } },
-        { label: "LEFT", at: { x: bbox.minX - 22, y: (bbox.minY + bbox.maxY) / 2 } },
-        { label: "RIGHT", at: { x: bbox.maxX + 22, y: (bbox.minY + bbox.maxY) / 2 } },
+        { label: "BACK", at: { x: (bbox.minX + bbox.maxX) / 2, y: bbox.minY - 26 } },
+        { label: "FRONT", at: { x: (bbox.minX + bbox.maxX) / 2, y: bbox.maxY + 26 } },
+        { label: "LEFT", at: { x: bbox.minX - 42, y: (bbox.minY + bbox.maxY) / 2 } },
+        { label: "RIGHT", at: { x: bbox.maxX + 42, y: (bbox.minY + bbox.maxY) / 2 } },
       ].filter(
         (c) => c.at.x > 8 && c.at.x < VIEWBOX_W - 8 && c.at.y > 8 && c.at.y < VIEWBOX_H - 8,
       )
@@ -234,13 +247,15 @@ export function GutterDiagram({
       >
         <BlueprintBackground />
 
-        {/* Filled roof mass so the building reads as a solid shape */}
+        {/* Filled roof mass so the building reads as a solid shape. In
+            presentation mode the perimeter is the only outline left, so
+            it gets a slightly firmer stroke. */}
         {hasPerimeter && (
           <path
             d={pathD(perimeter) + " Z"}
             fill={C.mass}
-            stroke={C.massEdge}
-            strokeWidth={1.4}
+            stroke={presentation ? "rgba(20,58,74,.5)" : C.massEdge}
+            strokeWidth={presentation ? 1.8 : 1.4}
             strokeLinejoin="round"
           />
         )}
@@ -259,7 +274,7 @@ export function GutterDiagram({
         ))}
 
         {/* Rakes — de-emphasized dashed "no gutter" gable edges */}
-        {nRakes.map((line) => (
+        {!presentation && nRakes.map((line) => (
           <path
             key={line.id}
             d={pathD(line.points)}
@@ -273,7 +288,7 @@ export function GutterDiagram({
         ))}
 
         {/* Suggested interior gutters — un-priced amber dashed hints */}
-        {nSuggested.map((line, si) => {
+        {!presentation && nSuggested.map((line, si) => {
           if (line.points.length < 2) return null;
           const m = midpointOf(line.points);
           const clickable = !!onAcceptSuggested;
@@ -431,12 +446,12 @@ export function GutterDiagram({
           </span>
         )}
         <span className="inline-flex items-center gap-1.5 rounded-full bg-[#14688c] px-2.5 py-1 text-[11px] font-semibold text-white tabular-nums">
-          {totalEaveLF} LF
+          {totalEaveLF} LF gutter
           <span className="opacity-60">·</span>
-          {downspouts.length} drops
+          {downspouts.length} {downspouts.length === 1 ? "downspout" : "downspouts"}
         </span>
       </div>
-      {suggestedEaves.length > 0 && (
+      {!presentation && suggestedEaves.length > 0 && (
         <div className="pointer-events-none absolute bottom-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#c8892b] px-2.5 py-1 text-[10px] font-semibold text-white">
           {suggestedEaves.length} suggested interior {suggestedEaves.length === 1 ? "run" : "runs"}
           {onAcceptSuggested ? " · tap ＋ to add" : ` · +${suggestedLF} LF`}

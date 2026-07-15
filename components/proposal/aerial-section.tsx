@@ -33,7 +33,6 @@ export function AerialSection({
   const isSatellite = !!takeoff?.aerial?.imageDataUrl;
   const [view, setView] = useState<"diagram" | "photo">("diagram");
   const showDiagram = isSatellite && view === "diagram";
-  const suggestedEaves = takeoff?.suggestedEaves ?? [];
 
   // Recompute total LF from the live edited eaves so the badge stays in
   // sync as the contractor adjusts the trace. NaN-guard each line:
@@ -94,30 +93,6 @@ export function AerialSection({
     });
   };
 
-  // Promote a suggested interior gutter into a PRICED eave — only on this
-  // explicit action. The LF is added to measurements.eaveLF here (never
-  // before), keeping suggestions money-safe until the contractor accepts.
-  const handleAcceptSuggested = (line: EditableLine) => {
-    if (!onChange || !takeoff) return;
-    const promoted: EditableLine = {
-      ...line,
-      id: `eave-from-${line.id}`,
-      kind: "eave",
-    };
-    const nextEaves = [...takeoff.eaves, promoted];
-    const nextSuggested = (takeoff.suggestedEaves ?? []).filter(
-      (s) => s.id !== line.id,
-    );
-    const updatedLF = Math.round(
-      nextEaves.reduce((acc, l) => acc + safeLineLengthFt(l), 0),
-    );
-    onChange({
-      ...proposal,
-      takeoff: { ...takeoff, eaves: nextEaves, suggestedEaves: nextSuggested },
-      measurements: { ...proposal.measurements, eaveLF: updatedLF },
-    });
-  };
-
   return (
     <section data-section="aerial" className="space-y-4">
       <div className="flex items-start justify-between gap-4">
@@ -126,7 +101,7 @@ export function AerialSection({
           sub={
             hasRealTakeoff
               ? showDiagram
-                ? "Roof plan derived from the satellite image at true scale. Gutter runs in blue; tap a suggested run to add it."
+                ? "Roof plan drawn from the satellite image at true scale — gutter runs in blue with lengths, numbered downspouts."
                 : editable
                   ? "Live takeoff from the satellite image. Drag any handle to refine — totals update instantly."
                   : "Eaves and downspouts traced directly from this property's satellite image."
@@ -171,16 +146,15 @@ export function AerialSection({
               <div className="aspect-[16/10]">
                 <GutterDiagram
                   eaves={takeoff!.eaves}
-                  rakes={takeoff!.rakes}
                   downspouts={takeoff!.downspouts}
-                  // Interior-gutter suggestions are a contractor takeoff aid
-                  // — hide them in the client-facing (read-only) deliverable.
-                  suggestedEaves={editable ? suggestedEaves : []}
-                  roofStructure={takeoff!.roofStructure}
                   pxPerFt={takeoff!.canvasPxPerFt}
+                  roofStructure={takeoff!.roofStructure}
                   address={proposal.address}
                   confidence={takeoff!.roofStructure?.confidence}
-                  onAcceptSuggested={editable ? handleAcceptSuggested : undefined}
+                  // The proposal is the deliverable: perimeter, priced
+                  // gutter runs and downspouts only. Working layers
+                  // (suggestions, rakes, roof seams) live on /estimate.
+                  presentation
                 />
               </div>
             ) : (
