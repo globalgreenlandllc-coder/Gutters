@@ -186,9 +186,61 @@ export async function runSolarFirstEstimate(args: {
     }
   }
 
+  // ---- Roof-plane allow-zone ----------------------------------------
+  // Google's Solar segments map the actual roof planes. Padded 2 m they
+  // cover every real drip edge — but NOT the tree-canopy / shadow blobs
+  // Google's ML building mask sometimes annexes (this house: a shadowed
+  // tree by the porch bulged the mask, and the perimeter dutifully drew
+  // a gutter pentagon around it). Trim the mask to the zone before
+  // tracing; skipped when segments are too sparse to trust (<4).
+  let baseMask = layers.mask;
+  let allowMask: Uint8Array | undefined;
+  if (insights && insights.roofSegments.length >= 4) {
+    allowMask = new Uint8Array(layers.grid.width * layers.grid.height);
+    const padPx = Math.round(2 / mpp);
+    for (const seg of insights.roofSegments) {
+      if (!seg.boundingBoxNE || !seg.boundingBoxSW) continue;
+      const a = layers.grid.fromLatLng(
+        seg.boundingBoxNE.lat,
+        seg.boundingBoxNE.lng,
+      );
+      const b = layers.grid.fromLatLng(
+        seg.boundingBoxSW.lat,
+        seg.boundingBoxSW.lng,
+      );
+      const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x)) - padPx);
+      const x1 = Math.min(
+        layers.grid.width - 1,
+        Math.ceil(Math.max(a.x, b.x)) + padPx,
+      );
+      const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y)) - padPx);
+      const y1 = Math.min(
+        layers.grid.height - 1,
+        Math.ceil(Math.max(a.y, b.y)) + padPx,
+      );
+      for (let y = y0; y <= y1; y++) {
+        allowMask.fill(1, y * layers.grid.width + x0, y * layers.grid.width + x1 + 1);
+      }
+    }
+    const trimmed = new Uint8Array(layers.mask.length);
+    let cut = 0;
+    for (let i = 0; i < layers.mask.length; i++) {
+      if (layers.mask[i] > 0) {
+        if (allowMask[i] > 0) trimmed[i] = 1;
+        else cut++;
+      }
+    }
+    if (cut > 0) {
+      baseMask = trimmed;
+      notes.push(
+        `Trimmed ${Math.round(cut * mpp * mpp)} m² of the building mask that sits outside every Solar roof plane (tree canopy / shadow the mask annexed)`,
+      );
+    }
+  }
+
   // ---- Footprint ---------------------------------------------------
   let traced = traceMaskFootprint(
-    layers.mask,
+    baseMask,
     layers.grid.width,
     layers.grid.height,
   );
@@ -202,7 +254,7 @@ export async function runSolarFirstEstimate(args: {
   // sit outside it even though their roofs need gutters. The DSM knows
   // they're there (smooth elevated surfaces hugging the house) and the
   // orthophoto rules out tree canopy.
-  let workMask = layers.mask;
+  let workMask = baseMask;
   let expectedAreaPx = traced.areaPx;
   // Pushed only after the close step actually welds the porch onto the
   // footprint — a note about recovered roof that never landed would lie.
@@ -214,7 +266,7 @@ export async function runSolarFirstEstimate(args: {
     const bxs = traced.boundary.map((p) => p.x);
     const bys = traced.boundary.map((p) => p.y);
     const ground = estimateGroundHeightM({
-      mask: layers.mask,
+      mask: baseMask,
       dsm: layers.dsm,
       dsmNoData: layers.dsmNoData,
       width: layers.grid.width,
@@ -235,7 +287,7 @@ export async function runSolarFirstEstimate(args: {
       // corners, and its boundary IS the gutter line (so the blanket
       // overhang offset shrinks to a safety margin below).
       const grown = growRoofMask({
-        mask: layers.mask,
+        mask: baseMask,
         dsm: layers.dsm,
         dsmNoData: layers.dsmNoData,
         rgb: layers.rgb,
@@ -243,8 +295,9 @@ export async function runSolarFirstEstimate(args: {
         height: layers.grid.height,
         metersPerPixel: mpp,
         groundHeightM: ground,
+        allowMask,
       });
-      let growMask = layers.mask;
+      let growMask = baseMask;
       if (grown.grownPx > 0) {
         const regrow = traceMaskFootprint(
           grown.mask,
@@ -646,6 +699,66 @@ export async function runSolarFirstEstimate(args: {
       // A NEIGHBOR's building sliver inside the crop window forms its own
       // region — only tiers whose center lies inside OUR footprint count.
       if (!pointInPolygon(polygonCentroid(reg), ring)) continue;
+      // ROOF-PLANE gate: Google's Solar segments map the actual roof
+      // planes. A "tier" containing none of them isn't roof — it's the
+      // tree canopy the mask/growth annexed (photogrammetric canopy is
+      // smooth and shadowed canopy isn't green, so pixel tests miss it;
+      // the shadow-tree by this house's porch drew a gutter pentagon).
+      // Real small porches without their own segment fall back to the
+      // findTierEdges suggestions — precision governs pricing.
+      if (
+        segCentersPx.length > 0 &&
+        !segCentersPx.some((c) => pointInPolygon(c.px, reg))
+      ) {
+        continue;
+      }
+      // ROOF-SURFACE screen: a tier region must LOOK like roof inside.
+      // Sample its interior — tree canopy is rough in the DSM and often
+      // green; hardscape sits at grade (below the 1.8 m floor these
+      // regions inherit from the mask, but a mask/growth error can leak
+      // it in). >30% failing samples → not a roof, skip the region.
+      {
+        const xs2 = reg.map((q) => q.x);
+        const ys2 = reg.map((q) => q.y);
+        const step2 = Math.max(2, Math.round(0.6 / mpp));
+        let good = 0;
+        let bad = 0;
+        for (let sy = Math.min(...ys2); sy <= Math.max(...ys2); sy += step2) {
+          for (let sx = Math.min(...xs2); sx <= Math.max(...xs2); sx += step2) {
+            if (!pointInPolygon({ x: sx, y: sy }, reg)) continue;
+            const xi = Math.round(sx);
+            const yi = Math.round(sy);
+            if (xi < 1 || yi < 1 || xi >= W - 1 || yi >= H - 1) continue;
+            const h = sample(xi, yi);
+            if (h == null) {
+              bad++;
+              continue;
+            }
+            // local roughness (3×3 range) — canopy jumps, roofs don't
+            let lo = h;
+            let hi = h;
+            let ok = true;
+            for (let dy = -1; dy <= 1 && ok; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const v = sample(xi + dx, yi + dy);
+                if (v == null) {
+                  ok = false;
+                  break;
+                }
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+              }
+            }
+            const r = rgb[(yi * W + xi) * 3];
+            const g = rgb[(yi * W + xi) * 3 + 1];
+            const b2 = rgb[(yi * W + xi) * 3 + 2];
+            const green = g > r + 6 && g > b2 + 6;
+            if (!ok || hi - lo > 0.7 || green) bad++;
+            else good++;
+          }
+        }
+        if (good + bad >= 8 && bad / (good + bad) > 0.3) continue;
+      }
       // Degenerate-region gate: a needle-thin sliver (barrier artifacts
       // between roof planes) produces spike rings that draw as random
       // lines. Compactness 4πA/P² of a square ≈ 0.79; a 10:1 sliver

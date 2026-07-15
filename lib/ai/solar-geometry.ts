@@ -433,6 +433,12 @@ export function growRoofMask(args: {
   metersPerPixel: number;
   groundHeightM: number;
   maxGrowM?: number;
+  /** When provided, growth may only claim pixels where allowMask > 0 —
+   *  the caller rasterizes Google's Solar roof-plane bboxes (padded)
+   *  into it, so growth can reach every real drip edge but can't crawl
+   *  into the tree canopy beside the roof (smooth photogrammetric
+   *  crowns + shadow defeat the pixel-level tests). */
+  allowMask?: Uint8Array;
 }): { mask: Uint8Array; grownPx: number } {
   const { mask, dsm, dsmNoData, rgb, width, height, metersPerPixel, groundHeightM } = args;
   const maxSteps = Math.max(1, Math.round((args.maxGrowM ?? 3) / metersPerPixel));
@@ -499,6 +505,7 @@ export function growRoofMask(args: {
     for (const idx of frontier) {
       const x = idx % width;
       const y = (idx - x) / width;
+      const hHere = dsm[idx];
       for (const [nx, ny] of [
         [x - 1, y],
         [x + 1, y],
@@ -509,6 +516,13 @@ export function growRoofMask(args: {
         if (nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1) continue;
         if (out[ni] > 0) continue;
         if (!roofLike(nx, ny)) continue;
+        // HEIGHT CONTINUITY: a roof surface extends smoothly to its drip
+        // edge; tree canopy touching the roof jumps in height. Without
+        // this, SHADOWED canopy (dark enough to pass the green test,
+        // locally smooth at its crown) got annexed — and the tier engine
+        // then drew a gutter loop around a TREE next to the porch.
+        if (validH(hHere) && Math.abs(dsm[ni] - hHere) > 0.6) continue;
+        if (args.allowMask && args.allowMask[ni] === 0) continue;
         out[ni] = 1;
         grownPx++;
         if (grownPx > growCap) return { mask, grownPx: 0 }; // runaway — distrust
@@ -1245,7 +1259,10 @@ export function cleanFootprint(
     orthoMaxDriftM?: number;
   },
 ): CleanedFootprint | null {
-  const epsPx = (opts?.simplifyEpsM ?? 0.45) / metersPerPixel;
+  // 0.3 m (was 0.45): a two-step 0.5 m staircase jog deviates ~0.45 m
+  // from its chord — the old epsilon collapsed real jagged-roof corners
+  // into the diagonals the owner kept flagging.
+  const epsPx = (opts?.simplifyEpsM ?? 0.3) / metersPerPixel;
   const maxDriftPx = (opts?.orthoMaxDriftM ?? 2) / metersPerPixel;
 
   const downsampled =
