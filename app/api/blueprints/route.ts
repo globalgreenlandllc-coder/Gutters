@@ -725,6 +725,20 @@ export async function POST(request: Request) {
               .map((r) => r.feet)
               .filter((f): f is number => typeof f === "number" && Number.isFinite(f))
           : null,
+        // Gate the outline that's ACTUALLY PRICED (v2 edge takeoff) at its
+        // solved scale — not the raw vision trace, whose px space + declared
+        // scale produced the Woodinville "6648 sf vs stated 3328" noise.
+        pricedOutline:
+          edgeTakeoff?.ok &&
+          typeof edgeTakeoff.ptPerFt === "number" &&
+          Number.isFinite(edgeTakeoff.ptPerFt) &&
+          edgeTakeoff.ptPerFt > 0
+            ? {
+                ring: edgeTakeoff.outline,
+                ftPerUnit: 1 / edgeTakeoff.ptPerFt,
+                source: "edge-classified outline",
+              }
+            : null,
       });
       if (gates.notes.length > 0) {
         finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];

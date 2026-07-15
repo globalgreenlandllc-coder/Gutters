@@ -365,3 +365,145 @@ test("area-gate baseline: no-scale path — a corrected box silences the shape f
   const ns = v.reviewFlags.find((f) => f.code === "no_schedule");
   assert.ok(ns && /printed 50' × 40' overalls/.test(ns.message), "the correction is still noted");
 });
+
+// ---------------------------------------------------------------------------
+// pricedOutline — the area gate must judge the outline that is ACTUALLY PRICED
+// (the v2 edge-classified perimeter at its solved scale), not the raw vision
+// trace. Real failure: Woodinville's gate compared a 6648 sf trace extent (and
+// a 2177 sf re-scaled ring) against a bare 64×52 wall box while the priced
+// outline was 4047 sf — consistent with walls + overhangs all along.
+// ---------------------------------------------------------------------------
+
+/** Rectangle helper in outline units. */
+const rect = (w: number, h: number) => [
+  { x: 0, y: 0 },
+  { x: w, y: 0 },
+  { x: w, y: h },
+  { x: 0, y: h },
+];
+
+test("pricedOutline: the [main] area gate runs on the priced ring at the solved scale", () => {
+  // 136×104 units @ 0.5 ft/unit = 68×52 ft = 3536 sf vs the printed 64×52
+  // walls (3328 sf) + 2 ft overhangs (3808 sf) → inside [0.80·box, 1.15·grown].
+  const v = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    pricedOutline: { ring: rect(136, 104), ftPerUnit: 0.5, source: "edge-classified outline" },
+  });
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag, "area gate runs");
+  assert.equal(ag!.severity, "info");
+  assert.ok(/priced outline covers 3536 sf @ 2 pt\/ft/.test(ag!.message), `computed from the priced ring: ${ag!.message}`);
+  assert.ok(/consistent/.test(ag!.message));
+  assert.ok(/64' × 52' walls \(3328 sf\)/.test(ag!.message), "cites the wall box");
+  assert.ok(/≈3808 sf/.test(ag!.message), "cites the grown (overhang) envelope");
+  // The legacy vision-trace wording must NOT appear — the trace was not gated.
+  assert.ok(!/trace spans|declared scale/.test(ag!.message));
+  assert.ok(!v.reviewFlags.some((f) => f.code === "no_schedule"));
+});
+
+test("pricedOutline: Woodinville numbers — 12-corner ~4047 sf ring vs the 64×52 box reads CONSISTENT (info)", () => {
+  // The production defect: 87.6 LF priced on a 4047 sf outline @ 18 pt/ft
+  // flagged "35% off / a wing may be missing" because the gate was fed the
+  // vision trace. The same ring in POINTS at 18 pt/ft must pass as info.
+  const ftRing = [
+    { x: 0, y: 0 }, { x: 44, y: 0 }, { x: 44, y: 8 }, { x: 68.6, y: 8 },
+    { x: 68.6, y: 45 }, { x: 54, y: 45 }, { x: 54, y: 72.5 }, { x: 20, y: 72.5 },
+    { x: 20, y: 60 }, { x: 8, y: 60 }, { x: 8, y: 50 }, { x: 0, y: 50 },
+  ]; // 12 corners, 4045 sf, bbox 68.6 × 72.5 ft
+  const ring = ftRing.map((p) => ({ x: p.x * 18, y: p.y * 18 })); // outline in pt
+  const v = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    pricedOutline: { ring, ftPerUnit: 1 / 18, source: "edge-classified outline" },
+  });
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag, "area gate runs");
+  assert.equal(ag!.severity, "info", `must be consistent, got: ${ag?.message}`);
+  assert.ok(/priced outline covers 4045 sf @ 18 pt\/ft/.test(ag!.message), ag!.message);
+  assert.ok(/consistent; a roof outline is expected to run larger than the wall box/.test(ag!.message));
+  assert.ok(!/wing\/mass may be missing/.test(ag!.message), "no phantom missing-wing blame");
+});
+
+test("pricedOutline: a genuinely small priced outline still warns — a wing/mass may be missing", () => {
+  // 46×46 ft = 2116 sf vs the 64×52 walls: below 0.80×3328 = 2662 sf.
+  const v = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    pricedOutline: { ring: rect(46, 46), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "warn", "a small priced outline must warn");
+  assert.ok(/priced outline covers 2116 sf/.test(ag!.message));
+  assert.ok(/A wing\/mass may be missing from the priced outline/.test(ag!.message));
+  assert.ok(/VERIFY against the roof plan/.test(ag!.message));
+});
+
+test("pricedOutline absent/null → legacy vision-path output byte-identical (pinned fixture)", () => {
+  const expected = [
+    {
+      code: "area_gate",
+      severity: "info",
+      mass: "main",
+      message:
+        "[main] area gate: the trace spans a 2000 sf envelope (footprint 2000 sf; the rest is normal articulation) vs the stated 2000 sf width×depth box — 0.0% off — OK.",
+    },
+  ];
+  const legacy = validateBlueprintGeometry(analysis(), classification(50, 40));
+  assert.deepEqual(legacy.reviewFlags, expected, "the legacy message is pinned verbatim");
+  const withNull = validateBlueprintGeometry(analysis(), classification(50, 40), { pricedOutline: null });
+  assert.deepEqual(withNull.reviewFlags, legacy.reviewFlags);
+  assert.deepEqual(withNull.mass, legacy.mass);
+  assert.equal(withNull.scaleFtPerPx, legacy.scaleFtPerPx);
+  // A malformed priced outline (no scale / too few points) degrades to legacy.
+  const malformed = validateBlueprintGeometry(analysis(), classification(50, 40), {
+    pricedOutline: { ring: [{ x: 0, y: 0 }, { x: 1, y: 1 }], ftPerUnit: NaN, source: "junk" },
+  });
+  assert.deepEqual(malformed.reviewFlags, legacy.reviewFlags);
+});
+
+test("pricedOutline ADVERSARIAL: an oversized priced outline (~6500 sf vs 64×52) warns — never silent", () => {
+  // 81×81 ft = 6561 sf: above 1.15×(68×56) = 4379 sf.
+  const v = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    pricedOutline: { ring: rect(81, 81), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag, "the gate must emit a flag");
+  assert.equal(ag!.severity, "warn", "an oversized outline can never pass silently");
+  assert.ok(/priced outline covers 6561 sf/.test(ag!.message));
+  assert.ok(/% off/.test(ag!.message));
+  assert.ok(/dimension-line scale is wrong|wing\/mass may be missing/.test(ag!.message));
+});
+
+test("pricedOutline: a roof-labeled schedule area compares polygon-to-polygon (±15%)", () => {
+  // 1168G prints "ROOF AREA (ft²) = 3358" — the same quantity as the priced
+  // roof outline, so the compare is direct. 58×58 = 3364 sf ≈ 3358 → info.
+  const ok = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    statedScheduleAreaFt2: 3358,
+    scheduleLabel: "roof area (p6)",
+    pricedOutline: { ring: rect(58, 58), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const agOk = ok.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(agOk && agOk.severity === "info", agOk?.message);
+  assert.ok(/roof area \(p6\) 3358 sf/.test(agOk!.message));
+  assert.ok(/consistent/.test(agOk!.message));
+  // 46×46 = 2116 sf vs 3358 → 37% off → warn.
+  const bad = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    statedScheduleAreaFt2: 3358,
+    scheduleLabel: "roof area (p6)",
+    pricedOutline: { ring: rect(46, 46), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const agBad = bad.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(agBad && agBad.severity === "warn");
+  assert.ok(/VERIFY against the roof plan/.test(agBad!.message));
+  // A non-roof schedule label (floor area) falls back to the wall box, not a
+  // polygon compare — a 2-story floor total is NOT the roof outline's area.
+  const floor = validateBlueprintGeometry(analysis(), classification(64, 52), {
+    statedScheduleAreaFt2: 4667,
+    scheduleLabel: "total/conditioned area (p1)",
+    pricedOutline: { ring: rect(68, 52), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const agFloor = floor.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(agFloor && agFloor.severity === "info", agFloor?.message);
+  assert.ok(/walls/.test(agFloor!.message), "wall-box comparator used");
+  // No schedule AND no printed walls → honest info, still names the outline.
+  const none = validateBlueprintGeometry(analysis(), classification(null, null), {
+    pricedOutline: { ring: rect(58, 58), ftPerUnit: 1, source: "edge-classified outline" },
+  });
+  const ns = none.reviewFlags.find((f) => f.code === "no_schedule");
+  assert.ok(ns && /priced outline covers 3364 sf/.test(ns.message));
+});

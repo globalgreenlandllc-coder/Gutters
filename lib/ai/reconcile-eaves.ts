@@ -321,6 +321,12 @@ export function closeVectorPerimeter(
      *  additionally caps the closed total at the footprint's own perimeter
      *  (+10%), since a freehand ring is less trustworthy than CAD linework. */
     mode?: "vector" | "trace-hip";
+    /** Ring legs the closure must NEVER auto-price — the deep-notch audit's
+     *  suspect pocket edges (auditNotches): a carved pocket the elevations
+     *  don't support would otherwise be BILLED as upper eave by the trace-hip
+     *  closure (the 1168G phantom front-right notch). Skipped legs are
+     *  counted and noted UNPRICED. Absent/empty → byte-identical behavior. */
+    excludeEdges?: readonly { a: { x: number; y: number }; b: { x: number; y: number } }[] | null;
   },
 ): ReconcileResult {
   const notes: string[] = [];
@@ -422,6 +428,11 @@ export function closeVectorPerimeter(
     const exclusionSegs: Seg[] = (analysis.excluded_edges ?? [])
       .map((x) => ({ a: asPt(x.start), b: asPt(x.end) }))
       .filter((s): s is Seg => s.a !== null && s.b !== null);
+    // Suspect notch legs (deep-notch audit) — never auto-priced, counted +
+    // noted UNPRICED instead. Empty on every legacy call site.
+    const notchSegs: Seg[] = (opts?.excludeEdges ?? [])
+      .map((x) => ({ a: asPt(x.a), b: asPt(x.b) }))
+      .filter((s): s is Seg => s.a !== null && s.b !== null);
     const COVER = 0.5;
     // The AI runs/exclusions were BBOX-remapped onto the vector outline, so
     // they sit NEAR their walls, not exactly on them. Deduping with the tight
@@ -437,9 +448,16 @@ export function closeVectorPerimeter(
     let uncoveredFt = 0;
     let uncoveredCount = 0;
     let skippedGableEnd = 0;
+    let notchSkipped = 0;
+    let notchSkippedFt = 0;
     edges.forEach((e, i) => {
       if (coveredFraction(e, gutterSegs, covTol) > COVER) return;
       if (coveredFraction(e, exclusionSegs, covTol) > COVER) return;
+      if (notchSegs.length > 0 && coveredFraction(e, notchSegs, covTol) > COVER) {
+        notchSkipped++;
+        notchSkippedFt += round1(e.len * ftPerPx);
+        return;
+      }
       if (!hasEvidence) {
         const lenFt = round1(e.len * ftPerPx);
         if (lenFt >= 2) {
@@ -468,13 +486,29 @@ export function closeVectorPerimeter(
       });
     });
 
+    // The skipped-notch tail rides on whichever closure note fires (or stands
+    // alone when closure would otherwise return silently) — an unpriced leg
+    // must be VISIBLE, never a silent skip.
+    const notchSentence =
+      notchSkipped > 0
+        ? ` ${notchSkipped} suspect notch leg(s) (~${round1(notchSkippedFt)} LF) left UNPRICED per the deep-notch audit — a carved pocket the elevations don't support; verify/edit the outline before pricing them.`
+        : "";
+
     if (!hasEvidence && uncoveredCount > 0) {
       notes.push(
-        `Vector closure SKIPPED — no readable elevation face, so unclassified exterior edges can't be told apart as eaves vs gable ends. ${uncoveredCount} exterior edge(s) (~${round1(uncoveredFt)} LF) left UNPRICED for review; the total stays on the AI's measured runs.`,
+        `Vector closure SKIPPED — no readable elevation face, so unclassified exterior edges can't be told apart as eaves vs gable ends. ${uncoveredCount} exterior edge(s) (~${round1(uncoveredFt)} LF) left UNPRICED for review; the total stays on the AI's measured runs.` +
+          notchSentence,
       );
       return { analysis, reconcileNotes: notes };
     }
-    if (newRuns.length === 0) return { analysis, reconcileNotes: notes };
+    if (newRuns.length === 0) {
+      if (notchSentence) {
+        notes.push(
+          `${mode === "trace-hip" ? "Hip" : "Vector"} closure:${notchSentence}`,
+        );
+      }
+      return { analysis, reconcileNotes: notes };
+    }
 
     // Trace-hip cap: on a squared AI trace the closed UPPER-tier total must not
     // exceed the footprint's own perimeter (+10% slack for coverage overlap) —
@@ -490,7 +524,8 @@ export function closeVectorPerimeter(
       const addFt = newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0);
       if (upperPricedFt + addFt > perimeterFt * 1.1) {
         notes.push(
-          `Hip closure SKIPPED — adding ${round1(addFt)} LF would push the upper-tier total past the footprint's own ~${round1(perimeterFt)} ft perimeter; the trace and runs disagree. ${newRuns.length} unguttered edge(s) left UNPRICED for review.`,
+          `Hip closure SKIPPED — adding ${round1(addFt)} LF would push the upper-tier total past the footprint's own ~${round1(perimeterFt)} ft perimeter; the trace and runs disagree. ${newRuns.length} unguttered edge(s) left UNPRICED for review.` +
+            notchSentence,
         );
         return { analysis, reconcileNotes: notes };
       }
@@ -505,7 +540,7 @@ export function closeVectorPerimeter(
         : analysis.totals;
 
     notes.push(
-      mode === "trace-hip"
+      (mode === "trace-hip"
         ? `Hip closure: every readable elevation shows a continuous eave with ZERO gables (fully hipped roof), so the footprint's ${
             newRuns.length
           } unguttered exterior wall(s) priced as eaves (+${addedFt} LF at the runs' own ${(1 / ftPerPx).toFixed(1)} px/ft scale) — a hip roof carries gutter on every exterior wall. VERIFY each on the canvas.`
@@ -515,7 +550,7 @@ export function closeVectorPerimeter(
             skippedGableEnd > 0
               ? ` ${skippedGableEnd} gable-end edge(s) (${gableEndFaces.join("/")}) left unguttered per the elevation read.`
               : ""
-          }`,
+          }`) + notchSentence,
     );
 
     return { analysis: { ...analysis, gutter_runs, totals }, reconcileNotes: notes };

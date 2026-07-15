@@ -71,6 +71,16 @@ export type FaceGableRead = {
 export type FaceProjection = {
   kind: FaceGableRead["kind"];
   depth_ft: number | null;
+  /** Where along this face the profiled mass sits, in the VIEWER's frame as
+   *  you look at the elevation (left_end / center / right_end). Two
+   *  perpendicular faces agreeing pin the mass's plan corner — the
+   *  tier-corner veto's input (lib/ai/tier-corner-veto.ts). Optional; absent
+   *  on older reads. */
+  position?: "left_end" | "center" | "right_end" | "unknown" | null;
+  /** true when the mass's eave line reads clearly LOWER than the main eave
+   *  (a dropped single-story cover — the strongest lower-tier signal).
+   *  Optional; absent on older reads, null when unclear. */
+  eave_below_main?: boolean | null;
   notes: string;
 };
 
@@ -182,6 +192,30 @@ export type MergedFaces = {
   elevation_unreadable: string[];
   review_flags: string[];
 };
+
+/**
+ * STORIES CONSENSUS across the four per-face reads. The old rule took the MAX
+ * of stories_visible, so ONE clerestory misread ("that band is a 2nd floor")
+ * outvoted three honest 1-story reads and priced 2-story drops on a rambler
+ * (the 1168G STORIES=2 pill). Rule: with ≥3 non-null reads where all-but-one
+ * agree, the majority value wins; otherwise fall back to the MAX of the
+ * non-null reads (the conservative legacy rule); null when nothing was read.
+ * Pure + deterministic.
+ */
+export function consensusStories(perFace: (number | null)[]): number | null {
+  const vals = perFace.filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1,
+  );
+  if (vals.length === 0) return null;
+  if (vals.length >= 3) {
+    const counts = new Map<number, number>();
+    for (const v of vals) counts.set(v, (counts.get(v) ?? 0) + 1);
+    for (const [v, c] of counts) {
+      if (c >= vals.length - 1) return v; // all-but-one agree → majority value
+    }
+  }
+  return Math.max(...vals);
+}
 
 /** Opposite faces — used to phrase the "read independently, not mirrored" note. */
 const OPPOSITE: Record<string, string> = {

@@ -465,6 +465,19 @@ export async function POST(
               .map((r) => r.feet)
               .filter((f): f is number => typeof f === "number" && Number.isFinite(f))
           : null,
+        // Gate the outline that's ACTUALLY PRICED (v2 edge takeoff) at its
+        // solved scale — same wire-in as the upload path.
+        pricedOutline:
+          edgeTakeoff?.ok &&
+          typeof edgeTakeoff.ptPerFt === "number" &&
+          Number.isFinite(edgeTakeoff.ptPerFt) &&
+          edgeTakeoff.ptPerFt > 0
+            ? {
+                ring: edgeTakeoff.outline,
+                ftPerUnit: 1 / edgeTakeoff.ptPerFt,
+                source: "edge-classified outline",
+              }
+            : null,
       });
       if (gates.notes.length > 0) {
         finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];

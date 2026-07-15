@@ -397,7 +397,9 @@ test("frameOverEnds: rejected elevation gable draws as a verify-tagged end; clas
       ptPerFt: FT,
     });
   const base = mk();
-  const withFo = mk([{ edgeId: "E8", spanFt: 24, u: 0.5 }]);
+  // SUB-DOMINANT frame-over (12 ft of a 30 ft wall, 0.4 coverage): stays a
+  // decorative sub-span wedge — no drawn line changes, no boundary flip.
+  const withFo = mk([{ edgeId: "E8", spanFt: 12, u: 0.5 }]);
   const fo = withFo.gableEnds.filter((g) => g.verify);
   assert.equal(fo.length, 1);
   assert.equal(fo[0].edgeId, "E8");
@@ -405,7 +407,7 @@ test("frameOverEnds: rejected elevation gable draws as a verify-tagged end; clas
     fo[0].base[1].x - fo[0].base[0].x,
     fo[0].base[1].y - fo[0].base[0].y,
   );
-  assert.ok(Math.abs(baseLen - 24 * FT) < 2, `base spans the 24 ft read (${baseLen / FT} ft)`);
+  assert.ok(Math.abs(baseLen - 12 * FT) < 2, `base spans the 12 ft read (${baseLen / FT} ft)`);
   // Decorative only: the frame-over end changes NO drawn lines, no rake
   // classification, no gable budget.
   assert.equal(withFo.ridges.length, base.ridges.length);
@@ -413,6 +415,224 @@ test("frameOverEnds: rejected elevation gable draws as a verify-tagged end; clas
   assert.equal(withFo.hips.length, base.hips.length);
   assert.deepEqual(withFo.rakeEdgeIds, base.rakeEdgeIds);
   assert.equal(withFo.gableCount, base.gableCount);
+  // UNKNOWN span never flips the skeleton boundary either (conservative).
+  const noSpan = mk([{ edgeId: "E8", u: 0.5 }]);
+  assert.equal(noSpan.hips.length, base.hips.length);
+  assert.deepEqual(noSpan.rakeEdgeIds, base.rakeEdgeIds);
+});
+
+test("frameOverEnds: a DOMINANT frame-over (≥0.7 of the wall) becomes a skeleton gable boundary — pricing untouched", () => {
+  const FT = 20;
+  const P = (x: number, y: number) => ({ x: x * FT, y: y * FT });
+  const W = [
+    P(0, 8), P(18, 8), P(18, 0), P(34, 0), P(34, 8), P(48, 8),
+    P(48, 16), P(64, 16), P(64, 46), P(56, 46), P(56, 50), P(40, 50),
+    P(40, 46), P(36, 46), P(36, 52), P(28, 52), P(28, 46), P(0, 46),
+  ];
+  const rakeIds = ["E3", "E5", "E15", "E17"];
+  const mk = (fo?: { edgeId: string; spanFt?: number; u?: number }[]) =>
+    buildRoofLayout({
+      outline: W,
+      edges: outlineEdges(W),
+      classes: classesFor(W, (id) => (rakeIds.includes(id) ? "rake" : "eave")),
+      frameOverEnds: fo ?? null,
+      ptPerFt: FT,
+    });
+  const base = mk();
+  const withFo = mk([{ edgeId: "E8", spanFt: 24, u: 0.5 }]); // 24/30 = 0.8 ≥ 0.7
+  // E8 gets a real gable end (verify-tagged: rejected from pricing) …
+  const fo = withFo.gableEnds.filter((g) => g.verify && g.edgeId === "E8");
+  assert.equal(fo.length, 1);
+  // … and the wall no longer fans hips off its corners (E8 = x 64, y 16→46).
+  const corners = [
+    { x: 64 * FT, y: 16 * FT },
+    { x: 64 * FT, y: 46 * FT },
+  ];
+  const touches = (p: { x: number; y: number }, q: { x: number; y: number }) =>
+    Math.hypot(p.x - q.x, p.y - q.y) < 2;
+  for (const h of withFo.hips) {
+    for (const c of corners) {
+      assert.ok(
+        !touches(h.p1, c) && !touches(h.p2, c),
+        `hip still fans off the frame-over wall corner (${c.x},${c.y})`,
+      );
+    }
+  }
+  // Pricing/legend semantics stay classifier-owned.
+  assert.deepEqual(withFo.rakeEdgeIds, base.rakeEdgeIds);
+  assert.equal(withFo.gableCount, base.gableCount);
+  assert.ok(
+    withFo.notes.some((n) => n.includes("drawn as gable ends")),
+    "drawn-as-gable note missing",
+  );
+});
+
+test("skeleton gable boundary: partial_gables covering ≥0.7 flips; 0.55 does not", () => {
+  const classes = (cov: number): EdgeClass[] =>
+    outlineEdges(RECT).map((e) => ({
+      id: e.id,
+      edge_class: "eave" as const,
+      tier: null,
+      feature: null,
+      evidence: [],
+      ...(e.id === "E2"
+        ? { partial_gables: [{ u0: (1 - cov) / 2, u1: (1 + cov) / 2 }] }
+        : {}),
+    }));
+  const mk = (cov: number) =>
+    buildRoofLayout({
+      outline: RECT,
+      edges: outlineEdges(RECT),
+      classes: classes(cov),
+      ptPerFt: 4,
+    });
+  // E2 = right wall (400,0)→(400,200).
+  const corners = [
+    { x: 400, y: 0 },
+    { x: 400, y: 200 },
+  ];
+  const touchesCorner = (h: { p1: { x: number; y: number }; p2: { x: number; y: number } }) =>
+    corners.some(
+      (c) =>
+        Math.hypot(h.p1.x - c.x, h.p1.y - c.y) < 2 ||
+        Math.hypot(h.p2.x - c.x, h.p2.y - c.y) < 2,
+    );
+  const dominated = mk(0.8);
+  assert.ok(
+    dominated.hips.every((h) => !touchesCorner(h)),
+    "hip fans off a partial-rake-dominated wall",
+  );
+  const minor = mk(0.55);
+  assert.ok(
+    minor.hips.some(touchesCorner),
+    "sub-dominant partial should NOT flip the boundary",
+  );
+});
+
+test("sheet evidence: a mostly-unevidenced skeleton (<50%) is suppressed; adopted sheet lines + gable ridge rules draw instead", () => {
+  // Rectangle skeleton = 4 hips + 1 ridge. Sheet draws 3 diagonals, only ONE
+  // of which matches a skeleton hip → ratio 1/4 < 0.5 → discard (the old rule
+  // kept everything whenever even a single line matched).
+  const segs: number[][] = [
+    [0, 0, 100, 100], // matches the NW hip
+    [120, 180, 190, 110], // sheet crease the skeleton can't make
+    [240, 20, 310, 90], // another
+  ];
+  const layout = buildRoofLayout({
+    outline: RECT,
+    edges: outlineEdges(RECT),
+    classes: classesFor(RECT, () => "eave"),
+    segments: segs,
+  });
+  assert.equal(layout.ok, true);
+  assert.equal(layout.hips.length, 0, "unevidenced computed hips must be suppressed");
+  assert.equal(layout.interiorSource, "sheet-anchored");
+  assert.ok(layout.valleys.length >= 2, "adopted sheet diagonals must be drawn");
+  assert.ok(
+    layout.notes.some((n) => n.includes("suppressed")),
+    "suppression note missing",
+  );
+  assert.equal(layout.confidence, 0.65);
+});
+
+test("sheet evidence: a majority-evidenced hip skeleton is KEPT", () => {
+  // Sheet traces 3 of the rectangle's 4 hips → ratio 3/4 ≥ 0.5 → keep.
+  const segs: number[][] = [
+    [0, 0, 100, 100],
+    [400, 0, 300, 100],
+    [400, 200, 300, 100],
+  ];
+  const layout = buildRoofLayout({
+    outline: RECT,
+    edges: outlineEdges(RECT),
+    classes: classesFor(RECT, () => "eave"),
+    segments: segs,
+  });
+  assert.equal(layout.ok, true);
+  assert.equal(layout.hips.length, 4, "an evidenced hip skeleton must be kept");
+  assert.equal(layout.interiorSource, "skeleton");
+});
+
+test("raster path (no segments): all-hip skeleton kept intact — 1168G guard", async () => {
+  const layout = buildRoofLayout({
+    outline: RECT,
+    edges: outlineEdges(RECT),
+    classes: classesFor(RECT, () => "eave"),
+    segments: null,
+  });
+  assert.equal(layout.ok, true);
+  assert.equal(layout.hips.length, 4);
+  assert.equal(layout.ridges.length, 1);
+  assert.equal(layout.interiorSource, "skeleton");
+  const { suppressUnevidencedInterior } = await import("./roof-layout.ts");
+  // The view-time suppressor leaves a no-diag hip layout alone even when the
+  // interiorSource marker is missing (old stored raster rows).
+  const clean = suppressUnevidencedInterior({ ...layout, interiorSource: undefined });
+  assert.equal(clean.hips.length, 4);
+});
+
+test("suppressUnevidencedInterior: old spaghetti rows lose the unevidenced interior, keep adopted tail + gable ends", async () => {
+  const { suppressUnevidencedInterior } = await import("./roof-layout.ts");
+  const seg = (x1: number, y1: number, x2: number, y2: number) => ({
+    p1: { x: x1, y: y1 },
+    p2: { x: x2, y: y2 },
+  });
+  const old = {
+    ok: true,
+    ridges: [seg(100, 100, 300, 100)],
+    hips: [seg(0, 0, 100, 100), seg(400, 0, 300, 100)],
+    valleys: [seg(0, 200, 100, 100), seg(50, 50, 90, 90), seg(220, 20, 280, 80)],
+    rakeEdgeIds: [] as string[],
+    gableCount: 0,
+    gableEnds: [
+      {
+        edgeId: "E1",
+        base: [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+        ] as [{ x: number; y: number }, { x: number; y: number }],
+        apex: { x: 50, y: 40 },
+      },
+    ],
+    diag: {
+      planDiagonals: 5,
+      matchedPlan: 1,
+      skeletonDiagonals: 5,
+      matchedSkel: 1, // 1/5 < 0.5 → suppress
+      adopted: 2,
+    },
+    confidence: 0.75,
+    notes: [] as string[],
+    faces: [
+      {
+        polygon: [
+          { x: 0, y: 0 },
+          { x: 400, y: 0 },
+          { x: 400, y: 200 },
+          { x: 0, y: 200 },
+        ],
+        downhill: { x: 0, y: 1 },
+      },
+    ],
+  };
+  const out = suppressUnevidencedInterior(old);
+  assert.equal(out.ridges.length, 0);
+  assert.equal(out.hips.length, 0);
+  assert.equal(out.valleys.length, 2, "the adopted tail must survive");
+  assert.equal(out.valleys[0].p1.x, 50, "kept valleys must be the ADOPTED tail entries");
+  assert.equal(out.faces, undefined, "faces cleared so the bridge re-tiles");
+  assert.equal(out.gableEnds.length, 1, "gable ends pass through");
+  assert.ok(out.notes.some((n) => n.includes("Re-analyze")));
+  // Guards: post-fix rows (interiorSource set), evidenced rows, hip-less
+  // sheet-anchored rows and no-diag rows all pass through untouched.
+  const marked = { ...old, interiorSource: "skeleton" as const };
+  assert.equal(suppressUnevidencedInterior(marked), marked);
+  const evidenced = { ...old, diag: { ...old.diag, matchedSkel: 3 } };
+  assert.equal(suppressUnevidencedInterior(evidenced), evidenced);
+  const sheetAnchored = { ...old, hips: [] };
+  assert.equal(suppressUnevidencedInterior(sheetAnchored), sheetAnchored);
+  const noDiag = { ...old, diag: undefined };
+  assert.equal(suppressUnevidencedInterior(noDiag), noDiag);
 });
 
 test("organizeInterior: a near-miss endpoint snaps onto the ridge", async () => {

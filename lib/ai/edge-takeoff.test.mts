@@ -359,3 +359,74 @@ test("downspout synthesis: a single drop lands AT the run's outside corner, not 
   );
   assert.ok(r.notes.some((n) => n.includes("outside corners")));
 });
+
+test("buildEdgeTakeoff: a D.S. mark on a rake/unpriced edge is moved to the nearest gutter within 6 ft, else dropped — loudly", () => {
+  // E1/E3 eave, E2 rake, E4 unknown (80×60 ft at 1.5 pt/ft).
+  const edges = outlineEdges(RECT);
+  const classes = [
+    { id: "E1", edge_class: "eave" as const },
+    { id: "E2", edge_class: "rake" as const, evidence: ["gable_end_truss_label"] },
+    { id: "E3", edge_class: "eave" as const },
+    { id: "E4", edge_class: "unknown" as const },
+  ];
+  const t = buildEdgeTakeoff({
+    outline: RECT,
+    edges,
+    classes,
+    ptPerFt: 1.5,
+    downspouts: [
+      // On the RAKE E2 at (120, 4.5) — 3 ft from E1's corner → MOVED there.
+      { edge_id: "E2", frac: 0.05 },
+      // On the UNPRICED E4 at (0, 45) — 30 ft from any gutter → DROPPED.
+      { edge_id: "E4", frac: 0.5 },
+      // Legit mark on the eave E1 — untouched.
+      { edge_id: "E1", frac: 0.25 },
+    ],
+  });
+  assert.equal(t.downspouts.length, 2, "moved + kept; the far one dropped");
+  const moved = t.downspouts.find(
+    (d) =>
+      d.edge_id === "E1" &&
+      Math.abs(d.at.x - 120) < 1e-6 &&
+      Math.abs(d.at.y - 0) < 1e-6,
+  );
+  assert.ok(moved, "rake mark reassigned to the nearest eave point (≤6 ft)");
+  assert.ok(
+    !t.downspouts.some((d) => d.edge_id === "E2" || d.edge_id === "E4"),
+    "no drop ever ships on a rake/unpriced edge",
+  );
+  assert.ok(
+    t.notes.some((n) =>
+      n.includes("2 D.S. mark(s) sat on a gable/rake or unpriced edge"),
+    ),
+    "the stray marks are noted",
+  );
+});
+
+test("buildEdgeTakeoff: a reassigned D.S. mark lands on the GUTTERED interval of a partial edge, never inside its gable span", () => {
+  // E1 carries a mid-wall gable [0.4,0.6]; the rake E2's mark at (120,4.5)
+  // must snap to E1's guttered end at (120,0) — still fine — but a mark
+  // near the gable interval must not be pulled INTO it.
+  const edges = outlineEdges(RECT);
+  const classes = [
+    { id: "E1", edge_class: "eave" as const, partial_gables: [{ u0: 0.4, u1: 0.6 }] },
+    { id: "E2", edge_class: "rake" as const },
+    { id: "E3", edge_class: "eave" as const },
+    { id: "E4", edge_class: "eave" as const },
+  ];
+  const t = buildEdgeTakeoff({
+    outline: RECT,
+    edges,
+    classes,
+    ptPerFt: 1.5,
+    downspouts: [{ edge_id: "E2", frac: 0.05 }],
+  });
+  assert.equal(t.downspouts.length, 1);
+  const d = t.downspouts[0];
+  assert.equal(d.edge_id, "E1");
+  const f = (d.at.x - 0) / 120; // fraction along E1 (p1 x=0 → p2 x=120)
+  assert.ok(
+    f <= 0.4 + 1e-6 || f >= 0.6 - 1e-6,
+    `reassigned drop must sit on gutter, got f=${f.toFixed(3)}`,
+  );
+});

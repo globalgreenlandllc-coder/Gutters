@@ -73,7 +73,9 @@ export type FrameOverEnd = {
   spanFt: number | null;
   /** Gable center along its face, 0..1 viewer-left→right (pinning's u). */
   u: number;
-  source: "overframe" | "forced-flush" | "beam";
+  /** "truss-conflict": the label-vs-field resolution ladder priced the wall
+   *  as an eave and parked the elevation gable ABOVE it for drawing. */
+  source: "overframe" | "forced-flush" | "beam" | "truss-conflict";
 };
 
 export type ReconcileResult = {
@@ -356,18 +358,61 @@ export function reconcileEdgeClasses(opts: {
         return hit;
       };
 
+      // Shared partial-gable carve: the face-window [g0,g1] the gable's
+      // position + span cover on its wall, clamped to the wall, expressed as
+      // a [u0,u1] interval along the EDGE (0=p1, 1=p2). ONE implementation
+      // for both callers — the eave-base carve and the field-conflict
+      // resolution ladder — so the two money paths can never drift apart.
+      const carveGable = (
+        hit: { e: OutlineEdge; u0: number; u1: number },
+        u: number,
+        spanPt: number,
+      ): {
+        clampedCleanly: boolean;
+        remainderFt: number;
+        interval: { u0: number; u1: number } | null;
+      } => {
+        const a1 = uOf(hit.e.p1);
+        const a2 = uOf(hit.e.p2);
+        const spanU = spanPt / extent;
+        const g0 = Math.max(hit.u0, u - spanU / 2);
+        const g1 = Math.min(hit.u1, u + spanU / 2);
+        // If clamping to the wall ate a real slice of the read span, the
+        // gable straddles the corner — position/span is suspect and the
+        // clamped-off part would price as gutter.
+        const clampedCleanly = g1 - g0 >= spanU * 0.75;
+        const remainderFt =
+          (hit.e.lenPt - Math.max(0, g1 - g0) * extent) / (opts.ptPerFt || 1);
+        if (!(Math.abs(a2 - a1) > 1e-9 && g1 > g0)) {
+          return { clampedCleanly, remainderFt, interval: null };
+        }
+        const t0 = (g0 - a1) / (a2 - a1);
+        const t1 = (g1 - a1) / (a2 - a1);
+        return {
+          clampedCleanly,
+          remainderFt,
+          interval: { u0: Math.min(t0, t1), u1: Math.max(t0, t1) },
+        };
+      };
+
       // Flush/at-the-eave gables only — a set-back gable rises BEHIND a
       // guttered eave and must not consume a perimeter edge. When the face
       // reads a CONTINUOUS eave line, a flush wall-plane gable is physically
       // impossible unless the read explicitly places it at the eave — treat
       // set-back-unknown gables on such faces as frame-overs/dormers.
       const gablesAll = reading.gables ?? [];
-      // FLOATING gables — reported on this side but never pinned to a wall:
-      // a null set-back dropped by the continuous-eave filter (a guess, not a
-      // read), a null position, or a position that maps to no edge. Any one
-      // of them could be the gable a conflicted label really belongs to, so
-      // their presence vetoes the pass-2b recovery (the tie stands).
-      let floatingGables = 0;
+      // FLOATING gables — reported on this side but never pinned to a wall.
+      // Two very different kinds:
+      //   UNPINNED (null/bad position, failed re-pin): the gable could sit
+      //   ANYWHERE — including on a conflicted label's wall — so its presence
+      //   still vetoes the pass-2b recovery (the tie stands).
+      //   ABOVE-EAVE (null set-back dropped by the continuous-eave filter):
+      //   the face reads ONE gutter line across its full width, so this gable
+      //   is above that line by definition — it can't be the conflicted
+      //   label's wall plane and does NOT veto 2b; on a 2b recovery it is
+      //   recorded to frameOverEnds so the drawing still gains the gable.
+      let floatingUnpinned = 0;
+      const floatingAboveEave: (typeof gablesAll)[number][] = [];
       // Gables the elevation itself saw a gutter line running IN FRONT of —
       // frame-overs on stepped faces (no single continuous line to gate on).
       // They never consume a wall, and the wall at their position KEEPS its
@@ -409,12 +454,12 @@ export function reconcileEdgeClasses(opts: {
               u: Math.max(0, Math.min(1, g.position_frac ?? 0.5)),
               source: "forced-flush",
             });
-          } else floatingGables++; // unpinnable frame-over — ambiguous, vetoes 2b
+          } else floatingUnpinned++; // unpinnable frame-over — ambiguous, vetoes 2b
           return false;
         }
         const sb = typeof g.set_back_ft === "number" ? g.set_back_ft : null;
         if (sb != null) return sb <= 2;
-        if (reading.continuous_eave === true) floatingGables++;
+        if (reading.continuous_eave === true) floatingAboveEave.push(g);
         return reading.continuous_eave !== true;
       });
       if (gablesAll.length > flushGables.length) {
@@ -441,6 +486,10 @@ export function reconcileEdgeClasses(opts: {
       // signature of a missing footprint jog (each should own its own
       // wall segment); the un-gabled remainder ships unpriced, so say so.
       const rakePins = new Map<string, { count: number; spanPt: number }>();
+      // Walls the field-conflict RESOLUTION LADDER resolved (frame-over eave
+      // or rake-over-span split) — their gable IS placed even though the
+      // class isn't rake, so the budget check must count them.
+      const ladderPlaced = new Set<string>();
       // Edges a flush gable tried to claim but the framing field blocked —
       // a label-conflict on such an edge stays a genuine tie (see 2b).
       const gableBlockedByField = new Set<string>();
@@ -489,13 +538,13 @@ export function reconcileEdgeClasses(opts: {
       };
       for (const g of flushGables) {
         if (g.position_frac == null) {
-          floatingGables++;
+          floatingUnpinned++;
           continue;
         }
         const u = Math.max(0, Math.min(1, g.position_frac));
         let hit = pinEdge(g.position_frac);
         if (!hit) {
-          floatingGables++;
+          floatingUnpinned++;
           continue;
         }
         const spanPt =
@@ -540,7 +589,7 @@ export function reconcileEdgeClasses(opts: {
             hit = better;
             spanRepinned = true;
           } else {
-            floatingGables++;
+            floatingUnpinned++;
             notes.push(
               `🧭 ${face} elevation: its ${g.kind ?? "gable"} gable reads ${Math.round(g.span_ft!)}ft but sits over the ${stubFt}ft bump-out and no same-side wall matches the span — the gable was left unplaced (nothing tented; the bump-out keeps its own reading). Review gable placement.`,
             );
@@ -549,12 +598,143 @@ export function reconcileEdgeClasses(opts: {
         }
         const cls = byId.get(hit.e.id)!;
         // The framing field says this wall BEARS trusses — the gable the
-        // elevation sees here is a frame-over above the eave, not the wall.
+        // elevation sees here needs resolving against the wall, not blind
+        // parking (the Woodinville E3/E9 ~106 LF shipped UNPRICED because
+        // this check used to act on nothing). RESOLUTION LADDER — every rung
+        // a deterministic gate, and only (d) still parks the wall:
+        //   (hip)  hip read → the "gable" is a hip end; eave per framing.
+        //   (a)    the gable sits ABOVE a running eave/gutter line
+        //          (eave-in-front read / continuous face / span wider than
+        //          the wall) → frame-over: gutter priced full, gable drawn
+        //          above the eave.
+        //   (b)    label-vs-field conflict + gable clearly narrower than the
+        //          wall → the E4 mechanism: rake over the span, gutter kept
+        //          on the remainder (the framing bears there).
+        //   (c)    label-vs-field conflict + full-wall gable at the eave
+        //          line → rake (label + elevation outvote the truss read);
+        //          an off-center fit that leaves a real run still splits.
+        //   (d)    nothing mappable → today's park: UNPRICED, review.
+        // Rungs (b)/(c) REMOVE gutter, so they additionally require the
+        // edge's own label conflict (printed gable label / parked
+        // truss_field_conflict) — a bare elevation gable on a truss-bearing
+        // wall stays a frame-over question (fieldEave's contract: never
+        // promotable to rake on an elevation read alone).
         if (fieldEave.has(cls.id)) {
+          // (hip-first) A hip end carries a gutter — eave per framing, and
+          // nothing is drawn above it (NO frameOverEnds entry).
+          if (reading.roof_form === "hipped" || g.is_hip_end === true) {
+            notes.push(
+              `🛖 ${cls.id}: the ${face} elevation reads a hip end here and the framing bears on this wall — eave per framing, not tented` +
+                (cls.edge_class === "eave"
+                  ? "."
+                  : "; the wall stays under review (UNPRICED)."),
+            );
+            continue;
+          }
+          // (a) The gable rises ABOVE a running eave/gutter line — the wall
+          // under it is a guttered eave (frame-over); the gable is real and
+          // is drawn above it.
+          if (
+            g.eave_passes_in_front === true ||
+            reading.continuous_eave === true ||
+            (spanPt != null && spanPt > hit.e.lenPt * 1.08)
+          ) {
+            const was = cls.edge_class;
+            if (was !== "eave") {
+              cls.edge_class = "eave";
+              demoted++;
+            }
+            cls.evidence = [
+              ...(cls.evidence ?? []),
+              "field_conflict_frame_over",
+            ];
+            frameOverEnds.push({
+              edgeId: cls.id,
+              spanFt: typeof g.span_ft === "number" ? g.span_ft : null,
+              u,
+              source: "truss-conflict",
+            });
+            confirmed.add(cls.id);
+            ladderPlaced.add(cls.id);
+            notes.push(
+              `🧭 ${cls.id} ${was === "eave" ? "EAVE kept" : `${was}→EAVE`}: the framing bears on this wall AND the ${face} elevation shows its gable ABOVE a running eave/gutter line (frame-over) — gutter priced full; the gable is drawn above the eave. VERIFY against the building sections before quoting.`,
+            );
+            continue;
+          }
+          const labelConflict = (cls.evidence ?? []).some(
+            (t) => t === "truss_field_conflict" || STRONG_RAKE_EVIDENCE.has(t),
+          );
+          if (spanPt != null && labelConflict) {
+            const applyFieldSplit = (
+              remainderFt: number,
+              interval: { u0: number; u1: number },
+            ) => {
+              if (cls.edge_class !== "eave") {
+                cls.edge_class = "eave";
+                demoted++;
+              }
+              cls.partial_gables = [...(cls.partial_gables ?? []), interval];
+              cls.evidence = [...(cls.evidence ?? []), "field_conflict_split"];
+              confirmed.add(cls.id);
+              ladderPlaced.add(cls.id);
+              notes.push(
+                `🧭 ${cls.id}: printed gable label vs framing INTO this wall — resolved by the ${face} elevation: rake over its ~${Math.round(g.span_ft!)}ft gable span, gutter kept on the remaining ~${Math.round(remainderFt)}ft (the framing bears there). VERIFY both ends against the roof plan.`,
+              );
+            };
+            // (b) clearly narrower than the wall → rake-over-span split.
+            if (spanPt <= hit.e.lenPt * 0.8 && !fieldParallel.has(cls.id)) {
+              const carve = carveGable(hit, u, spanPt);
+              if (
+                carve.clampedCleanly &&
+                carve.remainderFt >= 6 &&
+                carve.interval
+              ) {
+                applyFieldSplit(carve.remainderFt, carve.interval);
+                continue;
+              }
+              // straddling/sliver — fall through to the park (d).
+            } else if (
+              spanPt > hit.e.lenPt * 0.8 &&
+              spanPt <= hit.e.lenPt * 1.08
+            ) {
+              // (c) full-wall gable AT the eave line — eave_passes===true
+              // can't reach here (rung (a) consumed it and continued). An
+              // off-center fit that still leaves a real gutter run splits
+              // like (b); else rake.
+              const carve = fieldParallel.has(cls.id)
+                ? null
+                : carveGable(hit, u, spanPt);
+              if (
+                carve &&
+                carve.clampedCleanly &&
+                carve.remainderFt >= 6 &&
+                carve.interval
+              ) {
+                applyFieldSplit(carve.remainderFt, carve.interval);
+                continue;
+              }
+              cls.edge_class = "rake";
+              cls.evidence = [
+                ...(cls.evidence ?? []),
+                "elevation_gable_mapped",
+              ];
+              promoted++;
+              confirmed.add(cls.id);
+              const acc = rakePins.get(cls.id) ?? { count: 0, spanPt: 0 };
+              acc.count++;
+              acc.spanPt += spanPt;
+              rakePins.set(cls.id, acc);
+              notes.push(
+                `🧭 ${cls.id} → RAKE: the printed gable label AND a full-wall elevation gable outvote the truss read — gable end, no gutter. Verify.`,
+              );
+              continue;
+            }
+          }
+          // (d) nothing resolvable — today's park, exactly.
           gableBlockedByField.add(cls.id);
           notes.push(
             `🧭 ${cls.id}: the ${face} elevation shows a gable here, but the framing bears on this wall — frame-over above the eave; ` +
-              (byId.get(cls.id)!.edge_class === "eave"
+              (cls.edge_class === "eave"
                 ? "the gutter stays."
                 : "the wall stays under review (UNPRICED)."),
           );
@@ -797,34 +977,24 @@ export function reconcileEdgeClasses(opts: {
           // rake, never that the rest is gutter — "unknown beats a guess",
           // so an unknown wall stays unknown (UNPRICED), not priced-eave.
           const wallFt = Math.round(hit.e.lenPt / (opts.ptPerFt || 1));
-          const a1 = uOf(hit.e.p1);
-          const a2 = uOf(hit.e.p2);
-          const spanU = spanPt / extent;
-          const g0 = Math.max(hit.u0, u - spanU / 2);
-          const g1 = Math.min(hit.u1, u + spanU / 2);
-          // If clamping to the wall ate a real slice of the read span, the
-          // gable straddles the corner — position/span is suspect and the
-          // clamped-off part would price as gutter. Bail to review instead.
-          const clampedCleanly = g1 - g0 >= spanU * 0.75;
-          const remainderFt =
-            (hit.e.lenPt - Math.max(0, g1 - g0) * extent) / (opts.ptPerFt || 1);
+          // Same carve math as the field-conflict ladder (shared helper) —
+          // a straddling clamp bails to review instead of pricing the
+          // clamped-off part as gutter.
+          const carve = carveGable(hit, u, spanPt);
           if (
             cls.edge_class === "eave" &&
-            clampedCleanly &&
-            Math.abs(a2 - a1) > 1e-9 &&
-            g1 > g0 &&
-            remainderFt >= 6 &&
+            carve.clampedCleanly &&
+            carve.interval &&
+            carve.remainderFt >= 6 &&
             !fieldParallel.has(cls.id)
           ) {
-            const t0 = (g0 - a1) / (a2 - a1);
-            const t1 = (g1 - a1) / (a2 - a1);
             cls.partial_gables = [
               ...(cls.partial_gables ?? []),
-              { u0: Math.min(t0, t1), u1: Math.max(t0, t1) },
+              carve.interval,
             ];
             cls.evidence = [...(cls.evidence ?? []), "partial_gable_remainder"];
             notes.push(
-              `🧭 ${cls.id}: the ${face} elevation shows a ${Math.round(g.span_ft!)}ft gable on this ${wallFt}ft wall — rake over the gable span only; gutter kept on the remaining ~${Math.round(remainderFt)}ft. Verify.`,
+              `🧭 ${cls.id}: the ${face} elevation shows a ${Math.round(g.span_ft!)}ft gable on this ${wallFt}ft wall — rake over the gable span only; gutter kept on the remaining ~${Math.round(carve.remainderFt)}ft. Verify.`,
             );
             confirmed.add(cls.id);
             continue;
@@ -962,10 +1132,13 @@ export function reconcileEdgeClasses(opts: {
       // claimed the edge, that's TWO sheet reads (framing bears + unbroken
       // fascia) against ONE stray label — the wall gets its gutter back.
       // An edge a gable tried to claim (gableBlockedByField) stays a tie:
-      // UNPRICED, human review. So does the whole side while ANY reported
-      // gable floats unpinned (null position / null set-back / bad map) —
-      // the floater could be the label's gable, and a wrong eave BILLS
-      // gutter across a rake.
+      // UNPRICED, human review. So does the whole side while a reported
+      // gable floats UNPINNED (null position / bad map) — that floater could
+      // be the label's gable, and a wrong eave BILLS gutter across a rake.
+      // An ABOVE-EAVE floater (dropped by the continuous-eave filter) does
+      // NOT veto: the face's one gutter line runs under it by definition —
+      // it is recorded to frameOverEnds instead so the drawing gains the
+      // side gable above the recovered eave.
       for (const s of spans) {
         const cls = byId.get(s.e.id)!;
         if (cls.edge_class !== "unknown") continue;
@@ -976,15 +1149,26 @@ export function reconcileEdgeClasses(opts: {
         const foHere = frameOverGables.some((f) => f.pin?.e.id === s.e.id);
         if (reading.continuous_eave !== true && !foHere) continue;
         if (confirmed.has(cls.id) || gableBlockedByField.has(cls.id)) continue;
-        if (floatingGables > 0) {
+        if (floatingUnpinned > 0) {
           notes.push(
-            `🧭 ${cls.id} stays UNPRICED: the framing and the ${face} elevation's continuous eave line both dispute its printed gable label, but ${floatingGables} reported gable(s) on this side couldn't be pinned to a wall — one of them may be this label's gable. Review.`,
+            `🧭 ${cls.id} stays UNPRICED: the framing and the ${face} elevation's continuous eave line both dispute its printed gable label, but ${floatingUnpinned} reported gable(s) on this side couldn't be pinned to a wall — one of them may be this label's gable. Review.`,
           );
           continue;
         }
         cls.edge_class = "eave";
         cls.evidence = [...(cls.evidence ?? []), "elevation_continuous_eave"];
         demoted++;
+        // The side's above-the-eave gable(s) belong over this recovered
+        // wall — record them so the layout draws the side gable (the old
+        // veto shipped the wall unpriced AND drew nothing).
+        for (const fg of floatingAboveEave.splice(0, floatingAboveEave.length)) {
+          frameOverEnds.push({
+            edgeId: cls.id,
+            spanFt: typeof fg.span_ft === "number" ? fg.span_ft : null,
+            u: Math.max(0, Math.min(1, fg.position_frac ?? 0.5)),
+            source: "truss-conflict",
+          });
+        }
         notes.push(
           `🧭 ${cls.id} unknown→EAVE: the framing bears on this wall AND the ${face} elevation ` +
             (reading.continuous_eave === true
@@ -1019,16 +1203,20 @@ export function reconcileEdgeClasses(opts: {
       // A partial-gable wall (rake over the span, gutter on the rest) counts
       // as placed; a rake kept only on its printed label does NOT (no
       // elevation gable mapped to it — honest accounting).
+      // A ladder-resolved wall (frame-over eave / rake-over-span split) DID
+      // place its gable — counting it avoids the false "0 gable walls
+      // placed" alarm the old conflict park raised on every resolved side.
       const rakeWalls = spans.filter((s) => {
         const c = byId.get(s.e.id)!;
         return (
           (c.edge_class === "rake" && !labelKeptUnmapped.has(s.e.id)) ||
-          (c.partial_gables?.length ?? 0) > 0
+          (c.partial_gables?.length ?? 0) > 0 ||
+          ladderPlaced.has(s.e.id)
         );
       }).length;
       if (flushGables.length > rakeWalls) {
         notes.push(
-          `⚠ ${face} elevation shows ${flushGables.length} gable(s) at the eave line but only ${rakeWalls} gable wall(s) placed on this side — review gable placement.`,
+          `⚠ ${face} elevation shows ${flushGables.length} gable(s) at the eave line but only ${rakeWalls} gable wall(s)/frame-over(s) placed on this side — review gable placement.`,
         );
       }
       for (const id of confirmed) claimedByGable.add(id);
@@ -1069,6 +1257,183 @@ export function reconcileEdgeClasses(opts: {
       notes.push(
         `🧭 ${cls.id} unknown→EAVE: it flanks the gable end ${rakeNb.id} — the gable roof sheds onto this wall, so it carries the gutter (its side eave). Verify.`,
       );
+    }
+
+    // 4b) FRONT-GABLED ENTRY/PORCH STUB: a small protruding entry cover
+    // whose peak faces FRONT hangs its gutters on its two SIDE returns —
+    // the outer (front) edge is a rake with no gutter and no D.S. The
+    // Woodinville entry stub shipped exactly inverted (front priced eave
+    // with a D.S. on it, sides raked). Deterministic gates: the stub trio
+    // geometry (unifyStubTiers-style DEPTH test — isProtrusion fails on
+    // 9.1-ft returns), entry/porch evidence (a trio feature tag or the
+    // facing elevation's front_gabled entry/porch gable pinned inside the
+    // stub), and hard vetoes on any contradicting sheet evidence.
+    if (opts.ptPerFt && opts.ptPerFt > 0 && outline.length >= 3) {
+      const ppf = opts.ptPerFt;
+      const cxAll = outline.reduce((s, p) => s + p.x, 0) / outline.length;
+      const cyAll = outline.reduce((s, p) => s + p.y, 0) / outline.length;
+      const xsAll = outline.map((p) => p.x);
+      const ysAll = outline.map((p) => p.y);
+      const spanX = Math.max(...xsAll) - Math.min(...xsAll);
+      const spanY = Math.max(...ysAll) - Math.min(...ysAll);
+      for (let i = 0; i < ringE.length; i++) {
+        const outer = ringE[i];
+        const oCls = byId.get(outer.id);
+        if (!oCls || ringE.length < 4) continue;
+        // Trade-plausible entry-cover size only.
+        if (outer.lenPt > 16 * ppf) continue;
+        const prev = ringE[(i - 1 + ringE.length) % ringE.length];
+        const next = ringE[(i + 1) % ringE.length];
+        if (prev.lenPt > 12 * ppf || next.lenPt > 12 * ppf) continue;
+        const axisSpan =
+          outer.axis === "h"
+            ? spanX
+            : outer.axis === "v"
+              ? spanY
+              : Math.max(spanX, spanY);
+        if (outer.lenPt > axisSpan * 0.5) continue;
+        // DEPTH test (unifyStubTiers): both ring neighbors' far endpoints
+        // step clearly inward of the outer edge's line.
+        const dx = outer.p2.x - outer.p1.x;
+        const dy = outer.p2.y - outer.p1.y;
+        const len = Math.hypot(dx, dy) || 1;
+        let nx = -dy / len;
+        let ny = dx / len;
+        if ((cxAll - outer.mid.x) * nx + (cyAll - outer.mid.y) * ny < 0) {
+          nx = -nx;
+          ny = -ny;
+        }
+        const depthOf = (p: OverlayPt) =>
+          (p.x - outer.mid.x) * nx + (p.y - outer.mid.y) * ny;
+        const minStep = Math.max(8, len * 0.15);
+        if (depthOf(prev.p1) <= minStep || depthOf(next.p2) <= minStep)
+          continue;
+        // VETO: the framing bears INTO the outer edge — sheet evidence wins.
+        if (fieldEave.has(outer.id)) continue;
+        const trio = [byId.get(prev.id), oCls, byId.get(next.id)].filter(
+          (c): c is EdgeClass => !!c,
+        );
+        // VETO: a garage stub is not an entry cover (its front is a door
+        // wall under a gable OR a guttered eave — never this rule's call).
+        if (
+          trio.some((c) => (c.feature ?? "").toLowerCase() === "garage")
+        )
+          continue;
+        const side = sideOfPerimeterEdge(outer.p1, outer.p2, outline);
+        if (!side) continue;
+        const { faceLabel: faceOf, reading: facing } = readingForSide(side);
+        // VETO: a hipped face has no front-gabled covers.
+        if (facing?.roof_form === "hipped") continue;
+        // Evidence 1: the classifier tagged the stub porch/entry.
+        const featEvidence = trio.some((c) => {
+          const f = (c.feature ?? "").toLowerCase();
+          return f === "porch" || f === "entry";
+        });
+        // Evidence 2: the facing elevation's entry/porch gable pins inside
+        // the stub's window on that side (any supported_on).
+        let pinnedCover: FaceReadingRaw["gables"][number] | null = null;
+        if (facing && facing.readable !== false) {
+          const sideEdges4b = edges.filter(
+            (e) =>
+              e.lenPt > 1e-6 &&
+              sideOfPerimeterEdge(e.p1, e.p2, outline) === side,
+          );
+          const n4 = SIDE_NORMAL[side];
+          const rd4 = { x: n4.y, y: -n4.x };
+          const proj4 = (p: OverlayPt) => p.x * rd4.x + p.y * rd4.y;
+          let lo4 = Infinity;
+          let hi4 = -Infinity;
+          for (const e of sideEdges4b) {
+            lo4 = Math.min(lo4, proj4(e.p1), proj4(e.p2));
+            hi4 = Math.max(hi4, proj4(e.p1), proj4(e.p2));
+          }
+          const ext4 = hi4 - lo4;
+          if (Number.isFinite(ext4) && ext4 > 0) {
+            const su0 =
+              (Math.min(proj4(outer.p1), proj4(outer.p2)) - lo4) / ext4;
+            const su1 =
+              (Math.max(proj4(outer.p1), proj4(outer.p2)) - lo4) / ext4;
+            for (const g of facing.gables ?? []) {
+              const k = (g.kind ?? "").toLowerCase();
+              if (k !== "entry" && k !== "porch") continue;
+              if (g.position_frac == null) continue;
+              const gu = Math.max(0, Math.min(1, g.position_frac));
+              if (gu < su0 - 0.05 || gu > su1 + 0.05) continue;
+              pinnedCover = g;
+              break;
+            }
+          }
+        }
+        // VETO: the pinned shape is a hip end — not a gabled cover.
+        if (pinnedCover?.is_hip_end === true) continue;
+        const coverForm = (pinnedCover as { cover_form?: unknown } | null)
+          ?.cover_form;
+        // VETO (note-only): the cover reads hipped/shed — its front edge
+        // carries its own gutter pattern, never this rule's rake.
+        if (coverForm === "hipped" || coverForm === "shed") {
+          notes.push(
+            `🧭 ${outer.id}: the ${faceOf ?? side} elevation reads the ${pinnedCover?.kind ?? "porch"} cover as ${coverForm} — its edges keep their readings (a ${coverForm} cover is not the front-gable pattern). Verify.`,
+          );
+          continue;
+        }
+        const gableEvidence =
+          pinnedCover != null && coverForm === "front_gabled";
+        if (!featEvidence && !gableEvidence) continue;
+        // ACTION — flip the stub to the front-gabled pattern.
+        let removedLf = 0;
+        let addedLf = 0;
+        let changedAny = false;
+        const sideIds: string[] = [];
+        if (oCls.edge_class === "eave" || oCls.edge_class === "unknown") {
+          if (oCls.edge_class === "eave") removedLf += outer.lenPt / ppf;
+          oCls.edge_class = "rake";
+          oCls.evidence = [...(oCls.evidence ?? []), "front_gabled_cover"];
+          promoted++;
+          changedAny = true;
+        }
+        for (const [nb, c] of [
+          [prev, byId.get(prev.id)],
+          [next, byId.get(next.id)],
+        ] as const) {
+          if (!c) continue;
+          if (c.edge_class === "rake" || c.edge_class === "unknown") {
+            // VETO (per edge): the sheet's own gable-end evidence on a side
+            // return outranks the cover pattern — it keeps its rake.
+            if (
+              (c.evidence ?? []).some((t) => STRONG_RAKE_EVIDENCE.has(t)) ||
+              fieldParallel.has(c.id)
+            ) {
+              notes.push(
+                `🧭 ${c.id}: the ${outer.id} entry/porch cover's side return keeps its RAKE — the sheet's own gable-end evidence outranks the cover pattern. Verify.`,
+              );
+              continue;
+            }
+            if (c.edge_class === "rake") demoted++;
+            c.edge_class = "eave";
+            c.evidence = [...(c.evidence ?? []), "cover_side_eave"];
+            addedLf += nb.lenPt / ppf;
+            sideIds.push(c.id);
+            changedAny = true;
+          } else if (c.edge_class === "eave") {
+            sideIds.push(c.id);
+          }
+        }
+        if (!changedAny) continue;
+        // The stub's own returns now price the cover's gutters — a
+        // same-face porch/entry droppedProjection would double-count them
+        // through the projection-LF synthesis. This rule supersedes it.
+        for (let k = droppedProjections.length - 1; k >= 0; k--) {
+          const dp = droppedProjections[k];
+          const dk = (dp.kind ?? "").toLowerCase();
+          if (dp.face === side && (dk === "porch" || dk === "entry")) {
+            droppedProjections.splice(k, 1);
+          }
+        }
+        const net = Math.round((addedLf - removedLf) * 10) / 10;
+        notes.push(
+          `🧭 ${outer.id}: front-gabled entry cover — the peak faces front, so its front edge is a RAKE (gutter and D.S. removed there); the cover's gutters hang on its side returns ${sideIds.join("+") || "(none priced)"}. Net ${net >= 0 ? "+" : ""}${net} LF. Verify against the roof plan.`,
+        );
+      }
     }
 
     // 5) JOG ↔ FOOTPRINT CROSS-CHECK: the elevations prove an offset

@@ -22,7 +22,7 @@ import type {
 // and the synthesized layout (blank canvas, "Eaves NaN LF").
 import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
-import { isUnanimousHip, type FaceReadingRaw } from "./face-merge";
+import { consensusStories, isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
 import { filterRoofDiagramLines } from "./roof-diagram-filter";
 import { facesFromRoofLines } from "./roof-faces-from-lines";
@@ -520,6 +520,12 @@ export function blueprintToEstimateResult(
       }> | null;
       confidence: number;
     } | null;
+    /** UN-PRICED suggested gutter segments in ANALYSIS space (e.g. the rear
+     *  tier-step return from the corner veto, tier-corner-veto.ts). Projected
+     *  through the SAME transform as the eaves and returned on
+     *  EstimateResult.suggestedEaves — the canvas draws them dashed with a
+     *  tap-to-add affordance; NEVER summed into eaveLF (money-safe). */
+    suggestedEaves?: { points: BlueprintPoint[]; tier?: EaveTier }[] | null;
   },
 ): EstimateResult {
   // CONFLICT DEDUP (Gemini code-review): a wall can't be BOTH a gutter and a
@@ -763,14 +769,17 @@ export function blueprintToEstimateResult(
   // The blind 20 ft (2-story) default priced every single-story plan as
   // 2 stories (measurements.stories derives from the max drop — the
   // 1168G single-story hip showed "stories 2"). The per-face reads carry
-  // stories_visible; use the max across readable faces, else keep 20.
-  const faceStories = Object.values(opts?.perFace ?? {}).reduce(
-    (m, r) =>
-      r && r.readable !== false && typeof r.stories_visible === "number" && r.stories_visible >= 1
-        ? Math.max(m, Math.min(3, Math.round(r.stories_visible)))
-        : m,
-    0,
+  // stories_visible — but the MAX across faces let ONE clerestory misread
+  // outvote three honest 1-story reads, so the CONSENSUS decides (≥3 reads
+  // with all-but-one agreeing → the majority; else the legacy max).
+  const faceStoriesReads = Object.values(opts?.perFace ?? {}).map((r) =>
+    r && r.readable !== false && typeof r.stories_visible === "number" && r.stories_visible >= 1
+      ? Math.min(3, Math.round(r.stories_visible))
+      : null,
   );
+  const storiesConsensus = consensusStories(faceStoriesReads);
+  const maxFaceStories = faceStoriesReads.reduce<number>((m, v) => (v != null && v > m ? v : m), 0);
+  const faceStories = storiesConsensus ?? 0;
   const defaultDropFt = faceStories === 1 ? 10 : faceStories >= 3 ? 26 : 20;
   let downspouts: Downspout[] = analysis.downspouts
     .map((d, i): Downspout | null => {
@@ -1139,12 +1148,27 @@ export function blueprintToEstimateResult(
   const avgRunLf = eaves.length > 0 ? eaveLF / eaves.length : 0;
   const rakeLF = Math.round(rakes.length * avgRunLf);
 
-  // Stories = the max tier we found on any downspout. A 2-story house
-  // with a porch will have downspouts at both 10 ft (porch) and 20+
-  // (main body); priced as 2-story.
+  // Stories: the elevation CONSENSUS when the faces were read (a wall count is
+  // direct evidence — the drop-height heuristic below inferred "2 stories"
+  // from a defaulted 20 ft drop on the 1168G single-story rambler). Fallback
+  // when no face read stories: the max downspout drop, as before.
   const maxDropFt = downspouts.reduce((m, d) => Math.max(m, d.heightFt), 0);
+  const heuristicStories: Stories = maxDropFt > 24 ? 3 : maxDropFt > 14 ? 2 : 1;
   const stories: Stories =
-    maxDropFt > 24 ? 3 : maxDropFt > 14 ? 2 : 1;
+    storiesConsensus != null
+      ? ((Math.min(3, Math.max(1, storiesConsensus)) as Stories))
+      : heuristicStories;
+  // A consensus that OVERRODE a taller reading (one face read more floors, or
+  // the drop heights implied more) must say so — never silently flip a pill.
+  let storiesNote: string | null = null;
+  if (storiesConsensus != null && (storiesConsensus < maxFaceStories || storiesConsensus < heuristicStories)) {
+    const m = faceStoriesReads.filter((v) => v != null).length;
+    const nAgree = faceStoriesReads.filter((v) => v === storiesConsensus).length;
+    storiesNote =
+      storiesConsensus === 1
+        ? `STORIES: ${nAgree} of ${m} elevations read a single story (a clerestory band is not a floor) — priced as 1-story drops. Some downspout drops were read taller; verify heights on the canvas.`
+        : `STORIES: ${nAgree} of ${m} elevations read ${storiesConsensus} stories — priced as ${storiesConsensus}-story drops. A taller reading was outvoted; verify heights on the canvas.`;
+  }
 
   const measurements = {
     eaveLF,
@@ -1174,6 +1198,7 @@ export function blueprintToEstimateResult(
   }
   for (const n of analysis.notes) notes.push(n);
   for (const n of projectionSynth.notes) notes.push(n);
+  if (storiesNote) notes.push(`⚠ ${storiesNote}`);
 
   if (engineBundle) {
     const eaveCount = engineBundle.takeoff.masses.flatMap((m) => m.edges).filter((e) => e.gutter).length;
@@ -1334,6 +1359,25 @@ export function blueprintToEstimateResult(
         }
       : undefined;
 
+  // UN-PRICED suggestion lines (tap-to-add) — same projection as the eaves so
+  // they register with the trace; never summed into eaveLF. Skipped when the
+  // layout was synthesized (the projection space is fabricated there).
+  const suggestedLines: EditableLine[] = synthesized
+    ? []
+    : (opts?.suggestedEaves ?? [])
+        .filter(
+          (s) =>
+            Array.isArray(s?.points) &&
+            s.points.length >= 2 &&
+            s.points.every((p) => isGoodPoint(p)),
+        )
+        .map((s, i) => ({
+          id: `suggested-step-${i}`,
+          kind: "eave" as const,
+          points: s.points.map(project),
+          ...(s.tier ? { tier: s.tier } : {}),
+        }));
+
   return {
     geocoded: {
       formatted: meta.filename,
@@ -1348,6 +1392,7 @@ export function blueprintToEstimateResult(
     rakes,
     downspouts,
     roofStructure,
+    ...(suggestedLines.length > 0 ? { suggestedEaves: suggestedLines } : {}),
     source: "ai",
     durationMs: meta.durationMs ?? 0,
     notes,

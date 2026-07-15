@@ -222,6 +222,14 @@ in profile, how far they project is measurable. For each such mass, add a
 projections entry with its kind (porch/patio/bay/wing…) and depth_ft in feet. You
 CANNOT measure the depth of a pop-out you're looking at head-on — that's the
 perpendicular view's job, i.e. some OTHER elevation reports this one's gables.
+For each projections entry also report position — WHERE along this face the
+profiled mass sits, as you look at the elevation: "left_end", "center", or
+"right_end" ("unknown" when you can't localize it); two perpendicular views
+agreeing on an end is how the plan corner of a covered porch/outdoor-living
+mass is pinned, so read it off the sheet, never guess. Also report
+eave_below_main: true when the mass's eave line is clearly LOWER than the main
+eave (a dropped single-story cover — the strongest lower-tier signal), false
+when it rides at the main eave height, null when you can't tell.
 </profile_depth>
 
 <edges>
@@ -332,6 +340,16 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
           properties: {
             kind: { type: "string", enum: ["porch", "patio", "entry", "garage", "dormer", "main", "other"] },
             depth_ft: { type: ["number", "null"], description: "how far it projects (measured in profile)." },
+            position: {
+              type: "string",
+              enum: ["left_end", "center", "right_end", "unknown"],
+              description:
+                "Where along this face the profiled mass sits, as you look at the elevation.",
+            },
+            eave_below_main: {
+              type: ["boolean", "null"],
+              description: "Its eave line is clearly lower than the main eave.",
+            },
             notes: { type: "string" },
           },
           required: ["kind", "depth_ft"],
@@ -415,7 +433,7 @@ export async function readElevationFace(
     // gutter under frame-over gables (the Woodinville "no eave-in-front
     // data" warnings). A stale override is bypassed for the code default.
     const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM, {
-      requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form"],
+      requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form", "eave_below_main"],
     });
     const response = await client.messages.create({
       model: MODEL,

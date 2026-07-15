@@ -365,3 +365,90 @@ test("vector mode is unchanged: same fixture keeps the vclose id and unknown tie
   assert.ok(analysis.gutter_runs[3].id.startsWith("vclose-"));
   assert.equal(analysis.gutter_runs[3].tier, "unknown");
 });
+
+// ── excludeEdges — the deep-notch audit's suspect legs stay UNPRICED ─────────
+
+/** Front + left guttered; the RIGHT and REAR (bottom) walls are unguttered.
+ *  0.2 ft/px scale from the runs' own measurements. */
+const twoOpenWalls = () =>
+  base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("left", [0, 0], [0, 120], 24),
+    ],
+    totals: { linear_feet_gutter: 64, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+
+test("trace-hip closure with excludeEdges: suspect notch legs SKIPPED + noted UNPRICED; other walls still close", () => {
+  const { analysis, reconcileNotes } = closeVectorPerimeter(twoOpenWalls(), {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+    // The right wall is a suspect pocket leg (deep-notch audit) — never price it.
+    excludeEdges: [{ a: { x: 200, y: 0 }, b: { x: 200, y: 120 } }],
+  });
+  // Only the bottom (rear) wall was auto-priced; the excluded right wall was not.
+  assert.equal(analysis.gutter_runs.length, 3, "one wall closed, one excluded");
+  const added = analysis.gutter_runs[2];
+  assert.ok(added.id.startsWith("hclose-"));
+  assert.equal(added.length_ft, 40, "bottom wall at the runs' own 0.2 ft/px");
+  assert.ok(
+    !analysis.gutter_runs.some(
+      (r) => r.id.startsWith("hclose-") && Math.abs(r.start.x - 200) < 1 && Math.abs(r.end.x - 200) < 1,
+    ),
+    "the excluded right wall got NO run",
+  );
+  assert.equal(analysis.totals.linear_feet_gutter, 104, "64 + 40 — the 24 LF suspect leg is NOT billed");
+  const note = reconcileNotes.find((n) => /Hip closure/.test(n));
+  assert.ok(note, "closure note present");
+  assert.match(note!, /1 suspect notch leg\(s\) \(~24 LF\) left UNPRICED per the deep-notch audit/);
+  assert.match(note!, /verify\/edit the outline/);
+});
+
+test("trace-hip closure with excludeEdges: nothing else to close still notes the skipped legs (never silent)", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("left", [0, 0], [0, 120], 24),
+      run("back", [0, 120], [200, 120], 40),
+    ],
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+    excludeEdges: [{ a: { x: 200, y: 0 }, b: { x: 200, y: 120 } }],
+  });
+  assert.equal(analysis.gutter_runs.length, 3, "nothing auto-priced");
+  assert.ok(
+    reconcileNotes.some((n) => /Hip closure:/.test(n) && /UNPRICED per the deep-notch audit/.test(n)),
+    "a skipped leg is still reported when no other wall closes",
+  );
+});
+
+test("trace-hip closure WITHOUT excludeEdges is byte-identical to today (pinned totals)", () => {
+  const { analysis, reconcileNotes } = closeVectorPerimeter(twoOpenWalls(), {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+  });
+  // Both open walls close, ring-walk order: right (24) then bottom (40).
+  assert.equal(analysis.gutter_runs.length, 4);
+  const [addedRight, addedBottom] = analysis.gutter_runs.slice(2);
+  assert.equal(addedRight.id, "hclose-1");
+  assert.equal(addedRight.length_ft, 24);
+  assert.equal(addedRight.tier, "upper");
+  assert.equal(addedBottom.id, "hclose-2");
+  assert.equal(addedBottom.length_ft, 40);
+  assert.equal(analysis.totals.linear_feet_gutter, 128, "64 + 24 + 40");
+  assert.equal(reconcileNotes.length, 1);
+  assert.match(reconcileNotes[0], /^Hip closure: every readable elevation shows a continuous eave/);
+  assert.ok(!/notch/.test(reconcileNotes[0]), "no notch wording without excludes");
+  // Empty excludeEdges array behaves exactly like the option being absent.
+  const empty = closeVectorPerimeter(twoOpenWalls(), {
+    perFace: HIP_FACES,
+    mode: "trace-hip",
+    excludeEdges: [],
+  });
+  assert.deepEqual(empty.analysis, analysis);
+  assert.deepEqual(empty.reconcileNotes, reconcileNotes);
+});

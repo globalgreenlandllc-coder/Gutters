@@ -239,23 +239,67 @@ export function buildEdgeTakeoff(opts: {
   }
 
   // Downspouts at classifier-marked positions (the sheet's own D.S. marks).
+  // A mark is only honored on a FINAL-class eave edge: a downspout drains a
+  // gutter, so a mark whose edge ended up rake/unknown is mis-attached (or
+  // sits on an unpriced wall) — it is reassigned to the nearest guttered
+  // point within 6 ft, else dropped. Loudly noted either way. The
+  // synthesized-downspout path below is untouched.
   const edgeById = new Map(edges.map((e) => [e.id, e]));
   const downspouts: EdgeTakeoffResult["downspouts"] = [];
+  let strayMarks = 0;
   for (const d of opts.downspouts ?? []) {
     const e = edgeById.get(d.edge_id);
     if (!e || e.lenPt < 1e-6) continue;
     const f = Math.max(0.05, Math.min(0.95, Number(d.frac) || 0.5));
-    const at = {
+    let at = {
       x: e.p1.x + (e.p2.x - e.p1.x) * f,
       y: e.p1.y + (e.p2.y - e.p1.y) * f,
     };
-    const tier = byId.get(d.edge_id)?.tier;
+    let target = e;
+    if (byId.get(d.edge_id)?.edge_class !== "eave") {
+      strayMarks++;
+      // Nearest point on any GUTTERED interval (a partial edge's gable span
+      // is excluded — a drop must sit on gutter, not under a rake).
+      let best: { at: OverlayPt; e: OutlineEdge; d2: number } | null = null;
+      for (const ee of edges) {
+        if (ee.lenPt < 1e-6) continue;
+        if (byId.get(ee.id)?.edge_class !== "eave") continue;
+        for (const iv of gutteredIntervals.get(ee.id) ?? [{ u0: 0, u1: 1 }]) {
+          const a = lerp(ee, iv.u0);
+          const b = lerp(ee, iv.u1);
+          const abx = b.x - a.x;
+          const aby = b.y - a.y;
+          const len2 = abx * abx + aby * aby;
+          const t =
+            len2 > 0
+              ? Math.max(
+                  0,
+                  Math.min(1, ((at.x - a.x) * abx + (at.y - a.y) * aby) / len2),
+                )
+              : 0;
+          const px = a.x + abx * t;
+          const py = a.y + aby * t;
+          const d2 = (at.x - px) * (at.x - px) + (at.y - py) * (at.y - py);
+          if (!best || d2 < best.d2) best = { at: { x: px, y: py }, e: ee, d2 };
+        }
+      }
+      const maxPt = 6 * ptPerFt;
+      if (!(ptPerFt > 0) || !best || best.d2 > maxPt * maxPt) continue; // dropped
+      at = best.at;
+      target = best.e;
+    }
+    const tier = byId.get(target.id)?.tier;
     downspouts.push({
       at,
       drop_height_ft: tier === "lower" ? tierHeights.lower : tierHeights.upper,
-      edge_id: d.edge_id,
-      side: sideOfPerimeterEdge(e.p1, e.p2, outline) ?? "interior",
+      edge_id: target.id,
+      side: sideOfPerimeterEdge(target.p1, target.p2, outline) ?? "interior",
     });
+  }
+  if (strayMarks > 0) {
+    notes.push(
+      `⚠ ${strayMarks} D.S. mark(s) sat on a gable/rake or unpriced edge — moved to the adjacent gutter / dropped. Verify.`,
+    );
   }
 
   // No D.S. marks read → synthesize by the 1-per-40 ft trade rule so the

@@ -157,6 +157,20 @@ export type ValidateOptions = {
    *  becomes the area-gate baseline (crossCheckStatedBox). Pass printed
    *  building extents, not every interior dim. */
   printedDimsFt?: readonly number[] | null;
+  /** The outline that is ACTUALLY PRICED — the v2 edge-classified perimeter at
+   *  its dimension-line-solved scale (`ftPerUnit` = feet per outline unit).
+   *  When present, the [main] area gate runs on THIS ring at THIS scale
+   *  instead of the raw vision trace + declared scale: the Woodinville gate
+   *  compared a 6648 sf trace extent (and a 2177 sf re-scaled ring) against a
+   *  bare 64×52 wall box while the real priced outline was 4047 sf — fully
+   *  consistent with walls + overhangs. The solved scale is trusted, so the
+   *  independent-scale requirement and the selfConsistentAreaFt2 rescue are
+   *  skipped. Absent → the legacy vision-trace math runs byte-identically. */
+  pricedOutline?: {
+    ring: { x: number; y: number }[];
+    ftPerUnit: number;
+    source: string;
+  } | null;
 };
 
 /**
@@ -362,6 +376,18 @@ function edgeCoverage(a: Pt, b: Pt, s: { a: Pt; b: Pt }, tol: number): number {
   return Math.max(0, Math.min(1, t1) - Math.max(0, t0));
 }
 
+/** Validate the caller's priced outline — ≥3 finite points at a finite positive
+ *  scale — or return null so the legacy vision-trace gate runs unchanged. */
+function readPricedOutline(
+  po: ValidateOptions["pricedOutline"],
+): { ring: Pt[]; ftPerUnit: number; source: string } | null {
+  if (!po || !Array.isArray(po.ring)) return null;
+  if (!(typeof po.ftPerUnit === "number" && Number.isFinite(po.ftPerUnit) && po.ftPerUnit > 0)) return null;
+  const ring = po.ring.filter(isFinitePt);
+  if (ring.length < 3) return null;
+  return { ring, ftPerUnit: po.ftPerUnit, source: po.source };
+}
+
 /**
  * Validate a blueprint analysis against the roof engine's gates. Pure; returns
  * flags only.
@@ -467,9 +493,80 @@ export function validateBlueprintGeometry(
       });
     }
 
-    // 3. Area gate. Scaled comparison when we have a declared scale, but a HUGE
-    //    miss is diagnosed as a scale mismatch (not a missing plane) and deferred
-    //    to the scale-free shape check.
+    // 3. Area gate.
+    //    PRICED-OUTLINE mode first: when the caller supplies the v2
+    //    edge-classified outline at its solved scale, THAT polygon is what the
+    //    contractor is billed on — so it, not the raw vision trace, is what
+    //    the schedule/wall-box must be compared against. The vision-trace math
+    //    below stays as the no-pricedOutline fallback (byte-identical legacy).
+    const priced = readPricedOutline(options?.pricedOutline);
+    if (priced) {
+      const ringFt = priced.ring.map((p): Pt => ({ x: p.x * priced.ftPerUnit, y: p.y * priced.ftPerUnit }));
+      const polyFt2 = polyArea(ringFt);
+      const unitsPerFt = Math.round((1 / priced.ftPerUnit) * 10) / 10; // e.g. pt/ft
+      const covers = `priced outline covers ${polyFt2.toFixed(0)} sf @ ${unitsPerFt} pt/ft`;
+      const verifyTail =
+        "A wing/mass may be missing from the priced outline, or the dimension-line scale is wrong — VERIFY against the roof plan before quoting.";
+      const roofSchedule =
+        titleArea != null && /roof/i.test(options?.scheduleLabel ?? "") ? titleArea : null;
+      const dimsForBox = cls?.building_dimensions;
+      const W = typeof dimsForBox?.width_ft === "number" && dimsForBox.width_ft > 0 ? dimsForBox.width_ft : null;
+      const D = typeof dimsForBox?.depth_ft === "number" && dimsForBox.depth_ft > 0 ? dimsForBox.depth_ft : null;
+      if (roofSchedule != null) {
+        // A roof-area schedule is the same quantity as the priced roof outline —
+        // compare the polygons directly.
+        const diff = Math.abs(polyFt2 - roofSchedule) / roofSchedule;
+        flags.push({
+          code: "area_gate",
+          severity: diff <= 0.15 ? "info" : "warn",
+          mass: mass.name,
+          message:
+            diff <= 0.15
+              ? `[main] area gate: ${covers} vs the ${options?.scheduleLabel ?? "roof schedule"} ${roofSchedule.toFixed(0)} sf — ${(diff * 100).toFixed(1)}% off — consistent.`
+              : `[main] area gate: ${covers} vs the ${options?.scheduleLabel ?? "roof schedule"} ${roofSchedule.toFixed(0)} sf — ${(diff * 100).toFixed(1)}% off. ${verifyTail}`,
+        });
+      } else if (W != null && D != null) {
+        // Wall box from the printed overalls (crossCheckStatedBox already
+        // replaced a misread vision axis above). A ROOF outline properly runs
+        // LARGER than the wall box (overhangs) — grow it ~2 ft per side and
+        // accept anything from a modestly-articulated footprint (0.80× the
+        // bare box) up to the grown envelope (+15%).
+        const boxArea = W * D;
+        const grown = (W + 4) * (D + 4);
+        if (polyFt2 >= 0.8 * boxArea && polyFt2 <= 1.15 * grown) {
+          flags.push({
+            code: "area_gate",
+            severity: "info",
+            mass: mass.name,
+            message:
+              `[main] area gate: ${covers} vs the printed ${fmtFt(W)} × ${fmtFt(D)} walls (${boxArea.toFixed(0)} sf) + ~2 ft roof overhangs (≈${grown.toFixed(0)} sf) — consistent; a roof outline is expected to run larger than the wall box.` +
+              (boxNote ? ` ${boxNote}` : ""),
+          });
+        } else {
+          const offPct = Math.round((Math.abs(polyFt2 - grown) / grown) * 100);
+          flags.push({
+            code: "area_gate",
+            severity: "warn",
+            mass: mass.name,
+            message:
+              `[main] area gate: ${covers} vs ≈${grown.toFixed(0)} sf expected from the printed ${fmtFt(W)} × ${fmtFt(D)} walls + roof overhangs — ${offPct}% off. ${verifyTail}` +
+              (boxNote ? ` ${boxNote}` : ""),
+          });
+        }
+      } else {
+        flags.push({
+          code: "no_schedule",
+          severity: "info",
+          mass: mass.name,
+          message: `[main] area gate: ${covers} — no roof-area schedule or printed wall box to verify against.`,
+        });
+      }
+      return { mass, scaleFtPerPx: ftPerPx, reviewFlags: flags };
+    }
+
+    //    Legacy (vision-trace) gate: scaled comparison when we have a declared
+    //    scale, but a HUGE miss is diagnosed as a scale mismatch (not a missing
+    //    plane) and deferred to the scale-free shape check.
     const shape = shapeCheck(ringPx, cls);
     if (ftPerPx && stated != null) {
       const computed = polyArea(ring);

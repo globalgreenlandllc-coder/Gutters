@@ -118,6 +118,15 @@ export async function runBlueprintGates(args: {
    *  the routes extracted it early for the edge takeoff's roofMasses, so the
    *  PDF text layer isn't scanned twice. */
   evidence?: GateEvidence | null;
+  /** The outline that is ACTUALLY PRICED — the v2 edge-classified perimeter at
+   *  its dimension-line-solved scale (ftPerUnit = 1 / ptPerFt). When present
+   *  the [main] area gate runs on THIS ring at THIS scale instead of the raw
+   *  vision trace + declared scale (see ValidateOptions.pricedOutline). */
+  pricedOutline?: {
+    ring: { x: number; y: number }[];
+    ftPerUnit: number;
+    source: string;
+  } | null;
 }): Promise<BlueprintGateResult> {
   const { texts, schedule, roofMasses, roofMassSource } =
     args.evidence ??
@@ -138,13 +147,15 @@ export async function runBlueprintGates(args: {
     `[blueprint-gates] schedule area: ${
       schedule ? `${schedule.areaFt2} sf (${schedule.label}, p${schedule.page})` : "NONE → area gate uses width×depth"
     }; roof masses: ${roofMasses.length ? `${roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ")} (${roofMassSource})` : "NONE → gable depth uses schematic"}; ` +
-      `printed dims for the box check: ${printedDimsFt.length ? printedDimsFt.map((f) => `${f}'`).join(", ") : "NONE"}.`,
+      `printed dims for the box check: ${printedDimsFt.length ? printedDimsFt.map((f) => `${f}'`).join(", ") : "NONE"}; ` +
+      `area gate ring: ${args.pricedOutline ? `${args.pricedOutline.source} (${args.pricedOutline.ring.length} pts)` : "vision trace (legacy)"}.`,
   );
 
   const v = validateBlueprintGeometry(args.analysis, args.classification, {
     statedScheduleAreaFt2: schedule?.areaFt2 ?? null,
     scheduleLabel: schedule ? `${schedule.label} (p${schedule.page})` : undefined,
     printedDimsFt: printedDimsFt.length > 0 ? printedDimsFt : null,
+    pricedOutline: args.pricedOutline ?? null,
   });
 
   const notes = v.reviewFlags.map((f) => `${MARK[f.severity]} ${f.message}`);

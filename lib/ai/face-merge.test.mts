@@ -261,3 +261,68 @@ test("a garage projection cue never claims the schedule estimate (porch/patio co
   assert.ok(cue);
   assert.match(cue!, /Defaulted to FLUSH/);
 });
+
+// ── consensusStories — one clerestory misread must not outvote three faces ──
+import { consensusStories } from "./face-merge.ts";
+
+test("consensusStories: [1,1,1,2] → 1 (all-but-one agree, the majority wins)", () => {
+  assert.equal(consensusStories([1, 1, 1, 2]), 1);
+  // Null reads don't count against the quorum.
+  assert.equal(consensusStories([1, null, 1, 1, 2]), 1);
+  // …and 3 reads with one dissenter still resolves by majority.
+  assert.equal(consensusStories([1, 1, 2]), 1);
+});
+
+test("consensusStories: [2,2,1,1] → 2 (no all-but-one majority → MAX of non-nulls)", () => {
+  assert.equal(consensusStories([2, 2, 1, 1]), 2);
+  // Under 3 non-null reads the majority rule never applies — max rules.
+  assert.equal(consensusStories([1, 2]), 2);
+  assert.equal(consensusStories([1]), 1);
+  // Three all-different reads → max.
+  assert.equal(consensusStories([1, 2, 3]), 3);
+});
+
+test("consensusStories: [2,2,2,2] → 2 (unanimous)", () => {
+  assert.equal(consensusStories([2, 2, 2, 2]), 2);
+});
+
+test("consensusStories: all-null → null", () => {
+  assert.equal(consensusStories([null, null, null, null]), null);
+  assert.equal(consensusStories([]), null);
+});
+
+// ── FaceProjection position / eave_below_main survive the merge ─────────────
+
+test("projection position + eave_below_main pass through mergeFaceReadings untouched", () => {
+  const reads: FaceReadingRaw[] = [
+    face({
+      face: "right",
+      projections: [
+        {
+          kind: "patio",
+          depth_ft: 13,
+          position: "right_end",
+          eave_below_main: true,
+          notes: "lower outdoor-living hip at the rear end",
+        },
+      ],
+    }),
+    face({
+      face: "rear",
+      projections: [{ kind: "patio", depth_ft: 12, position: "left_end", eave_below_main: true, notes: "" }],
+    }),
+    // An OLD-schema read without the new fields merges without breaking.
+    face({ face: "left", projections: [{ kind: "garage", depth_ft: 22, notes: "" }] }),
+  ];
+  const m = mergeFaceReadings(reads, ["right", "rear", "left"]);
+  const rightProj = m.per_face.right.projections[0];
+  assert.equal(rightProj.position, "right_end");
+  assert.equal(rightProj.eave_below_main, true);
+  assert.equal(rightProj.depth_ft, 13);
+  const rearProj = m.per_face.rear.projections[0];
+  assert.equal(rearProj.position, "left_end");
+  assert.equal(rearProj.eave_below_main, true);
+  const oldProj = m.per_face.left.projections[0];
+  assert.equal(oldProj.position, undefined, "old reads stay field-free (the veto's passthrough signal)");
+  assert.equal(oldProj.eave_below_main, undefined);
+});

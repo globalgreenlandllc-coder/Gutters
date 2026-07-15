@@ -168,3 +168,74 @@ test("non-finite input → passthrough, never throws", () => {
   const r = rectifyPlanFootprint(bad, []);
   assert.equal(r.applied, false);
 });
+
+// ── auditNotches — deep-notch flag-not-carve (the 1168G phantom pocket) ──────
+import { auditNotches } from "./rectify-plan-takeoff.ts";
+
+test("auditNotches: an 8-ft deep, 8-ft mouth pocket → exactly 1 suspect with its legs", () => {
+  // 60×40 ft house (ftPerUnit 1); an 8×8 pocket carved into the top (rear)
+  // edge — the 1168G shape: deep AND narrow-mouthed (mouth < 1.5× depth).
+  const ring: RPt[] = [
+    { x: 0, y: 0 }, { x: 26, y: 0 }, { x: 26, y: 8 }, { x: 34, y: 8 },
+    { x: 34, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 40 }, { x: 0, y: 40 },
+  ];
+  const before = JSON.stringify(ring);
+  const suspects = auditNotches(ring, 1);
+  assert.equal(suspects.length, 1, "exactly one suspect");
+  const s = suspects[0];
+  assert.ok(Math.abs(s.depthFt - 8) < 0.2, `depth ≈8 ft, got ${s.depthFt}`);
+  assert.ok(Math.abs(s.mouthFt - 8) < 0.2, `mouth ≈8 ft, got ${s.mouthFt}`);
+  assert.equal(s.edges.length, 3, "the pocket's three legs are returned");
+  assert.deepEqual(s.edgeIndices, [1, 2, 3]);
+  assert.equal(s.where, "rear", "pocket located on the top (rear) half");
+  assert.equal(JSON.stringify(ring), before, "flag-not-carve: the ring is never mutated");
+
+  // Scale derivation path (median ft/px over the runs, like reconcile-eaves).
+  const derived = auditNotches(ring, null, { runs: [{ length_ft: 26, length_px: 26 }] });
+  assert.equal(derived.length, 1);
+  // No scale at all → the 6-ft threshold is unjudgeable → degrade to none.
+  assert.deepEqual(auditNotches(ring, null), []);
+});
+
+test("auditNotches ADVERSARIAL: a real 2-ft rear step is NOT flagged", () => {
+  // The 1168G rear edge really does step ~2 ft near the outdoor living —
+  // flagging it would train the owner to ignore the note.
+  const ring: RPt[] = [
+    { x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 2 }, { x: 60, y: 2 },
+    { x: 60, y: 40 }, { x: 0, y: 40 },
+  ];
+  assert.deepEqual(auditNotches(ring, 1), []);
+});
+
+test("auditNotches ADVERSARIAL: a wide shallow recess (12-ft mouth × 4-ft deep) is not a suspect", () => {
+  // A recessed entry/porch: wide and shallow — a real architectural feature.
+  const ring: RPt[] = [
+    { x: 0, y: 0 }, { x: 24, y: 0 }, { x: 24, y: 4 }, { x: 36, y: 4 },
+    { x: 36, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 40 }, { x: 0, y: 40 },
+  ];
+  assert.deepEqual(auditNotches(ring, 1), []);
+  // …and a deep-but-wide courtyard (20 mouth × 10 deep) is an L/U shape, not
+  // a carve: mouth ≥ 1.5× depth keeps it.
+  const courtyard: RPt[] = [
+    { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 40, y: 10 },
+    { x: 40, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 40 }, { x: 0, y: 40 },
+  ];
+  assert.deepEqual(auditNotches(courtyard, 1), []);
+});
+
+test("auditNotches: squaring output is unchanged by the audit (audit is pure, read-only)", () => {
+  const footprint: RPt[] = [
+    { x: 0, y: 0 },
+    { x: 960, y: 100 }, // the 1168G skewed wall
+    { x: 960, y: 800 },
+    { x: 0, y: 800 },
+  ];
+  const r1 = rectifyPlanFootprint(footprint, [{ x: 500, y: 250 }]);
+  assert.equal(r1.applied, true);
+  const snapshot = JSON.stringify(r1.footprint);
+  auditNotches(r1.footprint, 0.1);
+  assert.equal(JSON.stringify(r1.footprint), snapshot, "audit did not mutate the squared ring");
+  const r2 = rectifyPlanFootprint(footprint, [{ x: 500, y: 250 }]);
+  assert.deepEqual(r2.footprint, r1.footprint, "squaring is deterministic with the audit in play");
+  assert.deepEqual(r2.followers, r1.followers);
+});

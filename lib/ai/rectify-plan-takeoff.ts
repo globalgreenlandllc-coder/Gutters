@@ -340,3 +340,182 @@ export function rectifyPlanFootprint(
     return passthrough("rectify threw");
   }
 }
+
+// ─── Deep-notch audit (flag-not-carve) ───────────────────────────────────────
+//
+// A vision trace on a scanned plan can CARVE a pocket that isn't there — 1168G
+// invented an ~8 ft notch at the front-right (the garage corner, which JOGS
+// OUT on the real roof) and the trace-hip closure then BILLED the phantom
+// notch legs as upper eaves. rectifyPlanFootprint has no concavity sanity
+// (axis-fraction, area-drift and corner-move gates all pass a squared notch by
+// construction), so this audit flags the suspicious pockets AFTER squaring:
+// deep AND narrow-mouthed concavities that a real roof outline rarely has.
+// It never edits the ring — the caller notes the suspects loudly and excludes
+// their legs from auto-pricing (closeVectorPerimeter excludeEdges).
+
+/** A suspicious concave pocket on the traced ring. */
+export type NotchSuspect = {
+  /** Ring edge indices of the pocket's legs (edge i = ring[i] → ring[i+1]). */
+  edgeIndices: number[];
+  /** The pocket's legs as segments, in ring coordinates — feed these to
+   *  closeVectorPerimeter's excludeEdges so closure never prices them. */
+  edges: { a: RPt; b: RPt }[];
+  depthFt: number;
+  mouthFt: number;
+  /** Rough plan location in the drafting convention (front at the bottom of
+   *  the sheet): "front-right", "rear", "center", … — note wording only. */
+  where: string;
+};
+
+/**
+ * Audit a traced footprint ring for phantom notches: a SUSPECT is a concave
+ * pocket deeper than 6 ft whose mouth is narrower than 1.5× its depth (a real
+ * recessed porch is wide and shallow; a real inside corner is as wide as it is
+ * deep — only the deep, narrow carve is trace-artifact-shaped). Flag-only by
+ * design: returns the pockets, never mutates the ring.
+ *
+ * `ftPerUnit` converts ring units to feet; when absent it is derived the same
+ * way the perimeter closure derives its scale — the median length_ft /
+ * length_px over the AI's own measured runs (`opts.runs`). With neither, the
+ * 6-ft threshold is unjudgeable and the audit degrades to no suspects.
+ */
+export function auditNotches(
+  ringIn: readonly RPt[],
+  ftPerUnit?: number | null,
+  opts?: {
+    runs?: readonly { length_ft?: number | null; length_px?: number | null }[] | null;
+  },
+): NotchSuspect[] {
+  try {
+    let scale = typeof ftPerUnit === "number" && Number.isFinite(ftPerUnit) && ftPerUnit > 0 ? ftPerUnit : null;
+    if (scale == null) {
+      const ratios: number[] = [];
+      for (const r of opts?.runs ?? []) {
+        if (
+          typeof r?.length_ft === "number" &&
+          r.length_ft > 0 &&
+          typeof r?.length_px === "number" &&
+          r.length_px > 0
+        )
+          ratios.push(r.length_ft / r.length_px);
+      }
+      if (ratios.length > 0) {
+        ratios.sort((a, b) => a - b);
+        scale = ratios[Math.floor(ratios.length / 2)];
+      }
+    }
+    if (scale == null) return [];
+
+    const ring = openRing(
+      (ringIn ?? []).filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)),
+    );
+    const n = ring.length;
+    if (n < 5) return []; // a pocket needs at least one vertex beyond a box
+
+    // Ring orientation: interior lies on the positive-cross side of each
+    // directed edge when the shoelace sum is positive (y-down safe).
+    let shoelace = 0;
+    for (let i = 0; i < n; i++) {
+      const p = ring[i];
+      const q = ring[(i + 1) % n];
+      shoelace += p.x * q.y - q.x * p.y;
+    }
+    const orient = shoelace >= 0 ? 1 : -1;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of ring) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const span = Math.max(maxX - minX, maxY - minY);
+    if (!(span > 0)) return [];
+    const sideTol = Math.max(1e-9, span * 0.01); // "on the chord" slack
+
+    type Cand = {
+      i: number;
+      j: number;
+      count: number;
+      depthFt: number;
+      mouthFt: number;
+      indices: number[];
+    };
+    const cands: Cand[] = [];
+    const MAX_CHAIN = Math.min(8, n - 2);
+    for (let i = 0; i < n; i++) {
+      for (let count = 2; count <= MAX_CHAIN; count++) {
+        const j = (i + count) % n;
+        const A = ring[i];
+        const B = ring[j];
+        const mouth = Math.hypot(B.x - A.x, B.y - A.y);
+        if (!(mouth > 0)) continue;
+        const ux = (B.x - A.x) / mouth;
+        const uy = (B.y - A.y) / mouth;
+        // Every interior vertex must dip toward the polygon INTERIOR (an
+        // outward bump is a wing, not a notch); depth = the deepest dip.
+        let depth = 0;
+        let inward = true;
+        for (let k = 1; k < count; k++) {
+          const v = ring[(i + k) % n];
+          const d = (ux * (v.y - A.y) - uy * (v.x - A.x)) * orient;
+          if (d < -sideTol) {
+            inward = false;
+            break;
+          }
+          if (d > depth) depth = d;
+        }
+        if (!inward) continue;
+        const depthFt = depth * scale;
+        const mouthFt = mouth * scale;
+        if (!(depthFt > 6)) continue; // shallow → a step/recess, not a carve
+        if (!(mouthFt < 1.5 * depthFt)) continue; // wide → a real courtyard/L
+        cands.push({
+          i,
+          j,
+          count,
+          depthFt,
+          mouthFt,
+          indices: Array.from({ length: count }, (_, k) => (i + k) % n),
+        });
+      }
+    }
+    if (cands.length === 0) return [];
+
+    // Deepest pocket wins; overlapping shallower candidates are the same
+    // carve seen through a different vertex pair.
+    cands.sort((a, b) => b.depthFt - a.depthFt);
+    const used = new Set<number>();
+    const out: NotchSuspect[] = [];
+    const cxr = (minX + maxX) / 2;
+    const cyr = (minY + maxY) / 2;
+    const bandR = span * 0.05;
+    for (const c of cands) {
+      if (c.indices.some((k) => used.has(k))) continue;
+      c.indices.forEach((k) => used.add(k));
+      // Rough location: pocket centroid vs ring bbox center (front at bottom).
+      let px = 0;
+      let py = 0;
+      const verts = [c.i, ...c.indices.map((k) => (k + 1) % n)];
+      for (const k of verts) {
+        px += ring[k].x;
+        py += ring[k].y;
+      }
+      px /= verts.length;
+      py /= verts.length;
+      const yw = py > cyr + bandR ? "front" : py < cyr - bandR ? "rear" : "";
+      const xw = px > cxr + bandR ? "right" : px < cxr - bandR ? "left" : "";
+      const where = yw && xw ? `${yw}-${xw}` : yw || xw || "center";
+      out.push({
+        edgeIndices: c.indices,
+        edges: c.indices.map((k) => ({ a: { ...ring[k] }, b: { ...ring[(k + 1) % n] } })),
+        depthFt: Math.round(c.depthFt * 10) / 10,
+        mouthFt: Math.round(c.mouthFt * 10) / 10,
+        where,
+      });
+    }
+    return out;
+  } catch {
+    return []; // audit is flag-only — a bug here must never break a takeoff
+  }
+}

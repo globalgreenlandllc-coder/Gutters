@@ -87,10 +87,48 @@ export type RoofLayout = {
    *  bridge falls back to a single flat face so shading always covers. */
   faces?: RoofFacePoly[];
   diag?: RoofLayoutDiag;
+  /** How the interior lines were produced: the straight skeleton, or the
+   *  sheet-anchored rebuild (adopted sheet diagonals + gable ridge rules).
+   *  Absent on rows stored before this field existed — view-time cleanup
+   *  keys off that absence. */
+  interiorSource?: "skeleton" | "sheet-anchored";
   /** 0..1 — drives the canvas "Schematic — verify" banner (shown < 0.7) */
   confidence: number;
   notes: string[];
 };
+
+/**
+ * View-time cleanup for layouts STORED before the sheet-evidence discard
+ * learned ratios (they kept a skeleton the sheet contradicted — the
+ * "spaghetti" rows). When a majority of the stored skeleton's diagonals are
+ * unevidenced by the sheet, hide the computed interior and keep only what the
+ * sheet itself drew (the adopted tail of `valleys`) plus the gable ends.
+ * Faces are cleared so the estimate bridge re-tiles from the kept lines (or
+ * shades its single flat face). Pricing reads nothing from this object.
+ */
+export function suppressUnevidencedInterior(layout: RoofLayout): RoofLayout {
+  if (!layout.ok || layout.interiorSource) return layout; // post-fix rows are already clean
+  const d = layout.diag;
+  if (!d || d.adopted < 2 || layout.hips.length === 0) return layout;
+  if (d.skeletonDiagonals === 0 || d.matchedSkel / d.skeletonDiagonals >= 0.5) {
+    return layout;
+  }
+  // Adoptees are always the LAST d.adopted entries of `valleys` (the builder
+  // appends them after the skeleton's own lines; organizeInterior preserves
+  // the split). Keep them, drop the unevidenced computed interior.
+  const keep = Math.max(0, layout.valleys.length - d.adopted);
+  return {
+    ...layout,
+    ridges: [],
+    hips: [],
+    valleys: layout.valleys.slice(keep),
+    faces: undefined,
+    notes: [
+      ...layout.notes,
+      "📐 Interior roof lines the sheet did not evidence are hidden — Re-analyze to redraw the interior from the plan's own linework.",
+    ],
+  };
+}
 
 const fail = (reason: string): RoofLayout => ({
   ok: false,
@@ -666,7 +704,42 @@ export function buildRoofLayout(opts: {
     const unknowns = realEdges.filter(
       (e) => (clsById.get(e.id) ?? "unknown") === "unknown",
     ).length;
-    if (rakeIdsWanted.length === realEdges.length) {
+
+    // DRAWING-ONLY gable boundaries. A wall whose gutter is priced as eave
+    // can still be a gable wall in the ROOF FORM — a frame-over gable that
+    // covers (almost) the whole wall, or partial rake spans that dominate
+    // it. The straight skeleton would fan hips off such a wall's corners;
+    // treat it as stationary (gable) for the skeleton instead. Pricing,
+    // rakeEdgeIds and gableCount stay classifier-owned and untouched.
+    const skelGableIds = new Set(rakeIdsWanted);
+    const drawnAsGable: string[] = [];
+    for (const fo of opts.frameOverEnds ?? []) {
+      if (!fo?.edgeId || skelGableIds.has(fo.edgeId)) continue;
+      const e = realEdges.find((r) => r.id === fo.edgeId);
+      if (!e) continue;
+      const spanPt =
+        typeof fo.spanFt === "number" && fo.spanFt > 0 && opts.ptPerFt && opts.ptPerFt > 0
+          ? fo.spanFt * opts.ptPerFt
+          : null;
+      // Unknown span never flips the boundary (conservative — hips stay).
+      if (spanPt != null && Math.min(spanPt, e.lenPt) / e.lenPt >= 0.7) {
+        skelGableIds.add(e.id);
+        drawnAsGable.push(e.id);
+      }
+    }
+    for (const c of classes) {
+      if (skelGableIds.has(c.id)) continue;
+      const cov = (c.partial_gables ?? []).reduce(
+        (s, g) => s + Math.max(0, Math.min(1, g.u1) - Math.max(0, g.u0)),
+        0,
+      );
+      if (cov >= 0.7 && realEdges.some((r) => r.id === c.id)) {
+        skelGableIds.add(c.id);
+        drawnAsGable.push(c.id);
+      }
+    }
+    const skelGableList = [...skelGableIds];
+    if (skelGableList.length === realEdges.length) {
       return fail("every edge classified rake — no eave to slope from");
     }
 
@@ -699,13 +772,13 @@ export function buildRoofLayout(opts: {
     // beats none) → all-eave. Candidates scored by plan-diagonal agreement.
     let used: { skel: RoofSkeleton; rakeIds: readonly string[] } | null = null;
     let droppedRake: string | null = null;
-    const full = runSkel(rakeIdsWanted);
+    const full = runSkel(skelGableList);
     if (full.valid) {
-      used = { skel: full.skel, rakeIds: rakeIdsWanted };
-    } else if (rakeIdsWanted.length > 0) {
+      used = { skel: full.skel, rakeIds: skelGableList };
+    } else if (skelGableList.length > 0) {
       let best: { skel: RoofSkeleton; rakeIds: string[]; score: number } | null = null;
-      for (const dropId of rakeIdsWanted) {
-        const subset = rakeIdsWanted.filter((id) => id !== dropId);
+      for (const dropId of skelGableList) {
+        const subset = skelGableList.filter((id) => id !== dropId);
         const t = runSkel(subset);
         if (!t.valid) continue;
         const stats = crossCheckDiagonals(
@@ -718,7 +791,7 @@ export function buildRoofLayout(opts: {
       }
       if (best) {
         used = { skel: best.skel, rakeIds: best.rakeIds };
-        droppedRake = rakeIdsWanted.find((id) => !best!.rakeIds.includes(id)) ?? null;
+        droppedRake = skelGableList.find((id) => !best!.rakeIds.includes(id)) ?? null;
       } else {
         const allEave = runSkel([]);
         if (allEave.valid) {
@@ -762,14 +835,18 @@ export function buildRoofLayout(opts: {
     let skeletonKept = !!used;
     if (opts.segments?.length) {
       const pre = matchDiagonals({ hips, valleys }, planDiags, outline);
-      // Discard only when the skeleton DREW diagonals and the sheet confirms
-      // none of them. A pure-gable skeleton (ridge only, zero diagonals) has
-      // nothing to falsify — a few stray 45° strokes must not destroy it.
+      // Discard when the skeleton DREW diagonals and the sheet's own
+      // linework evidences less than HALF of them. A skeleton the sheet
+      // mostly confirms is kept; a pure-gable skeleton (ridge only, zero
+      // diagonals) has nothing to falsify — a few stray 45° strokes must
+      // not destroy it. (Was: discard only at exactly zero matches — one
+      // lucky crossing kept a whole contradicted skeleton on multi-tier
+      // roofs, drawing hips the plan does not have.)
       if (
         used &&
         planDiags.length >= 3 &&
         pre.skeletonDiagonals > 0 &&
-        pre.matchedSkel === 0
+        pre.matchedSkel / pre.skeletonDiagonals < 0.5
       ) {
         skeletonKept = false;
         ridges = [];
@@ -783,7 +860,8 @@ export function buildRoofLayout(opts: {
         );
         if (staleIdx >= 0) notes.splice(staleIdx, 1);
         notes.push(
-          "📐 The sheet's drawn diagonals contradict the uniform skeleton (multi-pitch roof) — " +
+          `📐 The sheet's drawn diagonals evidence only ${pre.matchedSkel} of ${pre.skeletonDiagonals} ` +
+            "computed skeleton diagonal(s) — unevidenced computed hips/valleys are suppressed; " +
             "interior drawn from the sheet's own linework + gable ridge rules instead" +
             (staleIdx >= 0
               ? " (the degenerate fallback skeleton was discarded; rake edges stay marked on the perimeter)."
@@ -828,7 +906,7 @@ export function buildRoofLayout(opts: {
     const nearestRakeEdgeId = (mid: OverlayPt): string => {
       let bestId = "";
       let bestD = Infinity;
-      for (const id of rakeIdsWanted) {
+      for (const id of skelGableList) {
         const e = realEdges.find((r) => r.id === id);
         if (!e) continue;
         const d = Math.hypot(e.mid.x - mid.x, e.mid.y - mid.y);
@@ -854,7 +932,7 @@ export function buildRoofLayout(opts: {
       //     it would leave the footprint. Stopping at (a)'s ridges keeps the
       //     drawn diagram crossing-free by construction.
       const stopAt = [...valleys, ...mains];
-      for (const id of rakeIdsWanted) {
+      for (const id of skelGableList) {
         const e = realEdges.find((r) => r.id === id);
         if (!e) continue;
         const rb = ridgeBack(e, outline, stopAt, span);
@@ -874,6 +952,7 @@ export function buildRoofLayout(opts: {
             x: rb.p1.x + (rb.p2.x - rb.p1.x) * t,
             y: rb.p1.y + (rb.p2.y - rb.p1.y) * t,
           },
+          ...(drawnAsGable.includes(id) ? { verify: true } : {}),
         });
       }
     }
@@ -901,13 +980,19 @@ export function buildRoofLayout(opts: {
             }
           }
         }
-        gableEnds.push({ edgeId: nearestRakeEdgeId(mid), base, apex });
+        const endId = nearestRakeEdgeId(mid);
+        gableEnds.push({
+          edgeId: endId,
+          base,
+          apex,
+          ...(drawnAsGable.includes(endId) ? { verify: true } : {}),
+        });
       }
       // A rake the robustness ladder DROPPED (skeleton degeneracy) has no
       // skeleton gable — synthesize its end on the ridge-back exactly like
       // the discarded-skeleton path, so the drawn gable never vanishes with
       // a wavefront hiccup. Decorative; classification/pricing untouched.
-      for (const id of rakeIdsWanted) {
+      for (const id of skelGableList) {
         if (gableEnds.some((g) => g.edgeId === id)) continue;
         const e = realEdges.find((r) => r.id === id);
         if (!e) continue;
@@ -926,6 +1011,7 @@ export function buildRoofLayout(opts: {
             x: rb.p1.x + (rb.p2.x - rb.p1.x) * t,
             y: rb.p1.y + (rb.p2.y - rb.p1.y) * t,
           },
+          ...(drawnAsGable.includes(id) ? { verify: true } : {}),
         });
         // The "drawn as eave" note is now wrong for this wall — it gets a
         // drawn gable end after all. Say what actually happens.
@@ -968,6 +1054,41 @@ export function buildRoofLayout(opts: {
       diag = { ...diag, adopted: org.kept.length };
     }
 
+    // Sub-span gable wedge on an eave wall: base = the given span of the
+    // edge, apex inward (≈45° in plan), clipped inside the outline. Shared
+    // by the frame-over channel and the priced partial-gable intervals.
+    const subSpanGable = (
+      e: OutlineEdge,
+      centerU: number,
+      spanPt: number,
+      verify: boolean,
+    ): GableEnd | null => {
+      const half = Math.min(spanPt, e.lenPt) / 2;
+      const c = Math.min(e.lenPt - half, Math.max(half, centerU * e.lenPt));
+      const dx = (e.p2.x - e.p1.x) / e.lenPt;
+      const dy = (e.p2.y - e.p1.y) / e.lenPt;
+      const base: [OverlayPt, OverlayPt] = [
+        { x: e.p1.x + dx * (c - half), y: e.p1.y + dy * (c - half) },
+        { x: e.p1.x + dx * (c + half), y: e.p1.y + dy * (c + half) },
+      ];
+      const n = inwardNormalOf(e, outline, span);
+      if (!n) return null;
+      const mid = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 };
+      const o = { x: mid.x + n.x * 0.5, y: mid.y + n.y * 0.5 };
+      let depth = half;
+      for (let i = 0; i < outline.length; i++) {
+        const t = raySegT(o, n, outline[i], outline[(i + 1) % outline.length]);
+        if (t !== null && t < depth) depth = t;
+      }
+      if (depth < span * 0.01) return null;
+      return {
+        edgeId: e.id,
+        base,
+        apex: { x: mid.x + n.x * depth, y: mid.y + n.y * depth },
+        ...(verify ? { verify: true } : {}),
+      };
+    };
+
     // Frame-over / beam gables the reconcile rejected from pricing — the
     // wall keeps its eave (and gutter), but the roof form above it is real:
     // draw it as a gable end tagged verify. Sub-span of the wall, centered
@@ -981,30 +1102,25 @@ export function buildRoofLayout(opts: {
         typeof fo.spanFt === "number" && fo.spanFt > 0 && opts.ptPerFt && opts.ptPerFt > 0
           ? Math.min(fo.spanFt * opts.ptPerFt, e.lenPt)
           : e.lenPt;
-      const half = spanPt / 2;
-      const c = Math.min(e.lenPt - half, Math.max(half, u * e.lenPt));
-      const dx = (e.p2.x - e.p1.x) / e.lenPt;
-      const dy = (e.p2.y - e.p1.y) / e.lenPt;
-      const base: [OverlayPt, OverlayPt] = [
-        { x: e.p1.x + dx * (c - half), y: e.p1.y + dy * (c - half) },
-        { x: e.p1.x + dx * (c + half), y: e.p1.y + dy * (c + half) },
-      ];
-      const n = inwardNormalOf(e, outline, span);
-      if (!n) continue;
-      const mid = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 };
-      const o = { x: mid.x + n.x * 0.5, y: mid.y + n.y * 0.5 };
-      let depth = spanPt / 2;
-      for (let i = 0; i < outline.length; i++) {
-        const t = raySegT(o, n, outline[i], outline[(i + 1) % outline.length]);
-        if (t !== null && t < depth) depth = t;
+      const ge = subSpanGable(e, u, spanPt, true);
+      if (ge) gableEnds.push(ge);
+    }
+
+    // PRICED partial-gable intervals ([u0,u1] rake spans carved out of an
+    // eave wall — the "rake over the gable span only" resolutions) are real
+    // gables the elevations evidenced: draw each one so the diagram shows
+    // the gable the pricing already excluded. Not verify-tagged — the
+    // classification itself prices around them.
+    for (const c of classes) {
+      const e = realEdges.find((r) => r.id === c.id);
+      if (!e || gableEnds.some((ge) => ge.edgeId === c.id)) continue;
+      for (const g of c.partial_gables ?? []) {
+        const u0 = Math.max(0, Math.min(1, g.u0));
+        const u1 = Math.max(0, Math.min(1, g.u1));
+        if (u1 - u0 < 0.05) continue;
+        const ge = subSpanGable(e, (u0 + u1) / 2, (u1 - u0) * e.lenPt, false);
+        if (ge) gableEnds.push(ge);
       }
-      if (depth < span * 0.01) continue;
-      gableEnds.push({
-        edgeId: e.id,
-        base,
-        apex: { x: mid.x + n.x * depth, y: mid.y + n.y * depth },
-        verify: true,
-      });
     }
 
     // Roof PLANES: the skeleton's validated tiling when it stood, else a
@@ -1021,6 +1137,14 @@ export function buildRoofLayout(opts: {
         facesFromRoofLines(outline, [...ridges, ...hips, ...valleys]) ?? undefined;
     }
 
+    if (drawnAsGable.length > 0) {
+      notes.push(
+        `📐 ${drawnAsGable.length} wall(s) drawn as gable ends (${drawnAsGable.join(", ")}) — ` +
+          "the roof form there is a gable that covers (nearly) the whole wall " +
+          "(frame-over / rake span dominates); gutter pricing on those walls is unchanged.",
+      );
+    }
+
     const rakeEdgeIds = [...rakeIdsWanted];
     const layout: RoofLayout = {
       ok: true,
@@ -1032,6 +1156,7 @@ export function buildRoofLayout(opts: {
       gableEnds,
       ...(faces ? { faces } : {}),
       diag,
+      interiorSource: skeletonKept ? "skeleton" : "sheet-anchored",
       confidence: 0.75,
       notes,
     };

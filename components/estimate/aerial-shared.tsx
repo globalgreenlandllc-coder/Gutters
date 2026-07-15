@@ -15,6 +15,7 @@ import {
   type Pt,
   type Dormer,
 } from "@/lib/roof-skeleton";
+import { engineDrawnGeometry } from "@/lib/roof-structure-view";
 import {
   perimBBox,
   anchorForSide,
@@ -743,6 +744,24 @@ export function RoofStructureOverlay({
         .flatMap((e) =>
           e.points.slice(1).map((p, i) => [e.points[i], p] as [Pt, Pt]),
         );
+    const isUserGable = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("gable-");
+    // v2/engine rows: the stored structure IS the drawing — render it
+    // verbatim (one source of truth; labels and wedges can't disagree, and
+    // no client-side skeleton re-invents lines the sheet never evidenced).
+    // Contractor-placed gables (Add-gable tool) are explicit and still
+    // surface as dormer wings on top. Legacy rows fall through to the
+    // grid derivation below, satellite stays on the non-derive branch.
+    const engineView = engineDrawnGeometry(structure);
+    if (engineView) {
+      const userDormers = extraGablesFromRakes(
+        toSegs(rakes.filter(isUserGable)),
+        [],
+        structure.perimeter,
+        [], // no eave veto — the contractor placed these on purpose
+      );
+      return { ...engineView, dormers: userDormers };
+    }
     const eaveSegs = toSegs(eaves);
     // v2 gable ENDS travel with the takeoff (structure.gables). Feed them to
     // the skeleton as rake walls so the derived FACES flip hip→gable on those
@@ -768,16 +787,14 @@ export function RoofStructureOverlay({
     // skeleton gables AND vetoed where they lie on an eave (a mis-read). A
     // CONTRACTOR-placed gable (Add-gable tool, id "gable-…") is explicit, so it
     // skips the eave veto — a real cross-gable rises above its gutter.
-    const isUser = (l: { id?: string }) =>
-      typeof l.id === "string" && l.id.startsWith("gable-");
     const aiDormers = extraGablesFromRakes(
-      toSegs(rakes.filter((l) => !isUser(l))),
+      toSegs(rakes.filter((l) => !isUserGable(l))),
       base.gables,
       structure.perimeter,
       eaveSegs,
     );
     const userDormers = extraGablesFromRakes(
-      toSegs(rakes.filter(isUser)),
+      toSegs(rakes.filter(isUserGable)),
       base.gables,
       structure.perimeter,
       [], // no eave veto — the contractor placed these on purpose

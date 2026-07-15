@@ -7,7 +7,8 @@ import { blueprintToEstimateResult } from "@/lib/ai/blueprint-to-estimate";
 import { engineDrawEnabled, engineTakeoffEnabled, perimeterOnlyEnabled } from "@/lib/ai/engine-takeoff";
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
-import { rectifyPlanFootprint } from "@/lib/ai/rectify-plan-takeoff";
+import { rectifyPlanFootprint, auditNotches } from "@/lib/ai/rectify-plan-takeoff";
+import { tierCornerVeto } from "@/lib/ai/tier-corner-veto";
 import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
@@ -18,7 +19,7 @@ import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
 import { outlineEdges, downspoutMarksFromLabels } from "@/lib/ai/plan-overlay";
 import { crossCheckScaleAgainstOveralls } from "@/lib/ai/dim-scale";
 import { edgeTakeoffEnabled, type EdgeClassification } from "@/lib/ai/classify-edges";
-import type { RoofLayout } from "@/lib/ai/roof-layout";
+import { suppressUnevidencedInterior, type RoofLayout } from "@/lib/ai/roof-layout";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
 import { checkAiSpendAllowed, recordSpend } from "@/lib/abuse/spend-guard";
@@ -489,10 +490,15 @@ export async function runEstimateFromPlan(
           Array.isArray(stored.hips) &&
           Array.isArray(stored.valleys)
         ) {
-          edgeLayout = stored;
+          // Rows stored before the sheet-evidence discard learned ratios can
+          // carry a skeleton the sheet mostly contradicts (the "random
+          // lines"). Hide the unevidenced computed interior at view time;
+          // sheet-adopted lines + gable ends stay. New rows pass through.
+          edgeLayout = suppressUnevidencedInterior(stored);
           vecTrace.push(
-            `📐 layout: ${stored.ridges.length} ridge / ${stored.hips.length} hip / ` +
-              `${stored.valleys.length} valley, ${stored.gableCount} gable end(s)` +
+            `📐 layout: ${edgeLayout.ridges.length} ridge / ${edgeLayout.hips.length} hip / ` +
+              `${edgeLayout.valleys.length} valley, ${edgeLayout.gableCount} gable end(s)` +
+              (edgeLayout !== stored ? " (unevidenced interior hidden)" : "") +
               (stored.diag
                 ? `, diag match ${stored.diag.matchedPlan}/${stored.diag.planDiagonals}` +
                   ` +${stored.diag.adopted} adopted`
@@ -946,6 +952,82 @@ export async function runEstimateFromPlan(
     analysis.notes = [...(analysis.notes ?? []), `🧭 ${titleOrientation.note}`];
   }
 
+  // CROSS-VIEW TIER-CORNER VETO + DEEP-NOTCH AUDIT — scanned/raster path only
+  // (the AI-trace fallback; vector-derived outlines don't carve phantom
+  // pockets and carry classifier-audited tiers). Runs AFTER the squaring
+  // above and BEFORE the perimeter closure below, so the closure never
+  // auto-prices a suspect pocket's legs.
+  //  - The veto RETIERS a lower porch/patio run that the elevations' new
+  //    position/eave_below_main reads place at a different corner (1168G put
+  //    the covered-outdoor-living loop on the garage corner). LF-neutral:
+  //    geometry, lengths and totals untouched; loud note.
+  //  - The notch audit flags deep, narrow pockets the trace carved
+  //    (flag-not-carve: the ring is never edited) and hands their legs to
+  //    closeVectorPerimeter as excludeEdges so they stay UNPRICED.
+  //  - When the pinned lower corner is at the REAR but the traced rear edge
+  //    runs straight, an UN-PRICED tap-to-add return is suggested (F4).
+  const isAiTrace = footprintSource === "AI trace (best-of read)";
+  const notchExcludes: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+  const suggestedEavesFromPlan: {
+    points: { x: number; y: number }[];
+    tier?: import("@/lib/types").EaveTier;
+  }[] = [];
+  if (isAiTrace) {
+    try {
+      const veto = tierCornerVeto({
+        analysis,
+        perFace: perFace as Partial<
+          Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
+        > | null,
+        faceNormals: orientation?.normals ?? null,
+      });
+      if (veto.vetoedRunIds.length > 0) {
+        analysis.gutter_runs = veto.analysis.gutter_runs;
+      }
+      if (veto.notes.length > 0) {
+        analysis.notes = [...(analysis.notes ?? []), ...veto.notes.map((n) => `⚠ ${n}`)];
+      }
+      if (veto.suggestedReturn) {
+        suggestedEavesFromPlan.push({
+          points: [veto.suggestedReturn.start, veto.suggestedReturn.end],
+          tier: "lower",
+        });
+        analysis.notes = [...(analysis.notes ?? []), `⚠ ${veto.suggestedReturn.note}`];
+      }
+      const suspects = auditNotches(analysis.building_footprint ?? [], null, {
+        runs: analysis.gutter_runs,
+      });
+      for (const s of suspects) {
+        notchExcludes.push(...s.edges);
+        // "elsewhere" only when the pocket is CLEARLY in a different quadrant
+        // than the pinned corner ("rear" overlaps "rear-right" — say nothing).
+        const clearlyElsewhere =
+          !!veto.pinned &&
+          !veto.pinned.corner.includes(s.where) &&
+          !s.where.includes(veto.pinned.corner);
+        const pinnedClause = clearlyElsewhere
+          ? `, and the ${veto.pinned!.faces.join(" + ")} elevations place the covered area elsewhere (at the ${veto.pinned!.corner})`
+          : "";
+        analysis.notes = [
+          ...(analysis.notes ?? []),
+          `🕳 DEEP NOTCH ON THE TRACE — the footprint carves an ~${Math.round(s.depthFt)} ft pocket at the ${s.where}, unsupported by the elevations${pinnedClause}. Kept drawn for review; its walls were NOT auto-priced — verify/edit the outline.`,
+        ];
+      }
+      if (veto.vetoedRunIds.length > 0 || veto.notes.length > 0 || suspects.length > 0) {
+        console.log(
+          `[tier-notch-audit] ${veto.vetoedRunIds.length} run(s) retiered, ${suspects.length} notch suspect(s)` +
+            (veto.pinned ? `, lower tier pinned ${veto.pinned.corner}` : "") +
+            (veto.suggestedReturn ? ", rear-step return suggested" : ""),
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[tier-notch-audit] threw (takeoff unchanged):`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
   // VECTOR CLOSURE — only when the footprint is the plan's own vector outline
   // (the swap above applied). Every outline edge is then real CAD linework, so
   // an exterior edge with no gutter/rake classification is a silently-missed
@@ -964,7 +1046,7 @@ export async function runEstimateFromPlan(
   // outline. The v2 edge takeoff covers every edge explicitly (unknowns are
   // flagged UNPRICED on purpose) — running closure would re-introduce the
   // blind "continuous gutters" default it exists to remove. Skip it.
-  const isAiTrace = footprintSource === "AI trace (best-of read)";
+  // (isAiTrace hoisted above the tier/notch audit.)
   const hipVerdict = explainUnanimousHip(
     perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
   );
@@ -991,6 +1073,9 @@ export async function runEstimateFromPlan(
       faceNormals: orientation?.normals ?? null,
       perFace: perFace as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,
       mode: isAiTrace ? "trace-hip" : "vector",
+      // Deep-notch audit suspects: closure must never bill a carved pocket's
+      // legs as eaves (counted + noted UNPRICED inside). Empty → unchanged.
+      excludeEdges: notchExcludes.length > 0 ? notchExcludes : undefined,
     });
     if (closed.reconcileNotes.length > 0) {
       analysis.gutter_runs = closed.analysis.gutter_runs;
@@ -1020,6 +1105,10 @@ export async function runEstimateFromPlan(
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
       droppedProjections,
       faceNormals: orientation?.normals ?? null,
+      // UN-PRICED tap-to-add suggestions from the tier-corner veto (the rear
+      // tier-step return) — projected into canvas space by the assembler,
+      // never summed into eaveLF.
+      suggestedEaves: suggestedEavesFromPlan.length > 0 ? suggestedEavesFromPlan : null,
       edgeLayout: edgeApplied && edgeLayout?.ok
         ? {
             ridges: edgeLayout.ridges,
