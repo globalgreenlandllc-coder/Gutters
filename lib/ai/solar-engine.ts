@@ -169,6 +169,23 @@ export async function runSolarFirstEstimate(args: {
     return null;
   }
 
+  // STALENESS GATE. Google's aerial survey lags its map tiles by years in
+  // some pockets (observed: Monroe WA still on 2013 data in 2026 while
+  // the regular satellite tiles show the finished subdivision). Tracing
+  // decade-old heights confidently prices a building that may no longer
+  // exist — worse than falling back to the CURRENT tile and letting the
+  // legacy tracer + drawing tools work on a photo of the real house.
+  if (layers.imageryDate) {
+    const captured = new Date(layers.imageryDate).getTime();
+    const ageYears = (Date.now() - captured) / (365.25 * 24 * 3600 * 1000);
+    if (Number.isFinite(ageYears) && ageYears > 6) {
+      notes.push(
+        `Google's roof data here is ${ageYears.toFixed(0)} years old (captured ${layers.imageryDate}) — the property may have been built or re-roofed since. Switching to current satellite imagery; verify or draw the gutters on the photo.`,
+      );
+      return null;
+    }
+  }
+
   // ---- Footprint ---------------------------------------------------
   let traced = traceMaskFootprint(
     layers.mask,
