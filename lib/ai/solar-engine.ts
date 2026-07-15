@@ -387,8 +387,11 @@ export async function runSolarFirstEstimate(args: {
 
   notes.push(
     `Footprint from Google's building mask: ${traced.boundary.length} boundary px → ${cleaned.points.length} corners` +
-      (cleaned.cleanup.kind === "ortho"
-        ? " (right-angle snap ✓)"
+      (cleaned.cleanup.kind === "regularized"
+        ? ` (straightened: ${cleaned.cleanup.snapped} wall${cleaned.cleanup.snapped === 1 ? "" : "s"} on the house grid` +
+          (cleaned.cleanup.kept > 0
+            ? `, ${cleaned.cleanup.kept} kept diagonal)`
+            : ")")
         : ` (${cleaned.cleanup.reason})`) +
       (cleaned.squaredCorners > 0
         ? `, squared ${cleaned.squaredCorners} chamfered corner${cleaned.squaredCorners === 1 ? "" : "s"} to 90°`

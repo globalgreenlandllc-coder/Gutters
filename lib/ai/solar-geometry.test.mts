@@ -12,6 +12,7 @@ import {
   estimateGroundHeightM,
   estimateRenderShift,
   inwardNormalForRing,
+  regularizeRing,
   distToPolyline,
   tierRegionRings,
   distToRing,
@@ -109,6 +110,167 @@ test("cleanFootprint collapses a pixel-staircase L-shape to ~6 corners", () => {
     Math.abs(got - expected) / expected < 0.1,
     `area ${got} vs expected ${expected}`,
   );
+  // The rectilinear L must take the per-wall straightening path.
+  assert.equal(cleaned.cleanup.kind, "regularized");
+});
+
+/* ------------------------------------------------------------------ */
+/*  regularizeRing — per-wall straightening                            */
+/* ------------------------------------------------------------------ */
+
+/** Interior turn angle at each vertex (deg) — 90 for a square corner. */
+function cornerAngles(ring: Pt[]): number[] {
+  const out: number[] = [];
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const p = ring[(i - 1 + n) % n];
+    const c = ring[i];
+    const q = ring[(i + 1) % n];
+    const v1x = c.x - p.x;
+    const v1y = c.y - p.y;
+    const v2x = q.x - c.x;
+    const v2y = q.y - c.y;
+    const cos =
+      (v1x * v2x + v1y * v2y) /
+      (Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y) || 1);
+    out.push((Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI);
+  }
+  return out;
+}
+
+test("regularizeRing straightens a wavy wall to one segment (4 corners)", () => {
+  // 40×30 m rectangle at 0.1 m/px whose top wall waves ±0.3 m — the
+  // DP-survivor pattern the owner screenshots as "wavy like a rope".
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 80, y: 3 },
+    { x: 160, y: -3 },
+    { x: 240, y: 2 },
+    { x: 320, y: -2 },
+    { x: 400, y: 0 },
+    { x: 400, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 4, `got ${reg.points.length} corners`);
+  for (const a of cornerAngles(reg.points)) {
+    assert.ok(Math.abs(a - 90) < 1.5, `corner ${a.toFixed(1)}° not square`);
+  }
+  const area = polygonArea(reg.points);
+  assert.ok(Math.abs(area - 400 * 300) / (400 * 300) < 0.05, `area ${area}`);
+});
+
+test("regularizeRing squares a rotated house (30°) with noisy walls", () => {
+  const base: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 2.5 },
+    { x: 200, y: -2.5 },
+    { x: 300, y: 0 },
+    { x: 300, y: 2 + 200 }, // slight mid-wall kink target below
+    { x: 0, y: 200 },
+  ];
+  const rot = (p: Pt): Pt => {
+    const t = (30 * Math.PI) / 180;
+    return {
+      x: 150 + (p.x - 150) * Math.cos(t) - (p.y - 100) * Math.sin(t),
+      y: 100 + (p.x - 150) * Math.sin(t) + (p.y - 100) * Math.cos(t),
+    };
+  };
+  const reg = regularizeRing(base.map(rot), 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 4, `got ${reg.points.length} corners`);
+  for (const a of cornerAngles(reg.points)) {
+    assert.ok(Math.abs(a - 90) < 1.5, `corner ${a.toFixed(1)}° not square`);
+  }
+});
+
+test("regularizeRing keeps a real 0.9 m jog as two square corners", () => {
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 9 },
+    { x: 400, y: 9 },
+    { x: 400, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 6, `got ${reg.points.length} corners`);
+  for (const a of cornerAngles(reg.points)) {
+    assert.ok(Math.abs(a - 90) < 1.5, `corner ${a.toFixed(1)}° not square`);
+  }
+  // The step corners stay where the roof steps.
+  const near = (x: number, y: number) =>
+    reg.points.some((p) => Math.hypot(p.x - x, p.y - y) < 2);
+  assert.ok(near(200, 0) && near(200, 9), "jog corners moved");
+});
+
+test("regularizeRing keeps a genuine 45° wall as a diagonal", () => {
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 340, y: 0 },
+    { x: 400, y: 60 },
+    { x: 400, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 5, `got ${reg.points.length} corners`);
+  // Find the diagonal edge and check its angle stayed ~45°.
+  let sawDiag = false;
+  for (let i = 0; i < reg.points.length; i++) {
+    const a = reg.points[i];
+    const b = reg.points[(i + 1) % reg.points.length];
+    let ang =
+      (Math.atan2(Math.abs(b.y - a.y), Math.abs(b.x - a.x)) * 180) / Math.PI;
+    if (ang > 20 && ang < 70) {
+      sawDiag = true;
+      assert.ok(Math.abs(ang - 45) < 1, `diagonal drifted to ${ang.toFixed(1)}°`);
+    }
+  }
+  assert.ok(sawDiag, "diagonal wall was destroyed");
+});
+
+test("regularizeRing straightens waves on a CONCAVE (L) ring, courtyard corner intact", () => {
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 130, y: 3 },
+    { x: 260, y: -2 },
+    { x: 400, y: 0 },
+    { x: 400, y: 150 },
+    { x: 250, y: 150 },
+    { x: 250, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 6, `got ${reg.points.length} corners`);
+  for (const a of cornerAngles(reg.points)) {
+    assert.ok(Math.abs(a - 90) < 1.5, `corner ${a.toFixed(1)}° not square`);
+  }
+  const near = (x: number, y: number) =>
+    reg.points.some((p) => Math.hypot(p.x - x, p.y - y) < 2.5);
+  assert.ok(near(400, 150) && near(250, 150) && near(250, 300), "L notch moved");
+});
+
+test("regularizeRing leaves a long genuinely-bent wall alone (gate)", () => {
+  // Two 20 m arms meeting at 160° — architecture, not noise. The corner
+  // turn (20°) is under cornerMinDeg? No: 180-160=20 < 28 → same-run fit
+  // fails (bow ≈ 17 px) → runs split, bevel keeps the bend. Nothing
+  // should snap this to one straight wall (drift gate).
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 396, y: 35 }, // ~10° down-slope arm
+    { x: 396, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  // Whether gated or bevel-kept, the bend must survive within 1 m.
+  const near = (x: number, y: number) =>
+    reg.points.some((p) => Math.hypot(p.x - x, p.y - y) < 10);
+  assert.ok(near(200, 0), "the real mid-wall bend vertex was erased");
 });
 
 /* ------------------------------------------------------------------ */

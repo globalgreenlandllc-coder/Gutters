@@ -11,8 +11,7 @@
  * functions with synthetic masks and DSMs.
  */
 
-import { simplify, orthogonalizePolygon, polygonSelfIntersects, ensureCCW, pointInPolygon } from "./geometry";
-import { symmetricHausdorffPx } from "./roof-geom";
+import { simplify, polygonSelfIntersects, ensureCCW, pointInPolygon } from "./geometry";
 
 export type Pt = { x: number; y: number };
 
@@ -842,7 +841,6 @@ export function refineEdgesToPhoto(args: {
     if (vals.length >= 40) roofLum = median(vals);
   }
 
-  const centroid = polygonCentroid(ring);
   const n = ring.length;
   const insidePx = 0.7 / metersPerPixel;
 
@@ -859,7 +857,11 @@ export function refineEdgesToPhoto(args: {
       lines.push({ p: a, d });
       continue;
     }
-    const nrm = interiorNormal(a, b, centroid); // inward
+    // Probe-based inward normal: the centroid heuristic FLIPS on the
+    // courtyard walls of concave (L/U) footprints — a flipped normal
+    // made this search slide those walls outward into the yard and
+    // sample "roof tone" from the lawn.
+    const nrm = inwardNormalForRing(a, b, ring, 0.4 / metersPerPixel);
     const stations = Math.max(3, Math.min(14, Math.round((len * metersPerPixel) / 1.2)));
     const scoreAt = (o: number): number => {
       let s = 0;
@@ -1233,7 +1235,343 @@ function traceMooreNeighbor(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Boundary cleanup: downsample → Douglas-Peucker → ortho snap        */
+/*  Per-wall regularization: straight walls, square corners            */
+/* ------------------------------------------------------------------ */
+
+type WallRun = {
+  /** The boundary vertices this run covers (shared endpoints with neighbors). */
+  pts: Pt[];
+  /** Total-least-squares centroid of those vertices. */
+  c: Pt;
+  /** TLS unit direction, oriented along the ring's travel direction. */
+  d: Pt;
+  /** Projected extent along d (px). */
+  lenPx: number;
+};
+
+function fitRun(pts: Pt[]): WallRun {
+  let mx = 0;
+  let my = 0;
+  for (const p of pts) {
+    mx += p.x;
+    my += p.y;
+  }
+  mx /= pts.length;
+  my /= pts.length;
+  let sxx = 0;
+  let sxy = 0;
+  let syy = 0;
+  for (const p of pts) {
+    const ux = p.x - mx;
+    const uy = p.y - my;
+    sxx += ux * ux;
+    sxy += ux * uy;
+    syy += uy * uy;
+  }
+  // Principal eigenvector of the 2×2 covariance = the wall's direction.
+  const tr = sxx + syy;
+  const det = sxx * syy - sxy * sxy;
+  const l1 = tr / 2 + Math.sqrt(Math.max(0, (tr * tr) / 4 - det));
+  let dx: number;
+  let dy: number;
+  if (Math.abs(sxy) > 1e-9) {
+    dx = l1 - syy;
+    dy = sxy;
+  } else if (sxx >= syy) {
+    dx = 1;
+    dy = 0;
+  } else {
+    dx = 0;
+    dy = 1;
+  }
+  const dl = Math.hypot(dx, dy) || 1;
+  dx /= dl;
+  dy /= dl;
+  // Orient head→tail so consecutive runs chain in ring order.
+  const tx = pts[pts.length - 1].x - pts[0].x;
+  const ty = pts[pts.length - 1].y - pts[0].y;
+  if (dx * tx + dy * ty < 0) {
+    dx = -dx;
+    dy = -dy;
+  }
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  for (const p of pts) {
+    const t = (p.x - mx) * dx + (p.y - my) * dy;
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+  }
+  return { pts, c: { x: mx, y: my }, d: { x: dx, y: dy }, lenPx: tMax - tMin };
+}
+
+function runMaxDevPx(pts: Pt[], c: Pt, d: Pt): number {
+  let worst = 0;
+  for (const p of pts) {
+    const dev = Math.abs((p.x - c.x) * -d.y + (p.y - c.y) * d.x);
+    if (dev > worst) worst = dev;
+  }
+  return worst;
+}
+
+function turnDeg(prev: Pt, curr: Pt, next: Pt): number {
+  const v1x = curr.x - prev.x;
+  const v1y = curr.y - prev.y;
+  const v2x = next.x - curr.x;
+  const v2y = next.y - curr.y;
+  const l1 = Math.hypot(v1x, v1y);
+  const l2 = Math.hypot(v2x, v2y);
+  if (l1 < 1e-9 || l2 < 1e-9) return 0;
+  const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+export type RegularizedRing = {
+  points: Pt[];
+  /** Walls snapped onto the building's rectilinear frame (incl. 45° family). */
+  snapped: number;
+  /** Walls kept at their own fitted angle (genuine odd diagonals). */
+  kept: number;
+  changed: boolean;
+  /** Why the gates rejected the result (input returned unchanged). */
+  reason?: string;
+};
+
+/**
+ * Straighten a simplified footprint ring wall-by-wall. Douglas-Peucker
+ * keeps every vertex that deviates more than its tolerance — on a noisy
+ * traced boundary that leaves real walls drawn as chains of short
+ * segments bending a few degrees at each vertex ("wavy like a rope",
+ * per the owner), and the old all-or-nothing orthogonalize pass bails
+ * on ANY house with one diagonal wall, leaving that waviness in the
+ * shipped geometry.
+ *
+ * Per-wall instead:
+ *   1. Split the ring into maximal RUNS of vertices that fit one line
+ *      (TLS, max deviation ≤ maxFitDevM); always break at turns ≥
+ *      cornerMinDeg so architectural corners survive.
+ *   2. Find the dominant rectilinear frame θ (length-weighted
+ *      quadruple-angle mean) and snap each run's angle onto {θ, θ+90°}
+ *      — or {θ+45°} for long runs — when the rotation moves the run's
+ *      endpoints ≤ maxSnapMoveM. A long wall 10° off frame is a REAL
+ *      diagonal and keeps its fitted angle; only noise-dominated short
+ *      runs snap from that far.
+ *   3. Merge consecutive runs that landed on the same line.
+ *   4. Rebuild each corner as the INTERSECTION of its two lines (≥25°
+ *      apart — frame walls meet at exactly 90° by construction) or a
+ *      short bevel where lines run near-parallel.
+ *
+ * Gates: simple polygon, area within ±10%, every input vertex within
+ * maxDriftM of the result — else the input returns unchanged. LF-wise
+ * straightening only ever SHORTENS a wavy wall toward its true chord.
+ */
+export function regularizeRing(
+  points: Pt[],
+  metersPerPixel: number,
+  opts?: {
+    maxFitDevM?: number;
+    cornerMinDeg?: number;
+    frameSnapDeg?: number;
+    diagSnapDeg?: number;
+    maxSnapMoveM?: number;
+    maxDriftM?: number;
+  },
+): RegularizedRing {
+  const unchanged = (reason: string): RegularizedRing => ({
+    points,
+    snapped: 0,
+    kept: 0,
+    changed: false,
+    reason,
+  });
+  const n = points.length;
+  if (n < 4) return unchanged("too few vertices");
+  // Just ABOVE the caller's DP epsilon (0.3 m): DP's survivors deviate
+  // ≥ its epsilon from their chord, and a straight wall's noise must fit
+  // ONE line here or the wave never straightens. Real jogs still split —
+  // their corners turn ≥ cornerMinDeg, which breaks the run regardless.
+  const maxFitDevPx = (opts?.maxFitDevM ?? 0.34) / metersPerPixel;
+  const cornerMinDeg = opts?.cornerMinDeg ?? 28;
+  const frameSnapDeg = opts?.frameSnapDeg ?? 12;
+  const diagSnapDeg = opts?.diagSnapDeg ?? 8;
+  const maxSnapMovePx = (opts?.maxSnapMoveM ?? 0.45) / metersPerPixel;
+  const maxDriftPx = (opts?.maxDriftM ?? 0.8) / metersPerPixel;
+  const mergeOffsetPx = 0.22 / metersPerPixel;
+
+  // Start the run walk at the sharpest corner so no wall straddles the
+  // array seam.
+  let start = 0;
+  let sharpest = -1;
+  for (let i = 0; i < n; i++) {
+    const t = turnDeg(points[(i - 1 + n) % n], points[i], points[(i + 1) % n]);
+    if (t > sharpest) {
+      sharpest = t;
+      start = i;
+    }
+  }
+  const V: Pt[] = [];
+  for (let i = 0; i < n; i++) V.push(points[(start + i) % n]);
+  V.push(V[0]);
+
+  // 1. Greedy maximal straight runs.
+  const runs: WallRun[] = [];
+  let cur: Pt[] = [V[0], V[1]];
+  for (let k = 2; k <= n; k++) {
+    let extendOk = false;
+    if (turnDeg(cur[cur.length - 2], cur[cur.length - 1], V[k]) < cornerMinDeg) {
+      const cand = [...cur, V[k]];
+      const f = fitRun(cand);
+      extendOk = runMaxDevPx(cand, f.c, f.d) <= maxFitDevPx;
+    }
+    if (extendOk) {
+      cur.push(V[k]);
+    } else {
+      runs.push(fitRun(cur));
+      cur = [V[k - 1], V[k]];
+    }
+  }
+  runs.push(fitRun(cur));
+  if (runs.length < 3) return unchanged("degenerate runs");
+
+  // 2. Dominant frame + per-run angle snap.
+  let fx = 0;
+  let fy = 0;
+  for (const r of runs) {
+    const a4 = 4 * Math.atan2(r.d.y, r.d.x);
+    fx += r.lenPx * Math.cos(a4);
+    fy += r.lenPx * Math.sin(a4);
+  }
+  const theta = Math.atan2(fy, fx) / 4;
+  const angDistDeg = (aRad: number, baseRad: number): number => {
+    const step = Math.PI / 2;
+    let d = (aRad - baseRad) % step;
+    if (d < 0) d += step;
+    d = Math.min(d, step - d);
+    return (d * 180) / Math.PI;
+  };
+  const snapTo = (r: WallRun, familyBase: number): WallRun => {
+    const a = Math.atan2(r.d.y, r.d.x);
+    const step = Math.PI / 2;
+    const target = familyBase + Math.round((a - familyBase) / step) * step;
+    return { ...r, d: { x: Math.cos(target), y: Math.sin(target) } };
+  };
+  const snapAngle = (r: WallRun): WallRun => {
+    const a = Math.atan2(r.d.y, r.d.x);
+    const dFrame = angDistDeg(a, theta);
+    const dDiag = angDistDeg(a, theta + Math.PI / 4);
+    const movePx = (deg: number) =>
+      (r.lenPx / 2) * Math.sin((deg * Math.PI) / 180);
+    if (dFrame <= frameSnapDeg && movePx(dFrame) <= maxSnapMovePx) {
+      return snapTo(r, theta);
+    }
+    if (
+      dDiag <= diagSnapDeg &&
+      movePx(dDiag) <= maxSnapMovePx &&
+      r.lenPx * metersPerPixel >= 3
+    ) {
+      return snapTo(r, theta + Math.PI / 4);
+    }
+    return r;
+  };
+  let work = runs.map(snapAngle);
+
+  // 3. Merge consecutive runs on the same physical line.
+  let mergedSome = true;
+  while (mergedSome && work.length > 3) {
+    mergedSome = false;
+    for (let i = 0; i + 1 < work.length; i++) {
+      const a = work[i];
+      const b = work[i + 1];
+      const cross = Math.abs(a.d.x * b.d.y - a.d.y * b.d.x);
+      const angBetween = (Math.asin(Math.min(1, cross)) * 180) / Math.PI;
+      const off = Math.abs(
+        (b.c.x - a.c.x) * -a.d.y + (b.c.y - a.c.y) * a.d.x,
+      );
+      if (angBetween < 3 && a.d.x * b.d.x + a.d.y * b.d.y > 0 && off <= mergeOffsetPx) {
+        work.splice(i, 2, snapAngle(fitRun([...a.pts, ...b.pts])));
+        mergedSome = true;
+        break;
+      }
+    }
+  }
+  if (work.length < 3) return unchanged("collapsed");
+
+  // 4. Rebuild corners from the run lines.
+  const projOnto = (p: Pt, r: WallRun): Pt => {
+    const t = (p.x - r.c.x) * r.d.x + (p.y - r.c.y) * r.d.y;
+    return { x: r.c.x + r.d.x * t, y: r.c.y + r.d.y * t };
+  };
+  const out: Pt[] = [];
+  const m = work.length;
+  for (let i = 0; i < m; i++) {
+    const a = work[i];
+    const b = work[(i + 1) % m];
+    const shared = a.pts[a.pts.length - 1];
+    const cross = Math.abs(a.d.x * b.d.y - a.d.y * b.d.x);
+    const angBetween = (Math.asin(Math.min(1, cross)) * 180) / Math.PI;
+    if (angBetween >= 25) {
+      const inter = lineIntersection(
+        a.c,
+        { x: a.c.x + a.d.x, y: a.c.y + a.d.y },
+        b.c,
+        { x: b.c.x + b.d.x, y: b.c.y + b.d.y },
+      );
+      if (
+        inter &&
+        Math.hypot(inter.x - shared.x, inter.y - shared.y) <=
+          2.5 / metersPerPixel
+      ) {
+        out.push(inter);
+        continue;
+      }
+    }
+    // Near-parallel neighbors (or a runaway miter): bevel between the
+    // shared vertex's projections onto each line — honest to the trace,
+    // fabricates nothing.
+    out.push(projOnto(shared, a));
+    out.push(projOnto(shared, b));
+  }
+  // Drop consecutive duplicates (incl. the wraparound pair).
+  const dedup: Pt[] = [];
+  for (const p of out) {
+    const prev = dedup[dedup.length - 1];
+    if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > 0.6) dedup.push(p);
+  }
+  while (
+    dedup.length > 1 &&
+    Math.hypot(
+      dedup[0].x - dedup[dedup.length - 1].x,
+      dedup[0].y - dedup[dedup.length - 1].y,
+    ) <= 0.6
+  ) {
+    dedup.pop();
+  }
+
+  // 5. Gates.
+  if (dedup.length < 4) return unchanged("too few corners");
+  if (polygonSelfIntersects(dedup)) return unchanged("self-intersected");
+  const areaRatio = polygonArea(dedup) / Math.max(1, polygonArea(points));
+  if (areaRatio < 0.9 || areaRatio > 1.1) {
+    return unchanged(`area ${(areaRatio * 100).toFixed(0)}%`);
+  }
+  let drift = 0;
+  for (const p of points) drift = Math.max(drift, distToRing(p, dedup));
+  if (drift > maxDriftPx) return unchanged("drifted");
+
+  let snapped = 0;
+  let kept = 0;
+  for (const r of work) {
+    const a = Math.atan2(r.d.y, r.d.x);
+    if (angDistDeg(a, theta) < 0.05 || angDistDeg(a, theta + Math.PI / 4) < 0.05) {
+      snapped++;
+    } else {
+      kept++;
+    }
+  }
+  return { points: dedup, snapped, kept, changed: true };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Boundary cleanup: downsample → Douglas-Peucker → per-wall snap     */
 /* ------------------------------------------------------------------ */
 
 export type CleanedFootprint = {
@@ -1241,7 +1579,12 @@ export type CleanedFootprint = {
   /** Chamfered corners squared away by dechamferPolygon. */
   squaredCorners: number;
   cleanup:
-    | { kind: "ortho"; vertCount: number }
+    | {
+        kind: "regularized";
+        vertCount: number;
+        snapped: number;
+        kept: number;
+      }
     | { kind: "simplified"; vertCount: number; reason: string };
 };
 
@@ -1256,14 +1599,12 @@ export function cleanFootprint(
   metersPerPixel: number,
   opts?: {
     simplifyEpsM?: number;
-    orthoMaxDriftM?: number;
   },
 ): CleanedFootprint | null {
   // 0.3 m (was 0.45): a two-step 0.5 m staircase jog deviates ~0.45 m
   // from its chord — the old epsilon collapsed real jagged-roof corners
   // into the diagonals the owner kept flagging.
   const epsPx = (opts?.simplifyEpsM ?? 0.3) / metersPerPixel;
-  const maxDriftPx = (opts?.orthoMaxDriftM ?? 2) / metersPerPixel;
 
   const downsampled =
     boundary.length > 800
@@ -1274,46 +1615,30 @@ export function cleanFootprint(
   const simplified = simplify(downsampled, epsPx);
   if (simplified.length < 4) return null;
 
-  const ortho = orthogonalizePolygon(simplified);
-  const orthoArea = polygonArea(ortho) / Math.max(1, polygonArea(simplified));
-  const orthoOk =
-    ortho.length >= 4 &&
-    !polygonSelfIntersects(ortho) &&
-    orthoArea >= 0.85 &&
-    orthoArea <= 1.15 &&
-    symmetricHausdorffPx(simplified, ortho) <= maxDriftPx;
+  // PER-WALL straightening (replaces the old all-or-nothing global ortho
+  // snap, which bailed on any house with one diagonal wall and shipped
+  // the raw wavy trace). Falls back to the DP ring when its gates
+  // reject; either way the local chamfer-squaring still runs after.
+  const reg = regularizeRing(simplified, metersPerPixel);
+  if (!reg.changed && polygonSelfIntersects(simplified)) return null;
 
-  if (orthoOk) {
-    // Global right-angle snap succeeded — corners are already square.
-    return {
-      points: ortho,
-      squaredCorners: 0,
-      cleanup: { kind: "ortho", vertCount: ortho.length },
-    };
-  }
-  if (!polygonSelfIntersects(simplified)) {
-    // Global snap failed (mixed-angle building) — square away the LOCAL
-    // chamfers the mask's rounded corners left behind, keeping genuine
-    // diagonal walls.
-    const dech = dechamferPolygon(simplified, metersPerPixel);
-    return {
-      points: dech.points,
-      squaredCorners: dech.squared,
-      cleanup: {
-        kind: "simplified",
-        vertCount: dech.points.length,
-        reason:
-          ortho.length < 4
-            ? "ortho degenerate"
-            : polygonSelfIntersects(ortho)
-              ? "ortho self-intersected"
-              : orthoArea < 0.85 || orthoArea > 1.15
-                ? `ortho area ${(orthoArea * 100).toFixed(0)}%`
-                : "ortho drifted",
-      },
-    };
-  }
-  return null;
+  const dech = dechamferPolygon(reg.points, metersPerPixel);
+  return {
+    points: dech.points,
+    squaredCorners: dech.squared,
+    cleanup: reg.changed
+      ? {
+          kind: "regularized",
+          vertCount: dech.points.length,
+          snapped: reg.snapped,
+          kept: reg.kept,
+        }
+      : {
+          kind: "simplified",
+          vertCount: dech.points.length,
+          reason: reg.reason ?? "regularization skipped",
+        },
+  };
 }
 
 export function polygonArea(points: Pt[]): number {
