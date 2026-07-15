@@ -74,6 +74,17 @@ export function Pricing({ pricing }: { pricing: PricingView }) {
                   Cancel anytime · No card to start
                 </span>
               </div>
+              <p className="mt-3 text-xs leading-relaxed text-zinc-500">
+                The free plan includes unlimited satellite address estimates
+                {pricing.freeBlueprintCredits > 0 && (
+                  <>
+                    {" "}
+                    and {pricing.freeBlueprintCredits} blueprint takeoff
+                    {pricing.freeBlueprintCredits === 1 ? "" : "s"} to try
+                  </>
+                )}
+                .
+              </p>
             </div>
 
             <div className="flex flex-col rounded-3xl bg-accent-950 p-6 text-white">
@@ -97,7 +108,9 @@ export function Pricing({ pricing }: { pricing: PricingView }) {
                 ))}
               </ul>
               <p className="mt-auto pt-5 text-xs leading-relaxed text-white/40">
-                Credits never interrupt your subscription — they stack on top.
+                Credits meter blueprint takeoffs only — address estimates are
+                free on every plan. Packs stack on top of your subscription
+                and never expire.
               </p>
             </div>
           </div>

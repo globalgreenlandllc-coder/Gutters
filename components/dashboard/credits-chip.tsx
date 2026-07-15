@@ -19,8 +19,10 @@ export function CreditsChip() {
   const isAdmin = session.user.role === "SUPER_ADMIN";
   const total = session.credits.included + session.credits.bonus;
   const remaining = Math.max(total - session.credits.used, 0);
-  const pct = isAdmin ? 100 : Math.round((remaining / total) * 100);
-  const low = !isAdmin && remaining <= 3;
+  const pct = isAdmin ? 100 : total > 0 ? Math.round((remaining / total) * 100) : 0;
+  // "Low" only makes sense when some credits have actually been burned —
+  // a free plan sitting at its full 1/1 shouldn't glow amber.
+  const low = !isAdmin && remaining <= 3 && remaining < total;
   const out = !isAdmin && remaining === 0;
 
   return (
@@ -68,7 +70,7 @@ export function CreditsChip() {
               transition={{ duration: 0.14 }}
               className="absolute right-0 z-20 mt-2 w-72 origin-top-right rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-elevated"
             >
-              <div className="microlabel">Takeoff credits</div>
+              <div className="microlabel">Blueprint credits</div>
               <div className="mt-1 flex items-baseline justify-between">
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
                   {isAdmin ? "Unlimited" : remaining}
@@ -93,18 +95,22 @@ export function CreditsChip() {
               </div>
 
               <div className="mt-3 space-y-1.5 text-xs">
+                <Row label="Address estimates" value="Free · don't use credits" />
                 <Row
                   label="Renews"
-                  value={new Date(session.credits.resetsAt).toLocaleDateString(
-                    "en-US",
-                    { month: "short", day: "numeric" },
-                  )}
+                  value={
+                    session.credits.renews
+                      ? new Date(session.credits.resetsAt).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )
+                      : "Pro renews monthly"
+                  }
                 />
                 <Row
                   label="Bonus credits"
                   value={String(session.credits.bonus)}
                 />
-                <Row label="Same address" value="10× / 24h · free" />
               </div>
 
               <div className="mt-4 flex items-center gap-2">

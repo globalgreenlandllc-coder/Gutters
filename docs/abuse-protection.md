@@ -23,7 +23,7 @@ GutterScan's exposure, ranked by expected impact without guards:
 | # | Threat | What Gets Hit | Worst Case |
 |---|--------|--|--|
 | **1** | **Bot-driven LLM cost explosion** | `/api/blueprints`, `/api/blueprints/[id]/reanalyze` (3× Opus + Haiku + Gemini), `runEstimate` (Solar + SAM-2 + GPT-4o) | Scripted account loops uploads → **$500+/hour** of Anthropic/OpenAI/Google spend |
-| **2** | **Credit-wallet bypass** | `runEstimate` re-run (free within 24h if same address); failed pipelines never debited | Bot fishes junk addresses → unlimited free Solar/SAM-2 calls |
+| **2** | **Free-pipeline abuse** | `runEstimate` is free on every plan (credits only meter `/api/blueprints`); failed pipelines never debited | Bot fishes junk addresses → unlimited free Solar/SAM-2 calls (bounded only by the rails below) |
 | **3** | **Unauthenticated portal writes** | `/p/[token]` accept + change-order-respond (mutate contract, **email contractor**) | Token holder loops writes → email spam + contract churn |
 | **4** | **Email reputation burn** | All Resend sends (proposals, receipts, reminders, worker invites, notifications) | Compromised account or bot loop → domain blacklist + Resend bill |
 | **5** | **Request floods / scraping** | `/api/leads` (bbox queries), public pages, cron/webhook endpoints (brute-force secrets) | DB saturation, function-hours bill, dataset scraping |

@@ -126,7 +126,11 @@ async function grantCredits(session: Stripe.Checkout.Session) {
       ? session.payment_intent
       : (session.payment_intent?.id ?? `cs_${session.id}`);
 
-  const included = (await getPlanPricing()).pro.includedCredits;
+  // Wallet create-branch only fires for a user who's never loaded the
+  // app shell (getMe creates wallets). Packs don't change the plan, so
+  // the included allowance is the FREE one; a Pro sub's invoice.paid
+  // sets pro.includedCredits itself.
+  const included = (await getPlanPricing()).free.blueprintCredits;
   try {
     await db.$transaction(async (tx) => {
       await tx.transaction.create({
@@ -137,7 +141,7 @@ async function grantCredits(session: Stripe.Checkout.Session) {
           grossCents: session.amount_total ?? 0,
           netCents: session.amount_total ?? 0,
           stripePaymentIntentId: paymentIntentId,
-          description: `${credits} estimate credits`,
+          description: `${credits} blueprint credits`,
           settledAt: new Date(),
         },
       });

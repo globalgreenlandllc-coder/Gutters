@@ -72,6 +72,7 @@ export async function savePlanPricing(input: unknown): Promise<SavePricingResult
       payload: {
         priceCents: config.pro.priceCents,
         includedCredits: config.pro.includedCredits,
+        freeBlueprintCredits: config.free.blueprintCredits,
         packs: config.packs.map((p) => `${p.credits}/${p.amountCents}`),
       },
     },

@@ -43,6 +43,11 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
     setDraft((d) => ({ ...d, pro: { ...d.pro, ...patch } }));
   }
 
+  function patchFree(patch: Partial<PlanPricing["free"]>) {
+    setSavedAt(null);
+    setDraft((d) => ({ ...d, free: { ...d.free, ...patch } }));
+  }
+
   function save() {
     setErrors([]);
     startTransition(async () => {
@@ -153,7 +158,7 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
                   onCents={(priceCents) => patchPro({ priceCents })}
                 />
               </Field>
-              <Field label="Included takeoffs / month">
+              <Field label="Included blueprint takeoffs / month">
                 <input
                   type="number"
                   min={1}
@@ -168,6 +173,37 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
             </div>
           </section>
 
+          {/* Free plan */}
+          <section className="surface p-6 shadow-card">
+            <div className="microlabel">Free plan</div>
+            <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
+              Free allowance
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Satellite address estimates are always free (bounded by the abuse
+              rate limits, not credits). This sets the <em>one-time</em>{" "}
+              blueprint-takeoff allowance new accounts get to try the feature —
+              it does not renew monthly. Existing free accounts pick up an edit
+              on their next visit.
+            </p>
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Free blueprint takeoffs (one-time, 0–100)">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className={inputCls}
+                  value={draft.free.blueprintCredits}
+                  onChange={(e) =>
+                    patchFree({
+                      blueprintCredits: Math.round(Number(e.target.value) || 0),
+                    })
+                  }
+                />
+              </Field>
+            </div>
+          </section>
+
           {/* Features */}
           <section className="surface p-6 shadow-card">
             <div className="microlabel">Marketing bullets</div>
@@ -176,9 +212,9 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
             </h2>
             <p className="mt-0.5 text-sm text-zinc-500">
               Shown on the landing pricing card and the in-app billing page.
-              The first bullet — &ldquo;{draft.pro.includedCredits} AI takeoffs
-              every month&rdquo; — is generated from the takeoff count and
-              can&rsquo;t drift.
+              The first bullet — &ldquo;{draft.pro.includedCredits} blueprint
+              takeoffs every month&rdquo; — is generated from the takeoff
+              count and can&rsquo;t drift.
             </p>
             <ul className="mt-4 space-y-2">
               {draft.pro.features.map((f, i) => (
@@ -341,7 +377,7 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
               </div>
               <ul className="mt-4 space-y-1.5">
                 {[
-                  `${draft.pro.includedCredits} AI takeoffs every month`,
+                  `${draft.pro.includedCredits} blueprint takeoffs every month`,
                   ...draft.pro.features.filter((f) => f.trim()),
                 ].map((f, i) => (
                   <li key={i} className="flex items-start gap-2 text-[12.5px] text-zinc-700">
@@ -368,6 +404,13 @@ export function PlanPricingEditor({ initial }: { initial: PlanPricingAdmin }) {
                   </ul>
                 </div>
               )}
+              <p className="mt-3 border-t border-zinc-200/70 pt-3 text-[11px] text-zinc-500">
+                Free plan: unlimited address estimates
+                {draft.free.blueprintCredits > 0
+                  ? ` + ${draft.free.blueprintCredits} blueprint takeoff${draft.free.blueprintCredits === 1 ? "" : "s"} to try`
+                  : ""}
+                .
+              </p>
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-zinc-400">
               Publishing updates the landing page, the in-app billing page, and

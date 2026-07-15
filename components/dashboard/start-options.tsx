@@ -107,7 +107,7 @@ export function StartOptions() {
           </div>
           <p className="mt-3 text-sm text-zinc-500">
             Upload construction plans — AI reads the roof plan and
-            classifies every edge.
+            classifies every edge. Uses one blueprint credit.
           </p>
           <div className="mt-4">
             <BlueprintUploader />
@@ -287,13 +287,18 @@ function SatelliteTakeoffCard() {
         <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
           Satellite takeoff
         </h2>
-        <span className="ml-auto rounded-md bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-          AI
+        <span className="ml-auto inline-flex items-center gap-1">
+          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+            FREE
+          </span>
+          <span className="rounded-md bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            AI
+          </span>
         </span>
       </div>
       <p className="mt-3 text-sm text-zinc-500">
         Type an address — AI measures eaves, corners, and downspouts from
-        aerial imagery.
+        aerial imagery. Free on every plan, no credits used.
       </p>
 
       <form

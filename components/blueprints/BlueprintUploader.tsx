@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import { upload } from "@vercel/blob/client";
-import { Upload, FileText, Loader2, X } from "lucide-react";
+import { Upload, FileText, Loader2, Sparkles, X, Zap } from "lucide-react";
 import { fadeInUp } from "@/lib/motion";
+import { useSession } from "@/lib/auth-mock";
 
 /** Copy-only stage labels for the analyzing strip. Purely visual — the
  *  upload/analyze flow doesn't report progress, so we pace expectations
@@ -19,6 +21,7 @@ const ANALYZE_STAGES = [
 
 export default function BlueprintUploader() {
   const router = useRouter();
+  const { session } = useSession();
   const inputRef = useRef<HTMLInputElement>(null);
   const reduce = useReducedMotion();
   const [file, setFile] = useState<File | null>(null);
@@ -27,6 +30,18 @@ export default function BlueprintUploader() {
   const [error, setError] = useState<string | null>(null);
   // Visual-only ticker for the analyzing strip (see ANALYZE_STAGES).
   const [stageIdx, setStageIdx] = useState(0);
+
+  // Blueprint analyses are what credits meter (address estimates are
+  // free). Client-side courtesy gate — the server enforces the same
+  // check with a 402 on POST /api/blueprints.
+  const isAdmin = session?.user.role === "SUPER_ADMIN";
+  const creditsRemaining = session
+    ? Math.max(
+        session.credits.included + session.credits.bonus - session.credits.used,
+        0,
+      )
+    : null;
+  const outOfCredits = !isAdmin && creditsRemaining === 0;
 
   useEffect(() => {
     if (!uploading) {
@@ -56,7 +71,7 @@ export default function BlueprintUploader() {
   );
 
   const onAnalyze = async () => {
-    if (!file) return;
+    if (!file || outOfCredits) return;
     setUploading(true);
     setError(null);
     try {
@@ -272,6 +287,45 @@ export default function BlueprintUploader() {
     }
   };
 
+  // Out of blueprint credits: swap the dropzone for an upgrade card —
+  // no point picking a file the server will 402.
+  if (outOfCredits) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+            <Zap className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-zinc-900">
+              You&rsquo;re out of blueprint credits
+            </div>
+            <p className="mt-1 text-sm leading-relaxed text-zinc-600">
+              Each blueprint analysis uses one credit. Upgrade to Pro for a
+              monthly allowance, or buy a credit pack — satellite address
+              estimates stay free either way.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Link
+                href="/dashboard/settings"
+                className="transition-smooth ring-focus press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Upgrade or top up
+              </Link>
+              <Link
+                href="/dashboard/proposals/new"
+                className="transition-smooth ring-focus inline-flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 hover:border-zinc-300 hover:text-zinc-900"
+              >
+                Run a free address estimate
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div
@@ -317,6 +371,12 @@ export default function BlueprintUploader() {
           <div className="mt-2 text-xs text-zinc-400">
             Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
           </div>
+          {!isAdmin && creditsRemaining !== null && (
+            <div className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[11px] font-medium text-accent-700">
+              <Sparkles className="h-3 w-3" />
+              Uses 1 blueprint credit · {creditsRemaining} left
+            </div>
+          )}
           {/* Build marker — if you don't see "v2" on Vercel prod, the
               new code hasn't deployed yet. Bump this string whenever
               there's a stale-build question to verify. */}

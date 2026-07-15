@@ -41,8 +41,6 @@ export default function SettingsPage() {
 
 function BillingSection() {
   const { session } = useSession();
-  const credits = session?.credits;
-  const used = credits?.used ?? 0;
   const isAdmin = session?.user.role === "SUPER_ADMIN";
 
   const [billing, setBilling] = useState<MyBilling | null>(null);
@@ -95,11 +93,12 @@ function BillingSection() {
     }
   }
 
-  // The wallet is the source of truth once loaded; the config-driven
-  // billing payload fills the gap before the session hydrates.
-  const total =
-    (credits?.included ?? billing?.includedCredits ?? 12) +
-    (credits?.bonus ?? 0);
+  // Credits meter BLUEPRINT takeoffs only — address estimates are free
+  // on every plan. Session wallet is the source of truth once hydrated;
+  // the billing payload's wallet snapshot fills the gap before that.
+  const credits = session?.credits ?? billing?.wallet ?? null;
+  const used = credits?.used ?? 0;
+  const total = (credits?.included ?? 0) + (credits?.bonus ?? 0);
   const remaining = Math.max(total - used, 0);
   const pct = total > 0 ? Math.round((used / total) * 100) : 0;
 
@@ -113,12 +112,14 @@ function BillingSection() {
       : { label: "Free plan", tone: "accent" as const };
 
   const subLine = billing
-    ? `${formatCurrency(billing.proPriceCents / 100)}/month · ${billing.includedCredits} takeoffs included · top up extra credits anytime.`
+    ? `Address estimates are free on every plan. Blueprint takeoffs use credits — ` +
+      `${billing.includedCredits}/month on ${billing.proName} (${formatCurrency(billing.proPriceCents / 100)}/mo), ` +
+      `${billing.freeBlueprintCredits} included free to try, top-ups anytime.`
     : "Pro plan + credit top-ups.";
 
   if (!billing) {
     return (
-      <Section eyebrow="Billing" title="Plan & credits" sub={subLine}>
+      <Section eyebrow="Billing" title="Plan & blueprint credits" sub={subLine}>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
           <div className="skeleton h-48" />
           <div className="skeleton h-48" />
@@ -130,7 +131,7 @@ function BillingSection() {
   return (
     <Section
       eyebrow="Billing"
-      title="Plan & credits"
+      title="Plan & blueprint credits"
       sub={subLine}
       badge={badge}
     >
@@ -152,7 +153,9 @@ function BillingSection() {
               {isAdmin ? "Unlimited" : remaining}
             </span>
             <span className="text-xs text-zinc-500">
-              {isAdmin ? "admin account" : `of ${total} credits remaining`}
+              {isAdmin
+                ? "admin account"
+                : `of ${total} blueprint credits remaining`}
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
@@ -163,19 +166,19 @@ function BillingSection() {
             />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-            <Stat label="Used this month" value={`${used}`} />
+            <Stat label="Address estimates" value="Free · unlimited" />
+            <Stat label="Blueprint credits used" value={`${used}`} />
             <Stat
               label="Renews"
               value={
-                credits?.resetsAt
+                credits?.renews && credits.resetsAt
                   ? new Date(credits.resetsAt).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
                     })
-                  : "—"
+                  : "On Pro · monthly"
               }
             />
-            <Stat label="Same-address re-runs" value="10× / 24h · free" />
             <Stat label="Bonus credits" value={`${credits?.bonus ?? 0}`} />
           </div>
 
@@ -183,7 +186,7 @@ function BillingSection() {
           {!isAdmin && (
             <div className="mt-4 border-t border-zinc-200 pt-4">
               <div className="microlabel">
-                Need more estimates? Buy credits
+                Need more blueprint takeoffs? Buy credits
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {(billing?.packs ?? []).map((p) => (
@@ -253,7 +256,7 @@ function BillingSection() {
             </div>
             <ul className="mt-3 space-y-1.5 text-xs text-zinc-600">
               {[
-                `${billing.includedCredits} takeoffs / month`,
+                `${billing.includedCredits} blueprint takeoffs / month`,
                 ...billing.features.slice(0, 6),
               ].map((f) => (
                 <li key={f} className="flex items-start gap-1.5">

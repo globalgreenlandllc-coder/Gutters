@@ -1,7 +1,6 @@
 "use server";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
-import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getPlanPricing } from "@/lib/plan-pricing";
 import {
@@ -36,6 +35,12 @@ export type MeData = {
   credits: Credits;
   impersonation?: Impersonation;
 };
+
+// Subscription statuses that get PRO wallet semantics (monthly credit
+// refresh). PAST_DUE is deliberately excluded from the refresh but also
+// from the free-plan regrade — a card hiccup shouldn't wipe the wallet;
+// the Stripe webhook resolves it either way within days.
+const REFRESHING_STATUSES = new Set(["ACTIVE", "TRIALING"]);
 
 function nextMonthBoundary(): Date {
   const now = new Date();
@@ -105,14 +110,20 @@ async function findOrCreateUser(
 
   let user = await db.user.findFirst({
     where: { OR: [{ clerkId }, { email }] },
-    include: { contractorProfile: true, creditWallet: true },
+    include: {
+      contractorProfile: true,
+      creditWallet: true,
+      subscription: { select: { status: true } },
+    },
   });
 
   if (!user) {
     const contractorName = deriveContractorName(fullName, email);
     const initials = deriveInitials(contractorName);
     const tone = pickTone(clerkId);
-    const included = (await getPlanPricing()).pro.includedCredits;
+    // New accounts start on the free plan: a one-time blueprint-takeoff
+    // allowance (address estimates don't touch the wallet at all).
+    const included = (await getPlanPricing()).free.blueprintCredits;
     user = await db.user.create({
       data: {
         clerkId,
@@ -141,7 +152,11 @@ async function findOrCreateUser(
           },
         },
       },
-      include: { contractorProfile: true, creditWallet: true },
+      include: {
+        contractorProfile: true,
+        creditWallet: true,
+        subscription: { select: { status: true } },
+      },
     });
     return user;
   }
@@ -179,21 +194,24 @@ async function findOrCreateUser(
       },
     });
   }
+  const subStatus = user.subscription?.status ?? null;
+  const isRefreshingSub = subStatus !== null && REFRESHING_STATUSES.has(subStatus);
+
   if (!user.creditWallet) {
     await db.creditWallet.create({
       data: {
         userId: user.id,
-        included: (await getPlanPricing()).pro.includedCredits,
+        included: (await getPlanPricing()).free.blueprintCredits,
         used: 0,
         bonus: 0,
         resetsAt: nextMonthBoundary(),
       },
     });
-  } else if (user.creditWallet.resetsAt.getTime() < Date.now()) {
-    // Lazy monthly rollover — without this, wallets brick at 12 lifetime
-    // estimates. Monthly `included` refreshes (used → 0) and re-syncs to
-    // the current admin-configured allowance (otherwise a /admin/pricing
-    // edit would never reach existing free users); purchased `bonus`
+  } else if (isRefreshingSub && user.creditWallet.resetsAt.getTime() < Date.now()) {
+    // PRO lazy monthly rollover — fallback for a missed invoice.paid
+    // webhook. `included` refreshes (used → 0) and re-syncs to the
+    // current admin-configured allowance (otherwise a /admin/pricing
+    // edit would never reach existing subscribers); purchased `bonus`
     // credits carry over minus whatever the user already burned beyond
     // the monthly allowance. The updateMany guard on resetsAt makes
     // concurrent requests idempotent (only one resets).
@@ -209,11 +227,34 @@ async function findOrCreateUser(
         resetsAt: nextMonthBoundary(),
       },
     });
+  } else if (!isRefreshingSub && subStatus !== "PAST_DUE") {
+    // FREE plan (no sub / CANCELED / INCOMPLETE): the wallet holds the
+    // one-time blueprint allowance and never renews. One-shot regrade
+    // whenever `included` disagrees with the configured free allowance:
+    //   - legacy wallets from the everyone-gets-12 era,
+    //   - just-canceled subscribers dropping off Pro,
+    //   - an /admin/pricing edit to the free allowance.
+    // `used` resets with it (pre-regrade `used` counted address scans,
+    // which are free now); purchased bonus credits always survive. The
+    // updateMany guard on `included` keeps concurrent requests idempotent.
+    // PAST_DUE is left untouched — Stripe retries resolve it either way.
+    const cw = user.creditWallet;
+    const freeIncluded = (await getPlanPricing()).free.blueprintCredits;
+    if (cw.included !== freeIncluded) {
+      await db.creditWallet.updateMany({
+        where: { userId: user.id, included: cw.included },
+        data: { included: freeIncluded, used: 0 },
+      });
+    }
   }
 
   return db.user.findUnique({
     where: { id: user.id },
-    include: { contractorProfile: true, creditWallet: true },
+    include: {
+      contractorProfile: true,
+      creditWallet: true,
+      subscription: { select: { status: true } },
+    },
   });
 }
 
@@ -226,6 +267,8 @@ function shape(
 ): MeData {
   const cp = user.contractorProfile;
   const cw = user.creditWallet;
+  const subStatus = user.subscription?.status ?? null;
+  const renews = subStatus !== null && REFRESHING_STATUSES.has(subStatus);
   return {
     user: {
       id: user.id,
@@ -253,10 +296,11 @@ function shape(
       },
     },
     credits: {
-      included: cw?.included ?? 12,
+      included: cw?.included ?? 1,
       used: cw?.used ?? 0,
       bonus: cw?.bonus ?? 0,
       resetsAt: (cw?.resetsAt ?? nextMonthBoundary()).toISOString(),
+      renews,
     },
     impersonation,
   };
@@ -290,7 +334,13 @@ export async function getMe(): Promise<MeData | null> {
         where: { id: sessionId },
         include: {
           admin: true,
-          user: { include: { contractorProfile: true, creditWallet: true } },
+          user: {
+            include: {
+              contractorProfile: true,
+              creditWallet: true,
+              subscription: { select: { status: true } },
+            },
+          },
         },
       });
       const valid =
@@ -414,10 +464,14 @@ export async function consumeMyCredit(address: string): Promise<{
   const userId = me.user.id;
   const since = new Date(Date.now() - 24 * 3600 * 1000);
   const norm = address.trim().toLowerCase();
-  // SUPER_ADMIN: skip both the per-address cap and the wallet. Mirrors
-  // the bypass in runEstimate; this entry point is hit by some legacy
-  // callers (e.g. mock pathway).
+  // Address estimates are FREE on every plan — the wallet only meters
+  // blueprint takeoffs now. This legacy entry point (mock pathway) still
+  // logs the run and enforces the per-address daily cap, but never
+  // debits. `remaining` reports the blueprint-credit balance for display.
   const isAdmin = me.user.role === "SUPER_ADMIN";
+  const remaining = isAdmin
+    ? Number.POSITIVE_INFINITY
+    : Math.max(me.credits.included + me.credits.bonus - me.credits.used, 0);
 
   const recentSame = await db.estimateRun.count({
     where: {
@@ -431,68 +485,21 @@ export async function consumeMyCredit(address: string): Promise<{
     return {
       ok: false,
       reused: false,
-      remaining: me.credits.included + me.credits.bonus - me.credits.used,
+      remaining,
       reason: "Same address has been re-run 10 times in the last 24 hours.",
     };
   }
 
-  const total = me.credits.included + me.credits.bonus;
-  const remainingHeadline = isAdmin
-    ? Number.POSITIVE_INFINITY
-    : total - me.credits.used;
+  await db.estimateRun.create({
+    data: {
+      userId,
+      address,
+      addressNormalized: norm,
+      status: "SUCCEEDED",
+      creditConsumed: false,
+      reused: recentSame > 0,
+    },
+  });
 
-  if (recentSame > 0) {
-    await db.estimateRun.create({
-      data: {
-        userId,
-        address,
-        addressNormalized: norm,
-        status: "SUCCEEDED",
-        creditConsumed: false,
-        reused: true,
-      },
-    });
-    return {
-      ok: true,
-      reused: true,
-      remaining: remainingHeadline,
-    };
-  }
-
-  if (!isAdmin && me.credits.used >= total) {
-    return {
-      ok: false,
-      reused: false,
-      remaining: 0,
-      reason: "Out of credits — upgrade or wait until the next renewal.",
-    };
-  }
-
-  const writes: Prisma.PrismaPromise<unknown>[] = [
-    db.estimateRun.create({
-      data: {
-        userId,
-        address,
-        addressNormalized: norm,
-        status: "SUCCEEDED",
-        creditConsumed: !isAdmin,
-        reused: false,
-      },
-    }),
-  ];
-  if (!isAdmin) {
-    writes.push(
-      db.creditWallet.update({
-        where: { userId },
-        data: { used: { increment: 1 } },
-      }),
-    );
-  }
-  await db.$transaction(writes);
-
-  return {
-    ok: true,
-    reused: false,
-    remaining: isAdmin ? Number.POSITIVE_INFINITY : total - me.credits.used - 1,
-  };
+  return { ok: true, reused: recentSame > 0, remaining };
 }

@@ -3,7 +3,7 @@
 import { db } from "@/lib/db";
 import { PRO_PLAN, getStripe } from "@/lib/stripe";
 import { getPlanPricing, packBlurb } from "@/lib/plan-pricing";
-import { getMe } from "./me";
+import { getMe, type MeData } from "./me";
 
 /* ------------------------------------------------------------------ */
 /*  Read: billing state for the settings page                          */
@@ -27,7 +27,12 @@ export type MyBilling = {
   packs: BillingPack[];
   proName: string;
   proPriceCents: number;
+  /** Pro's monthly blueprint-takeoff allowance (plan config, not the wallet). */
   includedCredits: number;
+  /** One-time blueprint takeoffs on the free plan. */
+  freeBlueprintCredits: number;
+  /** The caller's actual wallet — same shape the session carries. */
+  wallet: MeData["credits"];
   features: string[];
   recentTopups: Array<{ id: string; description: string; amountCents: number; at: string }>;
 };
@@ -59,6 +64,8 @@ export async function getMyBilling(): Promise<MyBilling | null> {
     proName: pricing.pro.name,
     proPriceCents: pricing.pro.priceCents,
     includedCredits: pricing.pro.includedCredits,
+    freeBlueprintCredits: pricing.free.blueprintCredits,
+    wallet: me.credits,
     features: pricing.pro.features,
     recentTopups: topups.map((t) => ({
       id: t.id,
@@ -158,7 +165,7 @@ export async function createSubscriptionCheckout(): Promise<CheckoutResult> {
             product_data: {
               name: pricing.pro.name,
               description:
-                "Monthly AI takeoffs · proposals, e-sign, scheduling & payment tracking",
+                "Monthly blueprint takeoffs · proposals, e-sign, scheduling & payment tracking",
             },
           },
         },
@@ -215,7 +222,7 @@ export async function createCreditsCheckout(
             currency: "usd",
             unit_amount: pack.amountCents,
             product_data: {
-              name: `${pack.credits} estimate credits`,
+              name: `${pack.credits} blueprint credits`,
               description: `${packBlurb(pack)} · credits never expire`,
             },
           },

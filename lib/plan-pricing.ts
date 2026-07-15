@@ -17,9 +17,16 @@ import { CREDIT_PACKS, PRO_PLAN } from "@/lib/stripe";
 //   validatePricingInput()  — admin saves. Strict: returns errors so the
 //                             editor can surface exactly what's wrong.
 //
-// The "N AI takeoffs every month" bullet is COMPUTED from
+// The "N blueprint takeoffs every month" bullet is COMPUTED from
 // includedCredits (see buildPricingView), never stored in features —
 // otherwise editing the credit count would silently strand the copy.
+//
+// CREDIT MODEL (2026-07): credits meter BLUEPRINT takeoffs only — the
+// most expensive action in the app (multi-Opus ensemble). Satellite
+// address estimates are free on every plan (bounded by the abuse rails
+// in lib/abuse, not by the wallet). The free plan includes a one-time
+// allowance of `free.blueprintCredits` (default 1) that does NOT renew
+// monthly; Pro refreshes `pro.includedCredits` every billing cycle.
 
 export const PRICING_SETTING_KEY = "billing.pricing";
 
@@ -39,6 +46,10 @@ export type PlanPricing = {
     /** Pill next to the price on the landing card. Empty = hidden. */
     badge: string;
   };
+  free: {
+    /** One-time blueprint takeoffs included on the free plan (no monthly renewal). */
+    blueprintCredits: number;
+  };
   packs: PricingPack[];
 };
 
@@ -48,7 +59,7 @@ export const DEFAULT_PLAN_PRICING: PlanPricing = {
     priceCents: PRO_PLAN.priceCents,
     includedCredits: PRO_PLAN.includedCredits,
     features: [
-      "Satellite + blueprint takeoffs",
+      "Unlimited satellite address estimates",
       "Good · Better · Best proposal builder",
       "Branded client portal with e-sign",
       "Payment schedules, receipts & auto-reminders",
@@ -56,9 +67,11 @@ export const DEFAULT_PLAN_PRICING: PlanPricing = {
       "Drag-and-drop job calendar + smart scheduling",
       "Crew assignments & worker portal",
       "Permit leads map with door-knock routes",
-      "Re-run the same address 10× in 24h — free",
     ],
     badge: "Free to start",
+  },
+  free: {
+    blueprintCredits: 1,
   },
   packs: CREDIT_PACKS.map((p) => ({
     id: p.id,
@@ -86,6 +99,8 @@ const BOUNDS = {
   packCreditsMax: 1_000,
   packAmountMin: 100, // $1
   packAmountMax: 500_000, // $5,000
+  freeCreditsMin: 0, // 0 = no free blueprint takeoff
+  freeCreditsMax: 100,
 } as const;
 
 function isIntIn(v: unknown, min: number, max: number): v is number {
@@ -122,6 +137,15 @@ function sanitizePricing(raw: unknown): PlanPricing {
     if (cleaned.length > 0) features = cleaned;
   }
 
+  const free = (o.free ?? {}) as Record<string, unknown>;
+  const blueprintCredits = isIntIn(
+    free.blueprintCredits,
+    BOUNDS.freeCreditsMin,
+    BOUNDS.freeCreditsMax,
+  )
+    ? free.blueprintCredits
+    : d.free.blueprintCredits;
+
   let packs = d.packs;
   if (Array.isArray(o.packs)) {
     const cleaned: PricingPack[] = [];
@@ -141,7 +165,11 @@ function sanitizePricing(raw: unknown): PlanPricing {
     packs = cleaned;
   }
 
-  return { pro: { name, priceCents, includedCredits, features, badge }, packs };
+  return {
+    pro: { name, priceCents, includedCredits, features, badge },
+    free: { blueprintCredits },
+    packs,
+  };
 }
 
 /** Strict: admin-save validation. Returns the config only when clean. */
@@ -189,6 +217,15 @@ export function validatePricingInput(raw: unknown): {
     if (cleaned.some((f) => f.length > BOUNDS.featureMax))
       errors.push(`Each feature must be ≤ ${BOUNDS.featureMax} characters`);
   }
+  const free = (o.free ?? {}) as Record<string, unknown>;
+  if (
+    !isIntIn(free.blueprintCredits, BOUNDS.freeCreditsMin, BOUNDS.freeCreditsMax)
+  ) {
+    errors.push(
+      `Free-plan blueprint takeoffs must be an integer between ${BOUNDS.freeCreditsMin} and ${BOUNDS.freeCreditsMax}`,
+    );
+  }
+
   if (!Array.isArray(o.packs)) {
     errors.push("Credit packs must be a list (it can be empty)");
   } else {
@@ -260,6 +297,8 @@ export type PricingView = {
   priceLabel: string;
   badge: string;
   features: string[];
+  /** One-time blueprint takeoffs on the free plan (for free-tier copy). */
+  freeBlueprintCredits: number;
   packs: Array<{ qty: string; price: string; per: string }>;
 };
 
@@ -269,9 +308,10 @@ export function buildPricingView(cfg: PlanPricing): PricingView {
     priceLabel: usd(cfg.pro.priceCents),
     badge: cfg.pro.badge,
     features: [
-      `${cfg.pro.includedCredits} AI takeoffs every month`,
+      `${cfg.pro.includedCredits} blueprint takeoffs every month`,
       ...cfg.pro.features,
     ],
+    freeBlueprintCredits: cfg.free.blueprintCredits,
     packs: cfg.packs.map((p) => ({
       qty: `${p.credits} takeoffs`,
       price: usd(p.amountCents),
