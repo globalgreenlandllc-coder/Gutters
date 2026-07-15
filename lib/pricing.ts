@@ -53,6 +53,17 @@ export function downspoutLengthFt(stories: 1 | 2 | 3) {
   return 10;
 }
 
+/** Tear-off + disposal of the existing system, per eave LF. Also the
+ *  basis of the "$X value" copy when the contractor gives it away free. */
+export const REMOVAL_PRICE_PER_LF = 1.5;
+
+/** What the old-gutter tear-off would cost at list — rounded to a clean
+ *  $5 step so the "FREE ($240 value)" marketing line reads like a real
+ *  offer, not a spreadsheet artifact. */
+export function removalValueDollars(eaveLF: number): number {
+  return Math.max(5, Math.round((eaveLF * REMOVAL_PRICE_PER_LF) / 5) * 5);
+}
+
 export const COLOR_OPTIONS = [
   { id: "white", name: "Classic White", hex: "#f4f4f5" },
   { id: "almond", name: "Almond", hex: "#ddd1bd" },
@@ -149,16 +160,115 @@ export function buildLineItems(
       unitPrice: 4.5,
       taxable: true,
     },
+    ...modernBomLineItems(measurements, config),
+    ...removalLineItems(measurements, config),
     {
       id: "labor",
       name: "Installation Labor",
-      description: "Removal of existing, install, sealants, cleanup",
+      description: hasRemovalLine(config)
+        ? "Install, sealants, cleanup"
+        : "Removal of existing, install, sealants, cleanup",
       quantity: 1,
       unit: "lot",
       unitPrice: Math.round(totalLF * 4 + dsLF * 2 + 250),
       taxable: false,
     },
     ...accessoryLineItems(measurements, config, totalLF),
+  ];
+}
+
+function hasRemovalLine(config: EstimateConfig): boolean {
+  return (
+    config.oldGutterRemoval === "free" || config.oldGutterRemoval === "priced"
+  );
+}
+
+/**
+ * Standard downspout hardware every real install carries but the BOM
+ * used to omit: outlets, straps, splash blocks. Gated on the config
+ * carrying `oldGutterRemoval` (i.e. created/edited after 2026-07) —
+ * proposals SENT before then recompute their totals live on every
+ * portal view, and silently adding ~$100 of parts to a quote the
+ * client already saw is not acceptable. New estimates always have the
+ * field, so they always get the full BOM.
+ */
+function modernBomLineItems(
+  measurements: Measurements,
+  config: EstimateConfig,
+): LineItem[] {
+  if (config.oldGutterRemoval === undefined) return [];
+  const spouts = Math.max(0, measurements.downspoutCount);
+  if (spouts === 0) return [];
+  return [
+    {
+      id: "outlets",
+      name: "Downspout Outlets",
+      description: "Machine-cut drop, sealed into the gutter run",
+      quantity: spouts,
+      unit: "ea",
+      unitPrice: 5.5,
+      taxable: true,
+    },
+    {
+      id: "straps",
+      name: "Downspout Straps & Fasteners",
+      description: "Color-matched, one per story plus the base",
+      quantity: spouts * (measurements.stories + 1),
+      unit: "ea",
+      unitPrice: 2.75,
+      taxable: true,
+    },
+    {
+      id: "splash-blocks",
+      name: "Splash Blocks",
+      description: "Disperses discharge away from the foundation",
+      quantity: spouts,
+      unit: "ea",
+      unitPrice: 14,
+      taxable: true,
+    },
+  ];
+}
+
+/**
+ * Old-gutter tear-off, visible on the quote instead of buried in the
+ * labor lot. "free" is the sales move: a $0 line that names the real
+ * value ("$240 value — included at no charge") so the client sees a
+ * concrete win. "priced" bills it per eave LF (no waste factor — you
+ * only tear off what exists). undefined/"none" renders nothing, which
+ * keeps every proposal saved before this feature priced exactly as it
+ * was sent.
+ */
+function removalLineItems(
+  measurements: Measurements,
+  config: EstimateConfig,
+): LineItem[] {
+  if (!hasRemovalLine(config)) return [];
+  const lf = Math.max(0, Math.round(measurements.eaveLF));
+  if (lf === 0) return [];
+  if (config.oldGutterRemoval === "free") {
+    return [
+      {
+        id: "removal",
+        name: "Old Gutter Removal & Haul-Away — FREE",
+        description: `$${removalValueDollars(lf)} value — tear-off, disposal and dump fees included at no charge`,
+        quantity: 1,
+        unit: "lot",
+        unitPrice: 0,
+        taxable: false,
+      },
+    ];
+  }
+  return [
+    {
+      id: "removal",
+      name: "Old Gutter Removal & Haul-Away",
+      description: "Tear-off, disposal and dump fees",
+      quantity: lf,
+      unit: "LF",
+      unitPrice: REMOVAL_PRICE_PER_LF,
+      taxable: false,
+    },
   ];
 }
 

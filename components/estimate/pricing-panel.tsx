@@ -28,12 +28,16 @@ const TABS: { id: Tab; label: string; icon: typeof Layers }[] = [
 export function PricingPanel({
   measurements,
   handoff,
+  jobType = "replacement",
 }: {
   measurements: Measurements;
   /** Threaded through to Summary so its "Send to client" button can
    *  hand the live takeoff (address + measurements + eaves + image)
    *  off to /proposal. */
   handoff?: Omit<EstimateHandoff, "capturedAt">;
+  /** Replacement jobs default to the FREE old-gutter-removal line (the
+   *  client-attracting move); new construction has nothing to remove. */
+  jobType?: "new" | "replacement";
 }) {
   const reduce = useReducedMotion();
   const [tab, setTab] = useState<Tab>("materials");
@@ -43,6 +47,7 @@ export function PricingPanel({
     material: "aluminum",
     color: "white",
     downspoutSize: "3x4",
+    oldGutterRemoval: jobType === "new" ? "none" : "free",
   });
 
   const auto = useMemo(

@@ -42,7 +42,7 @@ export type EaveFeature =
   | "main"
   | "unknown";
 
-export type RoofStructureLineKind = "ridge" | "valley" | "hip";
+export type RoofStructureLineKind = "ridge" | "valley" | "hip" | "gable";
 
 export type RoofStructureLine = {
   id: string;
@@ -70,6 +70,15 @@ export type RoofStructure = {
    *  legend reports "6 gables" instead of the rake-EDGE count. Absent on the
    *  satellite/AI-only path, where no structure count is available. */
   gableCount?: number;
+  /** Gable-END base segments (kind "gable") from the v2 layout — the overlay
+   *  uses them verbatim for GABLE labels and feeds them into the derived
+   *  skeleton so faces flip hip→gable. label "verify" marks a frame-over
+   *  gable recorded for review. Decorative, like every line here. */
+  gables?: RoofStructureLine[];
+  /** Roof PLANES (canvas space) tiling the perimeter — shaded by the
+   *  overlay. `downhill` = unit direction the plane slopes down toward.
+   *  Optional; absent on satellite/older stored takeoffs. */
+  faces?: { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[];
   /** 0–1, surfaces an "approximation only" warning when low. */
   confidence: number;
 };
@@ -144,4 +153,11 @@ export type EstimateConfig = {
   color: string;
   downspoutSize: DownspoutSize;
   accessories?: GutterAccessories;
+  /** Old-gutter tear-off on replacement jobs. "free" renders a $0 line
+   *  with the real value shown ("$240 value — included free", the
+   *  attract-the-client move); "priced" bills it per LF; "none" hides
+   *  the line (new construction). undefined = legacy configs saved
+   *  before this existed — treated as "none" so no already-sent
+   *  proposal ever reprices itself. */
+  oldGutterRemoval?: "free" | "priced" | "none";
 };

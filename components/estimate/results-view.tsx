@@ -221,17 +221,6 @@ export function ResultsView({
     canvasPxPerFt,
   };
 
-  // Promote a suggested interior gutter into the priced eaves. LF is only
-  // added here, on this explicit action — measurements.eaveLF recomputes
-  // from `eaves` below, so suggestions stay money-safe until accepted.
-  const handleAcceptSuggested = (line: EditableLine) => {
-    setEaves((prev) => [
-      ...prev,
-      { ...line, id: `eave-from-${line.id}`, kind: "eave" },
-    ]);
-    setSuggestedEaves((prev) => prev.filter((s) => s.id !== line.id));
-  };
-
   return (
     <div className="flex min-h-screen flex-col bg-paper">
       <TopBar
@@ -402,12 +391,10 @@ export function ResultsView({
                     eaves={eaves}
                     rakes={rakes}
                     downspouts={downspouts}
-                    suggestedEaves={suggestedEaves}
                     roofStructure={roofStructure}
                     pxPerFt={canvasPxPerFt}
                     address={address}
                     confidence={roofStructure?.confidence}
-                    onAcceptSuggested={handleAcceptSuggested}
                   />
                 </div>
               ) : (
@@ -436,7 +423,11 @@ export function ResultsView({
           >
             <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
               <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
-                <PricingPanel measurements={measurements} handoff={handoff} />
+                <PricingPanel
+                  measurements={measurements}
+                  handoff={handoff}
+                  jobType={jobType}
+                />
               </div>
             </div>
           </motion.div>

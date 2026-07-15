@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Droplet, Flame, Mountain, Shield, Waves } from "lucide-react";
+import { Check, Droplet, Flame, Gift, Mountain, Shield, Waves } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   EstimateConfig,
@@ -76,6 +76,8 @@ export function MaterialSelector({
     deltaFor
       ? formatDelta(deltaFor({ accessories: { ...accessories, ...patch } }))
       : null;
+  const accRemovalDelta = (mode: EstimateConfig["oldGutterRemoval"]) =>
+    deltaFor ? formatDelta(deltaFor({ oldGutterRemoval: mode })) : null;
 
   return (
     <div className="space-y-5">
@@ -192,6 +194,66 @@ export function MaterialSelector({
             );
           })}
         </div>
+      </Group>
+
+      <Group label="Old gutter removal">
+        <div className="grid grid-cols-3 gap-1.5">
+          {(
+            [
+              {
+                id: "free",
+                label: "FREE",
+                sub: "Included — shown as a $0 value line",
+              },
+              {
+                id: "priced",
+                label: "Charge",
+                sub: "Billed per LF of tear-off",
+              },
+              { id: "none", label: "Off", sub: "No removal line" },
+            ] as const
+          ).map((opt) => {
+            const selected = (config.oldGutterRemoval ?? "none") === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() =>
+                  onChange({ ...config, oldGutterRemoval: opt.id })
+                }
+                className={cn(
+                  "ring-focus rounded-lg border p-2.5 text-left transition-smooth active:scale-[0.98]",
+                  selected
+                    ? "border-accent-500 bg-accent-50 ring-1 ring-accent-200"
+                    : "border-zinc-200 bg-white hover:border-zinc-300",
+                )}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-medium text-zinc-900">
+                    {opt.label}
+                  </span>
+                  {opt.id === "free" && (
+                    <Gift className="h-3.5 w-3.5 text-accent-600" />
+                  )}
+                  {!selected &&
+                    opt.id !== "free" &&
+                    accRemovalDelta(opt.id) && (
+                      <span className="text-[10px] font-semibold tabular-nums text-zinc-400">
+                        {accRemovalDelta(opt.id)}
+                      </span>
+                    )}
+                </div>
+                <div className="mt-0.5 text-[10px] leading-snug text-zinc-500">
+                  {opt.sub}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-1.5 text-[10px] leading-snug text-zinc-400">
+          Free removal shows the client a real dollar value at no charge —
+          an easy yes on replacement jobs.
+        </p>
       </Group>
 
       <Group label="Accessories">

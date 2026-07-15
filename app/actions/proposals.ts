@@ -306,6 +306,15 @@ async function saveDraftFromEstimateImpl(args: {
     planId?: string;
   } = {
     ...blank,
+    // Old-gutter removal line per job type: replacement defaults to the
+    // FREE ($X value) marketing line; a new build has nothing to remove.
+    packages: blank.packages.map((p) => ({
+      ...p,
+      config: {
+        ...p.config,
+        oldGutterRemoval: args.jobType === "new" ? "none" : "free",
+      },
+    })),
     token: randomBytes(12).toString("hex"),
     jobType: args.jobType ?? "replacement",
     // Source-plan link (extra JSON key, same pattern as jobType) so a

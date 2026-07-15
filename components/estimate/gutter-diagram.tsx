@@ -32,17 +32,24 @@ import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
  * All geometry is already in the 900×580 canvas viewBox (COVER-fit of the
  * tile), so nothing is reprojected. Purely a render + read-only summary math
  * over the SAME eaves the pricing path sums — it never changes a priced
- * total. `suggestedEaves` are un-priced interior-gutter hints; clicking one
- * (when onAcceptSuggested is provided) promotes it to a real eave.
+ * total.
+ *
+ * Gutter runs are tier-colored so the client can read the roof: main
+ * (perimeter) runs in brand blue, upper-roof interior loops (the
+ * solar engine's auto-priced `tier-eave-*` runs) in a lighter sky
+ * blue, and plan-mode low-roof runs (porch / garage, tier "lower") in
+ * amber-brown — with a legend whenever more than one tier is present.
  */
 
 // Palette — the app's water-blue brand (#14688C) is the gutter.
 const C = {
   eave: "#14688c",
   eaveInk: "#10475e",
+  eaveUpper: "#4e9fc4",
+  eaveUpperInk: "#2b6f8e",
+  eaveLow: "#a8712c",
+  eaveLowInk: "#7c5320",
   rake: "#a8977b",
-  suggest: "#c8892b",
-  suggestBg: "#fbf1de",
   drop: "#e8687a",
   mass: "rgba(20,58,74,.055)",
   massEdge: "rgba(20,58,74,.35)",
@@ -52,6 +59,22 @@ const C = {
   chipText: "#10475e",
   paper: "#f7f4ee",
 };
+
+/** Which visual tier a priced run belongs to. Satellite upper-roof
+ *  loops are tagged by id (`tier-eave-*`, solar-engine); plan-mode
+ *  porch/garage runs carry `tier: "lower"`. Everything else is the
+ *  main eave line. */
+function runTier(line: EditableLine): "main" | "upper" | "low" {
+  if (line.id.startsWith("tier-eave-") || line.id.startsWith("eave-from-tier-")) return "upper";
+  if (line.tier === "lower") return "low";
+  return "main";
+}
+
+const TIER_STYLE = {
+  main: { stroke: C.eave, ink: C.eaveInk, label: "Gutter run" },
+  upper: { stroke: C.eaveUpper, ink: C.eaveUpperInk, label: "Upper-roof gutter" },
+  low: { stroke: C.eaveLow, ink: C.eaveLowInk, label: "Low-roof gutter" },
+} as const;
 
 const LABEL_MIN_FT = 6;
 
@@ -68,30 +91,20 @@ function pathD(points: Pt[]): string {
   );
 }
 
-function midpointOf(points: Pt[]): Pt {
-  const a = points[0];
-  const b = points[points.length - 1];
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
-
 export function GutterDiagram({
   eaves,
   rakes = [],
   downspouts,
-  suggestedEaves = [],
   roofStructure,
   pxPerFt,
   address,
   confidence,
-  onAcceptSuggested,
   presentation,
   className,
 }: {
   eaves: EditableLine[];
   rakes?: EditableLine[];
   downspouts: Downspout[];
-  /** Un-priced interior-gutter hints (dashed amber). */
-  suggestedEaves?: EditableLine[];
   roofStructure?: RoofStructure;
   /** Satellite trace's canvas-px-per-foot. Falls back to the plan constant
    *  only so labels never divide by undefined; satellite always passes it. */
@@ -99,12 +112,9 @@ export function GutterDiagram({
   address?: string;
   /** 0–1 trace confidence → drives the header badge. */
   confidence?: number;
-  /** When provided, suggested runs become clickable to promote into eaves. */
-  onAcceptSuggested?: (line: EditableLine) => void;
   /** Client-deliverable mode (proposal preview + portal): only the
    *  perimeter, priced gutter runs and downspouts render — no dashed
-   *  rakes, no dotted roof seams, no amber suggestions. The working
-   *  layers stay on the estimate page where the contractor needs them. */
+   *  rakes, no dotted roof seams. */
   presentation?: boolean;
   className?: string;
 }) {
@@ -124,11 +134,9 @@ export function GutterDiagram({
     const pts: Pt[] = [
       ...rawPerimeter,
       ...eaves.flatMap((e) => e.points),
-      // Hidden working layers must not influence the presentation fit —
-      // an off-roof suggestion would shrink the visible drawing for
-      // nothing.
+      // Rakes are hidden in presentation mode, so they must not
+      // influence its fit either.
       ...(presentation ? [] : rakes.flatMap((e) => e.points)),
-      ...(presentation ? [] : suggestedEaves.flatMap((e) => e.points)),
       ...downspouts.map((d) => ({ x: d.x, y: d.y })),
     ].filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
     const bb = bboxOfPoints(pts);
@@ -146,7 +154,7 @@ export function GutterDiagram({
     const cx = (bb.minX + bb.maxX) / 2;
     const cy = (bb.minY + bb.maxY) / 2;
     return { s, tx: VIEWBOX_W / 2 - cx * s, ty: VIEWBOX_H / 2 - cy * s };
-  }, [rawPerimeter, eaves, rakes, suggestedEaves, downspouts, presentation]);
+  }, [rawPerimeter, eaves, rakes, downspouts, presentation]);
 
   const tp = useMemo(() => {
     const { s, tx, ty } = fit;
@@ -161,10 +169,6 @@ export function GutterDiagram({
   const nRakes = useMemo(
     () => rakes.map((e) => ({ ...e, points: e.points.map(tp) })),
     [rakes, tp],
-  );
-  const nSuggested = useMemo(
-    () => suggestedEaves.map((e) => ({ ...e, points: e.points.map(tp) })),
-    [suggestedEaves, tp],
   );
   const nDownspouts = useMemo(
     () => downspouts.map((d) => ({ ...d, ...tp({ x: d.x, y: d.y }) })),
@@ -194,13 +198,12 @@ export function GutterDiagram({
     [nEaves, scale],
   );
 
-  const suggestedLF = useMemo(
-    () =>
-      Math.round(
-        nSuggested.reduce((s, e) => s + polylineLengthFt(e.points, scale), 0),
-      ),
-    [nSuggested, scale],
-  );
+  // Which tiers are actually present — drives the legend (only shown
+  // when there's more than the plain main run to explain).
+  const tiersPresent = useMemo(() => {
+    const set = new Set(nEaves.map((e) => runTier(e)));
+    return (["main", "upper", "low"] as const).filter((t) => set.has(t));
+  }, [nEaves]);
 
   // Scale bar: a 10 ft segment at the trace's px/ft (clamped so it never
   // dominates a tiny-scale plan fallback).
@@ -287,55 +290,26 @@ export function GutterDiagram({
           />
         ))}
 
-        {/* Suggested interior gutters — un-priced amber dashed hints */}
-        {!presentation && nSuggested.map((line, si) => {
-          if (line.points.length < 2) return null;
-          const m = midpointOf(line.points);
-          const clickable = !!onAcceptSuggested;
-          // Promote the ORIGINAL canvas-space line — the editor stores
-          // accepted eaves in raw canvas coords, not sheet-fitted ones.
-          const original = suggestedEaves[si] ?? line;
-          return (
-            <g key={line.id}>
-              <path
-                d={pathD(line.points)}
-                fill="none"
-                stroke={C.suggest}
-                strokeWidth={2.6}
-                strokeDasharray="7 5"
-                strokeLinecap="round"
-              />
-              {/* Tap-to-add affordance */}
-              <g
-                onClick={clickable ? () => onAcceptSuggested!(original) : undefined}
-                style={{ cursor: clickable ? "pointer" : "default" }}
-              >
-                <circle cx={m.x} cy={m.y} r={9} fill={C.suggestBg} stroke={C.suggest} strokeWidth={1.2} />
-                <path
-                  d={`M ${m.x - 4} ${m.y} H ${m.x + 4} M ${m.x} ${m.y - 4} V ${m.y + 4}`}
-                  stroke={C.suggest}
-                  strokeWidth={1.6}
-                  strokeLinecap="round"
-                />
-              </g>
-            </g>
-          );
-        })}
-
-        {/* Eaves — the hero. Bold water-blue with LF labels. */}
+        {/* Eaves — the hero. Bold, tier-colored, LF-labeled. */}
         {nEaves.map((line) => (
           <path
             key={line.id}
             d={pathD(line.points)}
             fill="none"
-            stroke={C.eave}
+            stroke={TIER_STYLE[runTier(line)].stroke}
             strokeWidth={4}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
         ))}
         {nEaves.map((line) => (
-          <EaveLabel key={`lbl-${line.id}`} line={line} pxPerFt={scale} centroid={centroid} />
+          <EaveLabel
+            key={`lbl-${line.id}`}
+            line={line}
+            pxPerFt={scale}
+            centroid={centroid}
+            tier={runTier(line)}
+          />
         ))}
 
         {/* Inside-corner miter chevrons */}
@@ -451,10 +425,20 @@ export function GutterDiagram({
           {downspouts.length} {downspouts.length === 1 ? "downspout" : "downspouts"}
         </span>
       </div>
-      {!presentation && suggestedEaves.length > 0 && (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#c8892b] px-2.5 py-1 text-[10px] font-semibold text-white">
-          {suggestedEaves.length} suggested interior {suggestedEaves.length === 1 ? "run" : "runs"}
-          {onAcceptSuggested ? " · tap ＋ to add" : ` · +${suggestedLF} LF`}
+      {/* Legend — explains the colors whenever the roof has more than
+          the plain main run (upper loops / low porch roofs). */}
+      {tiersPresent.length > 1 && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-3 rounded-full bg-white/92 px-3 py-1.5 ring-1 ring-[#14688c]/15">
+          {tiersPresent.map((t) => (
+            <span key={t} className="inline-flex items-center gap-1.5 text-[10px] font-semibold" style={{ color: TIER_STYLE[t].ink }}>
+              <span className="h-[3px] w-4 rounded-full" style={{ background: TIER_STYLE[t].stroke }} />
+              {TIER_STYLE[t].label}
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold" style={{ color: "#b34557" }}>
+            <span className="h-2 w-2 rounded-full" style={{ background: C.drop }} />
+            Downspout
+          </span>
         </div>
       )}
     </div>
@@ -467,10 +451,12 @@ function EaveLabel({
   line,
   pxPerFt,
   centroid,
+  tier = "main",
 }: {
   line: SimpleLine;
   pxPerFt: number;
   centroid: Pt;
+  tier?: keyof typeof TIER_STYLE;
 }) {
   if (line.points.length < 2) return null;
   const len = Math.round(polylineLengthFt(line.points, pxPerFt));
@@ -494,14 +480,14 @@ function EaveLabel({
   const w = 42;
   return (
     <g pointerEvents="none">
-      <rect x={lx - w / 2} y={ly - 8} width={w} height={16} rx={3.5} fill={C.paper} stroke={C.eave} strokeWidth={0.8} />
+      <rect x={lx - w / 2} y={ly - 8} width={w} height={16} rx={3.5} fill={C.paper} stroke={TIER_STYLE[tier].stroke} strokeWidth={0.8} />
       <text
         x={lx}
         y={ly + 3.5}
         textAnchor="middle"
         fontSize={10}
         fontWeight={600}
-        fill={C.eaveInk}
+        fill={TIER_STYLE[tier].ink}
         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
       >
         {len} ft

@@ -161,6 +161,7 @@ export const sampleProposal: Proposal = {
         material: "aluminum",
         color: "white",
         downspoutSize: "2x3",
+        oldGutterRemoval: "free",
       },
       highlights: [
         '5" K-style aluminum gutters',
@@ -189,6 +190,7 @@ export const sampleProposal: Proposal = {
         material: "aluminum",
         color: "graphite",
         downspoutSize: "3x4",
+        oldGutterRemoval: "free",
       },
       highlights: [
         '6" K-style aluminum gutters',
@@ -225,6 +227,7 @@ export const sampleProposal: Proposal = {
         material: "copper",
         color: "copper",
         downspoutSize: "round-4",
+        oldGutterRemoval: "free",
       },
       highlights: [
         '6" half-round natural copper',
