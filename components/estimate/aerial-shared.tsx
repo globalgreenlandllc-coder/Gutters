@@ -721,7 +721,10 @@ export function RoofStructureOverlay({
         valleys: structure.valleys.map((l) => ({ points: l.points })),
         gables: [] as { points: { x: number; y: number }[] }[],
         dormers: [] as Dormer[],
-        faces: [] as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        // Engine-computed roof PLANES travel with the takeoff — shade them
+        // (full-footprint coverage) instead of nothing. Empty on satellite
+        // and older stored takeoffs, where shading stays off as before.
+        faces: (structure.faces ?? []) as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
       };
     }
     // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
@@ -741,7 +744,20 @@ export function RoofStructureOverlay({
           e.points.slice(1).map((p, i) => [e.points[i], p] as [Pt, Pt]),
         );
     const eaveSegs = toSegs(eaves);
-    const rakeSegs = toSegs(rakes);
+    // v2 gable ENDS travel with the takeoff (structure.gables). Feed them to
+    // the skeleton as rake walls so the derived FACES flip hip→gable on those
+    // sides — without this the left/right wings of a cross-gabled house shade
+    // as hip corner planes that contradict the engine's drawn ridge/valley
+    // lines. They also replace the grid-derived gable list below (labels).
+    const structGables = (structure.gables ?? []).filter(
+      (l) => l.points.length >= 2,
+    );
+    const rakeSegs = [
+      ...toSegs(rakes),
+      ...structGables.map(
+        (l) => [l.points[0], l.points[l.points.length - 1]] as [Pt, Pt],
+      ),
+    ];
     const base = deriveRoofSkeleton(structure.perimeter, {
       eaveSegments: eaveSegs,
       rakeSegments: rakeSegs,
@@ -795,6 +811,15 @@ export function RoofStructureOverlay({
       hips: hasEngineSkeleton ? eHips : base.hips,
       ridges: [...(hasEngineSkeleton ? eRidges : base.ridges), ...gRidges],
       valleys: [...(hasEngineSkeleton ? eValleys : base.valleys), ...gValleys],
+      // The takeoff's own gable ends outrank the grid re-derivation — one
+      // source of truth for the GABLE labels (fixes phantom/missing labels
+      // when the two engines disagree).
+      gables:
+        structGables.length > 0
+          ? structGables.map((l) => ({
+              points: [l.points[0], l.points[l.points.length - 1]],
+            }))
+          : base.gables,
       dormers: [...aiDormers, ...userDormers],
     };
   }, [
@@ -805,6 +830,8 @@ export function RoofStructureOverlay({
     structure.ridges,
     structure.hips,
     structure.valleys,
+    structure.gables,
+    structure.faces,
   ]);
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";

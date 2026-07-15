@@ -39,7 +39,7 @@ export type EdgeTakeoffResult = {
     length_ft: number;
     drains_to: string[];
     tier: "upper" | "lower" | "unknown";
-    feature?: "porch" | "patio" | "garage";
+    feature?: "porch" | "patio" | "garage" | "entry" | "deck";
   }[];
   excluded_edges: {
     kind: "rake" | "unclassified";
@@ -119,7 +119,11 @@ export function buildEdgeTakeoff(opts: {
     const c = byId.get(e.id);
     const cls = c?.edge_class ?? "unknown";
     const feature =
-      c?.feature === "porch" || c?.feature === "patio" || c?.feature === "garage"
+      c?.feature === "porch" ||
+      c?.feature === "patio" ||
+      c?.feature === "garage" ||
+      c?.feature === "entry" ||
+      c?.feature === "deck"
         ? c.feature
         : undefined;
     if (cls === "eave") {
@@ -430,8 +434,19 @@ export function buildEdgeTakeoff(opts: {
 
   const eaveLf = Math.round(runs.reduce((s, r) => s + r.length_ft, 0) * 10) / 10;
   if (unpricedIds.length > 0) {
+    // Say what the review is WORTH: "1 edge unpriced" reads ignorable;
+    // "≈23 LF unpriced" reads like the money it is.
+    const unpricedSet = new Set(unpricedIds);
+    const unpricedLf =
+      ptPerFt > 0
+        ? Math.round(
+            edges
+              .filter((e) => unpricedSet.has(e.id))
+              .reduce((s, e) => s + e.lenPt / ptPerFt, 0),
+          )
+        : 0;
     notes.push(
-      `⚠ ${unpricedIds.length} edge(s) had no readable evidence (${unpricedIds.join(", ")}) — UNPRICED, review against the elevations.`,
+      `⚠ ${unpricedIds.length} edge(s) had no readable evidence (${unpricedIds.join(", ")})${unpricedLf > 0 ? ` — ≈${unpricedLf} LF NOT in the price` : ""} — UNPRICED, review against the elevations; add as eave on the canvas if guttered.`,
     );
   }
   notes.push(

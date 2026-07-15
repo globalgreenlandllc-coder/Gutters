@@ -941,3 +941,668 @@ test("reconcile: an UNKNOWN base wall with a partial gable stays UNKNOWN — nev
   assert.equal(e3.edge_class, "unknown", "unknown base stays unpriced — no partial carve");
   assert.equal(e3.partial_gables, undefined, "no gutter interval priced");
 });
+
+// ── Woodinville fix round: overframe note truth, frame-over channel, ─────────
+// ── span-aware pinning, beam-gate plausibility, budget dedupe, shortfall ─────
+
+test("reconcile: overframe on an EAVE-base wall keeps the gutter and says so (no false UNPRICED)", () => {
+  // Production notes 16/18 claimed E13/E3 shipped UNPRICED while both walls
+  // stayed priced eaves. The note must tell the truth — and the rejected
+  // gable is recorded for drawing (frameOverEnds), never as a class change.
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: ["truss_direction"],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [{ kind: "main", span_ft: 24, position_frac: 0.5 } as never],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "eave", "priced eave stays priced");
+  const note = r.notes.find((n) => n.includes("E6") && n.includes("frame-over"));
+  assert.ok(note, "overframe note present");
+  assert.ok(note!.includes("keeps its gutter"), "note says the wall stays priced");
+  assert.ok(!note!.includes("UNPRICED"), "no false UNPRICED claim on an eave base");
+  const fo = r.frameOverEnds.find((f) => f.edgeId === "E6");
+  assert.ok(fo, "rejected gable recorded for drawing");
+  assert.equal(fo!.source, "overframe");
+  assert.equal(fo!.spanFt, 24);
+});
+
+test("reconcile: overframe on a RAKE base still parks the wall UNPRICED (wording unchanged)", () => {
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E6 arrives rake
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [{ kind: "main", span_ft: 24, position_frac: 0.5 } as never],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "unknown", "rake base parks for review");
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("UNPRICED")),
+    "the rake→unknown branch keeps its UNPRICED wording",
+  );
+  assert.equal(r.frameOverEnds.filter((f) => f.edgeId === "E6").length, 1);
+});
+
+test("reconcile: eave-in-front + span WIDER than the wall stays a frame-over (ordering fix) — gutter restored, gable recorded", () => {
+  // The S8 failure: eave_passes_in_front:true with span 32ft on a 22ft wall
+  // pierced the >=0.8× forced-flush exemption, went FLUSH, and the overframe
+  // gate then discarded the gable entirely — no gable end drawn, wing
+  // rendered as a hip. Now >1.08× stays in the frame-over channel.
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E6 arrives rake (truss_direction only)
+    perFace: {
+      ...PER_FACE,
+      west: face(
+        "west",
+        "RIGHT/WEST ELEVATION",
+        [
+          {
+            kind: "main",
+            span_ft: 32, // 320pt on the 200pt E6 — clearly wider
+            position_frac: 0.5,
+            eave_passes_in_front: true,
+          } as never,
+        ],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E6"), "eave", "wall under the frame-over keeps its gutter");
+  assert.ok(
+    r.notes.some((n) => n.includes("E6") && n.includes("BEHIND a running eave")),
+    "the frame-over demote explains itself",
+  );
+  const fo = r.frameOverEnds.find((f) => f.edgeId === "E6");
+  assert.ok(fo, "the frame-over gable is recorded for drawing");
+  assert.equal(fo!.source, "forced-flush");
+});
+
+test("reconcile: span-aware pinning — a gable far wider than the stub at its position floats instead of consuming it (E8)", () => {
+  // The Woodinville E8: a 20-ft garage gable pinned by position alone onto
+  // the 8-ft entry stub and deleted its gutter. Now it floats (nothing
+  // tented) and the budget check reports the deficit honestly.
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes: invertedClasses(), // E9 (10ft porch front) arrives eave
+    perFace: {
+      ...PER_FACE,
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [{ kind: "garage", span_ft: 20, position_frac: 0.5 }],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E9"), "eave", "the stub keeps its gutter");
+  assert.ok(
+    r.notes.some((n) => n.includes("left unplaced")),
+    "the floating gable is noted",
+  );
+  assert.ok(
+    r.notes.some(
+      (n) => n.includes("north") && n.includes("0 gable wall(s) placed"),
+    ),
+    "budget deficit surfaced honestly",
+  );
+});
+
+test("reconcile: span-aware pinning — a same-side wall matching the span takes the gable instead of the stub", () => {
+  const edges = outlineEdges(OUTLINE);
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    // E11 (15ft front-left) arrives eave; the 16ft gable at u=0.42 pins the
+    // 10ft porch stub by position but E11's length matches the span.
+    classes: invertedClasses(),
+    perFace: {
+      ...PER_FACE,
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [{ kind: "garage", span_ft: 16, position_frac: 0.42 }],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "rake", "the span-matched wall takes the gable");
+  assert.equal(cls.get("E9"), "eave", "the stub keeps its gutter");
+  assert.ok(r.notes.some((n) => n.includes("placed there instead")));
+});
+
+test("reconcile: a MAIN gable on decorative beams whose wall matches the span IS the gable end — gutter comes off, loudly", () => {
+  // The Woodinville garage front: kind 'main', supported_on 'beam' (trellis
+  // beams drawn under a real gable end) — the old gate shipped it to
+  // droppedProjections (kind main synthesizes $0) and left 20 LF of phantom
+  // gutter across the gable. Deterministic gate: main/garage kind + beam +
+  // base-line wall ≈ span (0.7–1.6×).
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [
+          {
+            kind: "main",
+            span_ft: 15, // == E11's 15ft — the wall IS the gable end
+            position_frac: 0.15,
+            supported_on: "beam",
+          },
+        ],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "rake", "the beam-read gable end is placed");
+  assert.equal(r.promoted, 1);
+  assert.equal(r.droppedProjections.length, 0, "not routed off-outline");
+  assert.ok(
+    r.notes.some((n) => n.includes("decorative beams/trellis")),
+    "the LF removal is loud",
+  );
+});
+
+test("reconcile: a beam-supported GARAGE gable the roof schedule NAMES still projects beyond the wall (dropped, wall priced)", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [
+          {
+            kind: "garage",
+            span_ft: 15, // fits the wall — the schedule name is what routes it
+            position_frac: 0.15,
+            supported_on: "beam",
+          },
+        ],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+    roofMasses: [{ label: "GARAGE", areaFt2: 874 }],
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "eave", "wall keeps its gutter");
+  assert.equal(r.droppedProjections.length, 1);
+  assert.equal(r.droppedProjections[0].kind, "garage");
+  const fo = r.frameOverEnds.find((f) => f.edgeId === "E11");
+  assert.ok(fo && fo.source === "beam", "projecting gable recorded for drawing");
+});
+
+test("reconcile: a beam-supported main gable whose wall does NOT match the span stays a dropped projection (wall priced)", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        // 8ft span on the 15ft E11 — wall/span 1.875× is outside 0.7–1.6×.
+        [{ kind: "main", span_ft: 8, position_frac: 0.15, supported_on: "beam" }],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "eave", "no rake without the wall≈span gate");
+  assert.equal(r.droppedProjections.length, 1, "kept as a dropped projection");
+});
+
+test("reconcile: budget dedupe — one gable can't tent both the bump-out AND the wall behind it (E16 phantom)", () => {
+  // The Woodinville rear: the face's single patio gable owned the patio stub
+  // (E3, correct) but ALSO confirmed a rake on the parent rear wall behind
+  // it. The parent wall keeps its gutter; the gable is placed on the stub.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E1" || c.id === "E3" ? { ...c, edge_class: "rake" as const } : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      south: face(
+        "south",
+        "REAR/SOUTH ELEVATION",
+        // Position reads on the parent wall (u 0.42) but the span window
+        // covers the protruding patio stub (u 0.1–0.3) that is already rake.
+        [{ kind: "patio", span_ft: 18, position_frac: 0.42 }],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E1"), "eave", "parent wall gets its gutter back");
+  assert.equal(cls.get("E3"), "rake", "the stub keeps the gable end");
+  assert.ok(
+    r.notes.some((n) => n.includes("E1") && n.includes("can't tent two walls")),
+    "the dedupe explains itself",
+  );
+  assert.ok(
+    !r.notes.some((n) => n.includes("south elevation shows")),
+    "no phantom budget deficit — the one gable is placed on the stub",
+  );
+});
+
+test("reconcile: budget dedupe does NOT fire when the face shows two gables (each owns its wall)", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E1" || c.id === "E3" ? { ...c, edge_class: "rake" as const } : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      south: face(
+        "south",
+        "REAR/SOUTH ELEVATION",
+        [
+          { kind: "patio", span_ft: 8, position_frac: 0.2 },
+          { kind: "other", span_ft: 6, position_frac: 0.8 },
+        ],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E1"), "rake", "two gables — the parent wall keeps its own");
+  assert.equal(cls.get("E3"), "rake");
+});
+
+// A wider body with a 20ft front porch stub whose returns are only 5ft deep —
+// the roof schedule says the porch roof runs ~9.5ft deep, so ~4.5ft of side
+// gutter per return sits beyond the traced outline.
+const STUB_OUTLINE = [
+  { x: 0, y: 0 },
+  { x: 500, y: 0 },
+  { x: 500, y: 200 },
+  { x: 350, y: 200 },
+  { x: 350, y: 250 },
+  { x: 150, y: 250 },
+  { x: 150, y: 200 },
+  { x: 0, y: 200 },
+];
+
+test("reconcile: a porch gable on a SHALLOW stub emits a shortfall drop (schedule deeper than the traced returns)", () => {
+  const edges = outlineEdges(STUB_OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: STUB_OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [{ kind: "porch", span_ft: 20, position_frac: 0.5, supported_on: "posts" }],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+    roofMasses: [{ label: "PORCH ROOF", areaFt2: 189 }],
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E5"), "rake", "the stub gable still promotes");
+  assert.equal(r.droppedProjections.length, 1, "shortfall drop emitted");
+  const d = r.droppedProjections[0];
+  assert.equal(d.kind, "porch");
+  assert.equal(d.spanFt, 20);
+  assert.equal(d.stubReturnFt, 5, "traced return depth recorded — synthesis adds ONLY the difference");
+  assert.equal(d.form, "gable");
+});
+
+test("reconcile: NO shortfall drop when the traced returns already cover the schedule depth", () => {
+  // Same stub but with 9ft returns — 189sf ÷ 20ft ≈ 9.5ft deep, difference
+  // under 3ft is not material.
+  const deep = STUB_OUTLINE.map((p) => (p.y === 250 ? { ...p, y: 290 } : p));
+  const edges = outlineEdges(deep);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: deep,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [{ kind: "porch", span_ft: 20, position_frac: 0.5, supported_on: "posts" }],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+    roofMasses: [{ label: "PORCH ROOF", areaFt2: 189 }],
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E5"), "rake");
+  assert.equal(r.droppedProjections.length, 0, "no drop — nothing material missing");
+});
+
+test("reconcile: a label-kept rake with gables on the face is noted AND excluded from the placed count", () => {
+  // The silent-keep masking: a printed GABLE END TRUSS label kept E7 rake and
+  // counted it 'placed' while the face's second gable floated — the budget
+  // check reported no deficit. Now both surface.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E7"
+      ? { ...c, edge_class: "rake" as const, evidence: ["gable_end_truss_label"] }
+      : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      north: face("north", "FRONT/NORTH ELEVATION", [
+        { kind: "entry", span_ft: 10, position_frac: 0.5, supported_on: "posts" },
+        // A second flush gable that never pins to a wall.
+        { kind: "main", span_ft: 12, position_frac: null },
+      ]),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E7"), "rake", "the printed label still wins");
+  assert.ok(
+    r.notes.some(
+      (n) => n.includes("E7") && n.includes("no elevation gable maps to this wall"),
+    ),
+    "the label keep is no longer silent",
+  );
+  assert.ok(
+    r.notes.some(
+      (n) => n.includes("north") && n.includes("only 1 gable wall(s) placed"),
+    ),
+    "honest budget accounting — the label keep doesn't count as placed",
+  );
+});
+
+// ————————————————————————————————————————————————————————————————————————
+// Verification-wave regressions: the adversarial panel demonstrated each of
+// these as a real LF mutation on the first cut of the span-pin / dedupe /
+// beam gates. Pin the protective behavior.
+// ————————————————————————————————————————————————————————————————————————
+
+test("reconcile: a floated span-gate stub that arrived RAKE stays RAKE (step-2 demote can't re-class it)", () => {
+  // 10ft porch stub E9 arrives rake; the face's gable reads 16ft (an honest
+  // overhang span, >1.5× the stub), dead-center on the stub; the face
+  // sloppily reads continuous_eave. No same-side wall matches 16ft within
+  // ±25% near it. The gable floats — and the stub must keep its own reading:
+  // flipping it to eave bills gutter across a real gable end.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E9" ? { ...c, edge_class: "rake" as const } : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [{ kind: "entry", span_ft: 16, position_frac: 0.5 }],
+        { continuous_eave: true },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E9"), "rake", "the bump-out keeps its own reading");
+  assert.ok(
+    !r.notes.some((n) => n.includes("E9 rake→EAVE")),
+    "no step-2 demote on the protected stub",
+  );
+});
+
+test("reconcile: budget dedupe never fires when the gable span matches the parent wall (perfect fit wins)", () => {
+  // E1 (28ft rear wall) arrives rake with a matching 28ft gable read pinned
+  // to it; the 8ft patio stub E3 is also rake on the same side. The first
+  // cut attributed the 28ft gable to the 8ft stub and priced 28 LF of
+  // gutter across a true gable end.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E1" || c.id === "E3" ? { ...c, edge_class: "rake" as const } : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      south: face(
+        "south",
+        "REAR/SOUTH ELEVATION",
+        [{ kind: "main", span_ft: 28, position_frac: 0.6 }],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E1"), "rake", "the span-matched parent wall IS the gable end");
+  assert.ok(
+    !r.notes.some((n) => n.includes("can't tent two walls")),
+    "dedupe stays quiet on a perfect-fit parent",
+  );
+});
+
+test("reconcile: budget dedupe never preempts the overframe gate (span wider than the parent wall)", () => {
+  // A 39ft gable pinned to the 28ft rear wall E1 with the rake patio stub E3
+  // on the face: the overframe doctrine parks E1 UNPRICED for review — the
+  // dedupe must not convert it into a billed eave.
+  const edges = outlineEdges(OUTLINE);
+  const classes = invertedClasses().map((c) =>
+    c.id === "E1" || c.id === "E3" ? { ...c, edge_class: "rake" as const } : c,
+  );
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      ...PER_FACE,
+      south: face(
+        "south",
+        "REAR/SOUTH ELEVATION",
+        [{ kind: "main", span_ft: 39, position_frac: 0.6 }],
+        { continuous_eave: false },
+      ),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E1"), "unknown", "overframe parks the wall UNPRICED");
+  assert.ok(
+    r.notes.some((n) => n.includes("E1") && n.includes("overframe")),
+    "the overframe gate speaks, not the dedupe",
+  );
+});
+
+test("reconcile: the beam gate never strips a wall for a kind-'other' gable (the prompt's mandated unlabelled kind)", () => {
+  // An unlabelled projecting porch reads kind 'other' on posts with a
+  // projection cue — the first cut promoted the base wall to rake (−LF) and
+  // cascaded. It must route to droppedProjections; the wall keeps gutter.
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [
+          {
+            kind: "other",
+            span_ft: 15, // == E11 — inside the 0.7–1.6× wall≈span window
+            position_frac: 0.15,
+            supported_on: "posts",
+            shows_projection_cue: true,
+          },
+        ],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+    roofMasses: [{ label: "PORCH ROOF", areaFt2: 180 }],
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "eave", "wall keeps its gutter");
+  assert.equal(r.droppedProjections.length, 1, "projection recorded for the LF synthesis");
+});
+
+test("reconcile: a MAIN gable on beams with a projection cue is NOT the trellis case — wall keeps its gutter", () => {
+  const edges = outlineEdges(OUTLINE);
+  const classes: EdgeClass[] = edges.map((e) => ({
+    id: e.id,
+    edge_class: "eave",
+    tier: null,
+    feature: null,
+    evidence: [],
+  }));
+  const r = reconcileEdgeClasses({
+    outline: OUTLINE,
+    edges,
+    classes,
+    perFace: {
+      north: face(
+        "north",
+        "FRONT/NORTH ELEVATION",
+        [
+          {
+            kind: "main",
+            span_ft: 15,
+            position_frac: 0.15,
+            supported_on: "beam",
+            eave_condition_guess: "projecting",
+          },
+        ],
+        { continuous_eave: false },
+      ),
+      south: face("south", "REAR/SOUTH ELEVATION", []),
+      east: face("east", "LEFT/EAST ELEVATION", []),
+      west: face("west", "RIGHT/WEST ELEVATION", []),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E11"), "eave", "projection evidence beats the trellis promotion");
+  assert.equal(r.droppedProjections.length, 1);
+});

@@ -214,9 +214,12 @@ export function GutterSystemBreakdown({
               : "drainage not yet placed"
           }
         />
+        {/* Gutter MITERS (eave-meets-eave corners), not outline corners —
+            rake edges suppress theirs, so the count reads lower than the
+            drawn outline's corner count on purpose. */}
         <Stat
           icon={CornerUpRight}
-          label="Corners"
+          label="Gutter miters"
           value={`${cornerTotal}`}
           sub={`${measurements.outsideCorners} outside · ${measurements.insideCorners} inside`}
         />

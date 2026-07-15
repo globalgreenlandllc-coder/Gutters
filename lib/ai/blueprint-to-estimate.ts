@@ -25,6 +25,7 @@ import { buildEngineTakeoff } from "./engine-takeoff";
 import { isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
 import { filterRoofDiagramLines } from "./roof-diagram-filter";
+import { facesFromRoofLines } from "./roof-faces-from-lines";
 import type { RoofMassArea } from "./to-masses";
 import type { DroppedProjection } from "./reconcile-edge-classes";
 import { synthesizeProjectionGutterLF } from "./projection-lf";
@@ -502,6 +503,21 @@ export function blueprintToEstimateResult(
       valleys: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>;
       hips: Array<{ p1: BlueprintPoint; p2: BlueprintPoint }>;
       gableCount: number;
+      /** Edge-anchored gable-end triangles (roof-layout.ts GableEnd) —
+       *  projected into the "engine-gable-…" line channel + the overlay's
+       *  gable list so gables draw even when the skeleton degenerated. */
+      gableEnds?: Array<{
+        edgeId?: string;
+        base: [BlueprintPoint, BlueprintPoint];
+        apex: BlueprintPoint;
+        verify?: boolean;
+      }> | null;
+      /** Roof PLANES tiling the outline (analysis space) — projected into
+       *  RoofStructure.faces so shading covers the whole footprint. */
+      faces?: Array<{
+        polygon: BlueprintPoint[];
+        downhill: BlueprintPoint;
+      }> | null;
       confidence: number;
     } | null;
   },
@@ -807,6 +823,11 @@ export function blueprintToEstimateResult(
   let roofValleys = structLines("valley");
 
   let roofHips = structLines("hip");
+  // v2-layout extras: gable-end BASE segments (the overlay's GABLE labels +
+  // skeleton input) and the roof PLANES that shade the whole footprint.
+  // Both stay empty off the edgeLayout path — decorative, never priced.
+  let roofGables: RoofStructureLine[] = [];
+  let roofFaces: NonNullable<RoofStructure["faces"]> = [];
 
   // Engine mode: the engine owns the interior skeleton — the clean straight-
   // skeleton (main hips/ridges/valleys) + each gable's ridge-back — so the roof
@@ -874,6 +895,68 @@ export function blueprintToEstimateResult(
     roofRidges = layoutLines("ridge", el.ridges);
     roofValleys = layoutLines("valley", el.valleys);
     roofHips = layoutLines("hip", el.hips);
+
+    // Gable ENDS → the "engine-gable-…" line channel the overlay already
+    // renders as gable wings: a ridge stub (base midpoint → apex) plus the
+    // two base→apex slopes. A rake that spans its WHOLE footprint side is a
+    // flush gable end — the plan draws no diagonals there, so only the base
+    // segment (roofGables, for the GABLE label + skeleton input) is kept.
+    const gEnds = (Array.isArray(el.gableEnds) ? el.gableEnds : []).filter(
+      (g) =>
+        !!g &&
+        Array.isArray(g.base) &&
+        isGoodPoint(g.base[0]) &&
+        isGoodPoint(g.base[1]) &&
+        isGoodPoint(g.apex),
+    );
+    if (gEnds.length > 0) {
+      const vertexTol = 4; // canvas px — "base corner sits ON an outline corner"
+      const onPerimVertex = (p: BlueprintPoint) =>
+        roofPerimeter.some((v) => Math.hypot(v.x - p.x, v.y - p.y) <= vertexTol);
+      roofGables = [];
+      gEnds.forEach((g, i) => {
+        const b0 = project(g.base[0]);
+        const b1 = project(g.base[1]);
+        const ap = project(g.apex);
+        const mid = { x: (b0.x + b1.x) / 2, y: (b0.y + b1.y) / 2 };
+        roofGables.push({
+          id: `engine-gable-end-${i}`,
+          kind: "gable",
+          points: [b0, b1],
+          ...(g.verify ? { label: "verify" } : {}),
+        });
+        if (Math.hypot(ap.x - mid.x, ap.y - mid.y) > 1.5) {
+          roofRidges.push({
+            id: `engine-gable-ridge-${i}`,
+            kind: "ridge",
+            points: [mid, ap],
+          });
+          const wholeSide = onPerimVertex(b0) && onPerimVertex(b1);
+          if (!wholeSide) {
+            roofValleys.push(
+              { id: `engine-gable-valley-${i}a`, kind: "valley", points: [b0, ap] },
+              { id: `engine-gable-valley-${i}b`, kind: "valley", points: [b1, ap] },
+            );
+          }
+        }
+      });
+    }
+
+    // Roof PLANES (analysis space → canvas). project() is a uniform positive
+    // scale + translation, so the downhill DIRECTION passes through as-is.
+    roofFaces = (Array.isArray(el.faces) ? el.faces : [])
+      .filter(
+        (f) =>
+          !!f &&
+          Array.isArray(f.polygon) &&
+          f.polygon.length >= 3 &&
+          f.polygon.every(isGoodPoint) &&
+          isGoodPoint(f.downhill),
+      )
+      .map((f) => ({
+        polygon: f.polygon.map((p) => project(p)),
+        downhill: { x: f.downhill.x, y: f.downhill.y },
+      }));
   }
 
   // Synthesis fallback. Triggers in two cases:
@@ -970,6 +1053,9 @@ export function blueprintToEstimateResult(
     roofRidges = scaleLines(roofRidges);
     roofValleys = scaleLines(roofValleys);
     roofHips = scaleLines(roofHips);
+    roofGables = scaleLines(roofGables);
+    // Uniform scale about a point — downhill directions are unchanged.
+    roofFaces = roofFaces.map((f) => ({ ...f, polygon: f.polygon.map(sp) }));
 
     // (2) Cap physically-impossible runs. The longest legitimate run is
     // the longest (clamped) length_ft the AI reported — already capped to
@@ -1209,6 +1295,21 @@ export function blueprintToEstimateResult(
     roofValleys = filtered.valleys;
     roofHips = filtered.hips;
   }
+  // v2 shading back-compat + total-coverage guarantee: layouts stored before
+  // faces existed carry none — polygonize the PROJECTED lines instead (the
+  // arrangement helper is scale-free), and when even that fails shade the
+  // footprint as ONE flat plane rather than leaving the middle empty.
+  if (opts?.edgeLayout && !synthesized && roofPerimeter.length >= 3) {
+    if (roofFaces.length === 0) {
+      const segs = [...roofRidges, ...roofValleys, ...roofHips]
+        .filter((l) => l.points.length >= 2)
+        .map((l) => ({ p1: l.points[0], p2: l.points[l.points.length - 1] }));
+      roofFaces = facesFromRoofLines(roofPerimeter, segs) ?? [];
+    }
+    if (roofFaces.length === 0) {
+      roofFaces = [{ polygon: [...roofPerimeter], downhill: { x: 0.3, y: 1 } }];
+    }
+  }
   const roofStructure: RoofStructure | undefined =
     !synthesized && roofPerimeter.length >= 3
       ? {
@@ -1216,6 +1317,8 @@ export function blueprintToEstimateResult(
           ridges: roofRidges,
           valleys: roofValleys,
           hips: roofHips,
+          ...(roofGables.length > 0 ? { gables: roofGables } : {}),
+          ...(roofFaces.length > 0 ? { faces: roofFaces } : {}),
           // True gable-structure count: v2 layout counts classified gable-end
           // walls; otherwise the engine's per-face placement. Absent when
           // neither is drawing (AI-only path).

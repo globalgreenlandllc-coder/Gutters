@@ -13,9 +13,10 @@
  *  1. Unify the two parallel arrays (`gutter_runs` + `excluded_edges`) into a
  *     single classified `edges[]` per footprint edge — a proto `Mass.edges`.
  *  2. Run the AREA GATE: footprint area vs the schedule area (width × depth from
- *     the classifier). Needs an INDEPENDENT px→ft scale to be meaningful; when
- *     absent it reports `no_schedule` (honest) and falls back to a scale-free
- *     aspect-ratio check that still catches gross mis-reads.
+ *     the classifier, itself cross-checked against printed dimension evidence —
+ *     see crossCheckStatedBox). Needs an INDEPENDENT px→ft scale to be
+ *     meaningful; when absent it reports `no_schedule` (honest) and falls back
+ *     to a scale-free aspect-ratio check that still catches gross mis-reads.
  *  3. Run the CLOSURE gate on the footprint ring.
  *
  * PURE + never throws: any failure returns empty flags (worst case = today).
@@ -150,7 +151,119 @@ export type ValidateOptions = {
   statedScheduleAreaFt2?: number | null;
   /** Label of the schedule area (for the flag message). */
   scheduleLabel?: string;
+  /** Deterministic printed-dimension evidence in FEET — text-layer OVERALL
+   *  callouts plus the edge classifier's dimension-chip reads. Used ONLY to
+   *  cross-check the classifier's VISION-read width × depth box before it
+   *  becomes the area-gate baseline (crossCheckStatedBox). Pass printed
+   *  building extents, not every interior dim. */
+  printedDimsFt?: readonly number[] | null;
 };
+
+/**
+ * Feet values of printed OVERALL dimension callouts in a page's text layer
+ * ("64'-0\" OVERALL", "OVERALL: 51'-0"). These are deterministic ground truth
+ * for the building's extents; the OVERALL keyword is REQUIRED so lot lines and
+ * interior dims on other sheets can't masquerade as building extents (the
+ * schedule scan feeds EVERY page's text through here, site plan included).
+ * Deterministic + pure. Many sets outline their dim text (no text layer) —
+ * then this returns [] and only caller-passed dim reads can anchor the box.
+ */
+export function parseOverallDimsFt(text: string): number[] {
+  if (!text || typeof text !== "string") return [];
+  const T = text.replace(/\s+/g, " ");
+  const out: number[] = [];
+  const push = (ftStr: string, inStr?: string) => {
+    const ft = Number(ftStr) + (inStr ? Number(inStr) / 12 : 0);
+    if (!Number.isFinite(ft) || ft < 20 || ft > 250) return;
+    if (!out.some((v) => Math.abs(v - ft) < 0.05)) out.push(ft);
+  };
+  // "<ft>'-<in>\" OVERALL" (the standard callout). The lookbehind rejects a
+  // number that's the tail of a larger token, same as parseScheduleAreaFt2.
+  for (const m of T.matchAll(/(?<![\d.'\-])(\d{2,3})\s*['’](?:\s*-?\s*(\d{1,2})\s*(?:"|”|'')?)?\s*OVERALL/gi)) push(m[1], m[2]);
+  // …and the reversed "OVERALL 51'-0\"" order some title styles use.
+  for (const m of T.matchAll(/OVERALL\s*:?\s*(\d{2,3})\s*['’](?:\s*-?\s*(\d{1,2})\s*(?:"|”|'')?)?/gi)) push(m[1], m[2]);
+  return out;
+}
+
+const fmtFt = (v: number) => `${Math.round(v * 10) / 10}'`;
+
+export type StatedBoxCheck = {
+  widthFt: number;
+  depthFt: number;
+  corrected: boolean;
+  /** Full sentence to append to the area-gate note when corrected. */
+  note: string | null;
+};
+
+/**
+ * Cross-check the classifier's VISION-read width × depth box against printed
+ * dimension evidence before it becomes the area-gate baseline. The stated box
+ * is an unchecked Stage-1 vision read — on a real Woodinville set it read the
+ * depth as 71.5' (the printed overall is 51'-0"), so a good trace flagged
+ * "35.1% off — may not cover the full building" against a 4576 sf phantom box.
+ *
+ * Deterministic gate, anchored on agreement: keep only building-scale reads
+ * (20-250 ft AND within 0.6-1.4× of SOME stated axis — drops porch sub-dims
+ * and lot lines without trusting either axis), take the two largest as the
+ * candidate overall pair, and pair them to axes greedily by best agreement.
+ * The anchor pair must AGREE within 15% (one correctly-read axis proves the
+ * reads ARE the overalls); when the OTHER axis then contradicts its read by
+ * >15%, the printed pair replaces the box. Anything short of that — one read,
+ * no anchor, both axes agreeing — keeps the stated box untouched (doubt →
+ * current behavior). FLAG-ONLY subsystem: this changes what the area gate
+ * COMPARES against, never geometry or pricing.
+ */
+export function crossCheckStatedBox(
+  widthFt: number,
+  depthFt: number,
+  printedFt: readonly number[] | null | undefined,
+): StatedBoxCheck {
+  const unchanged: StatedBoxCheck = { widthFt, depthFt, corrected: false, note: null };
+  if (!(Number.isFinite(widthFt) && widthFt > 0 && Number.isFinite(depthFt) && depthFt > 0)) return unchanged;
+  if (!printedFt || printedFt.length === 0) return unchanged;
+
+  const buildingScale = (v: number) => [widthFt, depthFt].some((axis) => v >= axis * 0.6 && v <= axis * 1.4);
+  const clean = printedFt
+    .filter((v) => Number.isFinite(v) && v >= 20 && v <= 250 && buildingScale(v))
+    .sort((a, b) => b - a);
+  // Dedupe near-identical values (the same overall printed on two chains).
+  const reads: number[] = [];
+  for (const v of clean) if (!reads.some((r) => Math.abs(r - v) / r <= 0.02)) reads.push(v);
+  if (reads.length < 2) return unchanged; // need an anchor AND a contradictor
+  const pair = reads.slice(0, 2); // two largest = the building overalls
+
+  // Greedy anchor: the (axis, read) pairing with the best agreement wins.
+  // Min-TOTAL-error pairing is wrong here — on Woodinville it pairs the misread
+  // 71.5' depth with the printed 64' (11.7% — "agrees") and 51' with the 64'
+  // width; anchoring on the exact width↔64' match pins 51' to the depth.
+  const axes = [
+    { name: "width", stated: widthFt },
+    { name: "depth", stated: depthFt },
+  ] as const;
+  const relErr = (stated: number, read: number) => Math.abs(stated - read) / read;
+  let best: { ai: number; ri: number; e: number } | null = null;
+  for (let ai = 0; ai < 2; ai++)
+    for (let ri = 0; ri < 2; ri++) {
+      const e = relErr(axes[ai].stated, pair[ri]);
+      if (!best || e < best.e) best = { ai, ri, e };
+    }
+  if (!best || best.e > 0.15) return unchanged; // nothing anchors → keep
+  const otherAi = 1 - best.ai;
+  const otherRead = pair[1 - best.ri];
+  if (relErr(axes[otherAi].stated, otherRead) <= 0.15) return unchanged; // both agree
+
+  // The printed pair becomes the box (the anchor axis ≈ its read anyway).
+  const widthNew = best.ai === 0 ? pair[best.ri] : otherRead;
+  const depthNew = best.ai === 0 ? otherRead : pair[best.ri];
+  return {
+    widthFt: widthNew,
+    depthFt: depthNew,
+    corrected: true,
+    note:
+      `The stated box uses the printed ${fmtFt(widthNew)} × ${fmtFt(depthNew)} overalls; ` +
+      `the vision-read ${axes[otherAi].name} ${fmtFt(axes[otherAi].stated)} looked wrong.`,
+  };
+}
 
 /** An independent px→ft scale from the roof-plan scale reading (NOT derived from
  *  the footprint itself, which would make the area gate circular). */
@@ -299,13 +412,35 @@ export function validateBlueprintGeometry(
       edges.push({ p1: toFt(aPx), p2: toFt(bPx), type, gutter, source: "blueprint" });
     }
 
+    // The stated width × depth is a Stage-1 VISION read — cross-check it
+    // against printed dimension evidence (text-layer overalls, edge-classifier
+    // dim reads) before anything downstream compares to it. Flag-only: a
+    // correction changes what the gate COMPARES against, never the geometry.
+    const dims = classification?.building_dimensions;
+    let cls = classification;
+    let boxNote: string | null = null;
+    if (
+      classification &&
+      dims &&
+      typeof dims.width_ft === "number" &&
+      dims.width_ft > 0 &&
+      typeof dims.depth_ft === "number" &&
+      dims.depth_ft > 0
+    ) {
+      const box = crossCheckStatedBox(dims.width_ft, dims.depth_ft, options?.printedDimsFt);
+      if (box.corrected) {
+        cls = { ...classification, building_dimensions: { ...dims, width_ft: box.widthFt, depth_ft: box.depthFt } };
+        boxNote = box.note;
+      }
+    }
+
     // Schedule-area priority: title-block area (authoritative) → width × depth
     // (backstop). Aspect ratio (scale-free) is the last resort below.
     const titleArea =
       options?.statedScheduleAreaFt2 != null && options.statedScheduleAreaFt2 > 0
         ? options.statedScheduleAreaFt2
         : null;
-    const wd = scheduleAreaFt2(classification);
+    const wd = scheduleAreaFt2(cls);
     const stated = titleArea ?? wd;
     const statedSource =
       titleArea != null
@@ -335,7 +470,7 @@ export function validateBlueprintGeometry(
     // 3. Area gate. Scaled comparison when we have a declared scale, but a HUGE
     //    miss is diagnosed as a scale mismatch (not a missing plane) and deferred
     //    to the scale-free shape check.
-    const shape = shapeCheck(ringPx, classification);
+    const shape = shapeCheck(ringPx, cls);
     if (ftPerPx && stated != null) {
       const computed = polyArea(ring);
       // width × depth is a BOUNDING BOX, not a real roof/footprint area. An
@@ -357,7 +492,7 @@ export function validateBlueprintGeometry(
         // footprint is later re-spaced without rescaling). The measured-run LF is
         // scale-independent, so it's unaffected. Re-check using the footprint's
         // OWN scale (anchored on the trusted overall dimension) for a real area.
-        const selfArea = selfConsistentAreaFt2(ringPx, classification);
+        const selfArea = selfConsistentAreaFt2(ringPx, cls);
         let verdict: string;
         if (selfArea != null) {
           const selfDiff = Math.abs(selfArea - stated) / stated;
@@ -378,7 +513,8 @@ export function validateBlueprintGeometry(
           mass: mass.name,
           message:
             `[main] area gate: declared scale gives ${gauge.toFixed(0)} sf${vsBox ? " (trace extent)" : ""} vs stated ${stated.toFixed(0)} sf ` +
-            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (AI footprint-px vs declared plan scale), not a missing plane; ${verdict}.`,
+            `(${statedSource}) — ${(diff * 100).toFixed(1)}% off. Likely a SCALE MISMATCH (AI footprint-px vs declared plan scale), not a missing plane; ${verdict}.` +
+            (boxNote ? ` ${boxNote}` : ""),
         });
       } else {
         const over = diff > 0.15;
@@ -402,7 +538,8 @@ export function validateBlueprintGeometry(
           severity: over ? "warn" : "info",
           mass: mass.name,
           message: vsBox
-            ? `[main] area gate: the trace spans a ${traceBoxFt.toFixed(0)} sf envelope (footprint ${computed.toFixed(0)} sf; the rest is normal articulation) vs the stated ${stated.toFixed(0)} sf width×depth box — ${(diff * 100).toFixed(1)}% off — ${verdict}.`
+            ? `[main] area gate: the trace spans a ${traceBoxFt.toFixed(0)} sf envelope (footprint ${computed.toFixed(0)} sf; the rest is normal articulation) vs the stated ${stated.toFixed(0)} sf width×depth box — ${(diff * 100).toFixed(1)}% off — ${verdict}.` +
+              (boxNote ? ` ${boxNote}` : "")
             : `[main] area gate: computed ${computed.toFixed(0)} sf vs stated ${stated.toFixed(0)} sf ` +
               `(${statedSource}) — ${(diff * 100).toFixed(1)}% off — ${verdict}.`,
         });
@@ -413,7 +550,9 @@ export function validateBlueprintGeometry(
         code: "no_schedule",
         severity: "info",
         mass: mass.name,
-        message: `[main] area gate skipped (${reason}); footprint area unverified.`,
+        // A corrected box must never be silent — when the shape check passes
+        // only BECAUSE of the correction, this is the line that says so.
+        message: `[main] area gate skipped (${reason}); footprint area unverified.${boxNote && !shape?.off ? ` ${boxNote}` : ""}`,
       });
       // Scale-free sanity: footprint elongation vs stated width:depth.
       if (shape?.off) {
@@ -421,7 +560,7 @@ export function validateBlueprintGeometry(
           code: "area_gate",
           severity: "warn",
           mass: mass.name,
-          message: `[main] footprint proportions (elongation ${shape.traceElong.toFixed(2)}) don't match stated ${shape.w}×${shape.h} ft (elongation ${shape.statedElong.toFixed(2)}) — the trace may be mis-scaled or missing a wing.`,
+          message: `[main] footprint proportions (elongation ${shape.traceElong.toFixed(2)}) don't match stated ${shape.w}×${shape.h} ft (elongation ${shape.statedElong.toFixed(2)}) — the trace may be mis-scaled or missing a wing.${boxNote ? ` ${boxNote}` : ""}`,
         });
       }
     }

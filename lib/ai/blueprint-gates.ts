@@ -18,7 +18,13 @@ import "server-only";
 import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import type { PlanClassification } from "./classify-plans";
 import { extractScheduleText } from "./pdf-vectors";
-import { validateBlueprintGeometry, parseScheduleAreaFt2, parseRoofMasses, type RoofMassArea } from "./to-masses";
+import {
+  validateBlueprintGeometry,
+  parseScheduleAreaFt2,
+  parseRoofMasses,
+  parseOverallDimsFt,
+  type RoofMassArea,
+} from "./to-masses";
 import { deriveOrientation, type PlanOrientation } from "./plan-orientation";
 import type { ReviewFlag } from "../roof-engine";
 
@@ -42,12 +48,23 @@ const MARK: Record<ReviewFlag["severity"], string> = {
   info: "🔎",
 };
 
-export async function runBlueprintGates(args: {
-  analysis: BlueprintAnalysis;
-  classification: PlanClassification | null;
+/** The deterministic text/schedule evidence the gates run on. Extractable
+ *  EARLY (before the edge takeoff needs `roofMasses`) and passed back into
+ *  `runBlueprintGates` so the PDF text layer is scanned exactly once even
+ *  though the gates themselves run AFTER the edge takeoff (whose D-chip
+ *  printed reads anchor the stated-box cross-check). */
+export type GateEvidence = {
+  texts: { page: number; text: string }[];
+  schedule: { areaFt2: number; label: string; page: number } | null;
+  roofMasses: RoofMassArea[];
+  roofMassSource: string;
+};
+
+export async function extractGateEvidence(args: {
   /** Raw PDF bytes (base64) when the source is a PDF, else null. */
   pdfBase64: string | null;
-}): Promise<BlueprintGateResult> {
+  classification: PlanClassification | null;
+}): Promise<GateEvidence> {
   // One page-text scan (logged), then run both parsers over it.
   const texts = args.pdfBase64 ? await extractScheduleText(args.pdfBase64) : [];
   let schedule: { areaFt2: number; label: string; page: number } | null = null;
@@ -82,15 +99,52 @@ export async function runBlueprintGates(args: {
     }
   }
   const roofMasses: RoofMassArea[] = [...byLabel.entries()].map(([label, areaFt2]) => ({ label, areaFt2 }));
+  return { texts, schedule, roofMasses, roofMassSource };
+}
+
+export async function runBlueprintGates(args: {
+  analysis: BlueprintAnalysis;
+  classification: PlanClassification | null;
+  /** Raw PDF bytes (base64) when the source is a PDF, else null. Unused when
+   *  `evidence` is supplied. */
+  pdfBase64: string | null;
+  /** Deterministic printed-dimension reads in FEET (the edge classifier's
+   *  D-chip values, when the caller has them). Combined with the text-layer
+   *  OVERALL callouts parsed here to cross-check the classifier's vision-read
+   *  width × depth before it becomes the area-gate baseline. Optional —
+   *  without it, only text-layer overalls anchor the check. */
+  printedDimsFt?: readonly number[] | null;
+  /** Precomputed text/schedule evidence (extractGateEvidence) — pass it when
+   *  the routes extracted it early for the edge takeoff's roofMasses, so the
+   *  PDF text layer isn't scanned twice. */
+  evidence?: GateEvidence | null;
+}): Promise<BlueprintGateResult> {
+  const { texts, schedule, roofMasses, roofMassSource } =
+    args.evidence ??
+    (await extractGateEvidence({
+      pdfBase64: args.pdfBase64,
+      classification: args.classification,
+    }));
+
+  // Printed OVERALL callouts (deterministic text) + any dimension reads the
+  // caller passed down — the evidence the classifier's vision-read width×depth
+  // box is cross-checked against before it becomes the area-gate baseline
+  // (a misread 71.5' depth once became a 4576 sf phantom baseline on a good
+  // 3264 sf trace). Sets that outline ALL their text yield no overalls here;
+  // then only the caller's dim reads can anchor the check.
+  const textOveralls = texts.flatMap(({ text }) => parseOverallDimsFt(text));
+  const printedDimsFt = [...(args.printedDimsFt ?? []), ...textOveralls];
   console.log(
     `[blueprint-gates] schedule area: ${
       schedule ? `${schedule.areaFt2} sf (${schedule.label}, p${schedule.page})` : "NONE → area gate uses width×depth"
-    }; roof masses: ${roofMasses.length ? `${roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ")} (${roofMassSource})` : "NONE → gable depth uses schematic"}.`,
+    }; roof masses: ${roofMasses.length ? `${roofMasses.map((m) => `${m.label}=${m.areaFt2}`).join(", ")} (${roofMassSource})` : "NONE → gable depth uses schematic"}; ` +
+      `printed dims for the box check: ${printedDimsFt.length ? printedDimsFt.map((f) => `${f}'`).join(", ") : "NONE"}.`,
   );
 
   const v = validateBlueprintGeometry(args.analysis, args.classification, {
     statedScheduleAreaFt2: schedule?.areaFt2 ?? null,
     scheduleLabel: schedule ? `${schedule.label} (p${schedule.page})` : undefined,
+    printedDimsFt: printedDimsFt.length > 0 ? printedDimsFt : null,
   });
 
   const notes = v.reviewFlags.map((f) => `${MARK[f.severity]} ${f.message}`);

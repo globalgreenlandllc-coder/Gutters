@@ -1202,6 +1202,9 @@ export function AerialCanvas({
             // (a ~45° roof), capped so it never shoots across the roof.
             const wing = (() => {
               const perim = roofStructure?.perimeter;
+              // Engine faces tile the whole footprint — the approximate
+              // 46-px wing would double-shade on top of the real plane.
+              if (roofStructure?.faces?.length) return null;
               if (!perim || perim.length < 3 || lenPx < 12) return null;
               let cx = 0, cy = 0;
               for (const p of perim) { cx += p.x; cy += p.y; }
@@ -2260,7 +2263,13 @@ function Legend({
               }}
             />
             <span className={tactical ? "text-slate-300" : "text-slate-600"}>
-              Gables
+              {/* When the count is just the rake-EDGE count (v2 layout, or no
+                  engine count at all) say so — "Gables 4" with no gable form
+                  in sight reads as a bug; "Gable edges 4" matches the dashed
+                  edges actually drawn. A real STRUCTURE count keeps "Gables". */}
+              {gableCount == null || gableCount === rakeCount
+                ? "Gable edges"
+                : "Gables"}
             </span>
             <span
               className={cn(

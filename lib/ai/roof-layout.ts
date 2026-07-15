@@ -34,8 +34,25 @@ import type { Seg as SkelSeg, SkeletonLine, RoofSkeleton } from "../roof-skeleto
 import type { OutlineEdge, OverlayPt } from "./plan-overlay";
 import type { EdgeClass } from "./edge-takeoff";
 import { pointInPolygon } from "./plan-orientation";
+import { facesFromRoofLines, type RoofFacePoly } from "./roof-faces-from-lines";
 
 export type LayoutSeg = { p1: OverlayPt; p2: OverlayPt };
+
+/** A gable-end triangle, anchored to the outline edge it rises from. The
+ *  canvas draws it as a WING (base + the two base→apex slopes) so a gable
+ *  reads as an actual gable form, not an anonymous ridge stub. Decorative —
+ *  pricing never reads it. */
+export type GableEnd = {
+  /** outline edge id the gable end sits on ("" when unmatched) */
+  edgeId: string;
+  /** the rake wall the gable planes rise from */
+  base: [OverlayPt, OverlayPt];
+  /** plan-view peak — where the gable's ridge leaves the wall span */
+  apex: OverlayPt;
+  /** true = recorded from an elevation gable the reconcile REJECTED from
+   *  pricing (frame-over / beam) — drawn the same, flagged verify */
+  verify?: boolean;
+};
 
 export type RoofLayoutDiag = {
   /** distinct long diagonal strokes drawn on the roof sheet inside the outline */
@@ -60,6 +77,15 @@ export type RoofLayout = {
   /** outline edge ids the classifier called rake — the gable end walls */
   rakeEdgeIds: string[];
   gableCount: number;
+  /** Edge-anchored gable-end triangles — carried on BOTH paths (kept
+   *  skeleton or rule-drawn ridge-backs) so the drawn gables never vanish
+   *  when the skeleton degenerates. Decorative only. */
+  gableEnds: GableEnd[];
+  /** Roof PLANES tiling the outline: the skeleton's validated faces when it
+   *  stood, else a planar polygonization of the kept lines
+   *  (facesFromRoofLines). Undefined when neither validates — the estimate
+   *  bridge falls back to a single flat face so shading always covers. */
+  faces?: RoofFacePoly[];
   diag?: RoofLayoutDiag;
   /** 0..1 — drives the canvas "Schematic — verify" banner (shown < 0.7) */
   confidence: number;
@@ -74,6 +100,7 @@ const fail = (reason: string): RoofLayout => ({
   valleys: [],
   rakeEdgeIds: [],
   gableCount: 0,
+  gableEnds: [],
   confidence: 0,
   notes: [`📐 Roof layout not drawn: ${reason}`],
 });
@@ -617,6 +644,14 @@ export function buildRoofLayout(opts: {
   classes: readonly EdgeClass[];
   /** roof-sheet vector segments ([x1,y1,x2,y2][]) for the diagonal evidence */
   segments?: readonly number[][] | null;
+  /** Elevation gables the reconcile REJECTED from pricing (frame-over /
+   *  beam / forced-flush) — the wall keeps its class, but the roof form is
+   *  real, so it still DRAWS as a gable end tagged verify. Spans are in
+   *  feet; `ptPerFt` converts them to sheet units. */
+  frameOverEnds?:
+    | readonly { edgeId: string; spanFt?: number | null; u?: number | null }[]
+    | null;
+  ptPerFt?: number | null;
 }): RoofLayout {
   try {
     const { outline, edges, classes } = opts;
@@ -740,9 +775,19 @@ export function buildRoofLayout(opts: {
         ridges = [];
         hips = [];
         valleys = [];
+        // The fallback-skeleton notes above ("drawn all-hip" / "drawn as
+        // eave") describe lines just deleted — retract them so the notes
+        // describe what IS drawn, not the discarded fallback.
+        const staleIdx = notes.findIndex(
+          (n) => n.includes("drawn all-hip") || n.includes("drawn as eave in the diagram"),
+        );
+        if (staleIdx >= 0) notes.splice(staleIdx, 1);
         notes.push(
           "📐 The sheet's drawn diagonals contradict the uniform skeleton (multi-pitch roof) — " +
-            "interior drawn from the sheet's own linework + gable ridge rules instead.",
+            "interior drawn from the sheet's own linework + gable ridge rules instead" +
+            (staleIdx >= 0
+              ? " (the degenerate fallback skeleton was discarded; rake edges stay marked on the perimeter)."
+              : "."),
         );
       }
       // Adopt with the SAME predicate that counted matches, against the lines
@@ -776,6 +821,25 @@ export function buildRoofLayout(opts: {
       return fail("straight skeleton unavailable (non-rectilinear or degenerate outline)");
     }
 
+    // Gable ENDS — edge-anchored triangles the canvas draws as wings, carried
+    // on BOTH paths so the drawn gables never vanish with the skeleton.
+    // Decorative only; the rake classification (and pricing) is untouched.
+    const gableEnds: GableEnd[] = [];
+    const nearestRakeEdgeId = (mid: OverlayPt): string => {
+      let bestId = "";
+      let bestD = Infinity;
+      for (const id of rakeIdsWanted) {
+        const e = realEdges.find((r) => r.id === id);
+        if (!e) continue;
+        const d = Math.hypot(e.mid.x - mid.x, e.mid.y - mid.y);
+        if (d < bestD) {
+          bestD = d;
+          bestId = id;
+        }
+      }
+      return bestId;
+    };
+
     // Sheet-anchored ridge synthesis — only when the skeleton was discarded
     // (or never stood) and the sheet gave us valleys to anchor against.
     if (!skeletonKept && valleys.length > 0) {
@@ -794,7 +858,89 @@ export function buildRoofLayout(opts: {
         const e = realEdges.find((r) => r.id === id);
         if (!e) continue;
         const rb = ridgeBack(e, outline, stopAt, span);
-        if (rb) ridges.push(rb);
+        if (!rb) continue;
+        ridges.push(rb);
+        // Gable-end triangle on the ridge-back: apex at half the rake span
+        // along it (a ~45° gable in plan), never past the ridge-back's end.
+        const rbLen = Math.hypot(rb.p2.x - rb.p1.x, rb.p2.y - rb.p1.y);
+        const t = rbLen > 1e-9 ? Math.min(e.lenPt / 2, rbLen) / rbLen : 0;
+        gableEnds.push({
+          edgeId: id,
+          base: [
+            { x: e.p1.x, y: e.p1.y },
+            { x: e.p2.x, y: e.p2.y },
+          ],
+          apex: {
+            x: rb.p1.x + (rb.p2.x - rb.p1.x) * t,
+            y: rb.p1.y + (rb.p2.y - rb.p1.y) * t,
+          },
+        });
+      }
+    }
+
+    // Kept-skeleton path: the skeleton's own gable walls, apex = the ridge
+    // endpoint that lands on the wall (the ridge runs flush to a gable end).
+    if (skeletonKept && used) {
+      for (const g of used.skel.gables) {
+        const a = g.points[0];
+        const b = g.points[1];
+        if (!a || !b) continue;
+        const base: [OverlayPt, OverlayPt] = [
+          { x: a.x, y: a.y },
+          { x: b.x, y: b.y },
+        ];
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        let apex: OverlayPt = mid;
+        let bestD = Math.max(6, span * 0.015);
+        for (const r of ridges) {
+          for (const p of [r.p1, r.p2]) {
+            const d = distToSeg(p, base[0], base[1]);
+            if (d < bestD) {
+              bestD = d;
+              apex = { x: p.x, y: p.y };
+            }
+          }
+        }
+        gableEnds.push({ edgeId: nearestRakeEdgeId(mid), base, apex });
+      }
+      // A rake the robustness ladder DROPPED (skeleton degeneracy) has no
+      // skeleton gable — synthesize its end on the ridge-back exactly like
+      // the discarded-skeleton path, so the drawn gable never vanishes with
+      // a wavefront hiccup. Decorative; classification/pricing untouched.
+      for (const id of rakeIdsWanted) {
+        if (gableEnds.some((g) => g.edgeId === id)) continue;
+        const e = realEdges.find((r) => r.id === id);
+        if (!e) continue;
+        const rb = ridgeBack(e, outline, [...valleys, ...ridges, ...hips], span);
+        if (!rb) continue;
+        ridges.push(rb);
+        const rbLen = Math.hypot(rb.p2.x - rb.p1.x, rb.p2.y - rb.p1.y);
+        const t = rbLen > 1e-9 ? Math.min(e.lenPt / 2, rbLen) / rbLen : 0;
+        gableEnds.push({
+          edgeId: id,
+          base: [
+            { x: e.p1.x, y: e.p1.y },
+            { x: e.p2.x, y: e.p2.y },
+          ],
+          apex: {
+            x: rb.p1.x + (rb.p2.x - rb.p1.x) * t,
+            y: rb.p1.y + (rb.p2.y - rb.p1.y) * t,
+          },
+        });
+        // The "drawn as eave" note is now wrong for this wall — it gets a
+        // drawn gable end after all. Say what actually happens.
+        if (droppedRake === id) {
+          const staleIdx = notes.findIndex((n) =>
+            n.includes(`Gable wall ${id} drawn as eave`),
+          );
+          if (staleIdx >= 0) {
+            notes.splice(
+              staleIdx,
+              1,
+              `📐 Gable wall ${id} degenerated the skeleton wing — its gable end is drawn from the ridge line instead; its rake classification is unchanged.`,
+            );
+          }
+        }
       }
     }
 
@@ -822,6 +968,59 @@ export function buildRoofLayout(opts: {
       diag = { ...diag, adopted: org.kept.length };
     }
 
+    // Frame-over / beam gables the reconcile rejected from pricing — the
+    // wall keeps its eave (and gutter), but the roof form above it is real:
+    // draw it as a gable end tagged verify. Sub-span of the wall, centered
+    // at the elevation's u, apex clipped inside the outline.
+    for (const fo of opts.frameOverEnds ?? []) {
+      if (!fo?.edgeId || gableEnds.some((g) => g.edgeId === fo.edgeId)) continue;
+      const e = realEdges.find((r) => r.id === fo.edgeId);
+      if (!e || e.lenPt < 1e-6) continue;
+      const u = Math.min(1, Math.max(0, typeof fo.u === "number" ? fo.u : 0.5));
+      const spanPt =
+        typeof fo.spanFt === "number" && fo.spanFt > 0 && opts.ptPerFt && opts.ptPerFt > 0
+          ? Math.min(fo.spanFt * opts.ptPerFt, e.lenPt)
+          : e.lenPt;
+      const half = spanPt / 2;
+      const c = Math.min(e.lenPt - half, Math.max(half, u * e.lenPt));
+      const dx = (e.p2.x - e.p1.x) / e.lenPt;
+      const dy = (e.p2.y - e.p1.y) / e.lenPt;
+      const base: [OverlayPt, OverlayPt] = [
+        { x: e.p1.x + dx * (c - half), y: e.p1.y + dy * (c - half) },
+        { x: e.p1.x + dx * (c + half), y: e.p1.y + dy * (c + half) },
+      ];
+      const n = inwardNormalOf(e, outline, span);
+      if (!n) continue;
+      const mid = { x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 };
+      const o = { x: mid.x + n.x * 0.5, y: mid.y + n.y * 0.5 };
+      let depth = spanPt / 2;
+      for (let i = 0; i < outline.length; i++) {
+        const t = raySegT(o, n, outline[i], outline[(i + 1) % outline.length]);
+        if (t !== null && t < depth) depth = t;
+      }
+      if (depth < span * 0.01) continue;
+      gableEnds.push({
+        edgeId: e.id,
+        base,
+        apex: { x: mid.x + n.x * depth, y: mid.y + n.y * depth },
+        verify: true,
+      });
+    }
+
+    // Roof PLANES: the skeleton's validated tiling when it stood, else a
+    // planar polygonization of the final kept lines. Undefined when neither
+    // validates — the estimate bridge shades a single flat face instead.
+    let faces: RoofFacePoly[] | undefined;
+    if (skeletonKept && used && used.skel.faces.length > 0) {
+      faces = used.skel.faces.map((f) => ({
+        polygon: f.polygon.map((p) => ({ x: p.x, y: p.y })),
+        downhill: { x: f.downhill.x, y: f.downhill.y },
+      }));
+    } else {
+      faces =
+        facesFromRoofLines(outline, [...ridges, ...hips, ...valleys]) ?? undefined;
+    }
+
     const rakeEdgeIds = [...rakeIdsWanted];
     const layout: RoofLayout = {
       ok: true,
@@ -830,6 +1029,8 @@ export function buildRoofLayout(opts: {
       valleys,
       rakeEdgeIds,
       gableCount: rakeEdgeIds.length,
+      gableEnds,
+      ...(faces ? { faces } : {}),
       diag,
       confidence: 0.75,
       notes,

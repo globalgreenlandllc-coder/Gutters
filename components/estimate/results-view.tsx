@@ -504,11 +504,16 @@ function PropertyHeader({
               </span>
             )}
             <span>·</span>
-            <span>
+            {/* Gutter MITERS (eave-meets-eave corners), not outline corners —
+                rake/unknown edges suppress theirs, so a 16-corner outline can
+                legitimately read "6". Label it what it is. */}
+            <span
+              title={`${measurements.outsideCorners} outside · ${measurements.insideCorners} inside`}
+            >
               <span className="text-zinc-700">
                 {measurements.outsideCorners + measurements.insideCorners}
               </span>{" "}
-              corners
+              gutter miters
             </span>
             <span>·</span>
             <span>

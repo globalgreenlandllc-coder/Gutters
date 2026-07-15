@@ -10,11 +10,20 @@ import {
   type OverlayPt,
   type OutlineEdge,
 } from "./plan-overlay";
-import { findDimSpanCandidates, solvePtPerFt } from "./dim-scale";
+import {
+  findDimSpanCandidates,
+  solvePtPerFt,
+  anchorSolvedScale,
+  type ScaleAnchorResult,
+} from "./dim-scale";
 import { extractBuildingOutline } from "./outline-from-vectors";
 import type { EdgeClass, EdgeDownspout } from "./edge-takeoff";
 import { buildRoofLayout, type RoofLayout } from "./roof-layout";
-import { reconcileEdgeClasses, type DroppedProjection } from "./reconcile-edge-classes";
+import {
+  reconcileEdgeClasses,
+  type DroppedProjection,
+  type FrameOverEnd,
+} from "./reconcile-edge-classes";
 import { applyTrussFieldDemotions, deriveTrussField, deriveHipCorners } from "./truss-field";
 import type { FaceReadingRaw } from "./face-merge";
 
@@ -47,9 +56,14 @@ export type EdgeClassification = {
   outline: OverlayPt[];
   classes: EdgeClass[];
   downspouts: EdgeDownspout[];
-  /** Solved from dimension lines (vector span ÷ vision-read printed value). */
+  /** Solved from dimension lines (vector span ÷ vision-read printed value),
+   *  after the deterministic standard-scale anchor gate (see scaleGate). */
   ptPerFt: number | null;
   scaleSource: string | null;
+  /** Which path the scale took through the post-solve anchor gate — kept /
+   *  corrected to a standard sheet scale / kept-with-flag. Stashed with the
+   *  classification so the estimate path can show its work. */
+  scaleGate?: ScaleAnchorResult | null;
   dimReads: { id: string; feet: number | null; text: string | null }[];
   ridgeHints: { direction: "ns" | "ew"; near_edge_id: string }[];
   tierNote: string | null;
@@ -65,6 +79,10 @@ export type EdgeClassification = {
    *  these into ESTIMATED gutter lines from the roof-area schedule so the LF
    *  isn't silently dropped. Empty on every path but the elevation-reconcile. */
   droppedProjections?: DroppedProjection[];
+  /** Elevation gables the reconcile REJECTED from pricing (overframe /
+   *  forced-flush / decorative-beam) — real roof forms, so the layout still
+   *  DRAWS them as verify-tagged gable ends. Never changes pricing. */
+  frameOverEnds?: FrameOverEnd[];
 };
 
 const EDGE_SYSTEM = `
@@ -121,21 +139,35 @@ do not pick a side.
 <tiers_and_features>
 tier "lower" = single-story roof section (covered porch, patio, garage eave at
 a lower plate height — elevations show it stepping down); tier "upper" =
-2-story main body. feature = porch | patio | garage | null, from the floor
-plan / elevation labels (COV'D ENTRY, REAR COV'D PATIO, GARAGE).
+2-story main body. feature = porch | patio | entry | garage | deck | null,
+from the floor plan / elevation labels (COV'D ENTRY, REAR COV'D PATIO,
+GARAGE, DECK).
+
+A porch / patio / entry COVER has its OWN little roof, and its form decides
+which of the cover's edges carry gutter — read the form off the elevations:
+  • gable-fronted (a peaked triangle faces you on the cover's outer face):
+    the outer edge is a RAKE, its two side returns are EAVES.
+  • hipped (a horizontal eave wraps the cover with hip lines climbing
+    inward, no triangle): all three stub edges are EAVES.
+  • shed (a single low monopitch edge): the outer low edge is an EAVE, the
+    returns are RAKES.
 </tiers_and_features>
 
 <downspouts>
 The roof/floor plans mark downspouts as "D.S." at the roof edge; elevations
 draw "LINE OF DOWNSPOUT". Map EVERY mark to its edge id and its position
 along that edge as a fraction 0..1 measured from endpoint A (the edge table
-in the user message says which end is A). Only report marks you can see.
+in the user message says which end is A). Count every D.S. mark hugging each
+edge — plans often print 6-10 of them around the perimeter, so re-scan every
+side before you stop at 3-4. Only report marks you can see.
 </downspouts>
 
 <dimensions>
 Each D-chip is a dashed magenta span on the EDGE MAP whose exact pt length we
 measured. Find the SAME dimension line on the original sheet and read its
-printed value (e.g. 64'-0" ⇒ 64.0). Report feet as a decimal number, or null
+printed value (e.g. 64'-0" ⇒ 64.0). Some D-chips are tick-to-tick SUB-SPANS
+of a dimension chain — read the printed value between those exact tick
+marks, not the row's overall. Report feet as a decimal number, or null
 if you cannot read it confidently. NEVER infer a value from a scale note —
 read the printed string only.
 </dimensions>
@@ -167,7 +199,7 @@ function buildTool(edgeIds: string[], dimIds: string[]): Anthropic.Tool {
               tier: { type: ["string", "null"], enum: ["upper", "lower", null] },
               feature: {
                 type: ["string", "null"],
-                enum: ["porch", "patio", "garage", null],
+                enum: ["porch", "patio", "entry", "garage", "deck", null],
               },
               evidence: {
                 type: "array",
@@ -271,9 +303,12 @@ function sourceBlock(source: PlanSource): Anthropic.ContentBlockParam {
 
 /**
  * A protruding stub (porch/patio — both ring neighbors step back inward)
- * carries ONE roof, so its three edges share one tier. The classifier often
- * tags only the outer edge "lower"; spread it to the returns so downspout
- * drop heights price consistently.
+ * carries ONE roof, so its three edges share one tier AND one feature. The
+ * classifier often tags only the outer edge "lower"/"porch"; spread both to
+ * the returns so downspout drop heights and feature labels price
+ * consistently. A porch/patio/entry tag on ANY trio edge implies the whole
+ * stub is that lower cover (features fill only where absent — an explicit
+ * neighbor tag is never overwritten).
  */
 function unifyStubTiers(
   edges: readonly OutlineEdge[],
@@ -305,7 +340,17 @@ function unifyStubTiers(
     const trio = [byId.get(prev.id), byId.get(e.id), byId.get(next.id)].filter(
       (c): c is EdgeClass => !!c,
     );
-    if (trio.some((c) => c.tier === "lower")) {
+    const coverFeature =
+      trio
+        .map((c) => c.feature)
+        .find((f) => f === "porch" || f === "patio" || f === "entry") ?? null;
+    if (coverFeature) {
+      // A porch/patio/entry cover is a single lower roof over the whole stub.
+      for (const c of trio) {
+        c.tier = "lower";
+        if (!c.feature) c.feature = coverFeature;
+      }
+    } else if (trio.some((c) => c.tier === "lower")) {
       for (const c of trio) c.tier = "lower";
     }
   }
@@ -339,6 +384,10 @@ export async function classifyPerimeterEdges(opts: {
    *  lets the truss-field arbiter read eave/gable straight off the sheet's
    *  own truss arrays (truss-field.ts). */
   fieldSegments?: number[][] | null;
+  /** Roof-area schedule masses (label + sf) from the gate evidence — powers
+   *  the reconcile's beam/posts off-outline plausibility and the porch-stub
+   *  shortfall math. Optional; absent ⇒ those checks stay conservative. */
+  roofMasses?: { label: string; areaFt2: number }[] | null;
 }): Promise<EdgeClassification> {
   const empty = (reason: string): EdgeClassification => ({
     ok: false,
@@ -531,6 +580,62 @@ export async function classifyPerimeterEdges(opts: {
       }));
     const solved = solvePtPerFt(dims, dimReads);
 
+    // Post-solve sanity gate — deterministic, no vision in the loop. The
+    // solve is span ÷ vision-read value, so one mispaired chip rescales
+    // EVERY priced run (the Woodinville bug: a merged 65.9-ft chain rail
+    // paired with the printed "51'-0 OVERALL" deflated all LF by 23%). The
+    // printed reads + the outline bbox anchor the truth: swap to a standard
+    // sheet scale ONLY when the solve fails the anchor and exactly one
+    // standard scale passes; anything murkier keeps the solve and flags it.
+    // Each read carries its chip's span+axis so the gate anchors ONLY on
+    // full-rail overall reads — a sub-span tick chip (garage door, room dim)
+    // or a misread sliver the solve rejected must never overturn the solve.
+    const chipById = new Map(dims.map((c) => [c.id, c]));
+    const scaleGate = solved
+      ? anchorSolvedScale(
+          solved.ptPerFt,
+          opts.outline,
+          dimReads
+            .filter((r) => chipById.has(r.id))
+            .map((r) => ({
+              feet: r.feet,
+              spanPt: chipById.get(r.id)!.spanPt,
+              axis: chipById.get(r.id)!.axis,
+            })),
+        )
+      : null;
+    const ptPerFt = scaleGate ? scaleGate.ptPerFt : (solved?.ptPerFt ?? null);
+    const fmtScale = (v: number) => Math.round(v * 100) / 100;
+    let scaleSource: string | null = solved
+      ? `dimension-line solve (${solved.used.join(", ")})`
+      : null;
+    const scaleNotes: string[] = [];
+    if (solved && scaleGate?.checked) {
+      if (scaleGate.verdict === "corrected") {
+        scaleSource = `standard sheet scale ${fmtScale(scaleGate.ptPerFt)} pt/ft (corrected the dimension-line solve ${solved.used.join(", ")})`;
+        scaleNotes.push(
+          `📏 Scale corrected: the dimension-line solve said ${fmtScale(solved.ptPerFt)} pt/ft ` +
+            `(reads the building as ${scaleGate.solvedLongFt} ft wide — the plan prints ${scaleGate.anchorFt}'), ` +
+            `standard sheet scale ${fmtScale(scaleGate.ptPerFt)} pt/ft matches the printed dimensions. ` +
+            `Verify a couple of runs against the printed dims.`,
+        );
+      } else if (scaleGate.verdict === "unanchored") {
+        scaleNotes.push(
+          `📏 SCALE CHECK: at ${fmtScale(solved.ptPerFt)} pt/ft the building reads ${scaleGate.solvedLongFt} ft across, ` +
+            `but the largest printed dimension read is ${scaleGate.anchorFt}' — no standard sheet scale fits the ` +
+            `printed dimensions either, so the solve was KEPT. Verify the total LF against the plan's printed ` +
+            `overall dimensions before quoting.`,
+        );
+      } else if (scaleGate.verdict === "ambiguous") {
+        scaleNotes.push(
+          `📏 SCALE CHECK: at ${fmtScale(solved.ptPerFt)} pt/ft the building reads ${scaleGate.solvedLongFt} ft across, ` +
+            `but the largest printed dimension read is ${scaleGate.anchorFt}' — more than one standard sheet scale ` +
+            `fits the printed dimensions, so the solve was KEPT. Verify the total LF against the plan's printed ` +
+            `overall dimensions before quoting.`,
+        );
+      }
+    }
+
     const ridgeHints = (Array.isArray(raw.ridge_hints) ? raw.ridge_hints : [])
       .filter(
         (h): h is { direction: "ns" | "ew"; near_edge_id: string } =>
@@ -548,7 +653,7 @@ export async function classifyPerimeterEdges(opts: {
       outline: opts.outline,
       edges,
       segments: opts.fieldSegments ?? null,
-      ptPerFt: solved?.ptPerFt ?? null,
+      ptPerFt,
     });
     const fieldPass = applyTrussFieldDemotions({ classes, field, edges });
     classes = fieldPass.classes;
@@ -565,7 +670,7 @@ export async function classifyPerimeterEdges(opts: {
       outline: opts.outline,
       edges,
       segments: opts.fieldSegments ?? null,
-      ptPerFt: solved?.ptPerFt ?? null,
+      ptPerFt,
     });
     for (const id of hipCornerEaves) fieldEave.add(id);
     if (hipCornerEaves.size > 0) {
@@ -583,9 +688,10 @@ export async function classifyPerimeterEdges(opts: {
       edges,
       classes,
       perFace: opts.perFace ?? null,
-      ptPerFt: solved?.ptPerFt ?? null,
+      ptPerFt,
       fieldParallel: fieldPass.parallelIds,
       fieldEave,
+      roofMasses: opts.roofMasses ?? null,
     });
     classes = reconcile.classes;
 
@@ -608,7 +714,7 @@ export async function classifyPerimeterEdges(opts: {
       "right",
     ].some((f) => opts.perFace?.[f]?.readable);
     if (!anyFaceReadable) {
-      const minRakePt = (solved?.ptPerFt ?? 20) * 8;
+      const minRakePt = (ptPerFt ?? 20) * 8;
       for (const cls of classes) {
         if (!fieldPass.parallelIds.has(cls.id)) continue;
         if (cls.edge_class === "rake") continue;
@@ -628,11 +734,15 @@ export async function classifyPerimeterEdges(opts: {
 
     // Interior geometry — computed, never traced. Stored alongside the
     // classes so the estimate path draws the same layout the evidence built.
+    // frameOverEnds: real elevation gables the reconcile rejected from
+    // pricing still DRAW as verify-tagged gable ends (decorative only).
     const layout = buildRoofLayout({
       outline: opts.outline,
       edges,
       classes,
       segments: opts.segments ?? null,
+      frameOverEnds: reconcile.frameOverEnds ?? null,
+      ptPerFt,
     });
 
     const eaves = classes.filter((c) => c.edge_class === "eave").length;
@@ -641,9 +751,12 @@ export async function classifyPerimeterEdges(opts: {
     const notes = [
       `🎯 Edge classifier (${MODEL}): ${eaves} eave / ${rakes} rake / ${unknown} unknown of ${edgeIds.length} edges; ` +
         `${downspouts.length} downspout mark(s)` +
-        (solved
-          ? `; scale ${Math.round(solved.ptPerFt * 100) / 100} pt/ft from dimension line(s) ${solved.used.join(", ")}.`
+        (solved && ptPerFt != null
+          ? scaleGate?.verdict === "corrected"
+            ? `; scale ${fmtScale(ptPerFt)} pt/ft (standard sheet scale — corrected from the dimension-line solve, see the scale note).`
+            : `; scale ${fmtScale(ptPerFt)} pt/ft from dimension line(s) ${solved.used.join(", ")}.`
           : `; no dimension value read — scale unsolved.`),
+      ...scaleNotes,
       ...fieldPass.notes,
       ...reconcile.notes,
       ...layout.notes,
@@ -654,10 +767,9 @@ export async function classifyPerimeterEdges(opts: {
       outline: opts.outline,
       classes,
       downspouts,
-      ptPerFt: solved?.ptPerFt ?? null,
-      scaleSource: solved
-        ? `dimension-line solve (${solved.used.join(", ")})`
-        : null,
+      ptPerFt,
+      scaleSource,
+      scaleGate,
       dimReads,
       ridgeHints,
       tierNote: typeof raw.tier_note === "string" ? raw.tier_note : null,
@@ -666,6 +778,7 @@ export async function classifyPerimeterEdges(opts: {
       notes,
       layout,
       droppedProjections: reconcile.droppedProjections,
+      frameOverEnds: reconcile.frameOverEnds,
     };
   } catch (e) {
     return empty(e instanceof Error ? e.message : "edge classification failed");

@@ -273,9 +273,11 @@ const nearestRep = (reps: number[], v: number): number =>
  * (kills sub-`tol` stair-steps and door-gap dimples that would otherwise inflate
  * a real ~6-corner footprint to 30-40 staircase corners), drop consecutive
  * duplicates, then collapse collinear runs. Real jogs (edges ≫ tol) survive
- * because their coordinates cluster far apart.
+ * because their coordinates cluster far apart. Exported for the perimeter
+ * repair in roof-from-vectors.ts, which needs the same sliver cleanup after
+ * snapping phantom edges onto the sheet's drawn linework.
  */
-function snapAndClean(poly: Pt[], tol: number): Pt[] {
+export function snapAndClean(poly: Pt[], tol: number): Pt[] {
   if (poly.length < 4) return poly;
   const xs = clusterReps(poly.map((p) => p.x), tol);
   const ys = clusterReps(poly.map((p) => p.y), tol);

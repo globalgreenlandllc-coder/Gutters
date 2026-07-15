@@ -20,11 +20,12 @@ import {
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
-import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
+import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
-import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
+import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
+import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
 import {
@@ -72,6 +73,10 @@ export async function POST(
 
   // Same guard pair as the upload route — a re-analyze burns the same
   // Opus ensemble as a fresh upload, and it's a one-click button.
+  // Deliberately NO credit gate/debit here: the plan already consumed a
+  // blueprint credit when it was first analyzed, so refinement re-runs
+  // are free (mirrors free same-address satellite re-runs). The rate
+  // limit above (a few per hour) is what bounds the cost.
   const isAdmin = user.role === "SUPER_ADMIN";
   if (!isAdmin) {
     const rl = await consumeLimit({
@@ -325,15 +330,13 @@ export async function POST(
         constraints,
       );
 
-      // Deterministic roof-engine gates — same wire-in as the upload path.
-      const gates = await runBlueprintGates({
-        analysis: finalAnalysis,
-        classification: stage1 && stage1.ok ? stage1.classification : null,
+      // Gate EVIDENCE extracted early (same wire-in as the upload path) —
+      // the edge takeoff's reconcile consumes roofMasses; the gates run
+      // AFTER the takeoff so its D-chip reads anchor the stated-box check.
+      const gateEvidence = await extractGateEvidence({
         pdfBase64: isPdf && finalSource.kind === "pdf" ? finalSource.base64 : null,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
       });
-      if (gates.notes.length > 0) {
-        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
-      }
       if (calibration?.promptBlock) {
         finalAnalysis.notes = [
           ...finalAnalysis.notes,
@@ -382,9 +385,31 @@ export async function POST(
             expectedAspect ? { expectedAspect } : undefined,
           );
           if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+            // Cross-validate the priced perimeter BEFORE classification —
+            // same wire-in as the upload path: phantom dimension-line pockets
+            // snap back onto the sheet's heavy linework, flattened jogs are
+            // adopted from the foundation-plan outline. Null = trace stands.
+            let outline = roof.perimeter;
+            const fpRepairSegs = vectorGeometry?.footprint?.segments;
+            const fpOutline =
+              Array.isArray(fpRepairSegs) && fpRepairSegs.length >= 4
+                ? (extractBuildingOutline(fpRepairSegs)?.polygon ?? null)
+                : null;
+            const repair = reconcileRoofPerimeter({
+              perimeter: roof.perimeter,
+              segments: rsegs,
+              footprintOutline: fpOutline,
+            });
+            if (repair) {
+              outline = repair.perimeter;
+              console.log(
+                `[/api/blueprints/${id}/reanalyze] outline repair: ${repair.snappedEdges} phantom edge(s) snapped, ` +
+                  `${repair.jogsAdopted} jog(s) adopted (${roof.perimeter.length} → ${outline.length} corners)`,
+              );
+            }
             edgeTakeoff = await classifyPerimeterEdges({
               source: finalSource,
-              outline: roof.perimeter,
+              outline,
               segments: rsegs,
               roofPageSize: {
                 widthPt: vectorGeometry?.roof?.widthPt,
@@ -398,7 +423,18 @@ export async function POST(
               // Thin framing linework — the truss-field arbiter reads
               // eave/gable straight off the sheet's truss arrays.
               fieldSegments: vectorGeometry?.roof?.fieldSegments ?? null,
+              // Roof-area schedule masses — the reconcile's beam/posts
+              // plausibility + porch-stub shortfall evidence.
+              roofMasses: gateEvidence.roofMasses.length
+                ? gateEvidence.roofMasses
+                : null,
             });
+            // Repair notes land ONLY when the repaired outline actually
+            // prices (edgeTakeoff.ok) — on the v1 fallback the panel must
+            // not claim jogs were adopted into an outline nobody uses.
+            if (repair && edgeTakeoff.ok) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...repair.notes];
+            }
             if (edgeTakeoff.notes.length > 0) {
               finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
             }
@@ -414,6 +450,24 @@ export async function POST(
             e instanceof Error ? e.message : e,
           );
         }
+      }
+
+      // Deterministic roof-engine gates — same wire-in as the upload path:
+      // runs AFTER the edge takeoff so the D-chip printed reads can anchor
+      // the stated-box cross-check (evidence scan ran early, above).
+      const gates = await runBlueprintGates({
+        analysis: finalAnalysis,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+        pdfBase64: isPdf && finalSource.kind === "pdf" ? finalSource.base64 : null,
+        evidence: gateEvidence,
+        printedDimsFt: edgeTakeoff?.ok
+          ? edgeTakeoff.dimReads
+              .map((r) => r.feet)
+              .filter((f): f is number => typeof f === "number" && Number.isFinite(f))
+          : null,
+      });
+      if (gates.notes.length > 0) {
+        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
       }
 
       const analysisJson: Record<string, unknown> = {

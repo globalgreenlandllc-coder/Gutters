@@ -248,7 +248,45 @@ them and they cross-check each other:
   the wall top corroborates a gable.
 Reconcile the roof plan, framing plan, elevations and sections; where they
 conflict, say so in the notes. Do NOT rely on the roof plan alone.
+
+WHICH SHEET TO TRUST FOR WHAT — a plan set rarely has one perfect page:
+- footprint SHAPE + printed dimensions: FOUNDATION or MAIN FLOOR plan (crisp
+  wall lines, overall dimension strings). Never take roof form from these.
+- roof FORM (hip/gable per corner): a design ROOF PLAN when present; else the
+  ROOF FRAMING/TRUSS plan (GABLE END TRUSS labels and hip-jack fans name the
+  form outright — a dense truss field is still readable evidence); else the
+  four elevations.
+- TIERS + stories + drop heights: elevations and building SECTIONS.
+Name in the notes which page served each role, so a wrong pick is visible.
 </read_all_sheets>
+
+<roof_forms>
+Know the roof vocabulary BEFORE tracing — recognize the form, then apply its
+gutter consequence instead of reasoning edge-by-edge from scratch:
+- HIP: every wall tops out at a horizontal eave; hips climb from every outside
+  corner. Gutter the FULL perimeter; zero rakes.
+- GABLE / CROSS-GABLE: ridge runs to the wall at each gable end — those end
+  walls are RAKES (no gutter); the side walls are eaves.
+- DUTCH GABLE (gablet): a hip that breaks into a small gable near the ridge —
+  the EAVE still wraps the corner below it (gutter stays); only the little
+  gablet is rake.
+- JERKINHEAD (clipped gable): a gable whose peak is hipped back — treat the
+  end wall as RAKE (the clip rarely carries gutter).
+- GAMBREL (barn) / MANSARD: gutter sits at the BOTTOM of the lower slope —
+  eaves on the long sides (gambrel) or all four sides (mansard).
+- SHED / MONOPITCH: ONE low eave edge gets the gutter; the high edge and the
+  side edges are rakes.
+- FLAT with PARAPET: no exterior gutters at all — internal drains/scuppers.
+  Do not invent eave LF on a parapet roof.
+- BUTTERFLY: drains to an internal valley — gutter/leader at the low center,
+  not the perimeter.
+- CLERESTORY / STEPPED PRAIRIE: one roof plane steps above another with a
+  window band between — BOTH tiers carry eaves; the step is not a gable.
+- SALTBOX / ASYMMETRIC GABLE: still a gable — rakes at the ends, eaves on the
+  two (unequal) sides.
+Real houses COMBINE these per wing (hip main + gable garage + shed porch is
+common). Name the form(s) you identified in the notes.
+</roof_forms>
 
 <four_faces_and_flush_default>
 Read all FOUR elevations (front, rear, left, right) on their own. NEVER derive
@@ -1506,9 +1544,13 @@ export async function blueprintFromPlanSources(
   ];
 
   try {
+    // Stale-override guard: an /admin/prompts override saved before the
+    // hip-evidence + roof-form blocks existed would silently regress every
+    // takeoff — bypass it for the code default (loud console warning).
     const blueprintSystem = await getPrompt(
       "blueprint.takeoff.system",
       BLUEPRINT_FROM_PLANS_SYSTEM,
+      { requiredMarkers: ["read_all_sheets", "roof_forms"] },
     );
     const response = await client.messages.create({
       model: MODEL,

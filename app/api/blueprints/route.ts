@@ -19,12 +19,13 @@ import {
 } from "@/lib/ai/classify-plans";
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
-import { runBlueprintGates } from "@/lib/ai/blueprint-gates";
+import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
-import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
+import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
+import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
 import {
@@ -32,6 +33,40 @@ import {
   recordSpend,
   estimateModelCostCents,
 } from "@/lib/abuse/spend-guard";
+import { getPlanPricing } from "@/lib/plan-pricing";
+
+function nextMonthBoundary(): Date {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0),
+  );
+}
+
+/** One blueprint credit per SUCCESSFUL analysis (failed runs cost the
+ *  user nothing; re-analyze of an existing plan is free). Upsert covers
+ *  the never-loaded-the-shell case the gate above already allowed for.
+ *  Never throws — a billing miss must not fail a finished analysis. */
+async function debitBlueprintCredit(userId: string, planId: string) {
+  try {
+    const freeIncluded = (await getPlanPricing()).free.blueprintCredits;
+    await db.creditWallet.upsert({
+      where: { userId },
+      create: {
+        userId,
+        included: freeIncluded,
+        used: 1,
+        bonus: 0,
+        resetsAt: nextMonthBoundary(),
+      },
+      update: { used: { increment: 1 } },
+    });
+  } catch (e) {
+    console.error(
+      `[/api/blueprints] credit debit failed (planId=${planId}) — analysis kept`,
+      e,
+    );
+  }
+}
 
 function resolveBlobToken(): string | null {
   if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
@@ -91,17 +126,36 @@ export async function POST(request: Request) {
   }
   const user = await db.user.findUnique({
     where: { clerkId },
-    select: { id: true, role: true },
+    select: { id: true, role: true, creditWallet: true },
   });
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
   // This is the most expensive action in the app (3× Opus reads + the
-  // ensemble). Guard order: request-rate limit, then the cost-aware
-  // spend gate + circuit breaker. Both fail CLOSED on limiter errors.
+  // ensemble) — it's what the credit wallet meters. Guard order:
+  // credit gate, request-rate limit, then the cost-aware spend gate +
+  // circuit breaker. Rate/spend guards fail CLOSED on limiter errors.
   const isAdmin = user.role === "SUPER_ADMIN";
   if (!isAdmin) {
+    // The wallet normally exists (getMe creates it on any session).
+    // A missing row means the user has never loaded the app shell —
+    // treat it as an untouched free allowance.
+    const cw = user.creditWallet;
+    const freeIncluded = (await getPlanPricing()).free.blueprintCredits;
+    const remaining = cw
+      ? Math.max(cw.included + cw.bonus - cw.used, 0)
+      : freeIncluded;
+    if (remaining <= 0) {
+      return NextResponse.json(
+        {
+          error:
+            "You're out of blueprint credits. Upgrade to Pro or buy a credit pack in Settings → Billing — satellite address estimates stay free.",
+          code: "NO_CREDITS",
+        },
+        { status: 402 },
+      );
+    }
     const rl = await consumeLimit({
       policy: POLICIES.blueprintAnalyze,
       key: `user:${user.id}`,
@@ -527,22 +581,14 @@ export async function POST(request: Request) {
         constraints,
       );
 
-      // Deterministic roof-engine gates (area gate + closure). Pure
-      // validation: it only appends review notes, never changes the priced
-      // geometry. Fold the flag lines into notes BEFORE the analysisJson
-      // spread so they surface in the results panel, and stash the structured
-      // flags under `_engine` for a future dedicated review UI.
-      const gates = await runBlueprintGates({
-        analysis: finalAnalysis,
-        classification: stage1 && stage1.ok ? stage1.classification : null,
+      // Gate EVIDENCE (text-layer schedule/roof-mass scan) extracted early —
+      // the edge takeoff's reconcile consumes roofMasses; the gates themselves
+      // run AFTER the takeoff so its D-chip printed reads can anchor the
+      // stated-box cross-check (one text scan, shared).
+      const gateEvidence = await extractGateEvidence({
         pdfBase64: isPdf && source.kind === "pdf" ? source.base64 : null,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
       });
-      if (gates.notes.length > 0) {
-        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
-        console.log(
-          `[/api/blueprints after()] engine gates: ${gates.reviewFlags.length} flag(s) — ${gates.notes[0]}`,
-        );
-      }
       if (calibration?.promptBlock) {
         finalAnalysis.notes = [
           ...finalAnalysis.notes,
@@ -594,9 +640,33 @@ export async function POST(request: Request) {
             expectedAspect ? { expectedAspect } : undefined,
           );
           if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+            // Cross-validate the priced perimeter BEFORE classification:
+            // phantom dimension-line pockets snap back onto the sheet's heavy
+            // roof linework, and jogs the roof trace flattened are adopted
+            // from the foundation-plan outline. Hard-gated + pure — null
+            // keeps the traced perimeter exactly as-is; a repair is noted
+            // loudly on-panel (it changes the priced LF).
+            let outline = roof.perimeter;
+            const fpRepairSegs = vectorGeometry?.footprint?.segments;
+            const fpOutline =
+              Array.isArray(fpRepairSegs) && fpRepairSegs.length >= 4
+                ? (extractBuildingOutline(fpRepairSegs)?.polygon ?? null)
+                : null;
+            const repair = reconcileRoofPerimeter({
+              perimeter: roof.perimeter,
+              segments: rsegs,
+              footprintOutline: fpOutline,
+            });
+            if (repair) {
+              outline = repair.perimeter;
+              console.log(
+                `[/api/blueprints after()] outline repair: ${repair.snappedEdges} phantom edge(s) snapped, ` +
+                  `${repair.jogsAdopted} jog(s) adopted (${roof.perimeter.length} → ${outline.length} corners)`,
+              );
+            }
             edgeTakeoff = await classifyPerimeterEdges({
               source,
-              outline: roof.perimeter,
+              outline,
               segments: rsegs,
               roofPageSize: {
                 widthPt: vectorGeometry?.roof?.widthPt,
@@ -610,7 +680,18 @@ export async function POST(request: Request) {
               // Thin framing linework — the truss-field arbiter reads
               // eave/gable straight off the sheet's truss arrays.
               fieldSegments: vectorGeometry?.roof?.fieldSegments ?? null,
+              // Roof-area schedule masses — the reconcile's beam/posts
+              // plausibility + porch-stub shortfall evidence.
+              roofMasses: gateEvidence.roofMasses.length
+                ? gateEvidence.roofMasses
+                : null,
             });
+            // Repair notes land ONLY when the repaired outline actually
+            // prices (edgeTakeoff.ok) — on the v1 fallback the panel must
+            // not claim jogs were adopted into an outline nobody uses.
+            if (repair && edgeTakeoff.ok) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...repair.notes];
+            }
             if (edgeTakeoff.notes.length > 0) {
               finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
             }
@@ -627,6 +708,29 @@ export async function POST(request: Request) {
             e instanceof Error ? e.message : e,
           );
         }
+      }
+
+      // Deterministic roof-engine gates (area gate + closure). Pure
+      // validation: it only appends review notes, never changes the priced
+      // geometry. Runs AFTER the edge takeoff so the classifier's D-chip
+      // printed reads can anchor the stated-box cross-check on sets that
+      // outline all their text (the evidence scan itself ran early, above).
+      const gates = await runBlueprintGates({
+        analysis: finalAnalysis,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+        pdfBase64: isPdf && source.kind === "pdf" ? source.base64 : null,
+        evidence: gateEvidence,
+        printedDimsFt: edgeTakeoff?.ok
+          ? edgeTakeoff.dimReads
+              .map((r) => r.feet)
+              .filter((f): f is number => typeof f === "number" && Number.isFinite(f))
+          : null,
+      });
+      if (gates.notes.length > 0) {
+        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
+        console.log(
+          `[/api/blueprints after()] engine gates: ${gates.reviewFlags.length} flag(s) — ${gates.notes[0]}`,
+        );
       }
 
       // Stash the classifier output alongside the geometry under
@@ -698,6 +802,11 @@ export async function POST(request: Request) {
           durationMs: totalDurationMs,
         },
       });
+
+      // Charge the blueprint credit only now that the analysis landed.
+      if (!isAdmin) {
+        await debitBlueprintCredit(user.id, analysis.id);
+      }
 
       // Ledger the ACTUAL token-derived cost (floored at the flat
       // estimate — the per-face/Gemini/edge calls aren't in the totals).

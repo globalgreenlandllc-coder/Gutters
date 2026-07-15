@@ -273,3 +273,60 @@ function chip(
     `<text x="${x.toFixed(1)}" y="${(y + 8).toFixed(1)}" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="${color}" text-anchor="middle">${label}</text>`,
   );
 }
+
+/**
+ * Deterministic downspout marks from the sheet's own TEXT layer.
+ *
+ * Plans print "D.S." at the roof edge wherever a downspout drops. The edge
+ * classifier reads them with vision, but a dense sheet can defeat that read
+ * (Woodinville: zero marks seen, downspouts fell back to the 1-per-40 ft
+ * rule while the foundation plan printed them plainly). The extracted text
+ * items carry exact coordinates in the SAME pt space as the outline — so
+ * when the vision channel comes back empty, snap each "D.S." string to the
+ * nearest outline edge instead of guessing.
+ *
+ * Only labels within `maxFt` (default 10 ft) of an edge count — a schedule
+ * or legend entry ("D.S." in a key box) is far from the perimeter and is
+ * ignored. Pure — node-testable.
+ */
+export function downspoutMarksFromLabels(
+  labels: readonly { s: string; x: number; y: number }[] | null | undefined,
+  edges: readonly OutlineEdge[],
+  ptPerFt: number | null | undefined,
+  maxFt = 10,
+): { edge_id: string; frac: number }[] {
+  if (!labels || labels.length === 0 || edges.length === 0) return [];
+  const tolPt = ptPerFt && ptPerFt > 0 ? maxFt * ptPerFt : 40;
+  const minGapPt = ptPerFt && ptPerFt > 0 ? 4 * ptPerFt : 16;
+  const out: { edge_id: string; frac: number; x: number; y: number }[] = [];
+  for (const l of labels) {
+    if (!/^D\.?S\.?$/i.test((l.s ?? "").trim())) continue;
+    let best: { edge_id: string; frac: number; dist: number } | null = null;
+    for (const e of edges) {
+      if (e.lenPt < 1e-6) continue;
+      const dx = e.p2.x - e.p1.x;
+      const dy = e.p2.y - e.p1.y;
+      const t = Math.max(
+        0,
+        Math.min(1, ((l.x - e.p1.x) * dx + (l.y - e.p1.y) * dy) / (e.lenPt * e.lenPt)),
+      );
+      const px = e.p1.x + dx * t;
+      const py = e.p1.y + dy * t;
+      const dist = Math.hypot(l.x - px, l.y - py);
+      if (dist <= tolPt && (!best || dist < best.dist)) {
+        best = { edge_id: e.id, frac: t, dist };
+      }
+    }
+    if (!best) continue;
+    // Dedupe: the same printed mark often extracts as two nearby items.
+    const dup = out.some(
+      (o) => Math.hypot(o.x - l.x, o.y - l.y) < minGapPt,
+    );
+    if (!dup) out.push({ edge_id: best.edge_id, frac: best.frac, x: l.x, y: l.y });
+    if (out.length >= 40) break;
+  }
+  return out.map(({ edge_id, frac }) => ({
+    edge_id,
+    frac: Math.max(0.05, Math.min(0.95, frac)),
+  }));
+}

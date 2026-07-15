@@ -5,7 +5,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateBlueprintGeometry, parseScheduleAreaFt2, parseRoofMasses } from "./to-masses.ts";
+import {
+  validateBlueprintGeometry,
+  parseScheduleAreaFt2,
+  parseRoofMasses,
+  parseOverallDimsFt,
+  crossCheckStatedBox,
+} from "./to-masses.ts";
 import type { BlueprintAnalysis, BlueprintRun } from "./blueprint-from-plans.ts";
 import type { PlanClassification } from "./classify-plans.ts";
 
@@ -243,4 +249,119 @@ test("UNDERSIZED trace vs width×depth box keeps the under-coverage verdict", ()
   assert.ok(ag && ag.severity === "warn");
   assert.ok(/may not cover/.test(ag!.message), "under-coverage verdict preserved");
   assert.ok(!/OVERSIZED/.test(ag!.message));
+});
+
+// ---------------------------------------------------------------------------
+// crossCheckStatedBox — the stated width×depth is a VISION read; printed
+// dimension evidence (text overalls / dim-chip reads) corrects it before it
+// becomes the area-gate baseline. Real failure: Woodinville stated 64×71.5
+// (4576 sf) vs printed overalls 64'-0"/51'-0" → a good trace flagged 35% off.
+// ---------------------------------------------------------------------------
+
+test("crossCheckStatedBox: Woodinville — misread depth 71.5' corrected to the printed 51' (baseline 3264)", () => {
+  const c = crossCheckStatedBox(64, 71.5, [64, 51]);
+  assert.equal(c.corrected, true);
+  assert.equal(c.widthFt, 64);
+  assert.equal(c.depthFt, 51);
+  assert.equal(c.widthFt * c.depthFt, 3264);
+  assert.ok(c.note && /printed 64' × 51' overalls/.test(c.note), "note cites the printed pair");
+  assert.ok(/vision-read depth 71\.5' looked wrong/.test(c.note!), "note names the bad axis + value");
+});
+
+test("crossCheckStatedBox: agreeing stated box is untouched (incl. a 90° width↔depth swap)", () => {
+  assert.deepEqual(crossCheckStatedBox(64, 51, [64, 51]), { widthFt: 64, depthFt: 51, corrected: false, note: null });
+  // Reads pair to the SWAPPED axes — greedy anchoring is orientation-agnostic.
+  assert.equal(crossCheckStatedBox(51, 64, [64, 51]).corrected, false);
+});
+
+test("crossCheckStatedBox: conservative gates — one read, no anchor, or junk reads keep the stated box", () => {
+  // A single read can't both anchor the pairing and contradict an axis.
+  assert.equal(crossCheckStatedBox(64, 71.5, [64]).corrected, false);
+  // Neither axis agrees with any read → the reads aren't this box's overalls.
+  assert.equal(crossCheckStatedBox(100, 30, [64, 51]).corrected, false);
+  // A porch/garage sub-dim (24') is not building-scale next to a 50×52 box —
+  // it must not hijack the depth even though the 51' read anchors the width.
+  assert.equal(crossCheckStatedBox(50, 52, [51, 24]).corrected, false);
+  // No reads at all.
+  assert.equal(crossCheckStatedBox(64, 71.5, []).corrected, false);
+  assert.equal(crossCheckStatedBox(64, 71.5, null).corrected, false);
+});
+
+test("crossCheckStatedBox: out-of-band values (lot line, detail dims) are filtered before pairing", () => {
+  // 640' and 6' are outside 20-250; 120' is not within 0.6-1.4× of either axis
+  // (a lot line) — the surviving {64, 51} pair still corrects the depth.
+  const c = crossCheckStatedBox(64, 71.5, [640, 120, 64, 51, 6]);
+  assert.equal(c.corrected, true);
+  assert.equal(c.widthFt, 64);
+  assert.equal(c.depthFt, 51);
+  // Near-duplicate overalls (the same chain printed twice) dedupe first.
+  const d = crossCheckStatedBox(64, 71.5, [64.2, 64, 51]);
+  assert.equal(d.depthFt, 51);
+});
+
+test("crossCheckStatedBox: a within-tolerance depth read does not fire (15% is the contradiction bar)", () => {
+  // Stated 64×45 vs printed {64, 51}: depth is 11.8% off the 51' read → agree.
+  assert.equal(crossCheckStatedBox(64, 45, [64, 51]).corrected, false);
+});
+
+test("parseOverallDimsFt: reads printed OVERALL callouts only, both word orders, feet-inches", () => {
+  assert.deepEqual(parseOverallDimsFt(`64'-0" OVERALL ... 51'-0" OVERALL`), [64, 51]);
+  assert.deepEqual(parseOverallDimsFt("OVERALL: 64'-6\""), [64.5]);
+  // No OVERALL keyword → not an overall (interior dims / lot lines can't leak).
+  assert.deepEqual(parseOverallDimsFt(`24'-0" GARAGE 120'-0" PROPERTY LINE`), []);
+  // Out of the 20-250 ft building band.
+  assert.deepEqual(parseOverallDimsFt(`12'-0" OVERALL 264'-0" OVERALL`), []);
+  assert.deepEqual(parseOverallDimsFt(""), []);
+  // Duplicate callouts (same overall on two sheets' worth of text) dedupe.
+  assert.deepEqual(parseOverallDimsFt(`64'-0" OVERALL 64'-0" OVERALL`), [64]);
+});
+
+test("area-gate baseline: printed overalls fix the phantom 'may not cover' flag (Woodinville-shaped)", () => {
+  // Footprint 128×102 px @ 0.5 ft/px = 64×51 ft → a 3264 sf trace envelope.
+  // Stage-1 vision read the depth as 71.5' → stated box 4576 sf → 28.7% under
+  // → warn FLAG on a perfectly good trace.
+  const rect = [
+    { x: 0, y: 0 },
+    { x: 128, y: 0 },
+    { x: 128, y: 102 },
+    { x: 0, y: 102 },
+  ];
+  const before = validateBlueprintGeometry(analysis({ building_footprint: rect }), classification(64, 71.5));
+  const agBefore = before.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(agBefore && agBefore.severity === "warn", "without evidence the phantom box flags");
+  assert.ok(/may not cover/.test(agBefore!.message));
+
+  // With the printed overalls {64, 51}, the baseline becomes 64×51 = 3264 and
+  // the gate passes — annotated so the contractor sees WHY the box changed.
+  const after = validateBlueprintGeometry(analysis({ building_footprint: rect }), classification(64, 71.5), {
+    printedDimsFt: [64, 51],
+  });
+  const ag = after.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "info", "corrected baseline passes the gate");
+  assert.ok(/3264 sf width×depth box/.test(ag!.message), "baseline is the printed 64×51 box");
+  assert.ok(/printed 64' × 51' overalls/.test(ag!.message), "note cites the printed overalls");
+  assert.ok(/vision-read depth 71\.5' looked wrong/.test(ag!.message), "note names the misread axis");
+  // Flag-only: geometry, edges, and scale are byte-identical to the uncorrected run.
+  assert.equal(after.scaleFtPerPx, before.scaleFtPerPx);
+  assert.deepEqual(after.mass!.outline, before.mass!.outline);
+  assert.deepEqual(after.mass!.edges, before.mass!.edges);
+});
+
+test("area-gate baseline: agreeing evidence leaves the stated box and message unchanged", () => {
+  const opts = { printedDimsFt: [50, 40] };
+  const v = validateBlueprintGeometry(analysis(), classification(50, 40), opts); // 2000 ft² stated, trace 2000
+  const ag = v.reviewFlags.find((f) => f.code === "area_gate");
+  assert.ok(ag && ag.severity === "info");
+  assert.ok(!/looked wrong/.test(ag!.message), "no correction note when the box agrees");
+});
+
+test("area-gate baseline: no-scale path — a corrected box silences the shape flag LOUDLY, not silently", () => {
+  const noScale = analysis({ scale: { feet_per_unit: null, unit: "unknown", source: "test" } });
+  // Footprint 100×80 px (elongation 1.25); vision box 50×25 (elongation 2.0)
+  // would shape-flag, but the printed {50, 40} overalls correct the depth →
+  // no shape flag, and the no_schedule line carries the annotation.
+  const v = validateBlueprintGeometry(noScale, classification(50, 25), { printedDimsFt: [50, 40] });
+  assert.ok(!v.reviewFlags.some((f) => f.code === "area_gate"), "corrected proportions pass the shape check");
+  const ns = v.reviewFlags.find((f) => f.code === "no_schedule");
+  assert.ok(ns && /printed 50' × 40' overalls/.test(ns.message), "the correction is still noted");
 });

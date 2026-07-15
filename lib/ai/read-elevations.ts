@@ -179,6 +179,20 @@ projecting — flag the cue, but still leave the confirmation to the side view.
 Never invent a projection to add gutter.
 </projection_default>
 
+<porch_cover_form>
+A porch / patio / entry COVER has its OWN little roof, and its form decides
+which of the cover's edges carry gutter — so for every gable you report with
+kind porch / patio / entry, also read the cover's roof form (cover_form):
+  • front_gabled — a peaked triangle faces you on the cover's outer face
+    (two rakes down to the corners): its two SIDE returns get the gutters.
+  • hipped — a horizontal eave wraps the cover with hip lines climbing
+    inward (no triangle): the gutter wraps all three open sides.
+  • shed — a single low monopitch edge (the cover slopes one way): the
+    gutter hangs on the low edge only.
+Set cover_form "unknown" when you can't tell, and leave it unset on
+non-cover gables (main / garage / dormer).
+</porch_cover_form>
+
 <set_back_gable>
 A gable normally starts AT the eave — its base sits on the eave/fascia line. But
 a gable can be SET BACK: its base reads a few feet ABOVE the eave line, with a
@@ -288,6 +302,12 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
             eave_condition_guess: { type: "string", enum: ["projecting", "roof_mounted", "flush", "unknown"] },
             supported_on: { type: "string", enum: ["wall", "posts", "beam", "unknown"] },
             shows_projection_cue: { type: "boolean" },
+            cover_form: {
+              type: "string",
+              enum: ["front_gabled", "hipped", "shed", "unknown"],
+              description:
+                "For porch/patio/entry covers only — the cover's OWN roof form: 'front_gabled' = peaked triangle on the outer face (side returns get gutters); 'hipped' = horizontal eave wraps with inward hip lines (gutter wraps 3 sides); 'shed' = single low monopitch edge (gutter on the low edge only). See <porch_cover_form>.",
+            },
             set_back_ft: {
               type: ["number", "null"],
               description:
@@ -389,7 +409,14 @@ export async function readElevationFace(
     if (!apiKey) return { reading: emptyFace(spec.face, "no Anthropic API key"), usage: zero };
 
     const client = new Anthropic({ apiKey });
-    const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM);
+    // Engine-critical vocabulary the prompt MUST teach: an /admin/prompts
+    // override saved before these blocks existed produces faces with no
+    // eave-in-front / stories / hip data — the reconcile then can't protect
+    // gutter under frame-over gables (the Woodinville "no eave-in-front
+    // data" warnings). A stale override is bypassed for the code default.
+    const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM, {
+      requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form"],
+    });
     const response = await client.messages.create({
       model: MODEL,
       // Sized for the WORST face, not the typical one: a 20-gable elevation

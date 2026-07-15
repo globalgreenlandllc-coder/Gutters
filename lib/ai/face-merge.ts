@@ -39,6 +39,11 @@ export type FaceGableRead = {
   /** A positive depth cue visible ON THIS face (a "roof beyond" line, a porch at
    *  a different plane, posts/beam under an entry gable). Not a confirmation. */
   shows_projection_cue: boolean;
+  /** For porch/patio/entry covers: the cover's OWN roof form, read off the
+   *  elevation — decides which of the cover's edges carry gutter
+   *  (front_gabled = side returns; hipped = wraps 3 sides; shed = low edge
+   *  only). Optional; absent on non-cover gables and older reads. */
+  cover_form?: "front_gabled" | "hipped" | "shed" | "unknown" | null;
   /** SET-BACK / dormer signal (Case 2): how far the gable base sits BEHIND the
    *  eave, read from how far its base rises ABOVE the eave line in this elevation
    *  (at eave level ⇒ 0). Drives Gable.setbackFt so the engine draws it as a
@@ -111,19 +116,63 @@ export function isUnanimousHip(
     | null
     | undefined,
 ): boolean {
-  if (!perFace) return false;
-  const readable = Object.values(perFace).filter(
-    (r): r is FaceReadingRaw => !!r && r.readable !== false,
+  return explainUnanimousHip(perFace).unanimous;
+}
+
+/**
+ * isUnanimousHip with the REASON it failed — so a skipped hip closure is a
+ * diagnosis on the takeoff panel, not a silent no-op.
+ *
+ * What counts as gable evidence (and what deliberately does NOT):
+ * - a `gables[]` entry with `is_hip_end:true` is NOT a gable — it's a hip the
+ *   reader recorded through the gable channel on a second look;
+ * - `gable_count` is discounted by the hip-end entries visible in the array
+ *   (a truncated array can't hide a real gable behind the discount);
+ * - `continuous_eave:false` does NOT veto: a stepped multi-tier hip
+ *   (clerestory prairie roofs — the 1168G BIDSET) honestly reads a broken
+ *   eave line while still having zero gables and an eave on every wall;
+ * - `roof_form` "gabled"/"mixed" DOES veto even with an empty gables array —
+ *   a contradictory read stays conservative.
+ */
+export function explainUnanimousHip(
+  perFace:
+    | Partial<Record<string, FaceReadingRaw | undefined>>
+    | null
+    | undefined,
+): { unanimous: boolean; reason: string | null } {
+  if (!perFace) {
+    return { unanimous: false, reason: "no per-face elevation reads stored" };
+  }
+  const readable = Object.entries(perFace).filter(
+    (e): e is [string, FaceReadingRaw] => !!e[1] && e[1].readable !== false,
   );
-  return (
-    readable.length >= 3 &&
-    readable.every(
-      (r) =>
-        r.continuous_eave !== false &&
-        !(typeof r.gable_count === "number" && r.gable_count > 0) &&
-        (r.gables?.length ?? 0) === 0,
-    )
-  );
+  if (readable.length < 3) {
+    return {
+      unanimous: false,
+      reason: `only ${readable.length} readable elevation face(s) — need 3+ to rule out an unseen gable`,
+    };
+  }
+  for (const [face, r] of readable) {
+    if (r.roof_form === "gabled" || r.roof_form === "mixed") {
+      return {
+        unanimous: false,
+        reason: `${face} face reads roof_form "${r.roof_form}"`,
+      };
+    }
+    const entries = Array.isArray(r.gables) ? r.gables.filter(Boolean) : null;
+    const hipEnds = entries ? entries.filter((g) => g.is_hip_end === true).length : 0;
+    const listed = entries ? entries.length - hipEnds : 0;
+    const counted =
+      typeof r.gable_count === "number" ? Math.max(0, r.gable_count - hipEnds) : 0;
+    const gableEvidence = Math.max(listed, entries ? counted : 0);
+    if (gableEvidence > 0 || (!entries && typeof r.gable_count === "number" && r.gable_count > 0)) {
+      return {
+        unanimous: false,
+        reason: `${face} face reads ${Math.max(gableEvidence, r.gable_count ?? 0)} gable(s)`,
+      };
+    }
+  }
+  return { unanimous: true, reason: null };
 }
 
 export type MergedFaces = {
@@ -191,7 +240,14 @@ export function detectAsymmetricJogs(
   return out;
 }
 
-export function mergeFaceReadings(reads: FaceReadingRaw[], expectedFaces: string[]): MergedFaces {
+export function mergeFaceReadings(
+  reads: FaceReadingRaw[],
+  expectedFaces: string[],
+  /** Roof-area schedule masses when the sheet printed one — lets a
+   *  projection-cue flag state the estimated side-eave LF (area ÷ span × 2)
+   *  instead of a bare "no gutter added". Optional; flags stay note-only. */
+  roofMasses?: readonly { label: string; areaFt2: number }[] | null,
+): MergedFaces {
   const per_face: Record<string, FaceReadingRaw> = {};
   for (const r of reads) per_face[r.face] = r;
 
@@ -252,13 +308,40 @@ export function mergeFaceReadings(reads: FaceReadingRaw[], expectedFaces: string
     );
   }
 
-  // Projection cues → confirm-before-guttering flag (default flush).
+  // Projection cues → confirm-before-guttering flag. Default is still flush
+  // (no gutter added on a guess), but when the roof-area schedule NAMES the
+  // cued porch/patio mass, the flag states the measurable side-eave LF
+  // (depth = area ÷ span, two side returns) instead of a bare "no gutter" —
+  // an estimate to verify, never a silent price change (the LF itself is
+  // synthesized downstream from the same schedule, see projection-lf.ts).
+  const massForCue = (kind: string): { label: string; areaFt2: number } | null => {
+    const k = normKind(kind);
+    if (!JOG_KINDS.has(kind) || k === "garage") return null; // porch/patio/entry cues only
+    const wanted = kind === "entry" ? ["entry", "porch"] : [k];
+    let best: { label: string; areaFt2: number } | null = null;
+    for (const m of roofMasses ?? []) {
+      const label = (m.label ?? "").toLowerCase();
+      if (!label) continue;
+      if (wanted.some((w) => label.includes(w) || w.includes(label))) {
+        if (!best || m.areaFt2 > best.areaFt2) best = m;
+      }
+    }
+    return best;
+  };
   for (const r of reads) {
     if (!r.readable) continue;
     const cued = (r.gables ?? []).filter((g) => g.shows_projection_cue || g.eave_condition_guess === "projecting");
     for (const g of cued) {
       const perp = OPPOSITE[r.face] ? `${OPPOSITE[r.face]}/side` : "side";
       const carry = g.supported_on === "posts" || g.supported_on === "beam" ? ` (on ${g.supported_on} — likely a projecting porch)` : "";
+      const mass = g.span_ft != null && g.span_ft >= 6 && g.span_ft <= 120 ? massForCue(g.kind) : null;
+      const depthFt = mass ? mass.areaFt2 / g.span_ft! : null;
+      if (mass && depthFt != null && depthFt >= 4 && depthFt <= 60) {
+        flags.push(
+          `Gable '${g.id}' on the ${r.face} elevation shows a projection cue${carry} — the roof schedule's ${Math.round(mass.areaFt2)} sf ÷ its ${Math.round(g.span_ft!)} ft span ≈ ${Math.round(depthFt)} ft deep, so its two side returns carry ≈${Math.round(2 * depthFt)} LF of gutter (estimated — verify). Confirm the depth from the ${perp} elevation or roof plan.`,
+        );
+        continue;
+      }
       flags.push(`Gable '${g.id}' on the ${r.face} elevation shows a projection cue${carry} — confirm its depth from the ${perp} elevation or roof plan before adding side-eave gutter. Defaulted to FLUSH (no gutter added).`);
     }
   }

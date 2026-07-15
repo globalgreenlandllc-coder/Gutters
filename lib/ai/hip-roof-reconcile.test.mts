@@ -185,3 +185,69 @@ test("deriveHipCorners: a valley off an INSIDE (reflex) corner is ignored", () =
   const hint = deriveHipCorners({ outline: L, edges, segments, ptPerFt: PT_PER_FT });
   assert.equal(hint.size, 0, "valley at a reflex corner produces no eave hint");
 });
+
+test("hip: the HIP VETO fires before the beam gate — a beam-read garage 'gable' on a hipped face never removes the gutter", () => {
+  // Non-regression for the Woodinville beam-gate change: on a 1168G-shaped
+  // hip home a phantom 'garage gable on beams' whose span matches the front
+  // wall must NOT become a rake (the beam gate would remove real LF) — the
+  // hip veto still wins, and nothing is recorded or dropped.
+  const edges = outlineEdges(RECT);
+  const front = hipFace("front", {
+    gable_count: 1,
+    gables: [
+      {
+        id: "g0",
+        kind: "garage",
+        span_ft: 40, // == the full 40ft front wall (wall ≈ span)
+        pitch: null,
+        position_frac: 0.5,
+        eave_condition_guess: "flush",
+        supported_on: "beam",
+        shows_projection_cue: false,
+        set_back_ft: 0,
+        notes: "",
+      },
+    ],
+  });
+  const r = reconcileEdgeClasses({
+    outline: RECT,
+    edges,
+    classes: outlineEdges(RECT).map((e) => ({
+      id: e.id,
+      edge_class: "eave" as const,
+      tier: null,
+      feature: null,
+      evidence: [],
+    })),
+    perFace: { front, rear: hipFace("rear"), left: hipFace("left"), right: hipFace("right") },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E3"), "eave", "hip veto keeps the front gutter");
+  assert.ok(r.notes.some((n) => /HIP end/i.test(n)), "the veto is surfaced");
+  assert.equal(r.droppedProjections.length, 0, "nothing routed off-outline");
+  assert.equal(r.frameOverEnds.length, 0, "no phantom gable recorded for drawing");
+});
+
+test("hip: the continuous-eave demote still restores mis-tagged rakes and records no frame-over ends", () => {
+  // The original 1168G shape must be byte-for-byte unaffected by the new
+  // frame-over channel: demotes happen, frameOverEnds stays empty.
+  const edges = outlineEdges(RECT);
+  const r = reconcileEdgeClasses({
+    outline: RECT,
+    edges,
+    classes: misclassified(),
+    perFace: {
+      front: hipFace("front"),
+      rear: hipFace("rear"),
+      left: hipFace("left"),
+      right: hipFace("right"),
+    },
+    ptPerFt: PT_PER_FT,
+  });
+  const cls = new Map(r.classes.map((c) => [c.id, c.edge_class]));
+  assert.equal(cls.get("E2"), "eave");
+  assert.equal(cls.get("E3"), "eave");
+  assert.equal(r.frameOverEnds.length, 0);
+  assert.equal(r.droppedProjections.length, 0);
+});

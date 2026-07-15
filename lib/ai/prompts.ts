@@ -78,16 +78,44 @@ export const PROMPT_META: Record<
  * Resolve a prompt: DB override → code default. Never throws — a DB error
  * falls back to the hardcoded default so an estimate can't fail just
  * because the prompt store is unreachable.
+ *
+ * `requiredMarkers`: substrings the engine DEPENDS on the prompt teaching
+ * (field names like "eave_passes_in_front", block tags like "<stories>").
+ * An override saved before those blocks existed silently degrades every
+ * read it drives — the Woodinville run lost all eave-in-front + stories
+ * data to a stale elevation override. When any marker is missing, the
+ * override is treated as STALE: the code default is used and the caller
+ * gets `stale: true` to surface it ("reset the override at /admin/prompts").
  */
 export async function getPrompt(
   key: PromptKey,
   fallback: string,
+  opts?: { requiredMarkers?: string[] },
 ): Promise<string> {
+  return (await getPromptWithMeta(key, fallback, opts)).content;
+}
+
+export async function getPromptWithMeta(
+  key: PromptKey,
+  fallback: string,
+  opts?: { requiredMarkers?: string[] },
+): Promise<{ content: string; source: "override" | "default"; stale: boolean }> {
   try {
     const row = await db.promptTemplate.findUnique({ where: { key } });
-    if (row && row.content.trim().length > 0) return row.content;
+    if (row && row.content.trim().length > 0) {
+      const missing = (opts?.requiredMarkers ?? []).filter(
+        (m) => !row.content.includes(m),
+      );
+      if (missing.length === 0) {
+        return { content: row.content, source: "override", stale: false };
+      }
+      console.warn(
+        `[prompts] ${key} override is STALE (missing: ${missing.join(", ")}) — using the code default. Re-save or reset it at /admin/prompts.`,
+      );
+      return { content: fallback, source: "default", stale: true };
+    }
   } catch (e) {
     console.warn(`[prompts] getPrompt(${key}) — using code default:`, e);
   }
-  return fallback;
+  return { content: fallback, source: "default", stale: false };
 }

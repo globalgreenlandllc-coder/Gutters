@@ -12,10 +12,11 @@ import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
-import { isUnanimousHip } from "@/lib/ai/face-merge";
+import { explainUnanimousHip } from "@/lib/ai/face-merge";
 import { polygonCloses } from "@/lib/roof-engine";
 import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
-import { outlineEdges } from "@/lib/ai/plan-overlay";
+import { outlineEdges, downspoutMarksFromLabels } from "@/lib/ai/plan-overlay";
+import { crossCheckScaleAgainstOveralls } from "@/lib/ai/dim-scale";
 import { edgeTakeoffEnabled, type EdgeClassification } from "@/lib/ai/classify-edges";
 import type { RoofLayout } from "@/lib/ai/roof-layout";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
@@ -141,22 +142,23 @@ export async function runEstimate(
   const userId = me.user.id;
   const norm = trimmed.toLowerCase();
   const since = new Date(Date.now() - TWENTY_FOUR_HOURS);
-  // SUPER_ADMIN bypasses both credit accounting and the same-address
-  // daily cap. They're internal users running QA, demos, and bug-repros
-  // — counting those against a 12/month wallet makes the tool unusable
-  // for the team that owns it.
+  // SUPER_ADMIN bypasses the same-address daily cap and the rate limits
+  // — internal users running QA, demos, and bug-repros.
   const isAdmin = me.user.role === "SUPER_ADMIN";
 
+  // Address estimates are FREE on every plan — the credit wallet only
+  // meters blueprint takeoffs. `remaining` still reports the blueprint-
+  // credit balance so callers can display it.
   const totalCredits = me.credits.included + me.credits.bonus;
-  const remainingBefore = isAdmin
+  const remainingCredits = isAdmin
     ? Number.POSITIVE_INFINITY
     : Math.max(totalCredits - me.credits.used, 0);
 
-  // Abuse guards, cheapest first: request-rate limit (10/hr, 30/day per
-  // user — on top of the credit wallet, which a stolen session or bought
-  // account could otherwise burn through in minutes), then the cost-aware
-  // spend gate (per-user daily cents + global circuit breaker). Both
-  // fail CLOSED — this action spends real money on Solar/SAM-2/GPT-4o.
+  // With no wallet gate, the abuse rails are what actually bound free
+  // usage. Cheapest first: request-rate limit (10/hr, 30/day per user),
+  // then the cost-aware spend gate (per-user daily cents + global
+  // circuit breaker). Both fail CLOSED — this action spends real money
+  // on Solar/SAM-2/GPT-4o.
   if (!isAdmin) {
     const rl = await consumeLimit({
       policy: POLICIES.estimateRun,
@@ -164,7 +166,7 @@ export async function runEstimate(
       context: { userId, route: "runEstimate" },
     });
     if (!rl.ok) {
-      return { ok: false, reason: rl.reason, remaining: remainingBefore };
+      return { ok: false, reason: rl.reason, remaining: remainingCredits };
     }
   }
   const spend = await checkAiSpendAllowed({
@@ -174,7 +176,7 @@ export async function runEstimate(
     isAdmin,
   });
   if (!spend.ok) {
-    return { ok: false, reason: spend.reason, remaining: remainingBefore };
+    return { ok: false, reason: spend.reason, remaining: remainingCredits };
   }
 
   const recentSame = await db.estimateRun.count({
@@ -185,18 +187,11 @@ export async function runEstimate(
     return {
       ok: false,
       reason: `This address has been re-run ${SAME_ADDRESS_DAILY_LIMIT} times in the last 24 hours.`,
-      remaining: remainingBefore,
+      remaining: remainingCredits,
     };
   }
 
   const isReused = recentSame > 0;
-  if (!isAdmin && !isReused && remainingBefore <= 0) {
-    return {
-      ok: false,
-      reason: "Out of credits — top up or wait until your next renewal.",
-      remaining: 0,
-    };
-  }
 
   let result: EstimateResult;
   try {
@@ -228,36 +223,23 @@ export async function runEstimate(
         errorMessage: message,
       },
     });
-    return { ok: false, reason: message, remaining: remainingBefore };
+    return { ok: false, reason: message, remaining: remainingCredits };
   }
 
-  // Admins still log the run (we want the audit trail + dashboards) but
-  // creditConsumed is always false so the wallet stays untouched.
-  const consumesCredit = !isReused && !isAdmin;
-
-  const writes: Prisma.PrismaPromise<unknown>[] = [
-    db.estimateRun.create({
-      data: {
-        userId,
-        address: result.geocoded.formatted,
-        addressNormalized: norm,
-        status: "SUCCEEDED",
-        creditConsumed: consumesCredit,
-        reused: isReused,
-        durationMs: result.durationMs,
-        measurements: result.measurements as unknown as Prisma.InputJsonValue,
-      },
-    }),
-  ];
-  if (consumesCredit) {
-    writes.push(
-      db.creditWallet.update({
-        where: { userId },
-        data: { used: { increment: 1 } },
-      }),
-    );
-  }
-  const [created] = (await db.$transaction(writes)) as [{ id: string }];
+  // Every run is logged (audit trail + dashboards) but the wallet is
+  // never touched — address estimates don't consume blueprint credits.
+  const created = await db.estimateRun.create({
+    data: {
+      userId,
+      address: result.geocoded.formatted,
+      addressNormalized: norm,
+      status: "SUCCEEDED",
+      creditConsumed: false,
+      reused: isReused,
+      durationMs: result.durationMs,
+      measurements: result.measurements as unknown as Prisma.InputJsonValue,
+    },
+  });
 
   await recordSpend({
     userId,
@@ -266,15 +248,11 @@ export async function runEstimate(
     meta: { address: norm, reused: isReused, runId: created.id },
   });
 
-  const remainingAfter = consumesCredit
-    ? Math.max(remainingBefore - 1, 0)
-    : remainingBefore;
-
   return {
     ok: true,
     result,
     reused: isReused,
-    remaining: remainingAfter,
+    remaining: remainingCredits,
     runId: created.id,
   };
 }
@@ -286,7 +264,9 @@ export async function runEstimate(
  * a proposal from a plan exactly the way they would from a satellite-
  * derived estimate.
  *
- * No credit consumed — the blueprint pipeline is free per product call.
+ * No credit consumed HERE — the blueprint credit is charged when the
+ * plan is analyzed (POST /api/blueprints, on success). Loading the
+ * saved analysis into the estimate view is free, like a re-run.
  */
 export async function runEstimateFromPlan(
   planId: string,
@@ -377,13 +357,84 @@ export async function runEstimateFromPlan(
         stash.classes.some((c) => c.edge_class === "eave")
       ) {
         const edges = outlineEdges(stash.outline);
+        // D.S. union: the sheet's own extracted text layer often has the
+        // printed "D.S." strings with exact coordinates (same pt space as
+        // the outline — both come from the footprint page). A dense sheet
+        // can defeat the vision count PARTWAY (not just entirely), so text
+        // marks are UNIONED with the vision marks: any printed mark farther
+        // than ~4 ft from every vision mark is added — vision marks are
+        // never moved or removed. Beats the 1-per-40 ft synthesis either way.
+        let dsMarks = stash.downspouts ?? [];
+        let dsTextNote: string | null = null;
+        {
+          const fpLabels = (
+            row.analysisJson as {
+              _vectorGeometry?: {
+                footprint?: { labels?: { s: string; x: number; y: number }[] };
+              };
+            } | null
+          )?._vectorGeometry?.footprint?.labels;
+          const textMarks = downspoutMarksFromLabels(fpLabels, edges, stash.ptPerFt);
+          if (textMarks.length > 0) {
+            const at = (m: { edge_id: string; frac: number }) => {
+              const e = edges.find((x) => x.id === m.edge_id);
+              return e
+                ? {
+                    x: e.p1.x + (e.p2.x - e.p1.x) * m.frac,
+                    y: e.p1.y + (e.p2.y - e.p1.y) * m.frac,
+                  }
+                : null;
+            };
+            const minGapPt = stash.ptPerFt * 4; // ~4 ft — same spirit as the label MERGE gap
+            const existing = dsMarks
+              .map(at)
+              .filter((p): p is { x: number; y: number } => p !== null);
+            const added = textMarks.filter((m) => {
+              const p = at(m);
+              return (
+                !!p &&
+                existing.every((q) => Math.hypot(p.x - q.x, p.y - q.y) > minGapPt)
+              );
+            });
+            if (added.length > 0) {
+              const sawBefore = dsMarks.length;
+              dsMarks = [...dsMarks, ...added];
+              dsTextNote =
+                sawBefore === 0
+                  ? `💧 ${added.length} "D.S." mark(s) read from the plan's own text layer (the vision pass saw none) — downspouts placed at the printed marks, not the 1-per-40 ft rule. Verify count against the roof plan.`
+                  : `💧 ${added.length} "D.S." mark(s) added from the plan's own text layer (the vision pass saw ${sawBefore}) — printed marks the vision read missed. Verify count against the roof plan.`;
+            }
+          }
+        }
         const t = buildEdgeTakeoff({
           outline: stash.outline,
           edges,
           classes: stash.classes,
           ptPerFt: stash.ptPerFt,
-          downspouts: stash.downspouts ?? [],
+          downspouts: dsMarks,
         });
+        if (dsTextNote) t.notes.push(dsTextNote);
+        // Scale sanity: the dimension-line solve is span ÷ VISION-read value —
+        // one misread value scales every priced run. The text layer's printed
+        // overalls are read deterministically; the outline's extent at the
+        // solved scale must land near one. Flag-only (never rescales pricing).
+        {
+          const fpDims = (
+            row.analysisJson as {
+              _vectorGeometry?: { footprint?: { dimensions?: { s: string }[] } };
+            } | null
+          )?._vectorGeometry?.footprint?.dimensions;
+          const sc = crossCheckScaleAgainstOveralls(
+            stash.ptPerFt,
+            stash.outline,
+            fpDims?.map((d) => d.s),
+          );
+          if (sc.checked && !sc.consistent) {
+            t.notes.push(
+              `📏 SCALE MISMATCH: at ${Math.round(stash.ptPerFt * 100) / 100} pt/ft the footprint reads ${sc.impliedWFt} × ${sc.impliedHFt} ft, but the sheet's closest printed overall is ${sc.bestOverallFt}' (~${sc.mismatchPct}% off). The dimension-line solve may have read the wrong printed value — verify the total LF against the plan's printed overall dimensions before quoting.`,
+            );
+          }
+        }
         analysis.building_footprint = stash.outline.map((p) => ({ x: p.x, y: p.y }));
         analysis.gutter_runs = t.gutter_runs;
         // Keep only the classifier's rakes — the AI's freehand interior lines
@@ -914,11 +965,27 @@ export async function runEstimateFromPlan(
   // flagged UNPRICED on purpose) — running closure would re-introduce the
   // blind "continuous gutters" default it exists to remove. Skip it.
   const isAiTrace = footprintSource === "AI trace (best-of read)";
-  const hipClosureOk =
+  const hipVerdict = explainUnanimousHip(
+    perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
+  );
+  const hipClosureOk = isAiTrace && hipVerdict.unanimous;
+  // A skipped closure must say WHY on the panel: the contractor is looking at
+  // a "Closure check: N walls not priced" flag and deserves the reason the
+  // hip exception didn't clear it (only 2 readable faces? a face read a
+  // gable?) instead of a silent no-op.
+  if (
+    !edgeApplied &&
     isAiTrace &&
-    isUnanimousHip(
-      perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
-    );
+    !hipVerdict.unanimous &&
+    (analysis.notes ?? []).some(
+      (n) => typeof n === "string" && n.includes("Closure check:"),
+    )
+  ) {
+    analysis.notes = [
+      ...(analysis.notes ?? []),
+      `⏸ Hip closure not applied — ${hipVerdict.reason}. The unpriced walls above stay review-flagged; if this roof is actually fully hipped, Re-analyze so fresh elevation reads can prove it.`,
+    ];
+  }
   if (!edgeApplied && (!isAiTrace || hipClosureOk)) {
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
@@ -959,6 +1026,12 @@ export async function runEstimateFromPlan(
             valleys: edgeLayout.valleys,
             hips: edgeLayout.hips,
             gableCount: edgeLayout.gableCount,
+            // Stored stashes predate these fields — guard the array shapes
+            // like the ridges/valleys check above so old JSON degrades clean.
+            gableEnds: Array.isArray(edgeLayout.gableEnds)
+              ? edgeLayout.gableEnds
+              : [],
+            faces: Array.isArray(edgeLayout.faces) ? edgeLayout.faces : null,
             confidence: edgeLayout.confidence,
           }
         : null,
