@@ -337,6 +337,17 @@ export async function runAIEstimatePipeline(
         `Solar-first engine errored (${e instanceof Error ? e.message : String(e)}) — falling back to the legacy tile pipeline`,
       );
     }
+    // When the solar engine bailed because its imagery predates the
+    // current property, the buildingInsights from that SAME aged dataset
+    // are equally untrustworthy — feeding them to the legacy tracer aims
+    // SAM/vision at a structure that may no longer exist. Drop them and
+    // let the tracer work from the geocode point on the CURRENT tile.
+    if (insights && notes.some((n) => n.includes("roof data here is"))) {
+      notes.push(
+        "Ignoring Google's building location data (same outdated capture) — tracing the current photo from the address point instead",
+      );
+      insights = null;
+    }
   }
 
   // 2b. Aerial imagery (legacy path; only if we have a real geocode)
@@ -355,7 +366,7 @@ export async function runAIEstimatePipeline(
       );
       if (image.primaryFailureReason) {
         notes.push(
-          `Mapbox primary failed (${image.primaryFailureReason}) — fell back to Google`,
+          `Google imagery failed (${image.primaryFailureReason}) — fell back to Mapbox`,
         );
       }
     } else {

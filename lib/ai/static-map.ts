@@ -25,9 +25,12 @@ export type SatImageOutcome =
   | { ok: false; reason: string };
 
 /**
- * Fetch a satellite tile centered on (lat, lng). Tries Mapbox first
- * (sharper Maxar Vivid imagery in most US residential areas), falls
- * back to Google Static Maps.
+ * Fetch a satellite tile centered on (lat, lng). Tries GOOGLE first,
+ * falls back to Mapbox. (This order was flipped 2026-07: side-by-side
+ * checks across Lake Stevens / Monroe / Snohomish WA showed Google's
+ * Airbus/aerial layer consistently sharper AND fresher — Mapbox's
+ * Maxar tile at the owner's own new-construction address was a blurry
+ * upsample still showing the previous structure.)
  *
  * Both providers return the same effective resolution at scale=2 /
  * @2x: a requested 640×640 tile arrives as 1280×1280 pixels. Downstream
@@ -43,24 +46,24 @@ export async function fetchSatelliteImage(
   const zoom = opts.zoom ?? 20;
   const size = opts.size ?? 640;
 
-  const mapboxOutcome = await fetchFromMapbox(lat, lng, zoom, size);
-  if (mapboxOutcome.ok) return mapboxOutcome;
-
   const googleOutcome = await fetchFromGoogle(lat, lng, zoom, size);
-  if (googleOutcome.ok) {
-    // Stamp the Mapbox failure reason on the Google result so the run
+  if (googleOutcome.ok) return googleOutcome;
+
+  const mapboxOutcome = await fetchFromMapbox(lat, lng, zoom, size);
+  if (mapboxOutcome.ok) {
+    // Stamp the Google failure reason on the Mapbox result so the run
     // notes can show *why* we silently fell back — otherwise the only
     // signal is the source label and the user is left guessing
-    // (invalid token? out of quota? no row in vault?).
+    // (invalid key? quota? API not enabled?).
     return {
       ok: true,
-      image: { ...googleOutcome.image, primaryFailureReason: mapboxOutcome.reason },
+      image: { ...mapboxOutcome.image, primaryFailureReason: googleOutcome.reason },
     };
   }
 
   return {
     ok: false,
-    reason: `Mapbox: ${mapboxOutcome.reason}; Google: ${googleOutcome.reason}`,
+    reason: `Google: ${googleOutcome.reason}; Mapbox: ${mapboxOutcome.reason}`,
   };
 }
 
