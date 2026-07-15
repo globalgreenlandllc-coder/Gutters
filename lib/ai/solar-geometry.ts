@@ -777,6 +777,142 @@ export function distToRing(p: Pt, ring: Pt[]): number {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Roof-plane mask trim (semantic tree/hardscape veto)                */
+/* ------------------------------------------------------------------ */
+
+export type PlaneSeg = {
+  /** Segment center, px. */
+  cx: number;
+  cy: number;
+  /** Plane height at center (same datum as the DSM), meters. */
+  hCenterM: number;
+  pitchDeg: number;
+  /** Unit px vector pointing DOWNHILL (the direction the plane faces). */
+  downhill: { x: number; y: number };
+  /** Core (unpadded) bbox of the segment, px. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+};
+
+/**
+ * Trim the building mask to Google's actual roof planes — two layers:
+ *
+ *   1. AABB layer (round 11): any mask pixel outside EVERY segment's
+ *      padded bounding box is tree canopy / shadow the ML mask annexed.
+ *   2. PLANE layer (this round): inside the padded shell but outside
+ *      the segment cores, the pixel's DSM height must MATCH what some
+ *      overlapping segment's plane (center height + pitch × downhill
+ *      distance) predicts. Tree crowns float meters ABOVE the porch
+ *      plane and annexed lawn sits meters BELOW it — both survive the
+ *      AABB layer when they hide inside a padded box (the residual
+ *      bulge by the owner's porch), and neither can match the plane.
+ *
+ * The plane test runs EVERYWHERE inside the shell — including segment
+ * cores. Chimneys/dormers/vents deviate from their plane, but they are
+ * INTERIOR pixels and interior holes never change the outer boundary
+ * trace; exempting the cores would re-hide corner canopy on rotated
+ * houses (axis-aligned core boxes over-cover rotated corners as badly
+ * as the padded ones). Missing DSM keeps the pixel (never trim on
+ * absent evidence). The CALLER must guard against a missed Solar
+ * segment (a real unmapped wing fails every plane) by comparing the
+ * traced area with and without the plane layer. Returns the trimmed
+ * mask, the padded allow-zone (growth cap), and both cut counters.
+ */
+export function trimMaskToRoofPlanes(args: {
+  mask: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+  segs: PlaneSeg[];
+  padM?: number;
+  residualTolM?: number;
+}): {
+  mask: Uint8Array;
+  allowMask: Uint8Array;
+  cutOutsidePx: number;
+  cutPlanePx: number;
+} {
+  const { mask, dsm, dsmNoData, width, height, metersPerPixel, segs } = args;
+  const padPx = Math.round((args.padM ?? 2) / metersPerPixel);
+  const tol = args.residualTolM ?? 1.2;
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  const allowMask = new Uint8Array(width * height);
+  const paint = (
+    out: Uint8Array,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ) => {
+    const ax0 = Math.max(0, Math.floor(x0));
+    const ax1 = Math.min(width - 1, Math.ceil(x1));
+    const ay0 = Math.max(0, Math.floor(y0));
+    const ay1 = Math.min(height - 1, Math.ceil(y1));
+    for (let y = ay0; y <= ay1; y++) {
+      out.fill(1, y * width + ax0, y * width + ax1 + 1);
+    }
+  };
+  for (const s of segs) {
+    paint(allowMask, s.x0 - padPx, s.y0 - padPx, s.x1 + padPx, s.y1 + padPx);
+  }
+
+  const out = new Uint8Array(width * height);
+  let cutOutsidePx = 0;
+  let cutPlanePx = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (mask[i] === 0) continue;
+      if (allowMask[i] === 0) {
+        cutOutsidePx++;
+        continue;
+      }
+      const h = dsm[i];
+      if (!validH(h)) {
+        out[i] = 1; // no height evidence — keep
+        continue;
+      }
+      // Must sit ON some overlapping segment's plane (ridges/valleys lie
+      // on two planes at once, so they always match).
+      let best = Infinity;
+      for (const s of segs) {
+        if (
+          x < s.x0 - padPx ||
+          x > s.x1 + padPx ||
+          y < s.y0 - padPx ||
+          y > s.y1 + padPx
+        ) {
+          continue;
+        }
+        // tan clamped at 60° pitch — Solar's quantized steep pitches
+        // shouldn't explode the extrapolation.
+        const slope = Math.tan(
+          (Math.min(60, Math.max(0, s.pitchDeg)) * Math.PI) / 180,
+        );
+        const downM =
+          ((x - s.cx) * s.downhill.x + (y - s.cy) * s.downhill.y) *
+          metersPerPixel;
+        const predicted = s.hCenterM - slope * downM;
+        const resid = Math.abs(h - predicted);
+        if (resid < best) best = resid;
+      }
+      if (best <= tol) {
+        out[i] = 1;
+      } else {
+        cutPlanePx++;
+      }
+    }
+  }
+  return { mask: out, allowMask, cutOutsidePx, cutPlanePx };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Per-edge photo snapping                                            */
 /* ------------------------------------------------------------------ */
 
@@ -800,6 +936,13 @@ export function refineEdgesToPhoto(args: {
   height: number;
   metersPerPixel: number;
   maxSlideM?: number;
+  /** Height veto: returns true when the point (photo space) is clearly
+   *  NOT on the roof per the DSM (≈ground level). A concrete walkway
+   *  matches gray shingle in tone, so a candidate wall line can win the
+   *  photo-gradient search while sitting on the walkway/lawn boundary —
+   *  the DSM knows better. Vetoed candidates score ×0.1, which also
+   *  lets an inward slide beat a mask bulge's zero-offset line. */
+  offRoof?: (x: number, y: number) => boolean;
 }): { ring: Pt[]; refined: number } {
   const { ring, rgb, mask, width, height, metersPerPixel } = args;
   if (ring.length < 4) return { ring, refined: 0 };
@@ -873,12 +1016,18 @@ export function refineEdgesToPhoto(args: {
         const y = Math.round(py);
         if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue;
         let g = grad[y * width + x];
-        if (roofLum != null && g > 0) {
+        if (g > 0 && (roofLum != null || args.offRoof)) {
           const ix = Math.round(px + nrm.nx * insidePx);
           const iy = Math.round(py + nrm.ny * insidePx);
           if (ix >= 0 && iy >= 0 && ix < width && iy < height) {
-            const dL = Math.abs(lum[iy * width + ix] - roofLum);
-            g *= dL <= 34 ? 1 : 0.2;
+            if (roofLum != null) {
+              const dL = Math.abs(lum[iy * width + ix] - roofLum);
+              g *= dL <= 34 ? 1 : 0.2;
+            }
+            // Hard veto, not a discount: a walkway/lawn distractor edge
+            // can out-gradient the true roofline 20×, so any station
+            // whose inside the DSM puts at ground level counts ZERO.
+            if (args.offRoof?.(ix, iy)) g = 0;
           }
         }
         s += g;
@@ -1393,7 +1542,13 @@ export function regularizeRing(
   const cornerMinDeg = opts?.cornerMinDeg ?? 28;
   const frameSnapDeg = opts?.frameSnapDeg ?? 12;
   const diagSnapDeg = opts?.diagSnapDeg ?? 8;
-  const maxSnapMovePx = (opts?.maxSnapMoveM ?? 0.45) / metersPerPixel;
+  // 0.18 m endpoint budget: a LONG wall's fitted angle is measured from
+  // hundreds of boundary px and is more trustworthy than the consensus
+  // frame — snapping a 28 m wall 1.5° pushed its far end 0.4 m onto the
+  // walkway (correct at one end, drifting at the other). This cap lets
+  // short noisy runs snap up to frameSnapDeg while a 28 m wall may only
+  // rotate ~0.7°.
+  const maxSnapMovePx = (opts?.maxSnapMoveM ?? 0.18) / metersPerPixel;
   const maxDriftPx = (opts?.maxDriftM ?? 0.8) / metersPerPixel;
   const mergeOffsetPx = 0.22 / metersPerPixel;
 

@@ -34,6 +34,7 @@ import {
   refineEdgesToPhoto,
   tierRegionRings,
   traceMaskFootprint,
+  trimMaskToRoofPlanes,
   type DsmSampler,
   type Pt,
 } from "./solar-geometry";
@@ -186,20 +187,19 @@ export async function runSolarFirstEstimate(args: {
     }
   }
 
-  // ---- Roof-plane allow-zone ----------------------------------------
-  // Google's Solar segments map the actual roof planes. Padded 2 m they
-  // cover every real drip edge — but NOT the tree-canopy / shadow blobs
-  // Google's ML building mask sometimes annexes (this house: a shadowed
-  // tree by the porch bulged the mask, and the perimeter dutifully drew
-  // a gutter pentagon around it). Trim the mask to the zone before
-  // tracing; skipped when segments are too sparse to trust (<4).
+  // ---- Roof-plane trim ----------------------------------------------
+  // Google's Solar segments map the actual roof planes; the ML building
+  // mask sometimes annexes tree canopy / shadow next to them. Two-layer
+  // veto (pure fn): outside every padded segment bbox → cut; inside the
+  // padded shell, the DSM height must MATCH some segment's extrapolated
+  // plane (center height + pitch × downhill distance) — a tree crown
+  // floats meters above the porch plane it hides next to, annexed lawn
+  // sits meters below. Skipped when segments are too sparse (<4).
   let baseMask = layers.mask;
   let allowMask: Uint8Array | undefined;
-  if (insights && insights.roofSegments.length >= 4) {
-    allowMask = new Uint8Array(layers.grid.width * layers.grid.height);
-    const padPx = Math.round(2 / mpp);
-    for (const seg of insights.roofSegments) {
-      if (!seg.boundingBoxNE || !seg.boundingBoxSW) continue;
+  {
+    const segs = (insights?.roofSegments ?? []).flatMap((seg) => {
+      if (!seg.boundingBoxNE || !seg.boundingBoxSW || !seg.center) return [];
       const a = layers.grid.fromLatLng(
         seg.boundingBoxNE.lat,
         seg.boundingBoxNE.lng,
@@ -208,33 +208,113 @@ export async function runSolarFirstEstimate(args: {
         seg.boundingBoxSW.lat,
         seg.boundingBoxSW.lng,
       );
-      const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x)) - padPx);
-      const x1 = Math.min(
-        layers.grid.width - 1,
-        Math.ceil(Math.max(a.x, b.x)) + padPx,
+      const c = layers.grid.fromLatLng(seg.center.lat, seg.center.lng);
+      // Downhill unit vector in px space: walk 1 m along the azimuth
+      // (the direction the plane FACES) and normalize the px delta.
+      const azRad = (seg.azimuthDegrees * Math.PI) / 180;
+      const dLat = Math.cos(azRad) / 110_540;
+      const dLng =
+        Math.sin(azRad) /
+        (111_320 * Math.cos((seg.center.lat * Math.PI) / 180));
+      const c2 = layers.grid.fromLatLng(
+        seg.center.lat + dLat,
+        seg.center.lng + dLng,
       );
-      const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y)) - padPx);
-      const y1 = Math.min(
-        layers.grid.height - 1,
-        Math.ceil(Math.max(a.y, b.y)) + padPx,
-      );
-      for (let y = y0; y <= y1; y++) {
-        allowMask.fill(1, y * layers.grid.width + x0, y * layers.grid.width + x1 + 1);
+      const dl = Math.hypot(c2.x - c.x, c2.y - c.y) || 1;
+      // Plane height at center from the DSM ITSELF (median 3×3) — same
+      // raster, same datum by construction. Solar's planeHeightMeters is
+      // only the fallback: a datum mismatch there would make every
+      // residual huge and silently nuke the whole mask.
+      let hCenterM: number | null = null;
+      {
+        const vals: number[] = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const xi = Math.round(c.x) + dx;
+            const yi = Math.round(c.y) + dy;
+            if (xi < 0 || yi < 0 || xi >= layers.grid.width || yi >= layers.grid.height) continue;
+            const v = layers.dsm[yi * layers.grid.width + xi];
+            if (
+              Number.isFinite(v) &&
+              Math.abs(v - layers.dsmNoData) > 0.001 &&
+              v > -450 &&
+              v < 9000
+            ) {
+              vals.push(v);
+            }
+          }
+        }
+        if (vals.length > 0) hCenterM = median(vals);
+        else if (seg.planeHeightMeters != null) hCenterM = seg.planeHeightMeters;
       }
-    }
-    const trimmed = new Uint8Array(layers.mask.length);
-    let cut = 0;
-    for (let i = 0; i < layers.mask.length; i++) {
-      if (layers.mask[i] > 0) {
-        if (allowMask[i] > 0) trimmed[i] = 1;
-        else cut++;
+      if (hCenterM == null) return [];
+      return [
+        {
+          cx: c.x,
+          cy: c.y,
+          hCenterM,
+          pitchDeg: seg.pitchDegrees,
+          downhill: { x: (c2.x - c.x) / dl, y: (c2.y - c.y) / dl },
+          x0: Math.min(a.x, b.x),
+          y0: Math.min(a.y, b.y),
+          x1: Math.max(a.x, b.x),
+          y1: Math.max(a.y, b.y),
+        },
+      ];
+    });
+    if (segs.length >= 4) {
+      const trim = trimMaskToRoofPlanes({
+        mask: layers.mask,
+        dsm: layers.dsm,
+        dsmNoData: layers.dsmNoData,
+        width: layers.grid.width,
+        height: layers.grid.height,
+        metersPerPixel: mpp,
+        segs,
+      });
+      // COLLAPSE GUARD: a real wing Google's segment list MISSED fails
+      // every plane test — if the plane layer shrinks the traced
+      // component well past what the bbox layer alone leaves, drop the
+      // plane layer and keep the bbox trim (round-11 behavior).
+      const aabbOnly = new Uint8Array(layers.mask.length);
+      for (let i = 0; i < layers.mask.length; i++) {
+        if (layers.mask[i] > 0 && trim.allowMask[i] > 0) aabbOnly[i] = 1;
       }
-    }
-    if (cut > 0) {
-      baseMask = trimmed;
-      notes.push(
-        `Trimmed ${Math.round(cut * mpp * mpp)} m² of the building mask that sits outside every Solar roof plane (tree canopy / shadow the mask annexed)`,
-      );
+      let planeM2 = Math.round(trim.cutPlanePx * mpp * mpp);
+      let chosen = trim.mask;
+      if (trim.cutPlanePx > 0) {
+        const aabbTrace = traceMaskFootprint(
+          aabbOnly,
+          layers.grid.width,
+          layers.grid.height,
+        );
+        const planeTrace = traceMaskFootprint(
+          trim.mask,
+          layers.grid.width,
+          layers.grid.height,
+        );
+        if (
+          !planeTrace ||
+          (aabbTrace && planeTrace.areaPx < aabbTrace.areaPx * 0.85)
+        ) {
+          chosen = aabbOnly;
+          planeM2 = 0;
+          notes.push(
+            "Plane-height veto skipped — it would have removed a large roof area (a roof section Google's plane list doesn't cover)",
+          );
+        }
+      }
+      baseMask = chosen;
+      allowMask = trim.allowMask;
+      const outM2 = Math.round(trim.cutOutsidePx * mpp * mpp);
+      if (outM2 + planeM2 > 0) {
+        notes.push(
+          `Trimmed ${outM2 + planeM2} m² of the building mask that isn't real roof (${outM2} m² outside every Solar roof plane` +
+            (planeM2 > 0
+              ? `, ${planeM2} m² whose height doesn't match any plane — tree canopy/shadow next to the roof)`
+              : " — tree canopy / shadow the mask annexed)"),
+        );
+      }
     }
   }
 
@@ -498,7 +578,18 @@ export async function runSolarFirstEstimate(args: {
   // PER-EDGE SNAP: after the global shift, each wall slides individually
   // onto the photo's roof edge and every corner is rebuilt as the
   // intersection of its two refined walls — squares corners and removes
-  // the per-edge residual a single global shift can't fix.
+  // the per-edge residual a single global shift can't fix. The DSM veto
+  // (un-shift the photo point back to true position, check height) stops
+  // a wall from snapping onto a walkway/lawn boundary whose concrete
+  // matches the shingle tone — and lets an inward slide reclaim a wall
+  // the mask bulged past the real roof.
+  const offRoof =
+    groundM != null
+      ? (x: number, y: number): boolean => {
+          const v = sample(x - renderShift.dx, y - renderShift.dy);
+          return v != null && v < (groundM as number) + 1.2;
+        }
+      : undefined;
   const refineOut = refineEdgesToPhoto({
     ring: ring.map(S),
     rgb,
@@ -506,6 +597,7 @@ export async function runSolarFirstEstimate(args: {
     width: W,
     height: H,
     metersPerPixel: mpp,
+    offRoof,
   });
   const renderRing: Pt[] = refineOut.ring.map((p) => ({
     x: Math.max(0, Math.min(W, p.x)),
@@ -895,7 +987,11 @@ export async function runSolarFirstEstimate(args: {
                   mpp) /
                 METERS_PER_FOOT;
             }
-            if (ft >= 6) {
+            // 10 ft floor for AUTO-PRICED tier runs (was 6): the owner's
+            // screenshots showed 8–9 ft stubs drawn as diagonal ticks
+            // across roof faces — too short to trust sight-unseen.
+            // 4–10 ft pieces demote to tap-to-add suggestions instead.
+            if (ft >= 10) {
               tierChains.push({ points: piece, ft });
             } else if (ft >= 4) {
               for (let i = 1; i < piece.length; i++) {

@@ -17,6 +17,7 @@ import {
   tierRegionRings,
   distToRing,
   refineEdgesToPhoto,
+  trimMaskToRoofPlanes,
   growRoofMask,
   findTierEdges,
   recoverAttachedRoofs,
@@ -927,6 +928,158 @@ test("refineEdgesToPhoto slides one offset wall onto the photo edge and keeps co
       `corner drifted: ${JSON.stringify(p)}`,
     );
   }
+});
+
+test("refineEdgesToPhoto offRoof veto keeps a wall off the walkway edge", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  // Roof 80..220 × 50..140 (lum 170); concrete WALKWAY strip 71..79
+  // (lum 165 — within the roof-tone window, so tone can't save us);
+  // lawn (lum 60) beyond. The strongest photo edge is walkway/lawn.
+  const rgb = new Uint8Array(W * H * 3).fill(60);
+  const paint = (x0: number, x1: number, l: number) => {
+    for (let y = 40; y <= 150; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = (y * W + x) * 3;
+        rgb[i] = l;
+        rgb[i + 1] = l - 5;
+        rgb[i + 2] = l - 10;
+      }
+    }
+  };
+  paint(80, 220, 170);
+  paint(71, 79, 165);
+  const mask = rectMask(W, H, [{ x: 80, y: 50, w: 140, h: 90 }]);
+  // DSM: roof at 5 m, everything else ground (0 m).
+  const dsm = new Float32Array(W * H).fill(0);
+  for (let y = 50; y <= 140; y++) {
+    for (let x = 80; x <= 220; x++) dsm[y * W + x] = 5;
+  }
+  const ring: Pt[] = [
+    { x: 80, y: 50 },
+    { x: 220, y: 50 },
+    { x: 220, y: 140 },
+    { x: 80, y: 140 },
+  ];
+  const offRoof = (x: number, y: number): boolean => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= W || yi >= H) return false;
+    return dsm[yi * W + xi] < 1.2;
+  };
+  const r = refineEdgesToPhoto({
+    ring,
+    rgb,
+    mask,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+    offRoof,
+  });
+  // Without the veto the west wall chases the walkway/lawn gradient out
+  // to ≈71; with it the wall must stay on the roof edge.
+  const westXs = r.ring.filter((p) => p.x < 150).map((p) => p.x);
+  for (const x of westXs) {
+    assert.ok(x >= 78, `west wall slid onto the walkway: x=${x.toFixed(1)}`);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/*  Roof-plane mask trim                                               */
+/* ------------------------------------------------------------------ */
+
+test("trimMaskToRoofPlanes cuts canopy/lawn inside the padded shell, keeps roof + dormer", () => {
+  const W = 260;
+  const H = 200;
+  const mpp = 0.1;
+  const noData = -9999;
+  // Simple west-facing plane: core bbox 60..160 × 60..140, center
+  // (110,100), h(center)=5, pitch 20°, downhill = -x (faces west).
+  const seg = {
+    cx: 110,
+    cy: 100,
+    hCenterM: 5,
+    pitchDeg: 20,
+    downhill: { x: -1, y: 0 },
+    x0: 60,
+    y0: 60,
+    x1: 160,
+    y1: 140,
+  };
+  const slope = Math.tan((20 * Math.PI) / 180);
+  const dsm = new Float32Array(W * H).fill(0.2); // ground everywhere
+  const planeH = (x: number) => 5 - slope * (x - 110) * -1 * mpp;
+  // Mask: the true roof + a canopy bulge and a lawn bulge in the shell
+  // (161..175 is inside the 2 m padded box, outside the core).
+  const mask = new Uint8Array(W * H);
+  for (let y = 60; y <= 140; y++) {
+    for (let x = 60; x <= 160; x++) {
+      mask[y * W + x] = 1;
+      dsm[y * W + x] = planeH(x);
+    }
+  }
+  // Dormer bump INSIDE the core: +2 m off the plane — must survive.
+  for (let y = 95; y <= 105; y++) {
+    for (let x = 100; x <= 112; x++) dsm[y * W + x] = planeH(x) + 2;
+  }
+  // Canopy blob in the shell: mask says building, DSM says treetop.
+  for (let y = 70; y <= 95; y++) {
+    for (let x = 161; x <= 175; x++) {
+      mask[y * W + x] = 1;
+      dsm[y * W + x] = 9;
+    }
+  }
+  // Lawn blob in the shell: mask says building, DSM says grass.
+  for (let y = 110; y <= 130; y++) {
+    for (let x = 161; x <= 175; x++) {
+      mask[y * W + x] = 1;
+      dsm[y * W + x] = 0.2;
+    }
+  }
+  // Real eave overhang in the shell: ON the plane — must survive.
+  for (let y = 60; y <= 140; y++) {
+    for (let x = 55; x <= 59; x++) {
+      mask[y * W + x] = 1;
+      dsm[y * W + x] = planeH(x);
+    }
+  }
+  // Far blob outside every padded box → AABB layer cuts it.
+  for (let y = 20; y <= 30; y++) {
+    for (let x = 20; x <= 30; x++) mask[y * W + x] = 1;
+  }
+  const out = trimMaskToRoofPlanes({
+    mask,
+    dsm,
+    dsmNoData: noData,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+    segs: [seg],
+  });
+  const at = (x: number, y: number) => out.mask[y * W + x];
+  assert.equal(at(80, 100), 1, "core roof trimmed");
+  assert.equal(at(57, 100), 1, "real eave overhang on the plane trimmed");
+  assert.equal(at(168, 80), 0, "canopy blob survived the plane veto");
+  assert.equal(at(168, 120), 0, "lawn blob survived the plane veto");
+  assert.equal(at(25, 25), 0, "far blob survived the AABB layer");
+  assert.ok(out.cutPlanePx > 0 && out.cutOutsidePx > 0, "both counters move");
+  // The dormer deviates from the plane and gets holed — but interior
+  // holes must NOT damage the outer boundary the footprint trace uses.
+  assert.equal(at(106, 100), 0, "dormer px holed (interior, harmless)");
+  const traced = traceMaskFootprint(out.mask, W, H);
+  assert.ok(traced, "trimmed mask still traces");
+  for (const p of traced.boundary) {
+    assert.ok(
+      p.x >= 54 && p.x <= 161 && p.y >= 59 && p.y <= 141,
+      `boundary escaped the true roof: ${JSON.stringify(p)}`,
+    );
+  }
+  const bxs = traced.boundary.map((p) => p.x);
+  assert.ok(Math.max(...bxs) >= 159 && Math.min(...bxs) <= 56, "roof extent lost");
+  // allowMask is the padded shell (growth cap).
+  assert.equal(out.allowMask[100 * W + 165], 1);
+  assert.equal(out.allowMask[25 * W + 25], 0);
 });
 
 /* ------------------------------------------------------------------ */
