@@ -143,11 +143,26 @@ export default clerkMiddleware(async (auth, req) => {
   const limited = edgeRateLimit(req, req.nextUrl.pathname);
   if (limited) return limited;
 
-  if (isPublic(req)) return;
+  // Referral first-touch: ?ref=<code> on any page drops a 30-day cookie
+  // that account creation (app/actions/me.ts attributeReferral) redeems.
+  // First touch wins — an existing cookie is never overwritten.
+  let res: NextResponse | undefined;
+  const ref = req.nextUrl.searchParams.get("ref");
+  if (ref && /^[a-z0-9-]{4,32}$/i.test(ref) && !req.cookies.get("gutterscan_ref")) {
+    res = NextResponse.next();
+    res.cookies.set("gutterscan_ref", ref, {
+      maxAge: 30 * 86400,
+      path: "/",
+      sameSite: "lax",
+    });
+  }
+
+  if (isPublic(req)) return res;
   const { userId, redirectToSignIn } = await auth();
   if (!userId) {
     return redirectToSignIn({ returnBackUrl: req.url });
   }
+  return res;
 });
 
 export const config = {

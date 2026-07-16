@@ -18,6 +18,7 @@ import {
 } from "@/app/actions/billing";
 import { formatCurrency } from "@/lib/utils";
 import { trackEvent } from "@/components/analytics/tracker";
+import { getMyReferral, type MyReferral } from "@/app/actions/me";
 
 export default function SettingsPage() {
   return (
@@ -33,6 +34,8 @@ export default function SettingsPage() {
           <PaymentsSection />
 
           <BillingSection />
+
+          <ReferralSection />
         </div>
       </DashboardShell>
     </AuthGate>
@@ -356,5 +359,69 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="microlabel">{label}</div>
       <div className="mt-0.5 text-sm font-medium text-zinc-900">{value}</div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Referral — share link, earn blueprint credits                      */
+/* ------------------------------------------------------------------ */
+function ReferralSection() {
+  const [referral, setReferral] = useState<MyReferral | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    getMyReferral().then(setReferral).catch(() => undefined);
+  }, []);
+
+  if (!referral) return null;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(referral.url);
+      setCopied(true);
+      trackEvent("referral_link_copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard unavailable — the input below is selectable
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+            Refer a contractor
+          </h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Know someone still measuring off a ladder? You earn{" "}
+            <span className="font-semibold text-zinc-700">
+              {referral.bonusPerSignup} blueprint credits
+            </span>{" "}
+            for every contractor who signs up with your link.
+          </p>
+        </div>
+        <Badge tone="neutral">
+          {referral.credited}/{referral.cap} referred
+        </Badge>
+      </div>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <input
+          readOnly
+          value={referral.url}
+          onFocus={(e) => e.currentTarget.select()}
+          className="ring-focus h-10 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 font-mono text-xs text-zinc-700"
+        />
+        <Button onClick={() => void copy()} className="h-10 shrink-0">
+          {copied ? (
+            <>
+              <CheckCircle2 className="h-4 w-4" /> Copied
+            </>
+          ) : (
+            "Copy link"
+          )}
+        </Button>
+      </div>
+    </section>
   );
 }

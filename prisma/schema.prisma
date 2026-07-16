@@ -100,6 +100,12 @@ model User {
   // Jobs this user (as owner) has assigned out to workers.
   jobsOwned         JobAssignment[]       @relation("JobOwner")
 
+  // Referral program: shareable code (lazily minted on first visit to
+  // Settings) + who referred this account (set once at creation from
+  // the ?ref cookie; doubles as the "referrer was credited" marker).
+  referralCode  String? @unique
+  referredById  String?
+
   @@index([role])
   @@index([status])
   @@map("users")

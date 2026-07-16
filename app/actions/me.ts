@@ -1,6 +1,8 @@
 "use server";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
+import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { getPlanPricing } from "@/lib/plan-pricing";
 import {
@@ -158,6 +160,7 @@ async function findOrCreateUser(
         subscription: { select: { status: true } },
       },
     });
+    await attributeReferral(user.id);
     return user;
   }
 
@@ -502,4 +505,97 @@ export async function consumeMyCredit(address: string): Promise<{
   });
 
   return { ok: true, reused: recentSame > 0, remaining };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Referral program                                                   */
+/*                                                                     */
+/*  Contractors know contractors. Each user gets a shareable link      */
+/*  (/?ref=<code>, cookied for 30 days by the middleware); when a new  */
+/*  account is created with that cookie present, the referrer's wallet */
+/*  earns bonus blueprint credits. referredById doubles as the         */
+/*  "already credited" marker, and grants stop at the cap so a bot     */
+/*  farm can't mint unlimited credits.                                 */
+/* ------------------------------------------------------------------ */
+
+const REFERRAL_COOKIE = "gutterscan_ref";
+const REFERRAL_BONUS_CREDITS = 3;
+const REFERRAL_GRANT_CAP = 10;
+
+/** Best-effort, called exactly once per new account. Never throws into
+ *  the signup path — a broken referral must not block account creation. */
+async function attributeReferral(newUserId: string): Promise<void> {
+  try {
+    const jar = await cookies();
+    const refCode = jar.get(REFERRAL_COOKIE)?.value?.trim();
+    if (!refCode || !/^[a-f0-9]{8}$/i.test(refCode)) return;
+    const referrer = await db.user.findFirst({
+      where: { referralCode: refCode },
+      select: { id: true },
+    });
+    if (!referrer || referrer.id === newUserId) return;
+    const credited = await db.user.count({
+      where: { referredById: referrer.id },
+    });
+    if (credited >= REFERRAL_GRANT_CAP) return;
+    await db.user.update({
+      where: { id: newUserId },
+      data: { referredById: referrer.id },
+    });
+    // updateMany: no throw when the referrer's wallet row doesn't exist
+    // yet (it's lazily created on their next visit — rare, acceptable).
+    await db.creditWallet.updateMany({
+      where: { userId: referrer.id },
+      data: { bonus: { increment: REFERRAL_BONUS_CREDITS } },
+    });
+  } catch (e) {
+    console.warn("[referral] attribution failed", e);
+  }
+}
+
+export type MyReferral = {
+  code: string;
+  url: string;
+  credited: number;
+  cap: number;
+  bonusPerSignup: number;
+};
+
+/** Settings-page read: lazily mints the user's referral code. */
+export async function getMyReferral(): Promise<MyReferral | null> {
+  const me = await getMe();
+  if (!me) return null;
+  const row = await db.user.findUnique({
+    where: { id: me.user.id },
+    select: { referralCode: true },
+  });
+  let code = row?.referralCode ?? null;
+  if (!code) {
+    for (let attempt = 0; attempt < 2 && !code; attempt++) {
+      const candidate = randomBytes(4).toString("hex");
+      try {
+        await db.user.update({
+          where: { id: me.user.id },
+          data: { referralCode: candidate },
+        });
+        code = candidate;
+      } catch {
+        // unique collision (1 in 4 billion) — try once more
+      }
+    }
+    if (!code) return null;
+  }
+  const credited = await db.user.count({
+    where: { referredById: me.user.id },
+  });
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    "https://gutters.app";
+  return {
+    code,
+    url: `${base}/?ref=${code}`,
+    credited,
+    cap: REFERRAL_GRANT_CAP,
+    bonusPerSignup: REFERRAL_BONUS_CREDITS,
+  };
 }
