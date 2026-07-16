@@ -42,7 +42,13 @@ import {
   lineLengthFt,
   fitViewBox,
   PX_PER_FT,
+  orientationChipBoxes,
 } from "./aerial-shared";
+import {
+  layoutLabels,
+  type LabelBox,
+  type PlacedLabel,
+} from "@/lib/diagram-labels";
 import { gableWingFaces } from "@/lib/roof-skeleton";
 import { simplify } from "@/lib/ai/geometry";
 
@@ -362,6 +368,77 @@ export function AerialCanvas({
     });
     return ids;
   }, [eaves, showLfLabels, pxPerFt]);
+
+  // Global LF-label layout: each ambient pill starts at its preferred spot
+  // (perpendicular off the run's midpoint, away from the roof center) and a
+  // relaxation pass pushes it clear of the other pills, the downspout dots,
+  // the FRONT/BACK/LEFT/RIGHT chips and every eave/rake line — so "35 LF
+  // UPPER ROOF" can't sit across the LEFT chip or cover a downspout. Pills
+  // that had to travel get a thin leader back to their run (see LineLabel).
+  const labelLayout = useMemo(() => {
+    const items: LabelBox[] = [];
+    for (const line of eaves) {
+      if (!labelVisibleIds.has(line.id) || line.points.length < 2) continue;
+      const tier = lineTierTag(line);
+      const w = (tier ? 60 : 44) * renderScale;
+      const h = (tier ? 26 : 16) * renderScale;
+      const a = line.points[0];
+      const b = line.points[line.points.length - 1];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const nl = Math.hypot(dx, dy) || 1;
+      let nx = -dy / nl;
+      let ny = dx / nl;
+      if ((mx - eavesCentroid.x) * nx + (my - eavesCentroid.y) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      const off = 22 * renderScale;
+      items.push({ id: line.id, cx: mx + nx * off, cy: my + ny * off, w, h });
+    }
+    if (items.length === 0) return new Map<string, PlacedLabel>();
+    const segments = [...eaves, ...rakes].flatMap((l) =>
+      l.points
+        .slice(1)
+        .map((p, i) => ({ a: l.points[i], b: p, pad: 3 * renderScale })),
+    );
+    const discs = downspouts.map((d) => ({
+      x: d.x,
+      y: d.y,
+      r: 11 * renderScale,
+    }));
+    const rects = (
+      roofStructure && showRoofStructure
+        ? orientationChipBoxes(eaves, roofStructure.perimeter, renderScale)
+        : []
+    ).map((c) => ({ cx: c.at.x, cy: c.at.y, w: c.w, h: c.h }));
+    const inset = 6 * renderScale;
+    return layoutLabels(
+      items,
+      { segments, discs, rects },
+      {
+        bounds: {
+          minX: view.x + inset,
+          minY: view.y + inset,
+          maxX: view.x + view.width - inset,
+          maxY: view.y + view.height - inset,
+        },
+        gap: 3 * renderScale,
+      },
+    );
+  }, [
+    eaves,
+    rakes,
+    downspouts,
+    labelVisibleIds,
+    roofStructure,
+    showRoofStructure,
+    renderScale,
+    view,
+    eavesCentroid,
+  ]);
 
   const selectedDownspout = useMemo(
     () => downspouts.find((d) => d.id === selectedId) ?? null,
@@ -1595,6 +1672,7 @@ export function AerialCanvas({
                     outsideAnchor={eavesCentroid}
                     renderScale={renderScale}
                     pxPerFt={pxPerFt}
+                    at={labelLayout.get(line.id)}
                   />
                 )}
               {/* Vertex handles render LAST so they sit on top of any
@@ -2561,6 +2639,36 @@ function Legend({
   );
 }
 
+// Roof-tier tag shown under the footage so the contractor reads which
+// gutter is the upper (2-story) vs lower (porch/patio/1-story) eave.
+// When the plan named the structure (feature), show THAT — "PORCH",
+// "PATIO", "DECK", "ENTRY", "GARAGE", "DORMER" — so covered projections
+// read as what they are instead of an anonymous "LOWER ROOF" line.
+// Module-level so the global label-layout pass sizes pills identically.
+const FEATURE_LABELS: Record<string, string> = {
+  porch: "PORCH",
+  patio: "PATIO",
+  deck: "DECK",
+  entry: "ENTRY",
+  garage: "GARAGE",
+  dormer: "DORMER",
+};
+
+function lineTierTag(line: EditableLine): string | null {
+  const featureLabel =
+    line.feature && FEATURE_LABELS[line.feature]
+      ? FEATURE_LABELS[line.feature]
+      : null;
+  return (
+    featureLabel ??
+    (line.tier === "lower"
+      ? "LOWER ROOF"
+      : line.tier === "upper"
+        ? "UPPER ROOF"
+        : null)
+  );
+}
+
 function LineLabel({
   line,
   theme,
@@ -2569,6 +2677,7 @@ function LineLabel({
   outsideAnchor,
   renderScale = 1,
   pxPerFt,
+  at,
 }: {
   line: EditableLine;
   theme: CanvasTheme;
@@ -2586,6 +2695,11 @@ function LineLabel({
    *  contractor zooms in to nudge an eave. */
   renderScale?: number;
   pxPerFt?: number;
+  /** Center resolved by the canvas-wide label layout pass (de-collided
+   *  from other pills / downspouts / chips / lines). When the solver had
+   *  to move the pill off its preferred spot, a thin leader ties it back
+   *  to the run. Omitted (hover-only labels): local placement. */
+  at?: PlacedLabel;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -2593,30 +2707,11 @@ function LineLabel({
   const len = Math.round(lineLengthFt(line, pxPerFt));
 
   const tactical = theme === "tactical";
-  // Roof-tier tag shown under the footage so the contractor reads which
-  // gutter is the upper (2-story) vs lower (porch/patio/1-story) eave.
-  // When the plan named the structure (feature), show THAT — "PORCH",
-  // "PATIO", "DECK", "ENTRY", "GARAGE", "DORMER" — so covered projections
-  // read as what they are instead of an anonymous "LOWER ROOF" line.
-  const FEATURE_LABELS: Record<string, string> = {
-    porch: "PORCH",
-    patio: "PATIO",
-    deck: "DECK",
-    entry: "ENTRY",
-    garage: "GARAGE",
-    dormer: "DORMER",
-  };
+  const tierLabel = lineTierTag(line);
   const featureLabel =
     line.feature && FEATURE_LABELS[line.feature]
       ? FEATURE_LABELS[line.feature]
       : null;
-  const tierLabel =
-    featureLabel ??
-    (line.tier === "lower"
-      ? "LOWER ROOF"
-      : line.tier === "upper"
-        ? "UPPER ROOF"
-        : null);
   // Color covered projections amber whether their tier is lower OR the
   // feature itself marks a projection, so a porch/patio/deck pops.
   const isLower =
@@ -2652,8 +2747,9 @@ function LineLabel({
   const fromAnchorX = cx - anchor.x;
   const fromAnchorY = cy - anchor.y;
   const sign = fromAnchorX * nx + fromAnchorY * ny >= 0 ? 1 : -1;
-  const labelCx = cx + nx * sign;
-  const labelCy = cy + ny * sign;
+  const labelCx = at ? at.cx : cx + nx * sign;
+  const labelCy = at ? at.cy : cy + ny * sign;
+  const showLeader = !!at && at.moved > 26 * renderScale;
 
   return (
     <motion.g
@@ -2667,6 +2763,16 @@ function LineLabel({
         damping: 16,
       }}
     >
+      {showLeader && (
+        <line
+          x1={cx}
+          y1={cy}
+          x2={labelCx}
+          y2={labelCy}
+          stroke={tactical ? "rgba(103,232,249,0.4)" : "rgba(20,104,140,0.45)"}
+          strokeWidth={0.9 * renderScale}
+        />
+      )}
       <rect
         x={labelCx - w / 2}
         y={labelCy - h / 2}

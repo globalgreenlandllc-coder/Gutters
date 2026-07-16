@@ -12,7 +12,13 @@ import {
   pathFor,
   lineLengthFt,
   RoofStructureOverlay,
+  orientationChipBoxes,
 } from "@/components/estimate/aerial-shared";
+import {
+  layoutLabels,
+  type LabelBox,
+  type PlacedLabel,
+} from "@/lib/diagram-labels";
 import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
 
 /**
@@ -137,6 +143,188 @@ export function PresentationCanvas({
     ? `translate(${frame.tx} ${frame.ty}) scale(${frame.k})`
     : undefined;
 
+  // Center of the traced footprint — LF labels kick AWAY from this so they
+  // land outside the outline (never across the roof interior, where they
+  // crossed the derived hip/ridge lines).
+  const eavesCentroid = useMemo(() => {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const l of eaves) {
+      for (const p of l.points) {
+        sx += p.x;
+        sy += p.y;
+        n++;
+      }
+    }
+    if (n === 0) return { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+    return { x: sx / n, y: sy / n };
+  }, [eaves]);
+
+  // Client-readable downspout numbering: 1..N walking clockwise around the
+  // house from the top-left, so the pins read as an ordered walk-around
+  // (and match a count, "12 downspouts") instead of random dots.
+  const dropNumber = useMemo(() => {
+    if (downspouts.length === 0) return new Map<string, number>();
+    let cx = 0;
+    let cy = 0;
+    for (const d of downspouts) {
+      cx += d.x;
+      cy += d.y;
+    }
+    cx /= downspouts.length;
+    cy /= downspouts.length;
+    const start = (-Math.PI * 3) / 4; // top-left
+    const key = (d: Downspout) =>
+      (Math.atan2(d.y - cy, d.x - cx) - start + Math.PI * 2) % (Math.PI * 2);
+    const sorted = [...downspouts].sort((a, b) => key(a) - key(b));
+    return new Map(sorted.map((d, i) => [d.id, i + 1]));
+  }, [downspouts]);
+
+  // Drop-height policy: on most houses every downspout drops the same
+  // height, and 12 identical "10′" pills are pure noise. Show the common
+  // height ONCE (in the totals pill) and badge only the OUTLIERS — the
+  // porch drop at 10′ on a 20′ house is exactly what deserves a callout.
+  const heightInfo = useMemo(() => {
+    const hs = downspouts
+      .map((d) => Math.round(d.heightFt))
+      .filter((h) => h > 0);
+    if (hs.length === 0) return { mode: 0, uniform: false };
+    const counts = new Map<number, number>();
+    for (const h of hs) counts.set(h, (counts.get(h) ?? 0) + 1);
+    let mode = hs[0];
+    let best = 0;
+    for (const [h, c] of counts) {
+      if (c > best) {
+        mode = h;
+        best = c;
+      }
+    }
+    return { mode, uniform: counts.size === 1 && hs.length === downspouts.length };
+  }, [downspouts]);
+
+  // Miter markers — tiny drafting diamonds where two runs meet, tying the
+  // "N gutter miters" stat to visible corners on the drawing. Interior
+  // vertices of a jogging run count, and so do coincident endpoints of two
+  // separate runs. Skipped near a downspout pin (the pin covers them).
+  const miterPts = useMemo(() => {
+    if (!planMode) return [] as { x: number; y: number }[];
+    const pts: { x: number; y: number }[] = [];
+    for (const l of eaves) {
+      for (let i = 1; i < l.points.length - 1; i++) pts.push(l.points[i]);
+    }
+    const ends = eaves
+      .filter((l) => l.points.length >= 2)
+      .flatMap((l) => [l.points[0], l.points[l.points.length - 1]]);
+    for (let i = 0; i < ends.length; i++) {
+      for (let j = i + 1; j < ends.length; j++) {
+        if (Math.hypot(ends[i].x - ends[j].x, ends[i].y - ends[j].y) <= 3) {
+          pts.push({
+            x: (ends[i].x + ends[j].x) / 2,
+            y: (ends[i].y + ends[j].y) / 2,
+          });
+        }
+      }
+    }
+    const out: { x: number; y: number }[] = [];
+    for (const p of pts) {
+      if (out.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 3)) continue;
+      if (downspouts.some((d) => Math.hypot(d.x - p.x, d.y - p.y) < 7 * vs))
+        continue;
+      out.push(p);
+    }
+    return out;
+  }, [planMode, eaves, downspouts, vs]);
+
+  // Global label layout (plan mode): start every LF pill outward off its
+  // run, then relax collisions away — pills can't cover each other, a
+  // downspout pin, an orientation chip, or cross another run. Labels that
+  // had to travel get a thin leader back to their run.
+  const labelLayout = useMemo(() => {
+    if (!planMode) return null;
+    const items: LabelBox[] = [];
+    const anchors = new Map<string, { x: number; y: number }>();
+    for (const line of eaves) {
+      if (line.points.length < 2) continue;
+      const len = Math.round(lineLengthFt(line, pxPerFt));
+      if (len < 8) continue; // mirrors LABEL_MIN_FT below
+      const a = line.points[0];
+      const b = line.points[line.points.length - 1];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const nl = Math.hypot(dx, dy) || 1;
+      let nx = -dy / nl;
+      let ny = dx / nl;
+      if ((mx - eavesCentroid.x) * nx + (my - eavesCentroid.y) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      const off = 15 * vs;
+      items.push({
+        id: line.id,
+        cx: mx + nx * off,
+        cy: my + ny * off,
+        w: 42 * vs,
+        h: 15 * vs,
+      });
+      anchors.set(line.id, { x: mx, y: my });
+    }
+    // Outlier drop-height badges ride through the same solver.
+    for (const d of downspouts) {
+      if (!(d.heightFt > 0)) continue;
+      if (Math.round(d.heightFt) === heightInfo.mode) continue;
+      items.push({
+        id: `dsh-${d.id}`,
+        cx: d.x + 26 * vs,
+        cy: d.y - 11 * vs,
+        w: 44 * vs,
+        h: 13 * vs,
+      });
+      anchors.set(`dsh-${d.id}`, { x: d.x, y: d.y });
+    }
+    const segments = [...eaves, ...rakes].flatMap((l) =>
+      l.points.slice(1).map((p, i) => ({ a: l.points[i], b: p, pad: 2.5 * vs })),
+    );
+    const discs = downspouts.map((d) => ({ x: d.x, y: d.y, r: 10 * vs }));
+    const rects = (
+      roofStructure
+        ? orientationChipBoxes(eaves, roofStructure.perimeter, vs)
+        : []
+    ).map((c) => ({ cx: c.at.x, cy: c.at.y, w: c.w, h: c.h }));
+    // Frame interior, mapped into geometry coords when the trace is
+    // magnified (the pills render inside the scaled group).
+    const pad = 18;
+    const bounds = frame
+      ? {
+          minX: (pad - frame.tx) / frame.k,
+          minY: (pad - frame.ty) / frame.k,
+          maxX: (VIEWBOX_W - pad - frame.tx) / frame.k,
+          maxY: (VIEWBOX_H - pad - frame.ty) / frame.k,
+        }
+      : { minX: pad, minY: pad, maxX: VIEWBOX_W - pad, maxY: VIEWBOX_H - pad };
+    return {
+      placed: layoutLabels(
+        items,
+        { segments, discs, rects },
+        { bounds, gap: 3 * vs },
+      ),
+      anchors,
+    };
+  }, [
+    planMode,
+    eaves,
+    rakes,
+    downspouts,
+    roofStructure,
+    vs,
+    frame,
+    pxPerFt,
+    eavesCentroid,
+    heightInfo,
+  ]);
+
   function svgPoint(e: React.PointerEvent): { x: number; y: number } {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -242,6 +430,11 @@ export function PresentationCanvas({
             {downspouts.length}
           </span>{" "}
           drops
+          {/* One shared height note instead of 12 identical per-pin
+              badges — per-pin badges only appear for outliers. */}
+          {planMode && heightInfo.uniform && heightInfo.mode > 0 && (
+            <span className="text-slate-500"> @ {heightInfo.mode}′</span>
+          )}
         </span>
       </div>
 
@@ -398,14 +591,51 @@ export function PresentationCanvas({
                 planMode={planMode}
                 scale={vs}
                 pxPerFt={pxPerFt}
+                at={labelLayout?.placed.get(line.id)}
+                outsideAnchor={eavesCentroid}
               />
             </g>
           );
         })}
 
-        {/* Downspouts — small clean pins, no pulse halo */}
+        {/* Miter markers — small drafting diamonds at run-to-run corners,
+            so the "N gutter miters" stat has a visible counterpart. */}
+        {miterPts.map((p, i) => (
+          <rect
+            key={`mt-${i}`}
+            x={p.x - 1.7 * vs}
+            y={p.y - 1.7 * vs}
+            width={3.4 * vs}
+            height={3.4 * vs}
+            transform={`rotate(45 ${p.x} ${p.y})`}
+            fill="#f7f4ee"
+            stroke="#115673"
+            strokeWidth={0.9 * vs}
+            pointerEvents="none"
+          />
+        ))}
+
+        {/* Downspouts — numbered pins (clockwise walk-around order), so the
+            markers read as an ordered system a client can count, not a
+            scatter of dots. Drop height is NOT repeated on every pin: the
+            common height lives in the totals pill; only outliers (a porch
+            drop shorter than the house drop) get their own badge. */}
         {downspouts.map((d) => {
           const isSelected = selectedId === d.id;
+          const num = dropNumber.get(d.id);
+          const hRound = Math.round(d.heightFt);
+          const placedBadge = labelLayout?.placed.get(`dsh-${d.id}`);
+          // Outlier badge (solver-placed), or the selected pin while the
+          // contractor is nudging it (so the height stays inspectable).
+          const badge =
+            d.heightFt > 0 && (placedBadge || isSelected)
+              ? {
+                  cx: placedBadge?.cx ?? d.x + 26 * vs,
+                  cy: placedBadge?.cy ?? d.y - 11 * vs,
+                  moved: placedBadge?.moved ?? 0,
+                }
+              : null;
+          const pinR = (isSelected ? 8 : 6.5) * vs;
           return (
             <g
               key={d.id}
@@ -422,10 +652,10 @@ export function PresentationCanvas({
               <motion.circle
                 cx={d.x}
                 cy={d.y}
-                r={(isSelected ? 7 : 5.5) * vs}
-                fill={planMode ? "#0f172a" : "#f8717e"}
+                r={pinR}
+                fill={planMode ? (isSelected ? "#14688C" : "#115673") : "#f8717e"}
                 stroke={planMode ? "#f7f4ee" : "white"}
-                strokeWidth={(planMode ? 2 : 1.8) * vs}
+                strokeWidth={(planMode ? 1.6 : 1.8) * vs}
                 initial={{ opacity: 0, scale: 0.6 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25 }}
@@ -435,38 +665,58 @@ export function PresentationCanvas({
                     : "drop-shadow(0 0 4px rgba(248,113,126,0.7))",
                 }}
               />
-              <circle
-                cx={d.x}
-                cy={d.y}
-                r={1.8 * vs}
-                fill={planMode ? "#f7f4ee" : "#fff1f2"}
-              />
-              {/* Plan-mode height pill — surfaces per-downspout drop
-                  height so the contractor can spot a porch downspout
-                  sitting at 20 ft (wrong) or a 2-story body downspout
-                  sitting at 10 ft (wrong). Suppressed in aerial mode
-                  to keep the satellite background readable. */}
-              {planMode && d.heightFt > 0 && (
+              {num != null ? (
+                <text
+                  x={d.x}
+                  y={d.y + 2.6 * vs}
+                  textAnchor="middle"
+                  fontSize={(num >= 10 ? 6.6 : 7.5) * vs}
+                  fontWeight={700}
+                  fontFamily="ui-sans-serif, system-ui"
+                  fill={planMode ? "#f7f4ee" : "#fff1f2"}
+                  pointerEvents="none"
+                >
+                  {num}
+                </text>
+              ) : (
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={1.8 * vs}
+                  fill={planMode ? "#f7f4ee" : "#fff1f2"}
+                />
+              )}
+              {planMode && badge && (
                 <g pointerEvents="none">
+                  {badge.moved > 14 * vs && (
+                    <line
+                      x1={d.x}
+                      y1={d.y}
+                      x2={badge.cx}
+                      y2={badge.cy}
+                      stroke="rgba(17,86,115,0.38)"
+                      strokeWidth={0.8 * vs}
+                    />
+                  )}
                   <rect
-                    x={d.x + 8 * vs}
-                    y={d.y - 8 * vs}
-                    width={26 * vs}
-                    height={14 * vs}
+                    x={badge.cx - 22 * vs}
+                    y={badge.cy - 6.5 * vs}
+                    width={44 * vs}
+                    height={13 * vs}
                     rx={3 * vs}
                     fill="#f7f4ee"
                     stroke="#115673"
-                    strokeWidth={0.6 * vs}
+                    strokeWidth={0.7 * vs}
                   />
                   <text
-                    x={d.x + 21 * vs}
-                    y={d.y + 2 * vs}
-                    fontSize={9 * vs}
+                    x={badge.cx}
+                    y={badge.cy + 2.6 * vs}
+                    fontSize={7.5 * vs}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
                     fill="#115673"
                     textAnchor="middle"
                   >
-                    {Math.round(d.heightFt)}′
+                    {hRound}′ drop
                   </text>
                 </g>
               )}
@@ -491,6 +741,8 @@ function SegmentLabel({
   planMode,
   scale = 1,
   pxPerFt,
+  at,
+  outsideAnchor,
 }: {
   line: EditableLine;
   emphasized: boolean;
@@ -501,6 +753,13 @@ function SegmentLabel({
    *  zoomed in to frame a small trace). Keeps the pill a constant size
    *  on screen instead of ballooning with the zoom. */
   scale?: number;
+  /** Solver-resolved pill center (plan mode) — the global layout pass has
+   *  already pushed it clear of other pills / pins / chips / runs. When it
+   *  had to travel, a thin leader ties it back to its run. */
+  at?: PlacedLabel;
+  /** Footprint center: the fallback placement kicks the pill AWAY from
+   *  this so it lands outside the outline. */
+  outsideAnchor?: { x: number; y: number };
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -516,14 +775,14 @@ function SegmentLabel({
   const ny = (dx / norm) * offset;
   const cx = (a.x + b.x) / 2;
   const cy = (a.y + b.y) / 2;
-  // Offset away from the trace centroid so labels don't escape the
-  // viewBox on corner eaves near the edge. Uses the current viewBox
-  // center (which tracks the zoom window) rather than the fixed canvas
-  // center, so labels still kick outward when the camera is zoomed in.
-  const towardCenter = (cx - VIEWBOX_W / 2) * nx + (cy - VIEWBOX_H / 2) * ny;
-  const sign = towardCenter > 0 ? -1 : 1;
-  const labelCx = cx + nx * sign;
-  const labelCy = cy + ny * sign;
+  // Kick the pill away from the footprint center so it lands OUTSIDE the
+  // outline (labels inside the roof crossed the hip/ridge skeleton).
+  // Falls back to the viewBox center when no anchor is available.
+  const anchor = outsideAnchor ?? { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+  const sign = (cx - anchor.x) * nx + (cy - anchor.y) * ny >= 0 ? 1 : -1;
+  const labelCx = at ? at.cx : cx + nx * sign;
+  const labelCy = at ? at.cy : cy + ny * sign;
+  const showLeader = planMode && !!at && at.moved > 18 * scale;
 
   const w = (emphasized ? 52 : 38) * scale;
   const h = (emphasized ? 18 : 14) * scale;
@@ -536,6 +795,16 @@ function SegmentLabel({
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.2, delay: 0.15 }}
     >
+      {showLeader && (
+        <line
+          x1={cx}
+          y1={cy}
+          x2={labelCx}
+          y2={labelCy}
+          stroke="rgba(17,86,115,0.38)"
+          strokeWidth={0.8 * scale}
+        />
+      )}
       <rect
         x={labelCx - w / 2}
         y={labelCy - h / 2}

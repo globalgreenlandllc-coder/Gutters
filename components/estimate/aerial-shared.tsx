@@ -16,6 +16,7 @@ import {
   type Dormer,
 } from "@/lib/roof-skeleton";
 import { engineDrawnGeometry } from "@/lib/roof-structure-view";
+import { dropDanglingLines } from "@/lib/diagram-labels";
 import {
   perimBBox,
   anchorForSide,
@@ -668,6 +669,49 @@ function sideAnchor(
 }
 
 /**
+ * FRONT / BACK / LEFT / RIGHT orientation chip positions + pill boxes.
+ * Exported so the canvases can feed the chips into the label-layout solver
+ * as fixed obstacles (an LF pill must slide around a chip, not under it) —
+ * the SAME numbers the overlay renders, so obstacle and drawing agree.
+ */
+export type OrientationChipBox = {
+  side: OrientSide;
+  label: string;
+  at: Pt;
+  w: number;
+  h: number;
+};
+
+export function orientationChipBoxes(
+  eaves: { points: { x: number; y: number }[]; side?: EaveSide }[],
+  perimeter: readonly Pt[],
+  scale: number,
+): OrientationChipBox[] {
+  const bbox = perimBBox(perimeter);
+  return (
+    [
+      ["front", "FRONT"],
+      ["back", "BACK"],
+      ["left", "LEFT"],
+      ["right", "RIGHT"],
+    ] as [OrientSide, string][]
+  )
+    .map(([side, label]) => {
+      const at = sideAnchor(eaves, side, bbox, scale);
+      return at
+        ? {
+            side,
+            label,
+            at,
+            w: (label.length * 6.2 + 12) * scale,
+            h: 14 * scale,
+          }
+        : null;
+    })
+    .filter((c): c is OrientationChipBox => c !== null);
+}
+
+/**
  * Roof-structure overlay — renders the roof like an architect's roof plan
  * sitting under the gutter trace: the filled building SHAPE, the interior
  * roof planes (ridges / hips / valleys), the perimeter (roof edge), and
@@ -864,13 +908,40 @@ export function RoofStructureOverlay({
   const gableText = onDark ? "#cbd5e1" : "#475569";
 
   // Interior roof lines (skel derived above). Map to render descriptors.
-  const lines: { pts: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
-    ...skel.ridges.map((l) => ({ pts: l.points, c: ridgeC, w: 1.5, dash: false })),
-    ...skel.hips.map((l) => ({ pts: l.points, c: hipC, w: 1.6, dash: false })),
-    ...skel.valleys.map((l) => ({ pts: l.points, c: valleyC, w: 1.6, dash: true })),
+  const rawLines: { points: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
+    ...skel.ridges.map((l) => ({ points: l.points, c: ridgeC, w: 1.5, dash: false })),
+    ...skel.hips.map((l) => ({ points: l.points, c: hipC, w: 1.6, dash: false })),
+    ...skel.valleys.map((l) => ({ points: l.points, c: valleyC, w: 1.6, dash: true })),
   ].filter(
-    (l) => l.pts.length >= 2 && segLen(l.pts[0], l.pts[l.pts.length - 1]) > 1.5,
+    (l) => l.points.length >= 2 && segLen(l.points[0], l.points[l.points.length - 1]) > 1.5,
   );
+  // Drop DANGLING interior lines — a ridge/hip/valley that connects to
+  // nothing at one end (e.g. a porch-cover ridge stub the engine emitted
+  // without its cover outline) reads as a random pen stroke, worst on the
+  // client proposal. A well-formed skeleton line touches the perimeter, a
+  // gable end, an eave/rake, or another interior line at BOTH ends.
+  // Display-only: never affects LF / pricing.
+  const anchorSegs: [Pt, Pt][] = [];
+  for (let i = 0; i < structure.perimeter.length; i++) {
+    anchorSegs.push([
+      structure.perimeter[i],
+      structure.perimeter[(i + 1) % structure.perimeter.length],
+    ]);
+  }
+  for (const g of skel.gables) {
+    if (g.points.length >= 2) anchorSegs.push([g.points[0], g.points[g.points.length - 1]]);
+  }
+  for (const dm of skel.dormers ?? []) {
+    if (dm.points.length >= 2) anchorSegs.push([dm.points[0], dm.points[1]]);
+  }
+  for (const src of [eaves, rakes] as { points: { x: number; y: number }[] }[][]) {
+    for (const l of src) {
+      for (let i = 1; i < l.points.length; i++) {
+        anchorSegs.push([l.points[i - 1], l.points[i]]);
+      }
+    }
+  }
+  const lines = dropDanglingLines(rawLines, anchorSegs, 6);
 
   // Roof centroid (perimeter average) — used to nudge the GABLE labels just
   // inside their edge.
@@ -885,20 +956,8 @@ export function RoofStructureOverlay({
   const centroid = { x: cx, y: cy };
   // Orientation chips snap to the building bounding-box edge (off-edge by
   // construction), so FRONT/BACK/LEFT/RIGHT never float in the roof interior.
-  const chipBBox = perimBBox(structure.perimeter);
-  const chips: { side: OrientSide; label: string; at: Pt }[] = (
-    [
-      ["front", "FRONT"],
-      ["back", "BACK"],
-      ["left", "LEFT"],
-      ["right", "RIGHT"],
-    ] as [OrientSide, string][]
-  )
-    .map(([side, label]) => {
-      const at = sideAnchor(eaves, side, chipBBox, scale);
-      return at ? { side, label, at } : null;
-    })
-    .filter((c): c is { side: OrientSide; label: string; at: Pt } => c !== null);
+  // Shared with the canvases (label-layout obstacles) via orientationChipBoxes.
+  const chips = orientationChipBoxes(eaves, structure.perimeter, scale);
 
   const chipText = onDark ? "#e2e8f0" : "#1e3a8a";
   const chipFill = onDark ? "rgba(2,6,23,0.78)" : "rgba(255,255,255,0.92)";
@@ -944,7 +1003,7 @@ export function RoofStructureOverlay({
       {lines.map((l, i) => (
         <path
           key={`rl-${i}`}
-          d={linePathD(l.pts)}
+          d={linePathD(l.points)}
           fill="none"
           stroke={l.c}
           strokeWidth={l.w * scale}
@@ -1131,9 +1190,7 @@ export function RoofStructureOverlay({
         );
       })}
       {/* Orientation chips — FRONT / BACK / LEFT / RIGHT off each edge */}
-      {chips.map(({ side, label, at }) => {
-        const w = (label.length * 6.2 + 12) * scale;
-        const h = 14 * scale;
+      {chips.map(({ side, label, at, w, h }) => {
         return (
           <g key={side}>
             <rect
