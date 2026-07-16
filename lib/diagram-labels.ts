@@ -221,6 +221,35 @@ export function layoutLabels(
 }
 
 /**
+ * Label anchor for a polyline run: the midpoint + unit normal of its
+ * LONGEST segment. Using the first→last chord breaks on jogging runs (the
+ * chord is a diagonal matching no wall) and on closed loops (first == last
+ * → zero-length chord, label lands on a corner). The longest straight leg
+ * is always a real drawn edge to hang the label off.
+ */
+export function polylineLabelAnchor(
+  points: readonly DPt[],
+): { mid: DPt; nx: number; ny: number } | null {
+  let best = -1;
+  let bi = -1;
+  for (let i = 1; i < points.length; i++) {
+    const d = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    if (d > best) {
+      best = d;
+      bi = i;
+    }
+  }
+  if (bi < 0 || best <= 1e-6) return null;
+  const a = points[bi - 1];
+  const b = points[bi];
+  return {
+    mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    nx: -(b.y - a.y) / best,
+    ny: (b.x - a.x) / best,
+  };
+}
+
+/**
  * Drop interior skeleton lines that dangle in space. A line survives only
  * if BOTH endpoints sit within `tol` of an anchor segment (perimeter /
  * gable ends) or of another SURVIVING line. Removal loops to a fixpoint so

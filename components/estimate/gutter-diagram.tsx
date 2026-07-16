@@ -14,6 +14,12 @@ import {
   type Pt,
   type DBBox,
 } from "@/lib/diagram-geom";
+import {
+  layoutLabels,
+  polylineLabelAnchor,
+  type LabelBox,
+  type PlacedLabel,
+} from "@/lib/diagram-labels";
 import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
 
 /**
@@ -238,6 +244,96 @@ export function GutterDiagram({
 
   const confPct = confidence != null ? Math.round(confidence * 100) : null;
 
+  // Clockwise walk-around numbering (from top-left) so the drop numbers
+  // read as an ordered tour of the house, matching the proposal preview.
+  const dropOrder = useMemo(() => {
+    if (nDownspouts.length === 0) return new Map<string, number>();
+    let cx = 0;
+    let cy = 0;
+    for (const d of nDownspouts) {
+      cx += d.x;
+      cy += d.y;
+    }
+    cx /= nDownspouts.length;
+    cy /= nDownspouts.length;
+    const start = (-Math.PI * 3) / 4;
+    const key = (d: { x: number; y: number }) =>
+      (Math.atan2(d.y - cy, d.x - cx) - start + Math.PI * 2) % (Math.PI * 2);
+    const sorted = [...nDownspouts].sort((a, b) => key(a) - key(b));
+    return new Map(sorted.map((d, i) => [d.id, i + 1]));
+  }, [nDownspouts]);
+
+  // Global LF-pill layout: each label starts perpendicular off its run
+  // (away from the roof center) and the solver relaxes it clear of the
+  // other pills, the numbered drops, the orientation chips and every
+  // run — so a label can never cover a downspout number or cross a line.
+  // Labels that had to travel draw a thin leader back to their run.
+  const labelPlaced = useMemo(() => {
+    if (redactNumbers) return new Map<string, PlacedLabel>();
+    const items: LabelBox[] = [];
+    for (const line of nEaves) {
+      if (line.points.length < 2) continue;
+      const len = Math.round(polylineLengthFt(line.points, scale));
+      if (len < LABEL_MIN_FT) continue;
+      const anchor = polylineLabelAnchor(line.points);
+      if (!anchor) continue;
+      let { nx, ny } = anchor;
+      const { mid } = anchor;
+      if ((mid.x - centroid.x) * nx + (mid.y - centroid.y) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      items.push({
+        id: line.id,
+        cx: mid.x + nx * 13,
+        cy: mid.y + ny * 13,
+        w: 44,
+        h: 17,
+      });
+    }
+    if (items.length === 0) return new Map<string, PlacedLabel>();
+    const polys = [...nEaves, ...(presentation ? [] : nRakes)];
+    const segments = polys.flatMap((l) =>
+      l.points.slice(1).map((p, i) => ({ a: l.points[i], b: p, pad: 3 })),
+    );
+    if (hasPerimeter) {
+      for (let i = 0; i < perimeter.length; i++) {
+        segments.push({
+          a: perimeter[i],
+          b: perimeter[(i + 1) % perimeter.length],
+          pad: 2,
+        });
+      }
+    }
+    const discs = nDownspouts.map((d) => ({ x: d.x, y: d.y, r: 11 }));
+    const rects = orientationChips.map((c) => ({
+      cx: c.at.x,
+      cy: c.at.y,
+      w: c.label.length * 6.2 + 12,
+      h: 14,
+    }));
+    return layoutLabels(
+      items,
+      { segments, discs, rects },
+      {
+        // Top inset clears the HTML overlay chips (address / totals).
+        bounds: { minX: 12, minY: 36, maxX: VIEWBOX_W - 12, maxY: VIEWBOX_H - 14 },
+        gap: 3,
+      },
+    );
+  }, [
+    redactNumbers,
+    nEaves,
+    nRakes,
+    presentation,
+    hasPerimeter,
+    perimeter,
+    nDownspouts,
+    orientationChips,
+    scale,
+    centroid,
+  ]);
+
   return (
     <div
       className={
@@ -316,6 +412,7 @@ export function GutterDiagram({
               pxPerFt={scale}
               centroid={centroid}
               tier={runTier(line)}
+              at={labelPlaced.get(line.id)}
             />
           ))}
 
@@ -333,23 +430,26 @@ export function GutterDiagram({
           />
         ))}
 
-        {/* Downspouts — numbered coral drops */}
-        {nDownspouts.map((d, i) => (
-          <g key={d.id}>
-            <circle cx={d.x} cy={d.y} r={8} fill={C.drop} stroke="#fff" strokeWidth={1.8} />
-            <text
-              x={d.x}
-              y={d.y + 3}
-              textAnchor="middle"
-              fontSize={9}
-              fontWeight={700}
-              fill="#fff"
-              fontFamily="ui-sans-serif, system-ui"
-            >
-              {i + 1}
-            </text>
-          </g>
-        ))}
+        {/* Downspouts — numbered coral drops (clockwise walk-around) */}
+        {nDownspouts.map((d, i) => {
+          const num = dropOrder.get(d.id) ?? i + 1;
+          return (
+            <g key={d.id}>
+              <circle cx={d.x} cy={d.y} r={8} fill={C.drop} stroke="#fff" strokeWidth={1.8} />
+              <text
+                x={d.x}
+                y={d.y + 3}
+                textAnchor="middle"
+                fontSize={num >= 10 ? 8 : 9}
+                fontWeight={700}
+                fill="#fff"
+                fontFamily="ui-sans-serif, system-ui"
+              >
+                {num}
+              </text>
+            </g>
+          );
+        })}
 
         {/* Orientation chips (paired with the north arrow for true bearing) */}
         {orientationChips.map((c) => {
@@ -465,34 +565,49 @@ function EaveLabel({
   pxPerFt,
   centroid,
   tier = "main",
+  at,
 }: {
   line: SimpleLine;
   pxPerFt: number;
   centroid: Pt;
   tier?: keyof typeof TIER_STYLE;
+  /** Solver-resolved pill center (de-collided from other pills, drops,
+   *  chips and runs). When it traveled, a thin leader ties it back. */
+  at?: PlacedLabel;
 }) {
   if (line.points.length < 2) return null;
   const len = Math.round(polylineLengthFt(line.points, pxPerFt));
   if (len < LABEL_MIN_FT) return null;
-  const a = line.points[0];
-  const b = line.points[line.points.length - 1];
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const norm = Math.hypot(dx, dy) || 1;
-  let nx = (-dy / norm) * 12;
-  let ny = (dx / norm) * 12;
-  const cx = (a.x + b.x) / 2;
-  const cy = (a.y + b.y) / 2;
+  // Hang the label (and its leader) off the run's longest straight leg —
+  // the first→last chord breaks on jogging runs and closed tier loops.
+  const anchor = polylineLabelAnchor(line.points);
+  if (!anchor) return null;
+  let nx = anchor.nx * 12;
+  let ny = anchor.ny * 12;
+  const cx = anchor.mid.x;
+  const cy = anchor.mid.y;
   // Kick the label to the side away from the centroid.
   if ((cx - centroid.x) * nx + (cy - centroid.y) * ny < 0) {
     nx = -nx;
     ny = -ny;
   }
-  const lx = cx + nx;
-  const ly = cy + ny;
+  const lx = at ? at.cx : cx + nx;
+  const ly = at ? at.cy : cy + ny;
+  const showLeader = !!at && at.moved > 16;
   const w = 42;
   return (
     <g pointerEvents="none">
+      {showLeader && (
+        <line
+          x1={cx}
+          y1={cy}
+          x2={lx}
+          y2={ly}
+          stroke={TIER_STYLE[tier].stroke}
+          strokeWidth={0.8}
+          opacity={0.5}
+        />
+      )}
       <rect x={lx - w / 2} y={ly - 8} width={w} height={16} rx={3.5} fill={C.paper} stroke={TIER_STYLE[tier].stroke} strokeWidth={0.8} />
       <text
         x={lx}

@@ -46,14 +46,16 @@ export function ResultsView({
   const reduce = useReducedMotion();
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
-  // Satellite (address) estimates get a clean "Diagram" view as the default
-  // — the drafting sheet is the deliverable. Plan estimates keep the roof
-  // plan / sheet / elevations flow.
+  // Satellite (address) estimates open on "Photo & edit" — the trace ON
+  // the real photo — so the contractor verifies/adjusts runs against the
+  // actual roof FIRST; the clean "Diagram" drafting sheet is the second
+  // tab (the deliverable, once the trace is right). Plan estimates keep
+  // the roof plan / sheet / elevations flow.
   const isSatelliteEstimate =
     !!initial.aerial?.imageDataUrl && !initial.planSource;
   const [viewMode, setViewMode] = useState<
     "diagram" | "plan" | "sheet" | "elevations" | "3d"
-  >(isSatelliteEstimate ? "diagram" : "plan");
+  >("plan");
   // When the Elevations view hands off to the trace tool, it carries the
   // page to open the Plan-sheet on.
   const [sheetInitialPage, setSheetInitialPage] = useState<number | null>(null);
@@ -286,8 +288,8 @@ export function ResultsView({
               <div className="mb-2 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                 {(
                   [
-                    isSatelliteEstimate ? "diagram" : null,
                     "plan",
+                    isSatelliteEstimate ? "diagram" : null,
                     hasSheet ? "sheet" : null,
                     hasSheet ? "elevations" : null,
                     "3d",

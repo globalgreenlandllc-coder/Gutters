@@ -143,3 +143,23 @@ test("dropDanglingLines: preserves input order and drops degenerate lines", () =
   const kept = dropDanglingLines([bad as { points: { x: number; y: number }[] }, a], PERIM, 6);
   assert.deepEqual(kept, [a]);
 });
+
+test("polylineLabelAnchor: closed loop anchors on longest leg, not the seam", async () => {
+  const { polylineLabelAnchor } = await import("./diagram-labels");
+  const loop = [
+    { x: 0, y: 0 },
+    { x: 40, y: 0 },
+    { x: 40, y: 20 },
+    { x: 0, y: 20 },
+    { x: 0, y: 0 },
+  ];
+  const a = polylineLabelAnchor(loop)!;
+  assert.equal(a.mid.y === 0 || a.mid.y === 20, true); // one of the 40-long legs
+  assert.equal(Math.abs(a.nx), 0);
+  assert.equal(Math.abs(a.ny), 1);
+});
+
+test("polylineLabelAnchor: degenerate polyline returns null", async () => {
+  const { polylineLabelAnchor } = await import("./diagram-labels");
+  assert.equal(polylineLabelAnchor([{ x: 5, y: 5 }, { x: 5, y: 5 }]), null);
+});

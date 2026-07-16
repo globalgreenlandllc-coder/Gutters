@@ -112,3 +112,69 @@ sharp(Buffer.from(svg))
     "/private/tmp/claude-501/-Users-dmitriyapetenok-Documents-gutters-project/1af6dbb3-39a4-4b63-8e63-aa839f020db9/scratchpad/preview.png",
   )
   .then(() => console.log("rendered preview.png"));
+
+// ---------------------------------------------------------------------------
+// Second render: GutterDiagram (satellite / address flow drafting sheet).
+// Same footprint scaled into the 900x580 satellite canvas space, downspouts
+// deliberately ON run midpoints to force label<->pin collisions, plus an
+// upper-tier interior loop for tier colors.
+// ---------------------------------------------------------------------------
+import { GutterDiagram } from "@/components/estimate/gutter-diagram";
+
+const S = 2.2;
+const OX = 150;
+const OY = 40;
+const sp = (p: P): P => ({ x: p.x * S + OX, y: p.y * S + OY });
+const satPerim = PERIM.map(sp);
+const satEaves: EditableLine[] = runs(PERIM).map((l) => ({
+  ...l,
+  points: l.points.map(sp),
+}));
+// Upper-roof interior loop (solar tier run)
+satEaves.push({
+  id: "tier-eave-1",
+  points: [sp(pt(120, 100)), sp(pt(190, 100)), sp(pt(190, 140)), sp(pt(120, 140)), sp(pt(120, 100))],
+} as EditableLine);
+// Downspouts on run MIDPOINTS (collision stress) + corners
+const satDs: Downspout[] = (
+  [
+    [100, 54], [250, 118], [78, 130], [140, 206], [222, 206], [257, 183],
+    [182, 54], [78, 180],
+  ] as [number, number][]
+).map(([x, y], i) => ({ id: `sd${i}`, ...sp(pt(x, y)), heightFt: 10 })) as Downspout[];
+
+const satStructure = {
+  perimeter: satPerim,
+  ridges: [{ id: "r1", points: [sp(pt(115, 95)), sp(pt(215, 95))] }],
+  hips: [],
+  valleys: [],
+  gables: [],
+  confidence: 0.82,
+} as unknown as RoofStructure;
+
+const satHtml = renderToStaticMarkup(
+  <div style={{ width: 1100, height: 720 }}>
+    <GutterDiagram
+      eaves={satEaves}
+      rakes={[]}
+      downspouts={satDs}
+      roofStructure={satStructure}
+      pxPerFt={2.4 * S}
+      address="123 Verification Ln, Test WA"
+      confidence={0.82}
+    />
+  </div>,
+);
+const satM = satHtml.match(/<svg[\s\S]*<\/svg>/);
+if (!satM) throw new Error("no satellite svg found");
+const satSvg = satM[0].replace(/<svg /, '<svg width="1800" height="1160" ');
+writeFileSync(
+  "/private/tmp/claude-501/-Users-dmitriyapetenok-Documents-gutters-project/1af6dbb3-39a4-4b63-8e63-aa839f020db9/scratchpad/preview-satellite.svg",
+  satSvg,
+);
+sharp(Buffer.from(satSvg))
+  .png()
+  .toFile(
+    "/private/tmp/claude-501/-Users-dmitriyapetenok-Documents-gutters-project/1af6dbb3-39a4-4b63-8e63-aa839f020db9/scratchpad/preview-satellite.png",
+  )
+  .then(() => console.log("rendered preview-satellite.png"));
