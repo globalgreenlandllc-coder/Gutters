@@ -715,11 +715,55 @@ export function tierRegionRings(args: {
     }
   }
 
+  // SEAL the barrier — but only its REAL cliff lines. DSM noise leaves
+  // 2–3 px gaps in true cliff bands (the flood fill leaks through and
+  // two height tiers merge — the owner's west wing never got its
+  // interior drip line), while ridge smear sprinkles isolated step
+  // SPECKS that must not become walls. Despeckle (drop components
+  // shorter than ~1.2 m), then dilate the survivors to bridge the gaps.
+  {
+    const minCliffPx = Math.max(6, Math.round(1.2 / metersPerPixel));
+    const seen = new Uint8Array(width * height);
+    for (let i = 0; i < barrier.length; i++) {
+      if (barrier[i] === 0 || seen[i]) continue;
+      const queue = [i];
+      seen[i] = 1;
+      let head = 0;
+      const comp: number[] = [];
+      while (head < queue.length) {
+        const idx = queue[head++];
+        comp.push(idx);
+        const x = idx % width;
+        const y = (idx - x) / width;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            const ni = ny * width + nx;
+            if (barrier[ni] === 0 || seen[ni]) continue;
+            seen[ni] = 1;
+            queue.push(ni);
+          }
+        }
+      }
+      if (comp.length < minCliffPx) {
+        for (const idx of comp) barrier[idx] = 0;
+      }
+    }
+  }
+  const sealedBarrier = dilateMask(
+    barrier,
+    width,
+    height,
+    Math.max(1, Math.round(0.2 / metersPerPixel)),
+  );
+
   // Connected components of footprint minus barrier.
   const visited = new Uint8Array(width * height);
   const out: { ring: Pt[]; areaM2: number }[] = [];
   for (let start = 0; start < mask.length && out.length < 6; start++) {
-    if (mask[start] === 0 || barrier[start] === 1 || visited[start]) continue;
+    if (mask[start] === 0 || sealedBarrier[start] === 1 || visited[start]) continue;
     const queue = [start];
     visited[start] = 1;
     let head = 0;
@@ -739,7 +783,7 @@ export function tierRegionRings(args: {
       ] as const) {
         if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
         const ni = ny * width + nx;
-        if (mask[ni] === 0 || barrier[ni] === 1 || visited[ni]) continue;
+        if (mask[ni] === 0 || sealedBarrier[ni] === 1 || visited[ni]) continue;
         visited[ni] = 1;
         queue.push(ni);
       }

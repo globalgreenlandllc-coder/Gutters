@@ -901,7 +901,45 @@ export async function runSolarFirstEstimate(args: {
         if (best > 1.1) residN++;
       }
     }
-    return { n, offRoofN, roughN, toneN, greenN, residN };
+    // PLANARITY of the strip inside the edge: real roof is a PLANE even
+    // in deep shadow; vegetation is domed/lumpy at this scale. Fit
+    // h = c0 + c1·x + c2·y over a 2-row band (0.5 m and 1.6 m inside)
+    // and report RMS. This is what separates the owner's real covered
+    // patio (dark, flat) from the tree crown (dark, curved).
+    let planeRms: number | null = null;
+    {
+      const pts: { x: number; y: number; h: number }[] = [];
+      for (let k = 0; k < stations; k++) {
+        const t = 0.15 + (0.7 * k) / Math.max(1, stations - 1);
+        for (const depth of [0.5 / mpp, 1.6 / mpp]) {
+          const px = e.a.x + (e.b.x - e.a.x) * t + e.nrm.nx * depth;
+          const py = e.a.y + (e.b.y - e.a.y) * t + e.nrm.ny * depth;
+          const h = sample(px, py);
+          if (h != null) pts.push({ x: px * mpp, y: py * mpp, h });
+        }
+      }
+      if (pts.length >= 6) {
+        const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        const mh = pts.reduce((s, p) => s + p.h, 0) / pts.length;
+        let sxx = 0, sxy = 0, syy = 0, sxh = 0, syh = 0;
+        for (const p of pts) {
+          const ux = p.x - mx, uy = p.y - my, uh = p.h - mh;
+          sxx += ux * ux; sxy += ux * uy; syy += uy * uy;
+          sxh += ux * uh; syh += uy * uh;
+        }
+        const det = sxx * syy - sxy * sxy;
+        const c1 = det > 1e-9 ? (sxh * syy - syh * sxy) / det : 0;
+        const c2 = det > 1e-9 ? (syh * sxx - sxh * sxy) / det : 0;
+        let ss = 0;
+        for (const p of pts) {
+          const r = p.h - mh - c1 * (p.x - mx) - c2 * (p.y - my);
+          ss += r * r;
+        }
+        planeRms = Math.sqrt(ss / pts.length);
+      }
+    }
+    return { n, offRoofN, roughN, toneN, greenN, residN, planeRms };
   };
   if (process.env.SOLAR_EAVE_AUDIT) {
     for (const e of classified) {
@@ -942,8 +980,19 @@ export async function runSolarFirstEstimate(args: {
   const demotedEaves: typeof allEaveEdges = [];
   for (const e of allEaveEdges) {
     const ev = edgeEvidence(e);
-    if (ev.n >= 3 && ev.toneN / ev.n >= 0.67) demotedEaves.push(e);
-    else eaveEdges.push(e);
+    // Wrong tone AND non-planar inside → vegetation/shadow garbage.
+    // Wrong tone but PLANAR → real roof under tree shadow (the owner's
+    // covered patio measured plane-RMS 0.04–0.24 m; the bush 0.81, the
+    // tree-line 0.75) — stays priced.
+    if (
+      ev.n >= 3 &&
+      ev.toneN / ev.n >= 0.67 &&
+      (ev.planeRms == null || ev.planeRms > 0.28)
+    ) {
+      demotedEaves.push(e);
+    } else {
+      eaveEdges.push(e);
+    }
   }
   if (demotedEaves.length > 0) {
     const demotedFt = Math.round(
@@ -1029,11 +1078,23 @@ export async function runSolarFirstEstimate(args: {
     // the safety net (its PCA line fit rejects corner-wrapping cliffs),
     // so every rejection path records its own segments here.
     const rejectedTierSegs = rejectedTierSuggestions;
+    const tierDbg = (r: number, msg: string) => {
+      if (process.env.SOLAR_EAVE_AUDIT) {
+        const c = polygonCentroid(regions[r].ring);
+        const [cc] = transformToCanvas([S(c)], W, H);
+        console.log(
+          `TIER region ${r}: ${Math.round(regions[r].areaM2)} m² @ canvas(${Math.round(cc.x)},${Math.round(cc.y)}) — ${msg}`,
+        );
+      }
+    };
     for (let r = 0; r < regions.length; r++) {
       const reg = regions[r].ring;
       // A NEIGHBOR's building sliver inside the crop window forms its own
       // region — only tiers whose center lies inside OUR footprint count.
-      if (!pointInPolygon(polygonCentroid(reg), ring)) continue;
+      if (!pointInPolygon(polygonCentroid(reg), ring)) {
+        tierDbg(r, "REJECT centroid outside footprint");
+        continue;
+      }
       // ROOF-PLANE gate: Google's Solar segments map the actual roof
       // planes. A "tier" containing none of them isn't roof — it's the
       // tree canopy the mask/growth annexed (photogrammetric canopy is
@@ -1045,6 +1106,7 @@ export async function runSolarFirstEstimate(args: {
         segCentersPx.length > 0 &&
         !segCentersPx.some((c) => pointInPolygon(c.px, reg))
       ) {
+        tierDbg(r, "REJECT no Solar segment center inside");
         continue;
       }
       // ROOF-SURFACE screen: a tier region must LOOK like roof inside.
@@ -1092,7 +1154,10 @@ export async function runSolarFirstEstimate(args: {
             else good++;
           }
         }
-        if (good + bad >= 8 && bad / (good + bad) > 0.3) continue;
+        if (good + bad >= 8 && bad / (good + bad) > 0.3) {
+          tierDbg(r, `REJECT surface screen ${bad}/${good + bad} bad`);
+          continue;
+        }
       }
       // Degenerate-region gate: a needle-thin sliver (barrier artifacts
       // between roof planes) produces spike rings that draw as random
@@ -1106,8 +1171,12 @@ export async function runSolarFirstEstimate(args: {
           per += Math.hypot(b.x - a.x, b.y - a.y);
         }
         const compactness = (4 * Math.PI * polygonArea(reg)) / Math.max(1, per * per);
-        if (compactness < 0.07 || regions[r].areaM2 < 12) continue;
+        if (compactness < 0.07 || regions[r].areaM2 < 12) {
+          tierDbg(r, `REJECT compactness ${compactness.toFixed(3)} / area`);
+          continue;
+        }
       }
+      tierDbg(r, "ACCEPTED");
       tierRingsForMagnet.push(reg);
       // Judge every ring edge, then emit CONTIGUOUS CHAINS of kept edges
       // as single polyline runs — the loops a contractor draws — instead
@@ -1127,7 +1196,27 @@ export async function runSolarFirstEstimate(args: {
         const nrm = inwardNormalForRing(a, b, reg, 0.4 / mpp);
         const hIn = sample(mid.x + nrm.nx * insetPx, mid.y + nrm.ny * insetPx);
         const hOut = sample(mid.x - nrm.nx * insetPx, mid.y - nrm.ny * insetPx);
-        const upper = hIn != null && hOut != null && hIn - hOut >= 0.8;
+        let upper = hIn != null && hOut != null && hIn - hOut >= 0.8;
+        // CLIFF vs SMEARED RIDGE: past a real drip edge the LOWER ROOF
+        // continues flat-ish; past a photogrammetric ridge smear the
+        // surface keeps falling at the same rate. If the outside keeps
+        // dropping ≥55% of the step over the next meter, this is a
+        // slope, not a gutter line (the ridge chains the owner never
+        // drew).
+        if (upper) {
+          const hOutFar = sample(
+            mid.x - nrm.nx * insetPx * 2.3,
+            mid.y - nrm.ny * insetPx * 2.3,
+          );
+          if (
+            hOutFar != null &&
+            hOut != null &&
+            hIn != null &&
+            hOut - hOutFar > 0.55 * (hIn - hOut)
+          ) {
+            upper = false;
+          }
+        }
         if (nearOuter || !upper) {
           judged.push({ a, b, lengthFt, keep: "skip", bridgeable: false });
           continue;
