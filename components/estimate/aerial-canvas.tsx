@@ -4,13 +4,13 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
+  CircleDot,
   Hash,
-  Layers,
   Maximize2,
   Minimize2,
   MountainSnow,
   MousePointer2,
-  Plus,
+  PenLine,
   Ruler,
   Sparkles,
   Sun,
@@ -252,6 +252,14 @@ export function AerialCanvas({
   const [drawing, setDrawing] = useState<{
     start: { x: number; y: number };
     end: { x: number; y: number };
+  } | null>(null);
+  // Ghost preview for the downspout tool — follows the cursor, pulled
+  // onto the nearest gutter run so the contractor sees exactly where
+  // the drop will land BEFORE clicking. `snapped` brightens the ring.
+  const [dsGhost, setDsGhost] = useState<{
+    x: number;
+    y: number;
+    snapped: boolean;
   } | null>(null);
 
   const totalEaveLF = useMemo(
@@ -524,16 +532,68 @@ export function AerialCanvas({
     return orthoSnap(p, anchor);
   }
 
+  // Smart downspout placement: pull the drop onto the nearest eave run
+  // (within a fingertip, screen-constant) so the dot lands ON the gutter
+  // line instead of floating next to it — and read that eave's tier for
+  // the default height: a porch/garage (lower-tier) downspout drops at
+  // ~10 ft, a main-roof one at the 20 ft default.
+  function snapDownspoutPoint(p: { x: number; y: number }): {
+    x: number;
+    y: number;
+    heightFt: number;
+    snapped: boolean;
+  } {
+    const tol = 14 * Math.max(renderScale, 0.5);
+    let best: { x: number; y: number } | null = null;
+    let bestD = tol;
+    let bestTier: EditableLine["tier"];
+    for (const line of eaves) {
+      for (let i = 0; i < line.points.length - 1; i++) {
+        const a = line.points[i];
+        const b = line.points[i + 1];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        if (len2 === 0) continue;
+        const t = Math.max(
+          0,
+          Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2),
+        );
+        const proj = { x: a.x + t * dx, y: a.y + t * dy };
+        const d = Math.hypot(p.x - proj.x, p.y - proj.y);
+        if (d < bestD) {
+          bestD = d;
+          best = proj;
+          bestTier = line.tier;
+        }
+      }
+    }
+    if (!best) return { x: p.x, y: p.y, heightFt: 20, snapped: false };
+    return {
+      x: best.x,
+      y: best.y,
+      heightFt: bestTier === "lower" ? 10 : 20,
+      snapped: true,
+    };
+  }
+
   function handlePointerDown(e: React.PointerEvent) {
     const p = svgPoint(e);
     if (tool === "add-eave") {
+      // Right-click = "done drawing" — finish the chain and drop back
+      // to Select in one gesture.
+      if (e.button === 2) {
+        setDrawing(null);
+        setTool("select");
+        return;
+      }
       const snapped = snapPoint(p, drawing ? drawing.start : null);
       if (drawing) {
-        // SECOND click — commit the eave from the stored start to here.
-        // Two-click flow matches the contractor's mental model: same
-        // 'click here, click there' rhythm as add-downspout, just two
-        // taps. The old drag-to-draw required a continuous gesture
-        // the user couldn't tell was needed.
+        // NEXT click — commit a segment from the stored start to here,
+        // then keep the chain going FROM this corner. The contractor
+        // traces the whole perimeter corner-to-corner-to-corner without
+        // ever touching the toolbar; double-click, right-click, or Esc
+        // ends the chain (the tool stays armed for the next run).
         const len = dist(drawing.start, snapped);
         const threshold = Math.max(3, view.width * 0.015);
         if (len > threshold) {
@@ -560,10 +620,10 @@ export function AerialCanvas({
             }
           }
           onEavesChange([...eaves, { id, kind: "eave", points: pts }]);
-          setSelectedId(id);
         }
-        setDrawing(null);
-        setTool("select");
+        // Chain: the committed corner becomes the next segment's start.
+        // A zero-length click (below threshold) just re-anchors here.
+        setDrawing({ start: snapped, end: snapped });
         return;
       }
       // FIRST click — record the start point. The end point tracks the
@@ -577,6 +637,13 @@ export function AerialCanvas({
       // derived overlay then draws it as a real gable form (a whole-side gable
       // end, or a projecting cross-gable wing). NO gutter LF is added (a gable
       // sheds water), so the priced total is unchanged — this is pure shape.
+      // Gables don't chain (they're isolated edges) but the tool stays armed
+      // so several gable ends can be marked back-to-back.
+      if (e.button === 2) {
+        setDrawing(null);
+        setTool("select");
+        return;
+      }
       const snapped = snapPoint(p, drawing ? drawing.start : null);
       if (drawing) {
         const len = dist(drawing.start, snapped);
@@ -587,20 +654,29 @@ export function AerialCanvas({
             ...rakes,
             { id, kind: "rake", points: [drawing.start, snapped] },
           ]);
-          setSelectedId(id);
         }
         setDrawing(null);
-        setTool("select");
         return;
       }
       setDrawing({ start: snapped, end: snapped });
       return;
     }
     if (tool === "add-downspout") {
+      // Rapid-fire placement: every click drops a downspout (snapped
+      // onto the nearest gutter run, height read from its tier) and the
+      // tool STAYS armed — click, click, click around the roof. Esc or
+      // right-click when done. No popover interruption between drops;
+      // heights are already smart-defaulted and editable later.
+      if (e.button === 2) {
+        setTool("select");
+        return;
+      }
+      const snap = snapDownspoutPoint(p);
       const id = `ds-${Date.now()}`;
-      onDownspoutsChange([...downspouts, { id, x: p.x, y: p.y, heightFt: 20 }]);
-      setSelectedId(id);
-      setTool("select");
+      onDownspoutsChange([
+        ...downspouts,
+        { id, x: snap.x, y: snap.y, heightFt: snap.heightFt },
+      ]);
       return;
     }
     setSelectedId(null);
@@ -614,6 +690,13 @@ export function AerialCanvas({
       // the preview follows the mouse from click-1 to click-2. Corner
       // magnet wins, else right-angle lock relative to the start point.
       setDrawing({ ...drawing, end: snapPoint(p, drawing.start) });
+      return;
+    }
+    if (tool === "add-downspout") {
+      // Ghost preview follows the cursor, pre-snapped onto the nearest
+      // gutter run — the contractor sees the landing spot before the click.
+      const s = snapDownspoutPoint(p);
+      setDsGhost({ x: s.x, y: s.y, snapped: s.snapped });
       return;
     }
     if (drag?.kind === "vertex") {
@@ -712,13 +795,30 @@ export function AerialCanvas({
     setSelectedId(null);
   }
 
-  // Delete / Backspace removes the current selection. Bail when the
-  // keystroke targets a real input — otherwise the contractor types in
-  // the estimate-builder fields and accidentally erases an eave.
+  // Switching to a non-select tool (Add eave / Add downspout) clears
+  // the current selection. Without this, the previously-selected
+  // line's corner handles stay on top of the canvas and intercept
+  // pointer-down events — so clicking the satellite to start a new
+  // eave never reaches the SVG and the drawing doesn't appear.
+  // Any in-flight chain / ghost is also dropped so tools start clean.
   useEffect(() => {
-    if (!selectedId) return;
+    if (tool !== "select") {
+      setSelectedId(null);
+    }
+    setDrawing(null);
+    setDsGhost(null);
+  }, [tool]);
+
+  // ONE consolidated keyboard map (was three separate effects):
+  //   V / 1 — Select        E / 2 — Draw gutter
+  //   G     — Mark gable    D / 3 — Downspouts
+  //   Delete/Backspace — remove selection
+  //   Esc — layered escape: cancel the in-flight chain → put the tool
+  //         away → drop the selection → exit fullscreen.
+  // Everything bails when the keystroke targets a real input so typing
+  // in estimate-builder fields never erases an eave or flips tools.
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -729,62 +829,34 @@ export function AerialCanvas({
       ) {
         return;
       }
-      e.preventDefault();
-      deleteSelected();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-    // deleteSelected closes over selectedId/eaves/downspouts; rebinding
-    // when selection changes is enough.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
-
-  // Esc exits fullscreen. Skipped when fullscreen isn't active so the
-  // global Esc handlers in the rest of the app aren't doubly bound.
-  useEffect(() => {
-    if (!fullscreen) return;
-    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (!selectedId) return;
+        e.preventDefault();
+        deleteSelected();
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
-        setFullscreen(false);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [fullscreen]);
-
-  // Switching to a non-select tool (Add eave / Add downspout) clears
-  // the current selection. Without this, the previously-selected
-  // line's corner handles stay on top of the canvas and intercept
-  // pointer-down events — so clicking the satellite to start a new
-  // eave never reaches the SVG and the drawing doesn't appear.
-  useEffect(() => {
-    if (tool !== "select") {
-      setSelectedId(null);
-    }
-  }, [tool]);
-
-  // Esc-to-deselect. Convenient because the new "left-drag pans when
-  // zoomed in" behavior swallows the old "click empty space to
-  // deselect" gesture — Esc gives the contractor that escape hatch
-  // back without making them tap a different tool.
-  useEffect(() => {
-    if (!selectedId) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.isContentEditable ||
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA")
-      )
+        if (drawing) setDrawing(null);
+        else if (tool !== "select") setTool("select");
+        else if (selectedId) setSelectedId(null);
+        else if (fullscreen) setFullscreen(false);
         return;
-      setSelectedId(null);
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "v" || k === "1") setTool("select");
+      else if (k === "e" || k === "2") setTool("add-eave");
+      else if (k === "g" && onRakesChange) setTool("add-gable");
+      else if (k === "d" || k === "3") setTool("add-downspout");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedId]);
+    // deleteSelected reads eaves/rakes/downspouts — the arrays are in
+    // the dep list so a drag that just moved a vertex isn't reverted
+    // by deleting from a stale snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, tool, drawing, fullscreen, eaves, rakes, downspouts]);
 
   return (
     <div
@@ -841,13 +913,54 @@ export function AerialCanvas({
         downspoutCount={downspouts.length}
         hasLowerTier={hasLowerTier}
         theme={theme}
+        onFit={resetView}
       />
       {/* Roof-structure banner only shows when no downspout is
           selected — otherwise it overlaps with the downspout-height
           popover at the bottom of the canvas, and both are
           unreadable. */}
-      {roofStructure && showRoofStructure && !selectedDownspout && (
-        <RoofStructureBanner confidence={roofStructure.confidence} />
+      {roofStructure &&
+        showRoofStructure &&
+        !selectedDownspout &&
+        tool === "select" && (
+          <RoofStructureBanner confidence={roofStructure.confidence} />
+        )}
+
+      {/* Armed-tool hint — tells the contractor the fast gestures the
+          first time they use them: chained clicks, double-click /
+          right-click to finish, rapid-fire downspout drops. */}
+      {tool !== "select" && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
+          <div
+            className={cn(
+              "flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11px] font-medium shadow-elevated backdrop-blur",
+              theme === "tactical"
+                ? "border-cyan-400/30 bg-slate-950/85 text-cyan-100"
+                : "border-zinc-200 bg-white/95 text-zinc-700",
+            )}
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 animate-pulse rounded-full",
+                tool === "add-downspout"
+                  ? theme === "tactical"
+                    ? "bg-fuchsia-400"
+                    : "bg-[#f8717e]"
+                  : theme === "tactical"
+                    ? "bg-cyan-400"
+                    : "bg-accent-500",
+              )}
+            />
+            {tool === "add-eave" &&
+              (drawing
+                ? "Click the next corner — the run keeps chaining · double-click or right-click to finish"
+                : "Click a corner to start tracing · lines chain corner-to-corner")}
+            {tool === "add-gable" &&
+              "Click both ends of the gable edge — tool stays on for the next one"}
+            {tool === "add-downspout" &&
+              "Click along the gutter to drop downspouts — it snaps to the run · Esc when done"}
+          </div>
+        </div>
       )}
 
       {/* Zoom controls — bottom-right. Mouse-wheel zooms toward cursor;
@@ -958,10 +1071,14 @@ export function AerialCanvas({
           // Drags that originate on an eave / vertex / downspout don't
           // reach here — their handlers stopPropagation() — so this
           // never hijacks a real selection or vertex grab.
+          // In DRAW tools the primary button places points and right-
+          // click finishes the chain, so panning there is middle-button
+          // or shift+drag only.
           if (
-            tool === "select" &&
             !drag &&
-            (e.button === 0 || e.button === 2 || e.shiftKey)
+            (tool === "select"
+              ? e.button === 0 || e.button === 2 || e.shiftKey
+              : e.button === 1 || e.shiftKey)
           ) {
             e.preventDefault();
             setPanning({
@@ -1059,11 +1176,21 @@ export function AerialCanvas({
           setPinch(null);
           setPanning(null);
         }}
+        onPointerLeave={() => setDsGhost(null)}
+        onDoubleClick={() => {
+          // Double-click ends the drawing chain but keeps the tool
+          // armed for the next run. The two pointer-downs that precede
+          // the dblclick land on the same spot — below the length
+          // threshold — so no stray segment is committed.
+          if ((tool === "add-eave" || tool === "add-gable") && drawing) {
+            setDrawing(null);
+          }
+        }}
         onContextMenu={(e) => e.preventDefault()}
         className={cn(
           "h-full w-full touch-none select-none",
           (tool === "add-eave" || tool === "add-gable") && "cursor-crosshair",
-          tool === "add-downspout" && "cursor-copy",
+          tool === "add-downspout" && "cursor-none",
           tool === "select" && !panning && "cursor-grab",
           panning && "cursor-grabbing",
         )}
@@ -1268,7 +1395,7 @@ export function AerialCanvas({
                 />
                 {/* Gable width label — gray so it reads distinct from the cyan
                     eave LF pills; lets the contractor sanity-check the span. */}
-                {showLfLabels && lenPx >= 26 && pxPerFt ? (
+                {showLfLabels !== "off" && lenPx >= 26 && pxPerFt ? (
                   <text
                     x={mx}
                     y={my - 3 * renderScale}
@@ -1332,9 +1459,8 @@ export function AerialCanvas({
                 strokeWidth={
                   (isSelected ? 5 : isHover ? 4.5 : 3.5) * renderScale
                 }
-                strokeLinecap="square"
-                strokeLinejoin="miter"
-                strokeMiterlimit={4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 fill="none"
                 style={{
                   filter,
@@ -1413,6 +1539,41 @@ export function AerialCanvas({
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
               />
+              {/* Thin bright core over the main stroke — reads as a lit
+                  neon tube instead of a flat marker line. Tactical theme
+                  only; schematic stays a clean solid stroke. */}
+              {theme === "tactical" && (
+                <path
+                  d={pathFor(line)}
+                  stroke={isLower ? "#fef3c7" : "#e0fcff"}
+                  strokeWidth={1.2 * renderScale}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                  opacity={isSelected ? 0.95 : 0.65}
+                  pointerEvents="none"
+                />
+              )}
+              {/* Endpoint nodes — tiny sockets where runs start/stop, so
+                  chained corners read as joints and gaps in the run are
+                  visible at a glance. Selected lines show the square
+                  drag handles instead. */}
+              {!isSelected &&
+                !drag &&
+                [line.points[0], line.points[line.points.length - 1]].map(
+                  (pt, j) => (
+                    <circle
+                      key={`ep-${j}`}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={2.3 * renderScale}
+                      fill={theme === "tactical" ? "#020617" : "#ffffff"}
+                      stroke={stroke}
+                      strokeWidth={1.4 * renderScale}
+                      pointerEvents="none"
+                    />
+                  ),
+                )}
               {/* LF label policy: show when the line is just hovered or
                   ambient-labeled, but HIDE when the line is selected.
                   The contractor is editing — they don't need the LF
@@ -1566,26 +1727,73 @@ export function AerialCanvas({
         })}
 
         {drawing && (
-          <line
-            x1={drawing.start.x}
-            y1={drawing.start.y}
-            x2={drawing.end.x}
-            y2={drawing.end.y}
-            // A gable preview reads gray (no gutter); an eave reads cyan.
-            stroke={tool === "add-gable" ? "#cbd5e1" : t.eave}
-            // Stroke + dash pattern scale with zoom so the in-progress
-            // preview reads the same on screen at any zoom — was
-            // ballooning to a billboard-width dashed line at 5× zoom.
-            strokeWidth={3 * renderScale}
-            strokeDasharray={`${8 * renderScale} ${5 * renderScale}`}
-            opacity="0.95"
-            style={{
-              filter:
-                theme === "tactical" && tool !== "add-gable"
-                  ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                  : undefined,
-            }}
-          />
+          <g pointerEvents="none">
+            <line
+              x1={drawing.start.x}
+              y1={drawing.start.y}
+              x2={drawing.end.x}
+              y2={drawing.end.y}
+              // A gable preview reads gray (no gutter); an eave reads cyan.
+              stroke={tool === "add-gable" ? "#cbd5e1" : t.eave}
+              // Stroke + dash pattern scale with zoom so the in-progress
+              // preview reads the same on screen at any zoom — was
+              // ballooning to a billboard-width dashed line at 5× zoom.
+              strokeWidth={3 * renderScale}
+              strokeLinecap="round"
+              strokeDasharray={`${8 * renderScale} ${5 * renderScale}`}
+              opacity="0.95"
+              style={{
+                filter:
+                  theme === "tactical" && tool !== "add-gable"
+                    ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
+                    : undefined,
+              }}
+            />
+            {/* Anchor node — where the chain continues from. Pulses so
+                the contractor never loses the live end of the run. */}
+            <circle
+              cx={drawing.start.x}
+              cy={drawing.start.y}
+              r={3.2 * renderScale}
+              fill={tool === "add-gable" ? "#cbd5e1" : t.eave}
+              className="animate-pulse"
+            />
+            <circle
+              cx={drawing.end.x}
+              cy={drawing.end.y}
+              r={2.2 * renderScale}
+              fill={theme === "tactical" ? "#e0fcff" : "#ffffff"}
+              stroke={tool === "add-gable" ? "#cbd5e1" : t.eave}
+              strokeWidth={1.2 * renderScale}
+            />
+          </g>
+        )}
+
+        {/* Downspout ghost — the tool's live cursor. Dashed ring while
+            floating free; solid + crosshair tick when snapped onto a
+            gutter run (which is where clicks will land it). */}
+        {tool === "add-downspout" && dsGhost && (
+          <g pointerEvents="none" opacity={dsGhost.snapped ? 0.95 : 0.6}>
+            <circle
+              cx={dsGhost.x}
+              cy={dsGhost.y}
+              r={8 * renderScale}
+              fill="none"
+              stroke={t.downspout}
+              strokeWidth={1.5 * renderScale}
+              strokeDasharray={
+                dsGhost.snapped
+                  ? undefined
+                  : `${3 * renderScale} ${3 * renderScale}`
+              }
+            />
+            <circle
+              cx={dsGhost.x}
+              cy={dsGhost.y}
+              r={2.4 * renderScale}
+              fill={t.downspout}
+            />
+          </g>
         )}
         {/* Live length readout — while drawing a new eave or dragging a vertex,
             float the current run length (ft) by the cursor so the contractor
@@ -1915,50 +2123,68 @@ function Toolbar({
   lowGlow: boolean;
   onToggleLowGlow: () => void;
 }) {
-  const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
-    { id: "select", icon: MousePointer2, label: "Select" },
-    { id: "add-eave", icon: Plus, label: "Add eave" },
+  const tools: {
+    id: Tool;
+    icon: typeof MousePointer2;
+    label: string;
+    kbd: string;
+  }[] = [
+    { id: "select", icon: MousePointer2, label: "Select", kbd: "V" },
+    { id: "add-eave", icon: PenLine, label: "Draw gutter", kbd: "E" },
     ...(gableTool
-      ? [{ id: "add-gable" as const, icon: Triangle, label: "Add gable" }]
+      ? [
+          {
+            id: "add-gable" as const,
+            icon: Triangle,
+            label: "Mark gable",
+            kbd: "G",
+          },
+        ]
       : []),
-    { id: "add-downspout", icon: Layers, label: "Add downspout" },
+    { id: "add-downspout", icon: CircleDot, label: "Downspouts", kbd: "D" },
   ];
   const tactical = theme === "tactical";
   return (
     <div
       className={cn(
-        "absolute left-4 top-4 z-10 flex flex-col gap-1 rounded-xl border p-1 shadow-card backdrop-blur",
+        "absolute left-3 top-3 z-10 flex flex-col gap-1 rounded-2xl border p-1.5 shadow-elevated backdrop-blur-xl",
         tactical
-          ? "border-cyan-500/30 bg-slate-950/80"
-          : "border-zinc-200 bg-white/95",
+          ? "border-cyan-400/20 bg-slate-950/85"
+          : "border-zinc-200/80 bg-white/95",
       )}
     >
       {tools.map((t) => (
         <button
           key={t.id}
           onClick={() => setTool(t.id)}
-          title={t.label}
+          title={`${t.label} (${t.kbd})`}
           className={cn(
-            "group/tool flex h-10 items-center gap-2 rounded-lg pl-2 pr-2.5 transition",
+            "relative flex h-10 w-10 items-center justify-center rounded-xl transition",
             tool === t.id
               ? tactical
-                ? "bg-cyan-500/25 text-cyan-100 ring-1 ring-inset ring-cyan-400/60"
-                : "bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
+                ? "bg-gradient-to-br from-cyan-500/35 to-cyan-400/10 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.35)] ring-1 ring-inset ring-cyan-300/60"
+                : "bg-accent-600 text-white shadow-[0_2px_8px_rgba(20,104,140,0.35)]"
               : tactical
                 ? "text-cyan-200/70 hover:bg-cyan-500/10 hover:text-cyan-100"
                 : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
           )}
         >
-          <t.icon className="h-4 w-4 shrink-0" />
+          <t.icon className="h-[18px] w-[18px]" />
+          {/* Keyboard shortcut badge — always visible so the fast path
+              teaches itself. */}
           <span
             className={cn(
-              "text-[11px] font-semibold transition-all",
+              "absolute bottom-0.5 right-1 text-[8px] font-bold leading-none",
               tool === t.id
-                ? "max-w-[120px] opacity-100"
-                : "max-w-0 overflow-hidden opacity-0 group-hover/tool:max-w-[120px] group-hover/tool:opacity-100",
+                ? tactical
+                  ? "text-cyan-200/90"
+                  : "text-white/80"
+                : tactical
+                  ? "text-cyan-200/40"
+                  : "text-zinc-400",
             )}
           >
-            {t.label}
+            {t.kbd}
           </span>
         </button>
       ))}
@@ -1971,9 +2197,9 @@ function Toolbar({
       <button
         onClick={onDelete}
         disabled={!canDelete}
-        title="Delete selection"
+        title="Delete selection (⌫)"
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition disabled:opacity-40",
+          "flex h-9 w-9 items-center justify-center self-center rounded-lg transition disabled:opacity-40",
           tactical
             ? "text-cyan-200/70 hover:bg-rose-500/15 hover:text-rose-300 disabled:hover:bg-transparent disabled:hover:text-cyan-200/70"
             : "text-zinc-500 hover:bg-rose-50 hover:text-rose-600 disabled:hover:bg-transparent disabled:hover:text-zinc-500",
@@ -1991,7 +2217,7 @@ function Toolbar({
         onClick={onThemeToggle}
         title={tactical ? "Switch to schematic" : "Switch to tactical"}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
           tactical
             ? "text-fuchsia-300 hover:bg-fuchsia-500/15"
             : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
@@ -2008,7 +2234,7 @@ function Toolbar({
               : "Show roof structure (perimeter / ridges / valleys)"
           }
           className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-lg transition",
+            "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
             showRoofStructure
               ? tactical
                 ? "bg-white/15 text-white ring-1 ring-inset ring-white/40"
@@ -2030,7 +2256,7 @@ function Toolbar({
               : "Show rakes (gray dashed — no gutter)"
           }
           className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-lg transition",
+            "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
             showRakes
               ? tactical
                 ? "bg-slate-700/50 text-slate-200 ring-1 ring-inset ring-slate-500/50"
@@ -2066,7 +2292,7 @@ function Toolbar({
               : "LF labels: hidden"
         }
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
           lfLabelMode === "off"
             ? tactical
               ? "text-cyan-200/40 hover:bg-cyan-500/10 hover:text-cyan-100"
@@ -2096,7 +2322,7 @@ function Toolbar({
             : "Dim overlay glow so the satellite image reads clearly"
         }
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
           lowGlow
             ? tactical
               ? "bg-amber-500/20 text-amber-200 ring-1 ring-inset ring-amber-400/50"
@@ -2116,7 +2342,7 @@ function Toolbar({
         onClick={onToggleFullscreen}
         title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen edit"}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition",
+          "flex h-9 w-9 items-center justify-center self-center rounded-lg transition",
           fullscreen
             ? tactical
               ? "bg-cyan-500/20 text-cyan-200 ring-1 ring-inset ring-cyan-400/50"
@@ -2179,6 +2405,7 @@ function Legend({
   downspoutCount,
   hasLowerTier,
   theme,
+  onFit,
 }: {
   totalEaveLF: number;
   rakeCount: number;
@@ -2188,6 +2415,7 @@ function Legend({
   downspoutCount: number;
   hasLowerTier: boolean;
   theme: CanvasTheme;
+  onFit: () => void;
 }) {
   const tactical = theme === "tactical";
   return (
@@ -2319,6 +2547,7 @@ function Legend({
       </div>
       <button
         title="Fit to view"
+        onClick={onFit}
         className={cn(
           "ml-1 rounded-md border p-1 transition",
           tactical
