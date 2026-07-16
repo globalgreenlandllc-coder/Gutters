@@ -19,9 +19,17 @@ import { getActiveApiKey } from "@/lib/api-keys";
 export const PRO_PLAN = {
   id: "pro_monthly",
   name: "GutterScan Pro",
-  priceCents: 5000,
+  // Founding-contractor launch price — the plan is worth $50 and the
+  // landing badge says so; raise here (or at /admin/pricing, which
+  // overrides this default) once traction justifies it.
+  priceCents: 3900,
   includedCredits: 12,
 } as const;
+
+/** Free-plan monthly ceiling on SENT proposals (drafts are unlimited).
+ *  Scanning stays free — sending a real quote to a real client is the
+ *  money moment, so it's the fair place for the upgrade nudge. */
+export const FREE_PROPOSALS_PER_MONTH = 3;
 
 export type CreditPack = {
   id: string;
@@ -31,7 +39,6 @@ export type CreditPack = {
 };
 
 export const CREDIT_PACKS: CreditPack[] = [
-  { id: "pack5", credits: 5, amountCents: 2500, blurb: "$5.00 / estimate" },
   { id: "pack10", credits: 10, amountCents: 4500, blurb: "$4.50 / estimate" },
   { id: "pack25", credits: 25, amountCents: 10000, blurb: "$4.00 / estimate" },
 ];

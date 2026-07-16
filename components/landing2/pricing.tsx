@@ -75,7 +75,8 @@ export function Pricing({ pricing }: { pricing: PricingView }) {
                 </span>
               </div>
               <p className="mt-3 text-xs leading-relaxed text-zinc-500">
-                The free plan includes unlimited satellite address estimates
+                The free plan includes unlimited satellite address estimates,
+                3 sent proposals a month
                 {pricing.freeBlueprintCredits > 0 && (
                   <>
                     {" "}

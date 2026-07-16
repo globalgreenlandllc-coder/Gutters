@@ -60,6 +60,7 @@ export const DEFAULT_PLAN_PRICING: PlanPricing = {
     includedCredits: PRO_PLAN.includedCredits,
     features: [
       "Unlimited satellite address estimates",
+      "Unlimited proposal sending",
       "Good · Better · Best proposal builder",
       "Branded client portal with e-sign",
       "Payment schedules, receipts & auto-reminders",
@@ -68,7 +69,7 @@ export const DEFAULT_PLAN_PRICING: PlanPricing = {
       "Crew assignments & worker portal",
       "Permit leads map with door-knock routes",
     ],
-    badge: "Free to start",
+    badge: "Founding price — $50 after launch",
   },
   free: {
     blueprintCredits: 1,

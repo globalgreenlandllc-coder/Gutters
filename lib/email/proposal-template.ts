@@ -93,6 +93,10 @@ export function renderProposalEmail(v: ProposalEmailVars): {
 
           <div style="margin-top:14px;font-size:11px;color:#a1a1aa;">
             Sent securely via Gutters AI on behalf of ${escapeHtml(v.contractorCompany)}.
+            <br />
+            <a href="${escapeAttr(originOf(v.portalUrl))}/?ref=proposal-email" style="color:#a1a1aa;text-decoration:underline;">
+              Powered by GutterScan — send quotes like this in 60 seconds
+            </a>
           </div>
         </td>
       </tr>
@@ -129,4 +133,13 @@ function escapeHtml(s: string): string {
 
 function escapeAttr(s: string): string {
   return escapeHtml(s);
+}
+
+/** Origin of the portal link — the landing lives on the same host. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "https://gutters.app";
+  }
 }

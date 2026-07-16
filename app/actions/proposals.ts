@@ -16,6 +16,7 @@ import {
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
 import { checkUserEmailBudget, checkPortalWrite } from "@/lib/abuse/guards";
 import { POLICIES } from "@/lib/abuse/policies";
+import { FREE_PROPOSALS_PER_MONTH } from "@/lib/stripe";
 import { captureTakeoffCorrection } from "@/lib/ai/takeoff-corrections";
 import { getMe } from "./me";
 import { createDefaultSchedule } from "./payments";
@@ -70,6 +71,31 @@ export async function sendProposal(args: {
         where: { publicToken: proposal.token, userId: me.user.id },
       })
     : null;
+
+  // Free-plan cap: N distinct proposals sent per calendar month.
+  // Re-sending an already-sent proposal is free (its row already counted
+  // — that's why `existing` is excluded), drafts are unlimited, and Pro
+  // (renewing sub) or admin never hits this. The nudge lands exactly at
+  // the money moment: a contractor sending real quotes has real jobs.
+  const isPro = me.credits.renews || me.user.role === "SUPER_ADMIN";
+  if (!isPro) {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const sentThisMonth = await db.proposal.count({
+      where: {
+        userId: me.user.id,
+        sentAt: { gte: monthStart },
+        ...(existing ? { id: { not: existing.id } } : {}),
+      },
+    });
+    if (sentThisMonth >= FREE_PROPOSALS_PER_MONTH) {
+      return {
+        ok: false,
+        reason: `The free plan sends ${FREE_PROPOSALS_PER_MONTH} proposals a month — upgrade to Pro in Settings → Billing for unlimited sending.`,
+      };
+    }
+  }
 
   const row = existing
     ? await db.proposal.update({

@@ -200,6 +200,20 @@ export function ClientPortalView({
           </section>
 
           <ContactCard contractor={proposal.contractor} />
+
+          {/* Growth loop: every proposal reaches a homeowner — and some
+              homeowners are contractors. Quiet, but always present. */}
+          <div className="pb-2 text-center print:hidden">
+            <a
+              href="/?ref=proposal"
+              target="_blank"
+              rel="noopener"
+              className="transition-smooth text-xs text-zinc-400 hover:text-accent-700"
+            >
+              ⚡ Powered by <span className="font-semibold">GutterScan</span> —
+              send quotes like this in 60 seconds →
+            </a>
+          </div>
           <div className="h-32 print:hidden" />
         </motion.div>
       </main>
