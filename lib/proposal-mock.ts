@@ -132,6 +132,13 @@ export type Proposal = {
   /** Free-form reason the contractor shows next to the discount so
    *  the homeowner sees WHY (e.g. 'Spring promo', 'Repeat customer'). */
   discountLabel?: string;
+  /** How the measurements were produced. "manual" = the contractor
+   *  walked the site with a tape measure and typed the numbers in
+   *  (/dashboard/measure) — there is no takeoff geometry to draw, so
+   *  the aerial section renders the field-measurement card instead of
+   *  the sample cartoon. Absent = satellite/plan takeoff or a blank
+   *  builder draft (legacy proposals never carry it). */
+  source?: "manual";
 };
 
 export const sampleProposal: Proposal = {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, RotateCw, Ruler } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
 import { LoadingState } from "@/components/estimate/loading-state";
 import { ResultsView } from "@/components/estimate/results-view";
@@ -220,6 +220,31 @@ function ErrorScreen({
                 Back to dashboard
               </Button>
             </Link>
+          </div>
+
+          {/* Escape hatch: the scan won't ever work for some addresses
+              (bad imagery, rural lots, new builds). Route the contractor
+              to the tape-measure flow instead of a retry dead-end. */}
+          <div className="mt-4 rounded-lg bg-accent-50 p-4 ring-1 ring-inset ring-accent-200">
+            <div className="flex items-start gap-2.5">
+              <Ruler className="mt-0.5 h-4 w-4 shrink-0 text-accent-700" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-accent-900">
+                  Address won&apos;t scan? Build it manually.
+                </p>
+                <p className="mt-0.5 text-xs leading-relaxed text-accent-800/80">
+                  Type in the gutter runs you measured on site — packages
+                  price live and you can send the proposal from one page.
+                </p>
+                <Link
+                  href="/dashboard/measure"
+                  className="transition-smooth ring-focus group mt-2 inline-flex items-center gap-1 text-xs font-semibold text-accent-700 hover:text-accent-900"
+                >
+                  Start a manual proposal
+                  <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </div>

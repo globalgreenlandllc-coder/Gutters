@@ -12,6 +12,7 @@ import {
   Home,
   MapPin,
   PenLine,
+  Ruler,
   Satellite,
   Sparkles,
   Video,
@@ -138,8 +139,32 @@ export function StartOptions() {
       </motion.div>
 
       {/* Row 3 — secondary starts */}
-      <motion.div {...enter(0.1)} className="mt-6 grid gap-4 md:grid-cols-3">
-        {/* a — Build it yourself (compact dark card, no sample table) */}
+      <motion.div
+        {...enter(0.1)}
+        className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4"
+      >
+        {/* a — Measured on site: the fallback when neither AI path can
+            run (no blueprints, unscannable address). Accent-tinted so
+            the manual path reads as a first-class option, not an
+            afterthought. Same hover treatment as the lead card — see
+            its comment for the transition dance. */}
+        <Link
+          href="/dashboard/measure"
+          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] block rounded-2xl border border-accent-200 bg-accent-50/50 p-6 shadow-card hover:border-accent-300"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-600 text-white">
+            <Ruler className="h-4 w-4" />
+          </span>
+          <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
+            Measured on site
+          </span>
+          <span className="mt-1.5 block text-sm leading-relaxed text-zinc-600">
+            No plans, address won&apos;t scan? Type in your tape-measure
+            runs and send the proposal from one page.
+          </span>
+        </Link>
+
+        {/* b — Build it yourself (compact dark card, no sample table) */}
         <div className="relative overflow-hidden rounded-2xl bg-accent-950 p-6 text-white">
           <div
             aria-hidden
@@ -171,7 +196,7 @@ export function StartOptions() {
           </div>
         </div>
 
-        {/* b — From a lead.
+        {/* c — From a lead.
             .press-scale's `transition: transform` shorthand is declared
             after .hover-lift in globals.css and would wipe the lift's
             box-shadow (and the border-color) transition, so restate the
@@ -192,7 +217,7 @@ export function StartOptions() {
           </span>
         </Link>
 
-        {/* c — Video walkthrough (coming soon) */}
+        {/* d — Video walkthrough (coming soon) */}
         <div
           aria-disabled
           className="relative cursor-default rounded-2xl border border-zinc-200 bg-zinc-50 p-6 opacity-70"

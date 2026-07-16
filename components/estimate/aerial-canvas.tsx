@@ -258,6 +258,9 @@ export function AerialCanvas({
   const [drawing, setDrawing] = useState<{
     start: { x: number; y: number };
     end: { x: number; y: number };
+    /** The preview end is hard-snapped (corner magnet / roof edge) —
+     *  renders a snap ring so the jump reads as intentional. */
+    snapped?: boolean;
   } | null>(null);
   // Ghost preview for the downspout tool — follows the cursor, pulled
   // onto the nearest gutter run so the contractor sees exactly where
@@ -267,6 +270,22 @@ export function AerialCanvas({
     y: number;
     snapped: boolean;
   } | null>(null);
+  // Pointer-move coalescing: pointermove can fire at 120+ Hz (trackpads,
+  // pencil), and every event was doing a React state update → full SVG
+  // re-render. One rAF-scheduled update per frame keeps the preview
+  // glued to the cursor without the queue-behind lag that read as
+  // "slow / overshooting". processMoveRef always points at the latest
+  // render's closure so the callback never acts on stale state.
+  const moveRafRef = useRef<number | null>(null);
+  const lastMoveRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
+  useEffect(
+    () => () => {
+      if (moveRafRef.current != null) cancelAnimationFrame(moveRafRef.current);
+    },
+    [],
+  );
 
   const totalEaveLF = useMemo(
     () =>
@@ -759,20 +778,39 @@ export function AerialCanvas({
     setSelectedId(null);
   }
 
-  function handlePointerMove(e: React.PointerEvent) {
+  function handlePointerMove(e: { clientX: number; clientY: number }) {
     const p = svgPoint(e);
     if (drawing && (tool === "add-eave" || tool === "add-gable")) {
       // Live-update the preview end. Works WITHOUT a held drag —
       // pointermove fires whenever the cursor moves over the SVG so
       // the preview follows the mouse from click-1 to click-2. Corner
       // magnet wins, else right-angle lock relative to the start point.
-      setDrawing({ ...drawing, end: snapPoint(p, drawing.start) });
+      const end = snapPoint(p, drawing.start);
+      // Hard snap = corner magnet or roof-edge magnet (not the soft
+      // right-angle lock) — drives the snap-ring indicator.
+      const cornerPt = snapToCorner(p);
+      const hardSnap =
+        dist(cornerPt, p) > 1e-3 ||
+        nearestMagnetIndex(p, 10 * renderScale) != null;
+      // Skip the state update when nothing visibly changed (the cursor
+      // is parked on a snap target) — avoids re-render churn.
+      if (dist(end, drawing.end) < 0.25 && drawing.snapped === hardSnap) {
+        return;
+      }
+      setDrawing({ ...drawing, end, snapped: hardSnap });
       return;
     }
     if (tool === "add-downspout") {
       // Ghost preview follows the cursor, pre-snapped onto the nearest
       // gutter run — the contractor sees the landing spot before the click.
       const s = snapDownspoutPoint(p);
+      if (
+        dsGhost &&
+        Math.hypot(s.x - dsGhost.x, s.y - dsGhost.y) < 0.25 &&
+        dsGhost.snapped === s.snapped
+      ) {
+        return;
+      }
       setDsGhost({ x: s.x, y: s.y, snapped: s.snapped });
       return;
     }
@@ -833,6 +871,58 @@ export function AerialCanvas({
     // click in handlePointerDown commits the eave.
     setDrag(null);
   }
+
+  // Full move pipeline — pinch first, then pan, then tool handling.
+  // Called at most once per animation frame (see the svg onPointerMove
+  // wrapper); processMoveRef is refreshed every render so the rAF
+  // callback always runs against the latest state.
+  function processPointerMove(ev: { clientX: number; clientY: number }) {
+    if (pinch && pointersRef.current.size >= 2 && svgRef.current) {
+      const [p1, p2] = [...pointersRef.current.values()];
+      const rect = svgRef.current.getBoundingClientRect();
+      const d1 = Math.max(12, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      const minW = VIEWBOX_W / 5;
+      const maxW = VIEWBOX_W * 4;
+      const nextW = Math.max(minW, Math.min(maxW, pinch.w0 * (pinch.d0 / d1)));
+      const nextH = nextW * (pinch.h0 / pinch.w0);
+      setView(
+        clampView({
+          x: pinch.imgMidX - ((midX - rect.left) / rect.width) * nextW,
+          y: pinch.imgMidY - ((midY - rect.top) / rect.height) * nextH,
+          width: nextW,
+          height: nextH,
+        }),
+      );
+      return;
+    }
+    if (panning && svgRef.current) {
+      const dxRaw = ev.clientX - panning.sx;
+      const dyRaw = ev.clientY - panning.sy;
+      // Movement threshold: 4 screen pixels. Below that, treat
+      // the gesture as a click — used on pointer-up to deselect
+      // instead of leaving the user stuck because they tapped
+      // on empty space while zoomed in.
+      if (!panning.moved && Math.hypot(dxRaw, dyRaw) > 4) {
+        setPanning({ ...panning, moved: true });
+      }
+      const rect = svgRef.current.getBoundingClientRect();
+      const scaleX = view.width / rect.width;
+      const scaleY = view.height / rect.height;
+      setView((v) =>
+        clampView({
+          ...v,
+          x: panning.vx - dxRaw * scaleX,
+          y: panning.vy - dyRaw * scaleY,
+        }),
+      );
+      return;
+    }
+    handlePointerMove(ev);
+  }
+  const processMoveRef = useRef(processPointerMove);
+  processMoveRef.current = processPointerMove;
 
   function deleteSelected() {
     if (!selectedId) return;
@@ -1177,58 +1267,25 @@ export function AerialCanvas({
           handlePointerDown(e);
         }}
         onPointerMove={(e) => {
+          // Sync work only: keep the pinch-finger map current, remember
+          // the latest coords, and let ONE rAF per frame do the real
+          // processing — pointermove outruns the display refresh and
+          // queuing a React render per event is what made the tools
+          // feel laggy and overshooty.
           if (pointersRef.current.has(e.pointerId)) {
             pointersRef.current.set(e.pointerId, {
               x: e.clientX,
               y: e.clientY,
             });
           }
-          if (pinch && pointersRef.current.size >= 2 && svgRef.current) {
-            const [p1, p2] = [...pointersRef.current.values()];
-            const rect = svgRef.current.getBoundingClientRect();
-            const d1 = Math.max(12, Math.hypot(p2.x - p1.x, p2.y - p1.y));
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
-            const minW = VIEWBOX_W / 5;
-            const maxW = VIEWBOX_W * 4;
-            const nextW = Math.max(
-              minW,
-              Math.min(maxW, pinch.w0 * (pinch.d0 / d1)),
-            );
-            const nextH = nextW * (pinch.h0 / pinch.w0);
-            setView(
-              clampView({
-                x: pinch.imgMidX - ((midX - rect.left) / rect.width) * nextW,
-                y: pinch.imgMidY - ((midY - rect.top) / rect.height) * nextH,
-                width: nextW,
-                height: nextH,
-              }),
-            );
-            return;
+          lastMoveRef.current = { clientX: e.clientX, clientY: e.clientY };
+          if (moveRafRef.current == null) {
+            moveRafRef.current = requestAnimationFrame(() => {
+              moveRafRef.current = null;
+              const ev = lastMoveRef.current;
+              if (ev) processMoveRef.current(ev);
+            });
           }
-          if (panning && svgRef.current) {
-            const dxRaw = e.clientX - panning.sx;
-            const dyRaw = e.clientY - panning.sy;
-            // Movement threshold: 4 screen pixels. Below that, treat
-            // the gesture as a click — used on pointer-up to deselect
-            // instead of leaving the user stuck because they tapped
-            // on empty space while zoomed in.
-            if (!panning.moved && Math.hypot(dxRaw, dyRaw) > 4) {
-              setPanning({ ...panning, moved: true });
-            }
-            const rect = svgRef.current.getBoundingClientRect();
-            const scaleX = view.width / rect.width;
-            const scaleY = view.height / rect.height;
-            setView((v) =>
-              clampView({
-                ...v,
-                x: panning.vx - dxRaw * scaleX,
-                y: panning.vy - dyRaw * scaleY,
-              }),
-            );
-            return;
-          }
-          handlePointerMove(e);
         }}
         onPointerUp={(e) => {
           pointersRef.current.delete(e.pointerId);
@@ -1506,32 +1563,42 @@ export function AerialCanvas({
             : isSelected
               ? t.eaveSelected
               : t.eave;
-          // Low-glow mode keeps only the selected eave's glow so you
-          // can still tell which one you're editing, while the other
-          // eaves render as clean strokes that don't bleed across
-          // the satellite image's roof edges.
-          const filter =
+          // Glow via a LAYERED wide under-stroke instead of a CSS
+          // drop-shadow filter. Filters forced a per-path raster pass
+          // on every one of the ~60 re-renders/second while drawing or
+          // dragging — the single biggest cause of the tool feeling
+          // slow. A translucent halo stroke reads the same and is a
+          // plain vector fill. Low-glow keeps only the selected halo.
+          const haloColor = isLower
+            ? "rgba(251,191,36,0.9)"
+            : theme === "tactical"
+              ? "rgba(0,229,255,0.9)"
+              : "rgba(20,104,140,0.75)";
+          const haloOpacity =
             lowGlow && !isSelected
-              ? "none"
-              : isLower
-                ? isSelected
-                  ? "drop-shadow(0 0 10px rgba(251,191,36,1))"
-                  : "drop-shadow(0 0 6px rgba(251,191,36,0.95))"
-                : theme === "tactical"
-                  ? isSelected
-                    ? "drop-shadow(0 0 10px rgba(0,229,255,1))"
-                    : "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                  : isSelected
-                    ? "drop-shadow(0 1px 6px rgba(20,104,140,0.55))"
-                    : "drop-shadow(0 1px 4px rgba(20,121,184,0.45))";
+              ? 0
+              : (isSelected ? 0.5 : 0.3) * (theme === "tactical" ? 1 : 0.6);
+          const path = pathFor(line);
           return (
             <g key={line.id}>
+              {haloOpacity > 0 && (
+                <path
+                  d={path}
+                  stroke={haloColor}
+                  strokeWidth={(isSelected ? 12 : 9) * renderScale}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                  opacity={haloOpacity}
+                  pointerEvents="none"
+                />
+              )}
               {/* Plain <path> (not motion.path) — framer-motion's path
                   measurement on every render was a hot spot during
                   drag. Entrance animation isn't needed after the first
                   render of the canvas. */}
               <path
-                d={pathFor(line)}
+                d={path}
                 stroke={stroke}
                 strokeWidth={
                   (isSelected ? 5 : isHover ? 4.5 : 3.5) * renderScale
@@ -1539,10 +1606,36 @@ export function AerialCanvas({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
-                style={{
-                  filter,
-                  cursor: isSelected ? "move" : "pointer",
-                }}
+                pointerEvents="none"
+              />
+              {/* Thin bright core over the main stroke — reads as a lit
+                  neon tube instead of a flat marker line. Tactical theme
+                  only; schematic stays a clean solid stroke. */}
+              {theme === "tactical" && (
+                <path
+                  d={path}
+                  stroke={isLower ? "#fef3c7" : "#e0fcff"}
+                  strokeWidth={1.2 * renderScale}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                  opacity={isSelected ? 0.95 : 0.65}
+                  pointerEvents="none"
+                />
+              )}
+              {/* WIDE invisible hit zone — the visible stroke is ~4px,
+                  which made selecting (and therefore deleting) a line
+                  require sniper aim. This fat transparent stroke is the
+                  actual click/hover/drag target, with a viewBox floor so
+                  it stays a fingertip wide even zoomed far out. */}
+              <path
+                d={path}
+                stroke="transparent"
+                strokeWidth={Math.max(16 * renderScale, 10)}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                style={{ cursor: isSelected ? "move" : "pointer" }}
                 onPointerDown={(e) => {
                   if (tool !== "select") return;
                   e.stopPropagation();
@@ -1616,21 +1709,6 @@ export function AerialCanvas({
                 onPointerEnter={() => setHoverId(line.id)}
                 onPointerLeave={() => setHoverId(null)}
               />
-              {/* Thin bright core over the main stroke — reads as a lit
-                  neon tube instead of a flat marker line. Tactical theme
-                  only; schematic stays a clean solid stroke. */}
-              {theme === "tactical" && (
-                <path
-                  d={pathFor(line)}
-                  stroke={isLower ? "#fef3c7" : "#e0fcff"}
-                  strokeWidth={1.2 * renderScale}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  fill="none"
-                  opacity={isSelected ? 0.95 : 0.65}
-                  pointerEvents="none"
-                />
-              )}
               {/* Endpoint nodes — tiny sockets where runs start/stop, so
                   chained corners read as joints and gaps in the run are
                   visible at a glance. Selected lines show the square
@@ -1662,6 +1740,7 @@ export function AerialCanvas({
                   contractor isn't reading numbers while dragging.
                   Suppress them while ANY drag is in progress. */}
               {!drag &&
+                !drawing &&
                 !isSelected &&
                 (labelVisibleIds.has(line.id) || isHover) && (
                   <LineLabel
@@ -1759,27 +1838,20 @@ export function AerialCanvas({
                 if (theme === "tactical") {
                   return (
                     <>
-                      {isSelected && !lowGlow && (
+                      {/* Glow via a translucent halo circle, not an SVG
+                          filter — filters re-rasterize on every canvas
+                          re-render (each drawing/drag frame). */}
+                      {!(lowGlow && !isSelected) && (
                         <circle
                           cx={d.x}
                           cy={d.y}
-                          r={halo}
+                          r={isSelected ? halo : 10 * renderScale}
                           fill={t.downspout}
-                          opacity={0.18}
+                          opacity={isSelected ? 0.25 : 0.18}
                           pointerEvents="none"
                         />
                       )}
-                      <circle
-                        cx={d.x}
-                        cy={d.y}
-                        r={ringR}
-                        fill={t.downspout}
-                        filter={
-                          lowGlow && !isSelected
-                            ? undefined
-                            : (t.downspoutGlowFilter ?? undefined)
-                        }
-                      />
+                      <circle cx={d.x} cy={d.y} r={ringR} fill={t.downspout} />
                       <circle cx={d.x} cy={d.y} r={coreR} fill={t.downspoutCore} />
                     </>
                   );
@@ -1800,12 +1872,35 @@ export function AerialCanvas({
                   </>
                 );
               })()}
+              {/* Fat invisible hit target — grabbing a ~6px dot to move
+                  or delete it needed sniper aim, same as the lines. */}
+              <circle
+                cx={d.x}
+                cy={d.y}
+                r={Math.max(13 * renderScale, 8)}
+                fill="transparent"
+              />
             </g>
           );
         })}
 
         {drawing && (
           <g pointerEvents="none">
+            {/* Halo under-stroke instead of a drop-shadow filter — the
+                preview re-renders on every cursor frame, and a filter
+                here forced a raster pass per frame (the "slow" drag). */}
+            {theme === "tactical" && tool !== "add-gable" && (
+              <line
+                x1={drawing.start.x}
+                y1={drawing.start.y}
+                x2={drawing.end.x}
+                y2={drawing.end.y}
+                stroke="rgba(0,229,255,0.9)"
+                strokeWidth={8 * renderScale}
+                strokeLinecap="round"
+                opacity={0.3}
+              />
+            )}
             <line
               x1={drawing.start.x}
               y1={drawing.start.y}
@@ -1820,12 +1915,6 @@ export function AerialCanvas({
               strokeLinecap="round"
               strokeDasharray={`${8 * renderScale} ${5 * renderScale}`}
               opacity="0.95"
-              style={{
-                filter:
-                  theme === "tactical" && tool !== "add-gable"
-                    ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                    : undefined,
-              }}
             />
             {/* Anchor node — where the chain continues from. Pulses so
                 the contractor never loses the live end of the run. */}
@@ -1836,6 +1925,20 @@ export function AerialCanvas({
               fill={tool === "add-gable" ? "#cbd5e1" : t.eave}
               className="animate-pulse"
             />
+            {/* Snap ring — appears when the end point is magnetized to
+                a corner or the detected roof edge, so the cursor jump
+                reads as "locked on" rather than the tool overshooting. */}
+            {drawing.snapped && (
+              <circle
+                cx={drawing.end.x}
+                cy={drawing.end.y}
+                r={6.5 * renderScale}
+                fill="none"
+                stroke={tool === "add-gable" ? "#cbd5e1" : t.eave}
+                strokeWidth={1.4 * renderScale}
+                opacity={0.9}
+              />
+            )}
             <circle
               cx={drawing.end.x}
               cy={drawing.end.y}

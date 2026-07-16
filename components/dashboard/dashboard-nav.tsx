@@ -14,6 +14,7 @@ import {
   MapPin,
   PartyPopper,
   Plus,
+  Ruler,
   Search,
   Settings,
   ShieldAlert,
@@ -39,6 +40,10 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     items: [
       { href: "/dashboard", label: "Overview", Icon: LayoutGrid },
       { href: "/dashboard/proposals", label: "Proposals", Icon: FileText },
+      // Tape-measure proposals — no blueprints, address won't scan; the
+      // contractor measured on site, types the numbers in, and sends
+      // the proposal from the same page (separate from the AI builder).
+      { href: "/dashboard/measure", label: "Manual proposal", Icon: Ruler },
       // Fully-paid jobs — the proposals list pre-filtered to Done.
       { href: "/dashboard/proposals?filter=done", label: "Done jobs", Icon: PartyPopper },
       { href: "/dashboard/leads", label: "Leads", Icon: MapPin },

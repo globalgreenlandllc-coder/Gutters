@@ -7,6 +7,7 @@ import { AerialReadonly } from "@/components/estimate/aerial-shared";
 import { GutterDiagram } from "@/components/estimate/gutter-diagram";
 import { PresentationCanvas } from "./presentation-canvas";
 import { GutterSystemBreakdown } from "./gutter-system-breakdown";
+import { ManualMeasurementsCard } from "./manual-measurements-card";
 import { sampleEaves, sampleDownspouts } from "@/lib/mock-estimate";
 import type { Downspout, EditableLine } from "@/lib/types";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -26,6 +27,11 @@ export function AerialSection({
 }) {
   const takeoff = proposal.takeoff;
   const hasRealTakeoff = !!takeoff && takeoff.eaves.length > 0;
+  // Tape-measure proposals (/dashboard/measure) have real numbers but no
+  // geometry to draw — show the honest field-measurement card instead of
+  // the sample cartoon, editable in builder mode so a mis-typed number
+  // is fixable right here. A takeoff traced later (edited eaves) wins.
+  const isManual = proposal.source === "manual" && !hasRealTakeoff;
   const editable = !readOnly && !!onChange && hasRealTakeoff;
   // Satellite takeoffs get a Photo ⇄ Diagram toggle; the clean drafting
   // sheet is the default deliverable. Plan takeoffs already render as a
@@ -92,6 +98,25 @@ export function AerialSection({
       },
     });
   };
+
+  if (isManual) {
+    return (
+      <section data-section="aerial" className="space-y-4">
+        <SectionHeader
+          title="What we measured"
+          sub="Measured on-site with a tape measure — these numbers drive every package price."
+        />
+        <ManualMeasurementsCard
+          measurements={proposal.measurements}
+          onChange={
+            !readOnly && onChange
+              ? (next) => onChange({ ...proposal, measurements: next })
+              : undefined
+          }
+        />
+      </section>
+    );
+  }
 
   return (
     <section data-section="aerial" className="space-y-4">
