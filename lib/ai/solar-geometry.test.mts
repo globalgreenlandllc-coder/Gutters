@@ -1082,6 +1082,72 @@ test("trimMaskToRoofPlanes cuts canopy/lawn inside the padded shell, keeps roof 
   assert.equal(out.allowMask[25 * W + 25], 0);
 });
 
+test("refineEdgesToPhoto caps OUTWARD slides (cast-shadow edge can't drag the wall out)", () => {
+  const W = 300;
+  const H = 200;
+  const mpp = 0.1;
+  // Roof 80..220 (lum 170); same-tone strip 74..79 (the roof's cast
+  // shadow / walkway); dark beyond. Strongest gradient sits 6–7 px
+  // OUTSIDE the true edge — within the old ±9 slide range, beyond the
+  // new 0.35 m outward cap.
+  const rgb = new Uint8Array(W * H * 3).fill(60);
+  const paint = (x0: number, x1: number, l: number) => {
+    for (let y = 40; y <= 150; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = (y * W + x) * 3;
+        rgb[i] = l;
+        rgb[i + 1] = l - 5;
+        rgb[i + 2] = l - 10;
+      }
+    }
+  };
+  paint(80, 220, 170);
+  paint(74, 79, 165);
+  const mask = rectMask(W, H, [{ x: 80, y: 50, w: 140, h: 90 }]);
+  const ring: Pt[] = [
+    { x: 80, y: 50 },
+    { x: 220, y: 50 },
+    { x: 220, y: 140 },
+    { x: 80, y: 140 },
+  ];
+  const r = refineEdgesToPhoto({
+    ring,
+    rgb,
+    mask,
+    width: W,
+    height: H,
+    metersPerPixel: mpp,
+  });
+  const westXs = r.ring.filter((p) => p.x < 150).map((p) => p.x);
+  for (const x of westXs) {
+    assert.ok(x >= 76, `west wall chased the shadow edge out to x=${x.toFixed(1)}`);
+  }
+});
+
+test("dechamferPolygon squares a TWO-edge rounded arc corner", () => {
+  const mpp = 0.1;
+  // Rounded top-right corner: two short edges (three vertices) where the
+  // real roof has one 90° corner near (139, 20).
+  const pts: Pt[] = [
+    { x: 20, y: 20 },
+    { x: 124, y: 20 },
+    { x: 133, y: 23 },
+    { x: 139, y: 31 },
+    { x: 140, y: 100 },
+    { x: 20, y: 100 },
+  ];
+  const out = dechamferPolygon(pts, mpp);
+  assert.ok(out.squared >= 1, "arc was not squared");
+  assert.ok(
+    out.points.some((p) => Math.hypot(p.x - 139, p.y - 20) < 3),
+    `no square corner near (139,20): ${JSON.stringify(out.points)}`,
+  );
+  assert.ok(
+    !out.points.some((p) => Math.hypot(p.x - 133, p.y - 23) < 1),
+    "arc midpoint survived",
+  );
+});
+
 /* ------------------------------------------------------------------ */
 /*  De-chamfer                                                         */
 /* ------------------------------------------------------------------ */

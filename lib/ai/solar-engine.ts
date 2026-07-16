@@ -197,6 +197,8 @@ export async function runSolarFirstEstimate(args: {
   // sits meters below. Skipped when segments are too sparse (<4).
   let baseMask = layers.mask;
   let allowMask: Uint8Array | undefined;
+  // Kept for the eave audit below (full-grid px space).
+  let planeSegs: import("./solar-geometry").PlaneSeg[] = [];
   {
     const segs = (insights?.roofSegments ?? []).flatMap((seg) => {
       if (!seg.boundingBoxNE || !seg.boundingBoxSW || !seg.center) return [];
@@ -262,6 +264,7 @@ export async function runSolarFirstEstimate(args: {
         },
       ];
     });
+    planeSegs = segs;
     if (segs.length >= 4) {
       const trim = trimMaskToRoofPlanes({
         mask: layers.mask,
@@ -678,6 +681,7 @@ export async function runSolarFirstEstimate(args: {
     kind: "eave" | "rake";
     lengthFt: number;
     via: string;
+    nrm: { nx: number; ny: number };
   };
   const classified: ClassifiedEdge[] = [];
   let dsmDecided = 0;
@@ -720,14 +724,155 @@ export async function runSolarFirstEstimate(args: {
         defaultedToEave++;
       }
     }
-    classified.push({ a, b, idx: i, kind, lengthFt, via });
+    classified.push({ a, b, idx: i, kind, lengthFt, via, nrm });
   }
 
-  const eaveEdges = classified.filter((e) => e.kind === "eave");
+  // ---- EAVE AUDIT: does the strip just inside this edge LOOK like this
+  // roof? Vegetation the mask annexed can sit at plausible heights (a
+  // bush by the entry matches the porch plane's extrapolation), so the
+  // perimeter gates alone can't kill it — but its appearance and surface
+  // don't survive a direct look: wrong tone for this roof, rough or
+  // plane-less DSM. Edges failing on a majority of stations demote to
+  // unpriced tap-to-add suggestions (precision governs pricing).
+  const roofLumMedian = (() => {
+    const vals: number[] = [];
+    const stepPx = Math.max(1, Math.floor(Math.sqrt((W * H) / 4000)));
+    const e = Math.max(2, Math.round(0.5 / mpp));
+    for (let y = e; y < H - e; y += stepPx) {
+      for (let x = e; x < W - e; x += stepPx) {
+        const i = y * W + x;
+        if (
+          maskCrop[i] > 0 &&
+          maskCrop[i - e] > 0 &&
+          maskCrop[i + e] > 0 &&
+          maskCrop[i - e * W] > 0 &&
+          maskCrop[i + e * W] > 0
+        ) {
+          vals.push((rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2]) / 3);
+        }
+      }
+    }
+    return vals.length >= 40 ? median(vals) : null;
+  })();
+  const padSlackPx = 2.5 / mpp;
+  const edgeEvidence = (e: ClassifiedEdge) => {
+    const insidePx = 0.7 / mpp;
+    const len = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y);
+    const stations = Math.max(3, Math.min(12, Math.round((len * mpp) / 1.2)));
+    let n = 0;
+    let offRoofN = 0;
+    let roughN = 0;
+    let toneN = 0;
+    let greenN = 0;
+    let residN = 0;
+    for (let k = 0; k < stations; k++) {
+      const t = 0.15 + (0.7 * k) / Math.max(1, stations - 1);
+      const px = e.a.x + (e.b.x - e.a.x) * t + e.nrm.nx * insidePx;
+      const py = e.a.y + (e.b.y - e.a.y) * t + e.nrm.ny * insidePx;
+      const xi = Math.round(px);
+      const yi = Math.round(py);
+      if (xi < 1 || yi < 1 || xi >= W - 1 || yi >= H - 1) continue;
+      const h = sample(xi, yi);
+      if (h == null) continue;
+      n++;
+      if (groundM != null && h - groundM < 1.6) offRoofN++;
+      let lo = h;
+      let hi = h;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const v = sample(xi + dx, yi + dy);
+          if (v != null) {
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+          }
+        }
+      }
+      if (hi - lo > 0.9) roughN++;
+      const r = rgb[(yi * W + xi) * 3];
+      const g = rgb[(yi * W + xi) * 3 + 1];
+      const b2 = rgb[(yi * W + xi) * 3 + 2];
+      const lum = (r + g + b2) / 3;
+      if (roofLumMedian != null && Math.abs(lum - roofLumMedian) > 50) toneN++;
+      if (g > r + 6 && g > b2 + 6) greenN++;
+      if (planeSegs.length >= 4) {
+        const fx = px - padded.offX + win.x;
+        const fy = py - padded.offY + win.y;
+        let best = Infinity;
+        for (const s of planeSegs) {
+          if (
+            fx < s.x0 - padSlackPx ||
+            fx > s.x1 + padSlackPx ||
+            fy < s.y0 - padSlackPx ||
+            fy > s.y1 + padSlackPx
+          ) {
+            continue;
+          }
+          const slope = Math.tan(
+            (Math.min(60, Math.max(0, s.pitchDeg)) * Math.PI) / 180,
+          );
+          const downM =
+            ((fx - s.cx) * s.downhill.x + (fy - s.cy) * s.downhill.y) * mpp;
+          const resid = Math.abs(h - (s.hCenterM - slope * downM));
+          if (resid < best) best = resid;
+        }
+        if (best > 1.1) residN++;
+      }
+    }
+    return { n, offRoofN, roughN, toneN, greenN, residN };
+  };
+  if (process.env.SOLAR_EAVE_AUDIT) {
+    for (const e of classified) {
+      const ev = edgeEvidence(e);
+      const [cm] = transformToCanvas(
+        [S({ x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 })],
+        W,
+        H,
+      );
+      console.log(
+        JSON.stringify({
+          idx: e.idx,
+          kind: e.kind,
+          ft: Math.round(e.lengthFt),
+          mid: { x: Math.round(cm.x), y: Math.round(cm.y) },
+          ...ev,
+          via: e.via.slice(0, 40),
+        }),
+      );
+    }
+  }
+
+  const allEaveEdges = classified.filter((e) => e.kind === "eave");
   const rakeEdges = classified.filter((e) => e.kind === "rake");
+  if (allEaveEdges.length < 3) {
+    notes.push(
+      `Solar HD classification kept only ${allEaveEdges.length} eave edge(s) — legacy tracer`,
+    );
+    return null;
+  }
+  // Demote eaves whose inside doesn't look like THIS roof: on the owner's
+  // test house every phantom (tree-crown lobe, entry bush, deep-shadow
+  // jag) failed the tone test at ≥2/3 of stations while every real eave —
+  // including partially shaded ones — stayed ≤1/3. Height/roughness can't
+  // separate them (elevated vegetation mimics roof height). Demoted runs
+  // surface as unpriced tap-to-add suggestions, never silently dropped.
+  const eaveEdges: typeof allEaveEdges = [];
+  const demotedEaves: typeof allEaveEdges = [];
+  for (const e of allEaveEdges) {
+    const ev = edgeEvidence(e);
+    if (ev.n >= 3 && ev.toneN / ev.n >= 0.67) demotedEaves.push(e);
+    else eaveEdges.push(e);
+  }
+  if (demotedEaves.length > 0) {
+    const demotedFt = Math.round(
+      demotedEaves.reduce((s, e) => s + e.lengthFt, 0),
+    );
+    notes.push(
+      `Held back ${demotedEaves.length} run${demotedEaves.length === 1 ? "" : "s"} (≈${demotedFt} LF) in deep shadow/vegetation the camera can't confirm as roof — shown as tap-to-add lines, verify on site`,
+    );
+  }
   if (eaveEdges.length < 3) {
     notes.push(
-      `Solar HD classification kept only ${eaveEdges.length} eave edge(s) — legacy tracer`,
+      "Solar HD kept fewer than 3 confirmed eave edges after the shadow audit — legacy tracer",
     );
     return null;
   }
@@ -1241,10 +1386,12 @@ export async function runSolarFirstEstimate(args: {
   };
   // Pool: undiscovered height cliffs (findTierEdges) + the tier block's
   // OWN gate-rejected segments (findTierEdges structurally misses
-  // corner-wrapping cliffs, so it can't be the only safety net).
+  // corner-wrapping cliffs, so it can't be the only safety net) + the
+  // shadow-audit demotions (perimeter runs the camera couldn't confirm).
   const suggestionPool: { a: Pt; b: Pt }[] = [
     ...dsmTiers,
     ...rejectedTierSuggestions,
+    ...demotedEaves.map((e) => ({ a: e.a, b: e.b })),
   ].filter((t) => !coveredByDrawn(t.a, t.b));
   // De-dup the pool against itself (rejected segments often coincide
   // with a findTierEdges chord over the same cliff).
@@ -1360,6 +1507,15 @@ export async function runSolarFirstEstimate(args: {
       confidence: Math.min(traceQuality.confidence, 0.75),
       reasons: [
         "Interior upper-roof gutters were auto-drawn from the height tiers — verify them before pricing.",
+      ],
+    };
+  }
+  if (demotedEaves.length > 0 && traceQuality.status === "ok") {
+    traceQuality = {
+      status: "low",
+      confidence: Math.min(traceQuality.confidence, 0.75),
+      reasons: [
+        "Some perimeter runs sit in deep shadow/vegetation and were held back as tap-to-add lines — verify that side on site.",
       ],
     };
   }

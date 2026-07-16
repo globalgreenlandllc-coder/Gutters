@@ -947,6 +947,15 @@ export function refineEdgesToPhoto(args: {
   const { ring, rgb, mask, width, height, metersPerPixel } = args;
   if (ring.length < 4) return { ring, refined: 0 };
   const maxSlidePx = Math.max(2, Math.round((args.maxSlideM ?? 0.9) / metersPerPixel));
+  // ASYMMETRIC: outward slides are capped hard. Every observed failure
+  // (wall onto the walkway, wall onto the roof's cast shadow on the
+  // driveway) moved OUTWARD toward a stronger distractor edge; genuine
+  // outward corrections are small lean residuals. Inward keeps the full
+  // range so a mask bulge can still be reclaimed.
+  const maxOutPx = Math.min(
+    maxSlidePx,
+    Math.max(2, Math.round(0.35 / metersPerPixel)),
+  );
 
   // Shared luminance / gradient / roof-tone prep (small vs the search).
   const lum = new Float32Array(width * height);
@@ -1037,7 +1046,7 @@ export function refineEdgesToPhoto(args: {
     const zero = scoreAt(0);
     let bestO = 0;
     let best = zero;
-    for (let o = -maxSlidePx; o <= maxSlidePx; o++) {
+    for (let o = -maxSlidePx; o <= maxOutPx; o++) {
       if (o === 0) continue;
       const s = scoreAt(o);
       if (s > best) {
@@ -1879,6 +1888,41 @@ export function dechamferPolygon(
       squared++;
       changed = true;
       i--; // re-examine around the new corner
+    }
+    // TWO-EDGE ARCS: a rounded mask corner often survives DP as TWO short
+    // edges (three vertices) — the single-edge pass above can't square it
+    // and the corner draws as a soft multi-bend arc instead of the real
+    // 90° jog. Same gates, applied to the pair.
+    for (let i = 1; i < pts.length - 2 && pts.length > 5; i++) {
+      const n = pts.length;
+      const p0 = pts[i - 1];
+      const a = pts[i];
+      const m = pts[i + 1];
+      const b = pts[i + 2];
+      const p3 = pts[(i + 3) % n];
+      const chord = Math.hypot(b.x - a.x, b.y - a.y);
+      if (chord > maxChamferPx || chord < 1e-6) continue;
+      const d1x = a.x - p0.x;
+      const d1y = a.y - p0.y;
+      const d2x = p3.x - b.x;
+      const d2y = p3.y - b.y;
+      const l1 = Math.hypot(d1x, d1y);
+      const l2 = Math.hypot(d2x, d2y);
+      if (l1 < chord || l2 < chord) continue;
+      const cosAng = (d1x * d2x + d1y * d2y) / (l1 * l2);
+      const angDeg =
+        (Math.acos(Math.max(-1, Math.min(1, cosAng))) * 180) / Math.PI;
+      if (angDeg < 55 || angDeg > 125) continue;
+      const inter = lineIntersection(p0, a, b, p3);
+      if (!inter) continue;
+      if (Math.hypot(inter.x - m.x, inter.y - m.y) > maxExtendPx) continue;
+      const next = [...pts.slice(0, i), inter, ...pts.slice(i + 3)];
+      if (next.length < 4) continue;
+      if (polygonSelfIntersects(next)) continue;
+      pts = next;
+      squared++;
+      changed = true;
+      i--;
     }
     stale = changed ? 0 : stale + 1;
   }
