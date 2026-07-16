@@ -255,6 +255,50 @@ test("regularizeRing straightens waves on a CONCAVE (L) ring, courtyard corner i
   assert.ok(near(400, 150) && near(250, 150) && near(250, 300), "L notch moved");
 });
 
+test("regularizeRing straightens a rambler whose walls are each 1-3° off (proportional shape)", () => {
+  // The 6220 case: a plain rectangle traced with every wall slightly
+  // off-angle and micro-debris at the top-edge junction. Result must be
+  // ONE straight top edge and four exactly-square corners — not walls
+  // that are almost-but-not-quite parallel ("wavy, not proportional").
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 130, y: -5 }, // top run A (≈ -2.2°)
+    { x: 134, y: -4 }, // 0.4 m micro-debris at the junction
+    { x: 300, y: -6 }, // top run B (≈ -0.7°)
+    { x: 302, y: 200 }, // right wall (≈ 0.6° off vertical)
+    { x: 2, y: 204 }, // bottom (≈ 0.8°)
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 4, `got ${reg.points.length} corners`);
+  for (const a of cornerAngles(reg.points)) {
+    assert.ok(Math.abs(a - 90) < 0.5, `corner ${a.toFixed(2)}° not square`);
+  }
+  assert.equal(reg.kept, 0, "every wall of a rectangle should snap to frame");
+});
+
+test("regularizeRing frame estimate ignores a true 45° wing (two-pass θ)", () => {
+  // Rectilinear body + one long diagonal wall. The diagonal must not
+  // drag the frame: body corners stay exactly 90°, diagonal stays 45°.
+  const ring: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 150 },
+    { x: 120, y: 230 },
+    { x: 0, y: 230 },
+  ];
+  const reg = regularizeRing(ring, 0.1);
+  assert.equal(reg.changed, true, `expected change, got ${reg.reason}`);
+  assert.equal(reg.points.length, 5, `got ${reg.points.length} corners`);
+  const angles = cornerAngles(reg.points).map((a) => Math.round(a));
+  const squares = angles.filter((a) => Math.abs(a - 90) < 1).length;
+  const diags = angles.filter((a) => Math.abs(a - 45) < 1).length;
+  assert.ok(
+    squares === 3 && diags === 2,
+    `expected 3×90° + 2×45°, got ${angles.join(",")}`,
+  );
+});
+
 test("regularizeRing leaves a long genuinely-bent wall alone (gate)", () => {
   // Two 20 m arms meeting at 160° — architecture, not noise. The corner
   // turn (20°) is under cornerMinDeg? No: 180-160=20 < 28 → same-run fit

@@ -1551,15 +1551,16 @@ export function regularizeRing(
   const cornerMinDeg = opts?.cornerMinDeg ?? 28;
   const frameSnapDeg = opts?.frameSnapDeg ?? 12;
   const diagSnapDeg = opts?.diagSnapDeg ?? 8;
-  // 0.18 m endpoint budget: a LONG wall's fitted angle is measured from
-  // hundreds of boundary px and is more trustworthy than the consensus
-  // frame — snapping a 28 m wall 1.5° pushed its far end 0.4 m onto the
-  // walkway (correct at one end, drifting at the other). This cap lets
-  // short noisy runs snap up to frameSnapDeg while a 28 m wall may only
-  // rotate ~0.7°.
-  const maxSnapMovePx = (opts?.maxSnapMoveM ?? 0.18) / metersPerPixel;
+  // Absolute endpoint-move safety cap. The PRIMARY snap gate is the
+  // per-run angular uncertainty below (a long wall snaps only within
+  // its own fit accuracy — a hard 0.18 m cap here once stopped EVERY
+  // wall of a plain rectangular rambler from snapping, leaving walls
+  // 1–3° off-parallel: the owner's "wavy, not proportional" complaint).
+  const maxSnapMovePx = (opts?.maxSnapMoveM ?? 0.5) / metersPerPixel;
   const maxDriftPx = (opts?.maxDriftM ?? 0.8) / metersPerPixel;
-  const mergeOffsetPx = 0.22 / metersPerPixel;
+  // Same-line merge tolerance: a noise bend's two snapped halves sit up
+  // to ~0.3 m apart (DP epsilon); real architectural jogs are ≥0.5 m.
+  const mergeOffsetPx = 0.35 / metersPerPixel;
 
   // Start the run walk at the sharpest corner so no wall straddles the
   // array seam.
@@ -1596,15 +1597,43 @@ export function regularizeRing(
   runs.push(fitRun(cur));
   if (runs.length < 3) return unchanged("degenerate runs");
 
-  // 2. Dominant frame + per-run angle snap.
-  let fx = 0;
-  let fy = 0;
-  for (const r of runs) {
-    const a4 = 4 * Math.atan2(r.d.y, r.d.x);
-    fx += r.lenPx * Math.cos(a4);
-    fy += r.lenPx * Math.sin(a4);
+  // 1b. Absorb MICRO-RUN debris: a sub-0.8 m run at a shallow angle to a
+  // neighbor is junction noise the fitter split out — it blocks the
+  // collinear merge below and leaves a kink mid-wall ("wavy" top edge).
+  // A real jog step is near-PERPENDICULAR to its neighbors and stays.
+  {
+    const relAngDeg = (a: WallRun, b: WallRun): number => {
+      const cross = Math.abs(a.d.x * b.d.y - a.d.y * b.d.x);
+      return (Math.asin(Math.min(1, cross)) * 180) / Math.PI;
+    };
+    let absorbed = true;
+    while (absorbed && runs.length > 3) {
+      absorbed = false;
+      for (let i = 0; i < runs.length; i++) {
+        const r = runs[i];
+        if (r.lenPx * metersPerPixel >= 0.8) continue;
+        const prev = i > 0 ? runs[i - 1] : null;
+        const next = i + 1 < runs.length ? runs[i + 1] : null;
+        const cand: { j: number; ang: number }[] = [];
+        if (prev) cand.push({ j: i - 1, ang: relAngDeg(r, prev) });
+        if (next) cand.push({ j: i + 1, ang: relAngDeg(r, next) });
+        cand.sort((x, y) => x.ang - y.ang);
+        if (cand.length === 0 || cand[0].ang > 25) continue;
+        const j = cand[0].j;
+        const mergedPts =
+          j < i ? [...runs[j].pts, ...r.pts] : [...r.pts, ...runs[j].pts];
+        runs.splice(Math.min(i, j), 2, fitRun(mergedPts));
+        absorbed = true;
+        break;
+      }
+    }
   }
-  const theta = Math.atan2(fy, fx) / 4;
+
+  // 2. Dominant frame + per-run angle snap. TWO-PASS θ: the first pass
+  // is polluted by genuine diagonal wings (a 45°-rotated wall pulls the
+  // quadruple-angle mean), which once dragged a long wall 1.5° and
+  // walked its far end onto the walkway — pass 2 re-estimates from
+  // frame-consistent walls only.
   const angDistDeg = (aRad: number, baseRad: number): number => {
     const step = Math.PI / 2;
     let d = (aRad - baseRad) % step;
@@ -1612,23 +1641,47 @@ export function regularizeRing(
     d = Math.min(d, step - d);
     return (d * 180) / Math.PI;
   };
+  const meanTheta = (rs: WallRun[]): number => {
+    let fx = 0;
+    let fy = 0;
+    for (const r of rs) {
+      const a4 = 4 * Math.atan2(r.d.y, r.d.x);
+      fx += r.lenPx * Math.cos(a4);
+      fy += r.lenPx * Math.sin(a4);
+    }
+    return Math.atan2(fy, fx) / 4;
+  };
+  const theta1 = meanTheta(runs);
+  const frameRuns = runs.filter(
+    (r) => angDistDeg(Math.atan2(r.d.y, r.d.x), theta1) <= 12,
+  );
+  const theta = frameRuns.length > 0 ? meanTheta(frameRuns) : theta1;
   const snapTo = (r: WallRun, familyBase: number): WallRun => {
     const a = Math.atan2(r.d.y, r.d.x);
     const step = Math.PI / 2;
     const target = familyBase + Math.round((a - familyBase) / step) * step;
     return { ...r, d: { x: Math.cos(target), y: Math.sin(target) } };
   };
+  // Snap when the deviation is within the run's own angular MEASUREMENT
+  // uncertainty (≈ atan(2·fitDev / len)): a 28 m wall's fitted angle is
+  // trustworthy to ~1.4°, so 1° off the clean frame snaps (parallel
+  // walls stay parallel — the "proportional shape" a rambler really
+  // has) while 2° off is a real diagonal and keeps its fit. Absolute
+  // endpoint-move cap as the safety rail.
+  const uncDeg = (r: WallRun): number =>
+    (Math.atan((2 * maxFitDevPx) / Math.max(5, r.lenPx)) * 180) / Math.PI;
   const snapAngle = (r: WallRun): WallRun => {
     const a = Math.atan2(r.d.y, r.d.x);
     const dFrame = angDistDeg(a, theta);
     const dDiag = angDistDeg(a, theta + Math.PI / 4);
     const movePx = (deg: number) =>
       (r.lenPx / 2) * Math.sin((deg * Math.PI) / 180);
-    if (dFrame <= frameSnapDeg && movePx(dFrame) <= maxSnapMovePx) {
+    const tol = Math.max(1.2, uncDeg(r));
+    if (dFrame <= Math.min(frameSnapDeg, tol) && movePx(dFrame) <= maxSnapMovePx) {
       return snapTo(r, theta);
     }
     if (
-      dDiag <= diagSnapDeg &&
+      dDiag <= Math.min(diagSnapDeg, tol) &&
       movePx(dDiag) <= maxSnapMovePx &&
       r.lenPx * metersPerPixel >= 3
     ) {

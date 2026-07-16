@@ -678,15 +678,51 @@ export async function runSolarFirstEstimate(args: {
     b: Pt;
     /** Index into `ring` (and renderRing) of this edge's first vertex. */
     idx: number;
+    /** Sub-span of the ring edge (0..1) when a wall was split where the
+     *  roof form changes mid-run; undefined = the whole edge. */
+    t0?: number;
+    t1?: number;
     kind: "eave" | "rake";
     lengthFt: number;
     via: string;
     nrm: { nx: number; ny: number };
   };
+  const insideMaskOpt = {
+    insideMask: (x: number, y: number) => {
+      const xi = Math.round(x);
+      const yi = Math.round(y);
+      return (
+        xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0
+      );
+    },
+  };
+  const classifyAt = (
+    a: Pt,
+    b: Pt,
+    nrm: { nx: number; ny: number },
+  ): { kind: "eave" | "rake"; via: string; src: "dsm" | "az" | "def" } => {
+    const dsmV = classifyEdgeByDsm(a, b, nrm, sample, mpp, insideMaskOpt);
+    if (dsmV.kind !== "unknown") {
+      return { kind: dsmV.kind, via: `DSM: ${dsmV.reason}`, src: "dsm" };
+    }
+    const azV = azimuthVerdict(a, b, nrm);
+    if (azV.kind !== "unknown") {
+      return { kind: azV.kind, via: `azimuth: ${azV.reason}`, src: "az" };
+    }
+    // Inclusion bias: a wrongly-included rake is one click to delete;
+    // a silently-dropped eave costs the contractor the sale.
+    return { kind: "eave", via: `defaulted to eave (${dsmV.reason})`, src: "def" };
+  };
   const classified: ClassifiedEdge[] = [];
   let dsmDecided = 0;
   let azimuthDecided = 0;
   let defaultedToEave = 0;
+  let formSplits = 0;
+  const countSrc = (src: "dsm" | "az" | "def") => {
+    if (src === "dsm") dsmDecided++;
+    else if (src === "az") azimuthDecided++;
+    else defaultedToEave++;
+  };
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
@@ -695,36 +731,83 @@ export async function runSolarFirstEstimate(args: {
     // Probe-based inward normal — the centroid heuristic points the wrong
     // way along the courtyard edges of concave (U/L) footprints.
     const nrm = inwardNormalForRing(a, b, ring, 0.4 / mpp);
-    const dsmV = classifyEdgeByDsm(a, b, nrm, sample, mpp, {
-      insideMask: (x, y) => {
-        const xi = Math.round(x);
-        const yi = Math.round(y);
-        return (
-          xi >= 0 && yi >= 0 && xi < W && yi < H && maskCrop[yi * W + xi] > 0
-        );
-      },
+    const lerp = (t: number): Pt => ({
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
     });
-    let kind: "eave" | "rake";
-    let via: string;
-    if (dsmV.kind !== "unknown") {
-      kind = dsmV.kind;
-      via = `DSM: ${dsmV.reason}`;
-      dsmDecided++;
-    } else {
-      const azV = azimuthVerdict(a, b, nrm);
-      if (azV.kind !== "unknown") {
-        kind = azV.kind;
-        via = `azimuth: ${azV.reason}`;
-        azimuthDecided++;
-      } else {
-        // Inclusion bias: a wrongly-included rake is one click to delete;
-        // a silently-dropped eave costs the contractor the sale.
-        kind = "eave";
-        via = `defaulted to eave (${dsmV.reason})`;
-        defaultedToEave++;
+    // A straight wall can change ROOF FORM mid-run (gable section and
+    // eave section are collinear — the straightener rightly merges them
+    // into one line, but one verdict would price the gable half). Long
+    // walls classify per-half; on disagreement the split point is swept
+    // to the form boundary and BOTH halves are emitted.
+    if (lengthFt >= 23) {
+      const kL = classifyAt(a, lerp(0.5), nrm);
+      const kR = classifyAt(lerp(0.5), b, nrm);
+      // AZIMUTH ARBITRATION: hip faces and gable ends BOTH climb inward
+      // in the DSM, so a half-sample can call a draining hip face a
+      // rake. Google's plane azimuths know which way each face drains —
+      // a split half whose nearest segment FACES this edge is an eave
+      // face regardless of the climb profile; such a conflict voids the
+      // split (keep the whole-wall verdict).
+      const azAgrees = (ha: Pt, hb: Pt, kind: "eave" | "rake"): boolean => {
+        const az = azimuthVerdict(ha, hb, nrm);
+        return az.kind === "unknown" || az.kind === kind;
+      };
+      if (
+        kL.kind !== kR.kind &&
+        kL.src !== "def" &&
+        kR.src !== "def" &&
+        azAgrees(a, lerp(0.5), kL.kind) &&
+        azAgrees(lerp(0.5), b, kR.kind)
+      ) {
+        let tSplit = 0.5;
+        for (const t of [0.65, 0.75] as const) {
+          if (classifyAt(a, lerp(t), nrm).kind === kL.kind) tSplit = t;
+          else break;
+        }
+        if (tSplit === 0.5) {
+          for (const t of [0.35, 0.25] as const) {
+            if (classifyAt(lerp(t), b, nrm).kind === kR.kind) tSplit = t;
+            else break;
+          }
+        }
+        const mid = lerp(tSplit);
+        classified.push({
+          a,
+          b: mid,
+          idx: i,
+          t0: 0,
+          t1: tSplit,
+          kind: kL.kind,
+          lengthFt: lengthFt * tSplit,
+          via: `${kL.via} (roof form changes mid-wall)`,
+          nrm,
+        });
+        classified.push({
+          a: mid,
+          b,
+          idx: i,
+          t0: tSplit,
+          t1: 1,
+          kind: kR.kind,
+          lengthFt: lengthFt * (1 - tSplit),
+          via: `${kR.via} (roof form changes mid-wall)`,
+          nrm,
+        });
+        countSrc(kL.src);
+        countSrc(kR.src);
+        formSplits++;
+        continue;
       }
     }
-    classified.push({ a, b, idx: i, kind, lengthFt, via, nrm });
+    const v = classifyAt(a, b, nrm);
+    countSrc(v.src);
+    classified.push({ a, b, idx: i, kind: v.kind, lengthFt, via: v.via, nrm });
+  }
+  if (formSplits > 0) {
+    notes.push(
+      `Split ${formSplits} wall${formSplits === 1 ? "" : "s"} where the roof form changes mid-run (gutter on the eave section only, none across the gable)`,
+    );
   }
 
   // ---- EAVE AUDIT: does the strip just inside this edge LOOK like this
@@ -883,10 +966,22 @@ export async function runSolarFirstEstimate(args: {
   );
 
   // ---- Canvas-space geometry ---------------------------------------
-  const renderEdge = (e: { idx: number; a: Pt; b: Pt }): [Pt, Pt] => [
-    renderRing[e.idx] ?? S(e.a),
-    renderRing[(e.idx + 1) % ring.length] ?? S(e.b),
-  ];
+  const renderEdge = (e: {
+    idx: number;
+    a: Pt;
+    b: Pt;
+    t0?: number;
+    t1?: number;
+  }): [Pt, Pt] => {
+    const ra = renderRing[e.idx] ?? S(e.a);
+    const rb = renderRing[(e.idx + 1) % ring.length] ?? S(e.b);
+    if (e.t0 == null || e.t1 == null) return [ra, rb];
+    const L = (t: number): Pt => ({
+      x: ra.x + (rb.x - ra.x) * t,
+      y: ra.y + (rb.y - ra.y) * t,
+    });
+    return [L(e.t0), L(e.t1)];
+  };
   let eaves: EditableLine[] = eaveEdges.map((e, i) => ({
     id: `solar-eave-${i}`,
     kind: "eave" as const,
