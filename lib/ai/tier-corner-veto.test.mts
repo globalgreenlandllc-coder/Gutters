@@ -245,3 +245,43 @@ test("F4: rear-corner pin + straight traced rear edge → unpriced suggested ret
   assert.ok(v3.pinned && v3.pinned.corner === "front-right");
   assert.equal(v3.suggestedReturn, null);
 });
+
+// ── round-4: an entry portal can never PIN the corner ────────────────────────
+
+test("entry-portal reads can NOT pin a corner — degrade to the honest could-not-pin note", () => {
+  // The 1168G misfire: the recessed front entry read as a 'lower mass at the
+  // left end' of the front elevation, a weak right-side 'entry' read agreed,
+  // and the pin confidently named the WRONG corner (front-left). Entry kinds
+  // are excluded from pinning now — with nothing else, there is NO pin.
+  const perFace = {
+    front: faceRead("front", [proj({ kind: "entry", position: "left_end" })]),
+    right: faceRead("right", [proj({ kind: "entry", position: "left_end" })]),
+    rear: faceRead("rear", []),
+    left: faceRead("left", []),
+  };
+  const porch = run("g5", [200, 90], [200, 120], { tier: "lower", feature: "porch", side: "right" });
+  const a = analysis([run("g1", [0, 0], [200, 0]), porch]);
+  const v = tierCornerVeto({ analysis: a, perFace });
+  assert.equal(v.pinned, null, "entry reads must not pin");
+  assert.deepEqual(v.vetoedRunIds, []);
+  const g5 = v.analysis.gutter_runs.find((r) => r.id === "g5")!;
+  assert.equal(g5.tier, "lower", "run untouched without a pin");
+  assert.ok(
+    v.notes.some((n) => n.includes("could not be pinned")),
+    `honest degrade note (got: ${v.notes.join(" | ")})`,
+  );
+});
+
+test("a porch read still pins even when an entry read disagrees (entry is ignored, not counted)", () => {
+  const perFace = {
+    rear: faceRead("rear", [proj({ position: "left_end" })]), // patio → house-right
+    right: faceRead("right", [proj({ position: "right_end" })]), // patio → rear
+    front: faceRead("front", [proj({ kind: "entry", position: "left_end" })]), // noise
+    left: faceRead("left", []),
+  };
+  const porch = run("g5", [200, 90], [200, 120], { tier: "lower", feature: "porch", side: "right" });
+  const a = analysis([run("g1", [0, 0], [200, 0]), porch]);
+  const v = tierCornerVeto({ analysis: a, perFace });
+  assert.ok(v.pinned, "patio/porch reads still pin");
+  assert.equal(v.pinned!.corner, "rear-right");
+});

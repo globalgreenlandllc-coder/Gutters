@@ -123,7 +123,13 @@ type Pin = {
   depthFt: number | null;
 };
 
-const LOWER_COVER_KINDS = new Set(["porch", "patio", "entry"]);
+// Kinds whose elevation profile may PIN the lower covered mass to a corner.
+// "entry" is deliberately EXCLUDED from pinning: on hip/prairie plans the
+// entry is a recessed portal UNDER the main eave, and a vision read of that
+// recess as a "lower mass at the left end" of the front elevation is exactly
+// how the pin once named the wrong corner (front-left) for a rear-right
+// outdoor living. Entry runs can still be vetoed — they just can't pin.
+const LOWER_COVER_KINDS = new Set(["porch", "patio"]);
 
 /** Median ft-per-ring-unit from the AI's own measured runs — the same
  *  cross-validated scale closeVectorPerimeter uses. Null when underivable. */

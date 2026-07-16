@@ -14,6 +14,7 @@ import type { PlanClassification } from "./classify-plans";
 import { polygonCloses, polyArea } from "../roof-engine";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
 import { scheduleAreaFt2, selfConsistentAreaFt2 } from "./to-masses";
+import { footprintAxisAlignedFraction } from "./rectify-plan-takeoff";
 
 /** Cleaned footprint ring in pixel space, or [] if it can't form a polygon. */
 export function footprintRingPx(a: BlueprintAnalysis): Pt[] {
@@ -95,6 +96,12 @@ export function eaveLfFt(a: BlueprintAnalysis): number {
  *      whole eaves (e.g. 120 LF on a 326 ft perimeter = 37%). Only the LOW side
  *      is penalized; over-trace is bounded elsewhere by the envelope clamp, and
  *      the 50% threshold sits below a legitimately gable-dominant roof (~58%).
+ *   4. RECTILINEARITY — residential footprints are overwhelmingly rectilinear;
+ *      off-axis perimeter beyond a small allowance (clipped corners, a bay) is
+ *      almost always trace error, and a diagonal-heavy trace also defeats the
+ *      downstream squaring repair. A clean read pays nothing (≤10% off-axis is
+ *      free); the 22%-off-axis roll that once shipped diagonal walls on a
+ *      fully-orthogonal rambler pays ~12 — enough to lose to a clean sibling.
  */
 export function geometryQualityPenalty(
   a: BlueprintAnalysis,
@@ -123,6 +130,10 @@ export function geometryQualityPenalty(
     const ratio = eaveLfFt(a) / perimFt;
     if (ratio < 0.5) pen += Math.min(40, (0.5 - ratio) * 250);
   }
+
+  // 4. rectilinearity (diagonal-heavy trace of square geometry).
+  const offAxis = 1 - footprintAxisAlignedFraction(ring);
+  pen += Math.min(25, Math.max(0, offAxis - 0.1) * 100);
 
   return pen;
 }

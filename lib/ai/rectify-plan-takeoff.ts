@@ -208,6 +208,9 @@ export type RectifyPlanResult = {
   angleDeg: number;
   /** Why it bailed, when applied === false. */
   reason?: string;
+  /** Axis-aligned perimeter fraction of the INPUT ring (when measurable) —
+   *  callers use it to flag an unusually rough trace that was still squared. */
+  axisFrac?: number;
   /** The squared footprint (or the input, unchanged, when applied === false). */
   footprint: RPt[];
   /** Followers projected onto the squared perimeter, in input order
@@ -244,7 +247,13 @@ export function rectifyPlanFootprint(
     followers,
   });
   try {
-    const minAxisFrac = opts?.minAxisFrac ?? 0.8;
+    // 0.70, not the historical 0.80: a residential plan is rectilinear, so a
+    // 70-80%-aligned trace is a rough READ of square geometry, not a diagonal
+    // house — refusing to square it shipped raw diagonal walls ("kept diagonal
+    // geometry") on a fully-orthogonal rambler. The band is still protected by
+    // GATE 2 (area drift ≤ 10%) and GATE 3 (corner move ≤ 15% of the bbox):
+    // squaring that would actually RESHAPE the ring still bails.
+    const minAxisFrac = opts?.minAxisFrac ?? 0.7;
     const maxAreaDriftFrac = opts?.maxAreaDriftFrac ?? 0.1;
     const maxCornerDriftFrac = opts?.maxCornerDriftFrac ?? 0.15;
     const axisTolDeg = opts?.axisTolDeg ?? 14;
@@ -273,7 +282,12 @@ export function rectifyPlanFootprint(
     // GATE 1: only square shapes that are already meant to be square.
     const axisFrac = axisAlignedFraction(rot, axisTolDeg);
     if (axisFrac < minAxisFrac)
-      return passthrough(`only ${Math.round(axisFrac * 100)}% axis-aligned — kept diagonal geometry`);
+      return {
+        ...passthrough(
+          `only ${Math.round(axisFrac * 100)}% axis-aligned — kept diagonal geometry`,
+        ),
+        axisFrac,
+      };
 
     const snapped = snapAxisRing(rot);
     if (!snapped) return passthrough("squaring collapsed the ring");
@@ -333,11 +347,40 @@ export function rectifyPlanFootprint(
     return {
       applied: true,
       angleDeg: ((theta * 180) / Math.PI + 360) % 90,
+      axisFrac,
       footprint: squared,
       followers: outFollowers,
     };
   } catch {
     return passthrough("rectify threw");
+  }
+}
+
+/**
+ * Axis-aligned perimeter fraction of a raw footprint ring (dominant-axis
+ * frame, same math the squaring gate uses). 1 when unmeasurable — callers
+ * use this as a REJECT-IMPLAUSIBLE scoring signal, and an unknowable ring
+ * must not be penalized for it. Pure; exported for the best-of trace scorer.
+ */
+export function footprintAxisAlignedFraction(ring: RPt[], tolDeg = 14): number {
+  try {
+    const fp = openRing(ring);
+    if (fp.length < 4) return 1;
+    if (!fp.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) return 1;
+    let theta = dominantAngle(fp);
+    if (theta == null) return 1;
+    const devFromAxis = Math.min(theta, Math.PI / 2 - theta);
+    if (devFromAxis < (2 * Math.PI) / 180) theta = 0;
+    const cx = fp.reduce((s, p) => s + p.x, 0) / fp.length;
+    const cy = fp.reduce((s, p) => s + p.y, 0) / fp.length;
+    const cosN = Math.cos(-theta);
+    const sinN = Math.sin(-theta);
+    return axisAlignedFraction(
+      fp.map((p) => rotateAbout(p, cx, cy, cosN, sinN)),
+      tolDeg,
+    );
+  } catch {
+    return 1;
   }
 }
 

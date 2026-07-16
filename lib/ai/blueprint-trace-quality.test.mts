@@ -76,3 +76,47 @@ test("a self-intersecting (bow-tie) footprint is fatally demoted", () => {
   const a = analysis(bowtie, [run(0, 0, 100, 0, 10)]);
   assert.equal(geometryQualityPenalty(a), 40);
 });
+
+// ── round-4: rectilinearity — a diagonal-heavy roll loses to a clean sibling ─
+
+test("a diagonal-heavy trace of square geometry is demoted; the clean sibling wins", () => {
+  // ~38% of this ring's perimeter is diagonal (the bad 1168G roll shape class).
+  const arrow = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 700, y: 300 },
+    { x: 400, y: 600 },
+    { x: 0, y: 600 },
+  ];
+  // Healthy runs on both (≈62% of perimeter guttered → checks 2/3 quiet).
+  const arrowRuns = [
+    run(0, 0, 400, 0, 40),
+    run(0, 600, 400, 600, 40),
+    run(0, 0, 0, 600, 60),
+  ];
+  const diag = geometryQualityPenalty(analysis(arrow, arrowRuns));
+  const cleanRuns = [
+    run(0, 0, 1000, 0, 100),
+    run(0, 400, 1000, 400, 100),
+    run(0, 0, 0, 400, 40),
+  ];
+  const clean = geometryQualityPenalty(analysis(RECT, cleanRuns));
+  assert.equal(clean, 0);
+  assert.ok(diag >= 15, `diagonal-heavy penalty ${diag}`);
+});
+
+test("a small clipped corner (≤10% off-axis) pays no rectilinearity penalty", () => {
+  const clipped = [
+    { x: 0, y: 0 },
+    { x: 950, y: 0 },
+    { x: 1000, y: 50 },
+    { x: 1000, y: 400 },
+    { x: 0, y: 400 },
+  ];
+  const runs = [
+    run(0, 0, 950, 0, 95),
+    run(0, 400, 1000, 400, 100),
+    run(0, 0, 0, 400, 40),
+  ];
+  assert.equal(geometryQualityPenalty(analysis(clipped, runs)), 0);
+});

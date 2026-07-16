@@ -837,11 +837,19 @@ export async function runEstimateFromPlan(
           return { ...e, start, end };
         });
         analysis.downspouts = dss.map((d) => ({ ...d, at: sq.followers[k++] }));
+        const rough = typeof sq.axisFrac === "number" && sq.axisFrac < 0.8;
         analysis.notes = [
           ...(analysis.notes ?? []),
           `📐 Squared the vision footprint onto true horizontal/vertical walls and snapped the gutter runs + downspouts onto the cleaned perimeter (a diagonal eave / a floating downspout on a scanned plan is a trace artifact, not a real roofline). Priced LF unchanged.`,
+          ...(rough
+            ? [
+                `⚠ ROUGH TRACE — the vision read was only ${Math.round((sq.axisFrac ?? 0) * 100)}% axis-aligned before squaring (a clean read is ~95%+). The squared outline passed the area/corner safety gates, but verify the overall shape against the roof plan before quoting.`,
+              ]
+            : []),
         ];
-        vecTrace.push(`✓ squared vision footprint (${analysis.building_footprint.length} corners, ${sq.angleDeg.toFixed(1)}° off-axis)`);
+        vecTrace.push(
+          `✓ squared vision footprint (${analysis.building_footprint.length} corners, ${sq.angleDeg.toFixed(1)}° off-axis${rough ? `, ROUGH ${Math.round((sq.axisFrac ?? 0) * 100)}% input` : ""})`,
+        );
       } else {
         vecTrace.push(`vision footprint not squared: ${sq.reason}`);
       }

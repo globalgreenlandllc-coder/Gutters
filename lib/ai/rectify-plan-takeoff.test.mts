@@ -239,3 +239,79 @@ test("auditNotches: squaring output is unchanged by the audit (audit is pure, re
   assert.deepEqual(r2.footprint, r1.footprint, "squaring is deterministic with the audit in play");
   assert.deepEqual(r2.followers, r1.followers);
 });
+
+// ── round-4: the squaring cliff + the rectilinearity signal ─────────────────
+
+test("a ROUGH read of square geometry (70-80% axis-aligned) is squared, not shipped diagonal", async () => {
+  const { footprintAxisAlignedFraction } = await import("./rectify-plan-takeoff.ts");
+  // A 800×500 rectangle whose top and bottom walls each carry a ~28° zigzag
+  // (vision wobble on a scanned plan) — ~25% of the perimeter reads off-axis.
+  const wobbly: RPt[] = [
+    { x: 0, y: 0 },
+    { x: 150, y: -80 },
+    { x: 300, y: 0 },
+    { x: 800, y: 0 },
+    { x: 800, y: 500 },
+    { x: 650, y: 580 },
+    { x: 500, y: 500 },
+    { x: 0, y: 500 },
+  ];
+  const frac = footprintAxisAlignedFraction(wobbly);
+  assert.ok(frac > 0.7 && frac < 0.8, `fixture sits in the band (got ${frac.toFixed(2)})`);
+  const r = rectifyPlanFootprint(wobbly, []);
+  assert.equal(r.applied, true, r.reason);
+  assert.ok(typeof r.axisFrac === "number" && r.axisFrac < 0.8, "rough input fraction reported");
+  // Every output wall is axis-aligned.
+  for (let i = 0; i < r.footprint.length; i++) {
+    const a = r.footprint[i];
+    const b = r.footprint[(i + 1) % r.footprint.length];
+    assert.ok(
+      Math.abs(a.x - b.x) < 0.01 || Math.abs(a.y - b.y) < 0.01,
+      `wall ${i} still diagonal`,
+    );
+  }
+});
+
+test("a genuinely diagonal-HEAVY trace (<70%) still refuses to square", () => {
+  // ~38% of the perimeter is true 45° geometry — not a rough read of a
+  // rectangle; squaring must keep hands off.
+  const arrow: RPt[] = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 700, y: 300 },
+    { x: 400, y: 600 },
+    { x: 0, y: 600 },
+  ];
+  const r = rectifyPlanFootprint(arrow, []);
+  assert.equal(r.applied, false);
+  assert.ok(r.reason?.includes("kept diagonal geometry"), r.reason);
+  assert.ok(typeof r.axisFrac === "number" && r.axisFrac < 0.7);
+  assert.deepEqual(r.footprint, arrow);
+});
+
+test("footprintAxisAlignedFraction: clean=1, rotated-Manhattan=1, diagonal-heavy low", async () => {
+  const { footprintAxisAlignedFraction } = await import("./rectify-plan-takeoff.ts");
+  const rect: RPt[] = [
+    { x: 0, y: 0 },
+    { x: 800, y: 0 },
+    { x: 800, y: 500 },
+    { x: 0, y: 500 },
+  ];
+  assert.equal(footprintAxisAlignedFraction(rect), 1);
+  // Whole trace tilted 10° — Manhattan in its own frame → still 1.
+  const t = (10 * Math.PI) / 180;
+  const tilted = rect.map((p) => ({
+    x: p.x * Math.cos(t) - p.y * Math.sin(t),
+    y: p.x * Math.sin(t) + p.y * Math.cos(t),
+  }));
+  assert.ok(footprintAxisAlignedFraction(tilted) > 0.99);
+  const arrow: RPt[] = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 700, y: 300 },
+    { x: 400, y: 600 },
+    { x: 0, y: 600 },
+  ];
+  const f = footprintAxisAlignedFraction(arrow);
+  assert.ok(f > 0.55 && f < 0.7, `arrow fraction ${f.toFixed(2)}`);
+});
