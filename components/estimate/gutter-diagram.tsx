@@ -100,6 +100,7 @@ export function GutterDiagram({
   address,
   confidence,
   presentation,
+  redactNumbers,
   className,
 }: {
   eaves: EditableLine[];
@@ -116,6 +117,11 @@ export function GutterDiagram({
    *  perimeter, priced gutter runs and downspouts render — no dashed
    *  rakes, no dotted roof seams. */
   presentation?: boolean;
+  /** Anonymous teaser mode (landing page): the trace renders, the
+   *  numbers don't — no LF pills, and the totals chip becomes a locked
+   *  "sign up to reveal" pill. The API already withholds the scale, so
+   *  this is presentation-layer consistency, not the security boundary. */
+  redactNumbers?: boolean;
   className?: string;
 }) {
   const rawScale = Number.isFinite(pxPerFt) && (pxPerFt ?? 0) > 0 ? pxPerFt! : PX_PER_FT;
@@ -302,15 +308,16 @@ export function GutterDiagram({
             strokeLinejoin="round"
           />
         ))}
-        {nEaves.map((line) => (
-          <EaveLabel
-            key={`lbl-${line.id}`}
-            line={line}
-            pxPerFt={scale}
-            centroid={centroid}
-            tier={runTier(line)}
-          />
-        ))}
+        {!redactNumbers &&
+          nEaves.map((line) => (
+            <EaveLabel
+              key={`lbl-${line.id}`}
+              line={line}
+              pxPerFt={scale}
+              centroid={centroid}
+              tier={runTier(line)}
+            />
+          ))}
 
         {/* Inside-corner miter chevrons */}
         {insideCorners.map((p, i) => (
@@ -419,11 +426,17 @@ export function GutterDiagram({
             {confPct >= 70 ? "High confidence" : `${confPct}% confidence`}
           </span>
         )}
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#14688c] px-2.5 py-1 text-[11px] font-semibold text-white tabular-nums">
-          {totalEaveLF} LF gutter
-          <span className="opacity-60">·</span>
-          {downspouts.length} {downspouts.length === 1 ? "downspout" : "downspouts"}
-        </span>
+        {redactNumbers ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#14688c] px-2.5 py-1 text-[11px] font-semibold text-white">
+            🔒 Measurements ready — free account to reveal
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#14688c] px-2.5 py-1 text-[11px] font-semibold text-white tabular-nums">
+            {totalEaveLF} LF gutter
+            <span className="opacity-60">·</span>
+            {downspouts.length} {downspouts.length === 1 ? "downspout" : "downspouts"}
+          </span>
+        )}
       </div>
       {/* Legend — explains the colors whenever the roof has more than
           the plain main run (upper loops / low porch roofs). */}

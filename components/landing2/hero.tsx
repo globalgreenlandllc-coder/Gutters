@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Container, Eyebrow, PillLink } from "./ui";
+import { TeaserScan } from "./teaser-scan";
 import { HouseScene, type SceneTab } from "./house-scene";
 import { Reveal } from "./reveal";
 
@@ -136,18 +137,22 @@ export function Hero() {
             </h1>
             <div className="max-w-sm md:justify-self-end md:pt-3">
               <p className="text-[15px] leading-relaxed text-zinc-600">
-                The operating system for gutter contractors. AI takeoffs from
-                aerial imagery and blueprints, three-tier proposals, e-sign,
-                scheduling, and payment tracking &mdash; no ladder required.
+                Type an address, get a priced gutter proposal in 60 seconds —
+                AI-measured from satellite, sent with e-sign and payments.
+                No ladder, no tape measure.
               </p>
               <div className="mt-6 flex items-center gap-3">
-                <PillLink href="/sign-in">Get Started</PillLink>
-                <PillLink href="/sign-in" variant="outline">
-                  Contact Sales
+                <PillLink href="/sign-up">Start free</PillLink>
+                <PillLink href="/p/demo-7f3a2" variant="outline">
+                  See a live proposal
                 </PillLink>
               </div>
             </div>
           </div>
+        </Reveal>
+
+        <Reveal>
+          <TeaserScan />
         </Reveal>
 
         <ShowcaseCard />

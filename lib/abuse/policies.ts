@@ -163,6 +163,27 @@ export const POLICIES = {
     "The audio summary is taking a break — please read the proposal, or try again tomorrow.",
   ),
 
+  /** Anonymous landing-page teaser scans — per IP. Each one runs the
+   *  real satellite engine (Google Solar + imagery ≈ tens of cents),
+   *  so the budget is tight: the wow only needs one. Closed. */
+  teaserScan: make(
+    "teaser.scan",
+    "ABUSE_LIMIT_TEASER_SCAN",
+    [{ limit: 2, windowSec: DAY }],
+    "closed",
+    "That's the free-preview limit for today — create a free account for unlimited scans.",
+  ),
+
+  /** Whole-platform daily ceiling on anonymous teaser scans — bounds
+   *  the worst-case spend of a distributed bot sweep. Closed. */
+  teaserGlobal: make(
+    "teaser.global",
+    "ABUSE_LIMIT_TEASER_GLOBAL",
+    [{ limit: 150, windowSec: DAY }],
+    "closed",
+    "The free preview is very popular right now — create a free account to scan any address.",
+  ),
+
   /** All unauthenticated portal writes from one IP, across tokens. */
   portalIp: make(
     "portal.ip",

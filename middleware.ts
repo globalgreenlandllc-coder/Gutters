@@ -18,6 +18,9 @@ const isPublic = createRouteMatcher([
   "/api/cron/(.*)",
   // Analytics beacon — anonymous visitors must be able to POST pageviews.
   "/api/track(.*)",
+  // Landing-page teaser scan — the acquisition hook is anonymous by
+  // definition. Tightly rate-limited (edge class + 2/day/IP durable).
+  "/api/teaser(.*)",
 ]);
 
 // ---------------------------------------------------------------------
@@ -76,6 +79,9 @@ function limitFor(pathname: string): { limit: number; cls: string } {
   // Analytics beacons: ~2-3/min per open tab (pageview + 25s heartbeat),
   // so 60/min absorbs many tabs while still capping floods.
   if (pathname.startsWith("/api/track")) return { limit: 60, cls: "track" };
+  // Teaser scans spend real API money per call — tightest class here;
+  // the durable 2/day/IP limit inside the route is the real gate.
+  if (pathname.startsWith("/api/teaser")) return { limit: 5, cls: "teaser" };
   // Auth + marketing pages (Clerk adds its own bot detection on top).
   if (
     pathname === "/" ||

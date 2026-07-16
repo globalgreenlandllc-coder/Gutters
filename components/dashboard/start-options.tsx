@@ -36,6 +36,10 @@ const MICROLABEL =
 /* ------------------------------------------------------------------ */
 const LOCAL_RECENTS_KEY = "gutters.recentAddresses";
 const LOCAL_RECENTS_MAX = 8;
+/** Address typed into the landing-page teaser scan before signup —
+ *  same literal as PENDING_SCAN_KEY in landing2/teaser-scan.tsx
+ *  (duplicated to keep the landing bundle out of the dashboard). */
+const PENDING_SCAN_KEY = "gutterscan.pendingAddress";
 
 function readLocalRecents(): string[] {
   if (typeof window === "undefined") return [];
@@ -104,6 +108,11 @@ export function StartOptions() {
             <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
               Blueprint takeoff
             </h2>
+            {/* Honest label: the plan reader is the newest, hardest path.
+                Satellite is the launch hero; this earns the badge off. */}
+            <span className="ml-auto rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+              BETA
+            </span>
           </div>
           <p className="mt-3 text-sm text-zinc-500">
             Upload construction plans — AI reads the roof plan and
@@ -225,6 +234,22 @@ function SatelliteTakeoffCard() {
   const [highlight, setHighlight] = useState(-1);
   const blurTimer = useRef<number | null>(null);
 
+  // Landing-page teaser handoff: the visitor scanned an address before
+  // signing up — pre-fill it so their first dashboard action is one
+  // click ("finish the scan you started").
+  const [fromTeaser, setFromTeaser] = useState(false);
+  useEffect(() => {
+    try {
+      const pending = window.localStorage.getItem(PENDING_SCAN_KEY);
+      if (pending && pending.trim().length >= 8) {
+        setValue(pending.trim());
+        setFromTeaser(true);
+      }
+    } catch {
+      // private mode — nothing to pick up
+    }
+  }, []);
+
   // Hydrate localStorage immediately on mount, then fetch the server
   // copy in the background and merge — server wins on dedupe.
   useEffect(() => {
@@ -273,6 +298,11 @@ function SatelliteTakeoffCard() {
     // later, the user may want to retype/edit it from the dropdown
     // rather than re-typing from scratch.
     pushLocalRecent(target);
+    try {
+      window.localStorage.removeItem(PENDING_SCAN_KEY);
+    } catch {
+      // ignore
+    }
     router.push(
       `/estimate?address=${encodeURIComponent(target)}&jobType=${jobType}`,
     );
@@ -300,6 +330,13 @@ function SatelliteTakeoffCard() {
         Type an address — AI measures eaves, corners, and downspouts from
         aerial imagery. Free on every plan, no credits used.
       </p>
+
+      {fromTeaser && (
+        <div className="anim-enter-fade mt-3 rounded-lg bg-accent-50 px-3 py-2 text-xs font-medium text-accent-800 ring-1 ring-accent-200">
+          ✨ Picked up the address from your landing-page scan — hit Run to
+          unlock the full measurements.
+        </div>
+      )}
 
       <form
         onSubmit={(e) => {
