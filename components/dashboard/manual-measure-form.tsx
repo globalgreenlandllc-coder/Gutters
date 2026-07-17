@@ -10,7 +10,6 @@ import {
   Droplets,
   Hammer,
   Home,
-  Layers,
   Loader2,
   Mail,
   MapPin,
@@ -26,10 +25,13 @@ import { cn } from "@/lib/utils";
 import {
   blankProposal,
   packageTotal,
+  type Package,
   type Proposal,
 } from "@/lib/proposal-mock";
 import type { Measurements, Stories } from "@/lib/types";
 import { saveProposalDraft } from "@/app/actions/proposals";
+import { MaterialsBuilder } from "@/components/proposal/materials-builder";
+import { PackagesSection } from "@/components/proposal/packages-section";
 import { SendModal } from "@/components/proposal/send-modal";
 import { useProfile } from "@/lib/auth-mock";
 
@@ -87,11 +89,16 @@ function fmtMoney(n: number) {
 /*  and end caps suggest themselves from field rules of thumb; all     */
 /*  three packages price live in the sticky summary.                   */
 /*                                                                     */
-/*  Step 2 (Review & send): client info, pick the recommended tier,    */
-/*  then Save draft (saveProposalDraft) or Send (SendModal →           */
-/*  sendProposal) — right here, without visiting /proposal. Both are   */
-/*  keyed on the same proposal token so save-then-send updates one     */
-/*  row instead of creating two.                                       */
+/*  Step 2 (Review & send): the REAL package editor — the same         */
+/*  PackagesSection + MaterialsBuilder the proposal builder uses, so   */
+/*  every tier is fully buildable here: rename it, tap the price to    */
+/*  set a target, toggle add-ons, and open Edit materials & spec for   */
+/*  the gutter shape/size/material/color, accessories, highlight       */
+/*  bullets, BOM overrides and custom lines. Then client info and      */
+/*  Save draft (saveProposalDraft) or Send (SendModal → sendProposal)  */
+/*  — right here, without visiting /proposal. Both are keyed on the    */
+/*  same proposal token so save-then-send updates one row instead of   */
+/*  creating two.                                                      */
 /* ------------------------------------------------------------------ */
 export function ManualMeasureForm() {
   const reduce = useReducedMotion();
@@ -121,17 +128,23 @@ export function ManualMeasureForm() {
   // Review step
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
-  // Stable template: token, package configs, terms. Created once so the
-  // proposal token never changes across renders — save + send both key
-  // the DB row off it.
+  // Stable template: token, terms, intro. Created once so the proposal
+  // token never changes across renders — save + send both key the DB
+  // row off it.
   const [base] = useState<Proposal>(() => blankProposal());
-  const [recommendedId, setRecommendedId] = useState<string>(
-    () =>
-      base.packages.find((p) => p.recommended)?.id ??
-      base.packages[1]?.id ??
-      base.packages[0]?.id ??
-      "better",
+  // The three tiers, fully owned by this flow as live state so the
+  // PackagesSection + MaterialsBuilder editors can rebuild each one
+  // (name, price/markup, config, highlights, add-ons, BOM overrides).
+  // Seeded from the template with the replacement tear-off default
+  // (matches the initial jobType).
+  const [pkgs, setPkgs] = useState<Package[]>(() =>
+    base.packages.map((p) => ({
+      ...p,
+      config: { ...p.config, oldGutterRemoval: "free" as const },
+    })),
   );
+  // Package whose MaterialsBuilder drawer is open (null = closed).
+  const [materialsEditId, setMaterialsEditId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -160,28 +173,28 @@ export function ManualMeasureForm() {
     wasteFactorPct,
   };
 
-  // Same old-gutter-removal defaulting the AI flows get server-side, so
-  // replacement jobs carry the FREE tear-off line and new construction
-  // doesn't. recommended follows the contractor's tier pick.
-  const packages = useMemo(
-    () =>
-      base.packages.map((p) => ({
+  // Job type owns the tear-off default (same rule the AI flows apply
+  // server-side): replacement = FREE removal line, new build = none.
+  // Applied across all tiers; per-tier fine-tuning stays available in
+  // the materials builder afterwards.
+  function changeJobType(next: JobType) {
+    setJobType(next);
+    setPkgs((prev) =>
+      prev.map((p) => ({
         ...p,
-        recommended: p.id === recommendedId,
         config: {
           ...p.config,
-          oldGutterRemoval: (jobType === "new" ? "none" : "free") as
-            | "none"
-            | "free",
+          oldGutterRemoval: next === "new" ? "none" : "free",
         },
       })),
-    [base, jobType, recommendedId],
-  );
+    );
+  }
 
   // The full proposal blob this flow owns. Rebuilt per render (cheap) —
-  // saveProposalDraft persists it verbatim and SendModal/sendProposal
-  // consume it directly. `jobType` rides along as the same ad-hoc data
-  // key the estimate flow stores.
+  // PackagesSection edits flow back via setPkgs, saveProposalDraft
+  // persists it verbatim and SendModal/sendProposal consume it directly.
+  // `jobType` rides along as the same ad-hoc data key the estimate flow
+  // stores.
   const proposal: Proposal & { jobType: JobType } = {
     ...base,
     address: address.trim(),
@@ -196,24 +209,23 @@ export function ManualMeasureForm() {
       squarePaymentUrl: profile.payments.squareUrl ?? null,
     },
     measurements,
-    packages,
+    packages: pkgs,
     source: "manual",
     jobType,
   };
 
   const tiers = useMemo(() => {
     if (eaveLF <= 0) return [];
-    return packages.map((p) => ({
+    return pkgs.map((p) => ({
       id: p.id,
       name: p.name,
-      tagline: p.tagline,
       recommended: !!p.recommended,
       total: packageTotal(p, measurements, 0).total,
     }));
     // measurements is rebuilt every render; list its scalars instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    packages,
+    pkgs,
     eaveLF,
     downspoutCount,
     outsideCorners,
@@ -264,613 +276,592 @@ export function ManualMeasureForm() {
     transition: { duration: 0.45, delay },
   });
 
-  return (
-    <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="space-y-4">
-        <div className={cn(MICROLABEL, "anim-enter-fade text-zinc-400")}>
-          {step === "measure"
-            ? "Step 1 of 2 — Measurements"
-            : "Step 2 of 2 — Review & send"}
-        </div>
+  const materialsPkg = materialsEditId
+    ? (pkgs.find((p) => p.id === materialsEditId) ?? null)
+    : null;
 
-        {step === "measure" ? (
-          <>
-            {/* -------- Property -------- */}
-            <motion.div
-              {...enter(0)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <MapPin className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Property
-                </h2>
-              </div>
-              <label
-                htmlFor="manual-address"
-                className={cn(MICROLABEL, "mt-4 block text-zinc-400")}
+  return (
+    <div className="mt-6 space-y-6">
+      <div className={cn(MICROLABEL, "anim-enter-fade text-zinc-400")}>
+        {step === "measure"
+          ? "Step 1 of 2 — Measurements"
+          : "Step 2 of 2 — Build packages & send"}
+      </div>
+
+      {/* -------- Packages (review step, full width) --------
+          The exact same editor surface the /proposal builder uses:
+          inline name/tagline edits, tap-the-price targeting, add-on
+          checkboxes, Mark popular, and Edit materials & spec → the
+          MaterialsBuilder drawer (gutter shape/size/material/color,
+          accessories, highlights, BOM overrides, custom lines). */}
+      {step === "review" && (
+        <motion.div {...enter(0)}>
+          <PackagesSection
+            proposal={proposal}
+            onChange={(p) => setPkgs(p.packages)}
+            onEditMaterials={setMaterialsEditId}
+          />
+        </motion.div>
+      )}
+
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-4">
+          {step === "measure" ? (
+            <>
+              {/* -------- Property -------- */}
+              <motion.div
+                {...enter(0)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
               >
-                Property address
-              </label>
-              <input
-                id="manual-address"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
-                autoComplete="street-address"
-                className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
-              />
-              <div className="mt-4 flex items-center gap-2">
-                <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
-                <div className="inline-flex rounded-lg border border-zinc-200 p-0.5">
-                  {(
-                    [
-                      {
-                        value: "replacement",
-                        label: "Replacement",
-                        Icon: Hammer,
-                      },
-                      { value: "new", label: "New construction", Icon: Home },
-                    ] as const
-                  ).map((opt) => {
-                    const active = opt.value === jobType;
-                    return (
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <MapPin className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Property
+                  </h2>
+                </div>
+                <label
+                  htmlFor="manual-address"
+                  className={cn(MICROLABEL, "mt-4 block text-zinc-400")}
+                >
+                  Property address
+                </label>
+                <input
+                  id="manual-address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
+                  autoComplete="street-address"
+                  className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                />
+                <div className="mt-4 flex items-center gap-2">
+                  <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
+                  <div className="inline-flex rounded-lg border border-zinc-200 p-0.5">
+                    {(
+                      [
+                        {
+                          value: "replacement",
+                          label: "Replacement",
+                          Icon: Hammer,
+                        },
+                        { value: "new", label: "New construction", Icon: Home },
+                      ] as const
+                    ).map((opt) => {
+                      const active = opt.value === jobType;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => changeJobType(opt.value)}
+                          className={cn(
+                            "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
+                            active
+                              ? "bg-zinc-100 text-zinc-900"
+                              : "text-zinc-500 hover:text-zinc-900",
+                          )}
+                        >
+                          <opt.Icon className="h-3.5 w-3.5" />
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* -------- Gutter runs -------- */}
+              <motion.div
+                {...enter(0.05)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <Ruler className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Gutter runs
+                  </h2>
+                  <div className="ml-auto inline-flex rounded-lg border border-zinc-200 p-0.5">
+                    {(
+                      [
+                        { value: "runs", label: "Run by run" },
+                        { value: "total", label: "One total" },
+                      ] as const
+                    ).map((opt) => (
                       <button
                         key={opt.value}
                         type="button"
-                        onClick={() => setJobType(opt.value)}
+                        onClick={() => switchMode(opt.value)}
                         className={cn(
-                          "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
-                          active
+                          "transition-smooth ring-focus rounded-md px-2.5 py-1 text-xs font-medium",
+                          mode === opt.value
                             ? "bg-zinc-100 text-zinc-900"
                             : "text-zinc-500 hover:text-zinc-900",
                         )}
                       >
-                        <opt.Icon className="h-3.5 w-3.5" />
                         {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </motion.div>
-
-            {/* -------- Gutter runs -------- */}
-            <motion.div
-              {...enter(0.05)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <Ruler className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Gutter runs
-                </h2>
-                <div className="ml-auto inline-flex rounded-lg border border-zinc-200 p-0.5">
-                  {(
-                    [
-                      { value: "runs", label: "Run by run" },
-                      { value: "total", label: "One total" },
-                    ] as const
-                  ).map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => switchMode(opt.value)}
-                      className={cn(
-                        "transition-smooth ring-focus rounded-md px-2.5 py-1 text-xs font-medium",
-                        mode === opt.value
-                          ? "bg-zinc-100 text-zinc-900"
-                          : "text-zinc-500 hover:text-zinc-900",
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {mode === "runs" ? (
-                <>
-                  <p className="mt-3 text-sm text-zinc-500">
-                    Enter each straight gutter section as you measured it —
-                    Enter adds the run and keeps the cursor ready for the
-                    next one. Downspouts and end caps suggest themselves
-                    from the runs.
-                  </p>
-                  <div className="mt-4 flex gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        ref={runInputRef}
-                        value={runInput}
-                        onChange={(e) => setRunInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addRun();
-                          }
-                        }}
-                        type="number"
-                        min={1}
-                        step="0.5"
-                        inputMode="decimal"
-                        placeholder="Run length"
-                        className="transition-smooth h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 pr-9 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
-                      />
-                      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-medium text-zinc-400">
-                        ft
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={addRun}
-                      disabled={!runInput.trim()}
-                      className="transition-smooth ring-focus press-scale inline-flex h-11 items-center gap-1.5 rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add run
-                    </button>
-                  </div>
-                  {runs.length > 0 && (
-                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                      {runs.map((r, i) => (
-                        <span
-                          key={`${r}-${i}`}
-                          className="anim-pop inline-flex items-center gap-1 rounded-full bg-accent-50 py-1 pl-2.5 pr-1 text-xs font-semibold text-accent-800 ring-1 ring-accent-200"
-                        >
-                          {r} ft
-                          <button
-                            type="button"
-                            onClick={() => removeRun(i)}
-                            aria-label={`Remove ${r} ft run`}
-                            className="transition-smooth rounded-full p-0.5 text-accent-500 hover:bg-accent-100 hover:text-accent-800"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="mt-4 flex items-baseline gap-2 border-t border-zinc-100 pt-3">
-                    <span className={cn(MICROLABEL, "text-zinc-400")}>
-                      Total eaves
-                    </span>
-                    <span className="text-lg font-semibold tabular-nums tracking-tight text-zinc-900">
-                      {eaveLF} LF
-                    </span>
-                    {runs.length > 0 && (
-                      <span className="text-xs text-zinc-400">
-                        across {runs.length}{" "}
-                        {runs.length === 1 ? "run" : "runs"}
-                      </span>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="mt-3 text-sm text-zinc-500">
-                    Already summed it up on paper? Enter the total gutter
-                    footage — you can still fine-tune corners and caps
-                    below.
-                  </p>
-                  <label
-                    htmlFor="manual-total-lf"
-                    className={cn(MICROLABEL, "mt-4 block text-zinc-400")}
-                  >
-                    Total gutter length
-                  </label>
-                  <div className="relative mt-1.5 max-w-[220px]">
-                    <input
-                      id="manual-total-lf"
-                      value={totalInput}
-                      onChange={(e) => setTotalInput(e.target.value)}
-                      type="number"
-                      min={1}
-                      step="1"
-                      inputMode="decimal"
-                      placeholder="148"
-                      className="transition-smooth h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 pr-9 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
-                    />
-                    <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-medium text-zinc-400">
-                      LF
-                    </span>
-                  </div>
-                </>
-              )}
-            </motion.div>
-
-            {/* -------- Downspouts & height -------- */}
-            <motion.div
-              {...enter(0.1)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <Droplets className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Downspouts &amp; height
-                </h2>
-              </div>
-              <div className="mt-4 grid gap-5 sm:grid-cols-2">
-                <Stepper
-                  label="Downspouts"
-                  value={downspoutCount}
-                  onChange={(v) => setDownspoutOverride(v)}
-                  auto={downspoutOverride === null}
-                  suggestion={suggestedDownspouts}
-                  onUseSuggestion={() => setDownspoutOverride(null)}
-                  hint="Rule of thumb: one drop every 30–40 ft of run."
-                />
-                <div>
-                  <span className={cn(MICROLABEL, "text-zinc-400")}>
-                    Stories
-                  </span>
-                  <div className="mt-1.5 inline-flex rounded-lg border border-zinc-200 p-0.5">
-                    {([1, 2, 3] as const).map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setStories(s)}
-                        className={cn(
-                          "transition-smooth ring-focus rounded-md px-3 py-1.5 text-xs font-medium",
-                          stories === s
-                            ? "bg-zinc-100 text-zinc-900"
-                            : "text-zinc-500 hover:text-zinc-900",
-                        )}
-                      >
-                        {s}-story
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
-                    Sets downspout drop length (
-                    {stories === 1 ? 10 : stories === 2 ? 20 : 30} ft each)
-                    and strap counts.
-                  </p>
                 </div>
-              </div>
-            </motion.div>
 
-            {/* -------- Corners, caps & waste -------- */}
-            <motion.div
-              {...enter(0.15)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <PenLine className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Corners, caps &amp; waste
-                </h2>
-              </div>
-              <div className="mt-4 grid gap-5 sm:grid-cols-2">
-                <Stepper
-                  label="Outside corners"
-                  value={outsideCorners}
-                  onChange={setOutsideCorners}
-                  hint="Gutter wraps around an outside house corner."
-                />
-                <Stepper
-                  label="Inside corners"
-                  value={insideCorners}
-                  onChange={setInsideCorners}
-                  hint="Gutter turns into an inside (valley) corner."
-                />
-                <Stepper
-                  label="End caps"
-                  value={endCaps}
-                  onChange={(v) => setEndCapOverride(v)}
-                  auto={endCapOverride === null}
-                  suggestion={suggestedEndCaps}
-                  onUseSuggestion={() => setEndCapOverride(null)}
-                  hint="Every open run end gets a cap — corners join two ends."
-                />
-                <Stepper
-                  label="Waste factor"
-                  value={wasteFactorPct}
-                  onChange={(v) => setWasteFactorPct(Math.min(25, v))}
-                  unit="%"
-                  hint="Extra coil for cuts and miters. 8–12% is typical."
-                />
-              </div>
-            </motion.div>
-          </>
-        ) : (
-          <>
-            {/* -------- Client -------- */}
-            <motion.div
-              {...enter(0)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <UserRound className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Client
-                </h2>
-                <span className="ml-auto text-xs text-zinc-400">
-                  {address}
-                </span>
-              </div>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="manual-client-name"
-                    className={cn(MICROLABEL, "block text-zinc-400")}
-                  >
-                    Client name
-                  </label>
-                  <input
-                    id="manual-client-name"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="Sarah Chen"
-                    className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                {mode === "runs" ? (
+                  <>
+                    <p className="mt-3 text-sm text-zinc-500">
+                      Enter each straight gutter section as you measured it
+                      — Enter adds the run and keeps the cursor ready for
+                      the next one. Downspouts and end caps suggest
+                      themselves from the runs.
+                    </p>
+                    <div className="mt-4 flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          ref={runInputRef}
+                          value={runInput}
+                          onChange={(e) => setRunInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addRun();
+                            }
+                          }}
+                          type="number"
+                          min={1}
+                          step="0.5"
+                          inputMode="decimal"
+                          placeholder="Run length"
+                          className="transition-smooth h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 pr-9 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                        />
+                        <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-medium text-zinc-400">
+                          ft
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={addRun}
+                        disabled={!runInput.trim()}
+                        className="transition-smooth ring-focus press-scale inline-flex h-11 items-center gap-1.5 rounded-lg bg-accent-600 px-4 text-[13px] font-semibold text-white hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add run
+                      </button>
+                    </div>
+                    {runs.length > 0 && (
+                      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                        {runs.map((r, i) => (
+                          <span
+                            key={`${r}-${i}`}
+                            className="anim-pop inline-flex items-center gap-1 rounded-full bg-accent-50 py-1 pl-2.5 pr-1 text-xs font-semibold text-accent-800 ring-1 ring-accent-200"
+                          >
+                            {r} ft
+                            <button
+                              type="button"
+                              onClick={() => removeRun(i)}
+                              aria-label={`Remove ${r} ft run`}
+                              className="transition-smooth rounded-full p-0.5 text-accent-500 hover:bg-accent-100 hover:text-accent-800"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-4 flex items-baseline gap-2 border-t border-zinc-100 pt-3">
+                      <span className={cn(MICROLABEL, "text-zinc-400")}>
+                        Total eaves
+                      </span>
+                      <span className="text-lg font-semibold tabular-nums tracking-tight text-zinc-900">
+                        {eaveLF} LF
+                      </span>
+                      {runs.length > 0 && (
+                        <span className="text-xs text-zinc-400">
+                          across {runs.length}{" "}
+                          {runs.length === 1 ? "run" : "runs"}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 text-sm text-zinc-500">
+                      Already summed it up on paper? Enter the total gutter
+                      footage — you can still fine-tune corners and caps
+                      below.
+                    </p>
+                    <label
+                      htmlFor="manual-total-lf"
+                      className={cn(MICROLABEL, "mt-4 block text-zinc-400")}
+                    >
+                      Total gutter length
+                    </label>
+                    <div className="relative mt-1.5 max-w-[220px]">
+                      <input
+                        id="manual-total-lf"
+                        value={totalInput}
+                        onChange={(e) => setTotalInput(e.target.value)}
+                        type="number"
+                        min={1}
+                        step="1"
+                        inputMode="decimal"
+                        placeholder="148"
+                        className="transition-smooth h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 pr-9 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                      />
+                      <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-medium text-zinc-400">
+                        LF
+                      </span>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+
+              {/* -------- Downspouts & height -------- */}
+              <motion.div
+                {...enter(0.1)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <Droplets className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Downspouts &amp; height
+                  </h2>
+                </div>
+                <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                  <Stepper
+                    label="Downspouts"
+                    value={downspoutCount}
+                    onChange={(v) => setDownspoutOverride(v)}
+                    auto={downspoutOverride === null}
+                    suggestion={suggestedDownspouts}
+                    onUseSuggestion={() => setDownspoutOverride(null)}
+                    hint="Rule of thumb: one drop every 30–40 ft of run."
+                  />
+                  <div>
+                    <span className={cn(MICROLABEL, "text-zinc-400")}>
+                      Stories
+                    </span>
+                    <div className="mt-1.5 inline-flex rounded-lg border border-zinc-200 p-0.5">
+                      {([1, 2, 3] as const).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setStories(s)}
+                          className={cn(
+                            "transition-smooth ring-focus rounded-md px-3 py-1.5 text-xs font-medium",
+                            stories === s
+                              ? "bg-zinc-100 text-zinc-900"
+                              : "text-zinc-500 hover:text-zinc-900",
+                          )}
+                        >
+                          {s}-story
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-zinc-400">
+                      Sets downspout drop length (
+                      {stories === 1 ? 10 : stories === 2 ? 20 : 30} ft each)
+                      and strap counts.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* -------- Corners, caps & waste -------- */}
+              <motion.div
+                {...enter(0.15)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <PenLine className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Corners, caps &amp; waste
+                  </h2>
+                </div>
+                <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                  <Stepper
+                    label="Outside corners"
+                    value={outsideCorners}
+                    onChange={setOutsideCorners}
+                    hint="Gutter wraps around an outside house corner."
+                  />
+                  <Stepper
+                    label="Inside corners"
+                    value={insideCorners}
+                    onChange={setInsideCorners}
+                    hint="Gutter turns into an inside (valley) corner."
+                  />
+                  <Stepper
+                    label="End caps"
+                    value={endCaps}
+                    onChange={(v) => setEndCapOverride(v)}
+                    auto={endCapOverride === null}
+                    suggestion={suggestedEndCaps}
+                    onUseSuggestion={() => setEndCapOverride(null)}
+                    hint="Every open run end gets a cap — corners join two ends."
+                  />
+                  <Stepper
+                    label="Waste factor"
+                    value={wasteFactorPct}
+                    onChange={(v) => setWasteFactorPct(Math.min(25, v))}
+                    unit="%"
+                    hint="Extra coil for cuts and miters. 8–12% is typical."
                   />
                 </div>
-                <div>
-                  <label
-                    htmlFor="manual-client-email"
-                    className={cn(MICROLABEL, "block text-zinc-400")}
-                  >
-                    Client email
-                  </label>
-                  <input
-                    id="manual-client-email"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
-                    type="email"
-                    placeholder="name@domain.com"
-                    className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
-                  />
+              </motion.div>
+            </>
+          ) : (
+            <>
+              {/* -------- Client -------- */}
+              <motion.div
+                {...enter(0.05)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <UserRound className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Client
+                  </h2>
+                  <span className="ml-auto truncate text-xs text-zinc-400">
+                    {address}
+                  </span>
                 </div>
-              </div>
-              <p className="mt-2 text-xs text-zinc-400">
-                Optional for a draft — required before sending.
-              </p>
-            </motion.div>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="manual-client-name"
+                      className={cn(MICROLABEL, "block text-zinc-400")}
+                    >
+                      Client name
+                    </label>
+                    <input
+                      id="manual-client-name"
+                      value={clientName}
+                      onChange={(e) => setClientName(e.target.value)}
+                      placeholder="Sarah Chen"
+                      className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="manual-client-email"
+                      className={cn(MICROLABEL, "block text-zinc-400")}
+                    >
+                      Client email
+                    </label>
+                    <input
+                      id="manual-client-email"
+                      value={clientEmail}
+                      onChange={(e) => setClientEmail(e.target.value)}
+                      type="email"
+                      placeholder="name@domain.com"
+                      className="transition-smooth mt-1.5 h-11 w-full rounded-lg border border-zinc-200 bg-white px-3.5 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                    />
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-zinc-400">
+                  Optional for a draft — required before sending.
+                </p>
+              </motion.div>
 
-            {/* -------- Packages -------- */}
-            <motion.div
-              {...enter(0.05)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <Layers className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Packages
-                </h2>
+              {/* -------- Measurements recap -------- */}
+              <motion.div
+                {...enter(0.1)}
+                className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+                    <Ruler className="h-4 w-4" />
+                  </span>
+                  <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
+                    Field measurements
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setStep("measure")}
+                    className="transition-smooth ring-focus ml-auto inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 underline-offset-2 hover:underline"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Edit measurements
+                  </button>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+                  <RecapItem label="Gutter" value={`${eaveLF} LF`} />
+                  <RecapItem label="Downspouts" value={`${downspoutCount}`} />
+                  <RecapItem label="Stories" value={`${stories}`} />
+                  <RecapItem
+                    label="Corners"
+                    value={`${outsideCorners} out · ${insideCorners} in`}
+                  />
+                  <RecapItem label="End caps" value={`${endCaps}`} />
+                  <RecapItem label="Waste" value={`${wasteFactorPct}%`} />
+                </dl>
+              </motion.div>
+            </>
+          )}
+        </div>
+
+        {/* -------- Live summary (sticky) -------- */}
+        <motion.aside
+          {...enter(0.1)}
+          className="lg:sticky lg:top-[80px] lg:self-start"
+        >
+          <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
+            <div className={cn(MICROLABEL, "text-zinc-400")}>Live takeoff</div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-semibold tabular-nums tracking-tight text-zinc-900">
+                {eaveLF}
+              </span>
+              <span className="text-sm font-medium text-zinc-500">
+                LF of gutter
+              </span>
+            </div>
+            <dl className="mt-4 space-y-2 border-t border-zinc-100 pt-4 text-sm">
+              <SummaryRow label="Downspouts" value={`${downspoutCount}`} />
+              <SummaryRow label="Stories" value={`${stories}`} />
+              <SummaryRow
+                label="Corners"
+                value={`${outsideCorners} out · ${insideCorners} in`}
+              />
+              <SummaryRow label="End caps" value={`${endCaps}`} />
+              <SummaryRow label="Waste factor" value={`${wasteFactorPct}%`} />
+            </dl>
+
+            <div className="mt-4 border-t border-zinc-100 pt-4">
+              <div className={cn(MICROLABEL, "text-zinc-400")}>
+                Package pricing
               </div>
-              <p className="mt-3 text-sm text-zinc-500">
-                All three tiers go to the client — pick which one their
-                portal highlights as recommended.
-              </p>
-              <div className="mt-4 space-y-2">
-                {tiers.map((t) => {
-                  const active = t.recommended;
-                  return (
-                    <button
+              {tiers.length > 0 ? (
+                <ul className="mt-2 space-y-1.5">
+                  {tiers.map((t) => (
+                    <li
                       key={t.id}
-                      type="button"
-                      onClick={() => setRecommendedId(t.id)}
                       className={cn(
-                        "transition-smooth ring-focus flex w-full items-center gap-3 rounded-xl border p-4 text-left",
-                        active
-                          ? "border-accent-500 bg-accent-50 ring-2 ring-accent-500/15"
-                          : "border-zinc-200 bg-white hover:border-zinc-300",
+                        "flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm",
+                        t.recommended
+                          ? "bg-accent-50 font-semibold text-accent-900 ring-1 ring-accent-200"
+                          : "text-zinc-600",
                       )}
                     >
-                      <span
-                        className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
-                          active
-                            ? "border-accent-600 bg-accent-600 text-white"
-                            : "border-zinc-300 bg-white",
-                        )}
-                      >
-                        {active && <Check className="h-3 w-3" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold text-zinc-900">
-                          {t.name}
-                          {active && (
-                            <span className="ml-2 rounded-md bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                              RECOMMENDED
-                            </span>
-                          )}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-zinc-500">
-                          {t.tagline}
-                        </span>
-                      </span>
-                      <span className="text-base font-semibold tabular-nums tracking-tight text-zinc-900">
+                      <span className="truncate">{t.name}</span>
+                      <span className="shrink-0 tabular-nums">
                         {fmtMoney(t.total)}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-zinc-400">
+                  Add your first run to see live package pricing.
+                </p>
+              )}
+              <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                {step === "measure"
+                  ? `Priced with your standard package templates and a ${
+                      jobType === "new"
+                        ? "new-construction scope (no tear-off)"
+                        : "free tear-off included"
+                    }.`
+                  : "Rebuild any tier above — rename it, tap its price, or open Edit materials & spec for shapes, colors, add-ons and the full bill of materials."}
+              </p>
+            </div>
 
-            {/* -------- Measurements recap -------- */}
-            <motion.div
-              {...enter(0.1)}
-              className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-                  <Ruler className="h-4 w-4" />
-                </span>
-                <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-                  Field measurements
-                </h2>
+            {error && (
+              <p className="anim-enter-fade mt-3 text-xs text-rose-600">
+                Couldn&apos;t save: {error}
+              </p>
+            )}
+
+            {step === "measure" ? (
+              <button
+                type="button"
+                onClick={() => canReview && setStep("review")}
+                disabled={!canReview}
+                className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Build packages &amp; send
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSendOpen(true)}
+                  className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
+                >
+                  <Mail className="h-4 w-4" />
+                  Send proposal
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDraft}
+                  disabled={savingDraft}
+                  className="transition-smooth ring-focus press-scale mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-semibold text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingDraft ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : savedAt ? (
+                    <Check className="h-4 w-4 text-accent-700" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {savingDraft
+                    ? "Saving…"
+                    : savedAt
+                      ? "Saved — update draft"
+                      : "Save as draft"}
+                </button>
+                {savedAt && (
+                  <p className="anim-enter-fade mt-2 text-center text-xs text-zinc-500">
+                    Draft saved to{" "}
+                    <Link
+                      href="/dashboard/proposals"
+                      className="ring-focus rounded-sm font-medium text-accent-700 underline-offset-2 hover:underline"
+                    >
+                      Proposals
+                    </Link>
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => setStep("measure")}
-                  className="transition-smooth ring-focus ml-auto inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 underline-offset-2 hover:underline"
+                  className="transition-smooth ring-focus mt-2 block w-full text-center text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
                 >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                  Edit measurements
+                  ← Back to measurements
                 </button>
-              </div>
-              <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
-                <RecapItem label="Gutter" value={`${eaveLF} LF`} />
-                <RecapItem label="Downspouts" value={`${downspoutCount}`} />
-                <RecapItem label="Stories" value={`${stories}`} />
-                <RecapItem
-                  label="Corners"
-                  value={`${outsideCorners} out · ${insideCorners} in`}
-                />
-                <RecapItem label="End caps" value={`${endCaps}`} />
-                <RecapItem label="Waste" value={`${wasteFactorPct}%`} />
-              </dl>
-            </motion.div>
-          </>
-        )}
-      </div>
-
-      {/* -------- Live summary (sticky) -------- */}
-      <motion.aside
-        {...enter(0.1)}
-        className="lg:sticky lg:top-[80px] lg:self-start"
-      >
-        <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
-          <div className={cn(MICROLABEL, "text-zinc-400")}>Live takeoff</div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-semibold tabular-nums tracking-tight text-zinc-900">
-              {eaveLF}
-            </span>
-            <span className="text-sm font-medium text-zinc-500">
-              LF of gutter
-            </span>
-          </div>
-          <dl className="mt-4 space-y-2 border-t border-zinc-100 pt-4 text-sm">
-            <SummaryRow label="Downspouts" value={`${downspoutCount}`} />
-            <SummaryRow label="Stories" value={`${stories}`} />
-            <SummaryRow
-              label="Corners"
-              value={`${outsideCorners} out · ${insideCorners} in`}
-            />
-            <SummaryRow label="End caps" value={`${endCaps}`} />
-            <SummaryRow label="Waste factor" value={`${wasteFactorPct}%`} />
-          </dl>
-
-          <div className="mt-4 border-t border-zinc-100 pt-4">
-            <div className={cn(MICROLABEL, "text-zinc-400")}>
-              Package pricing
-            </div>
-            {tiers.length > 0 ? (
-              <ul className="mt-2 space-y-1.5">
-                {tiers.map((t) => (
-                  <li
-                    key={t.id}
-                    className={cn(
-                      "flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm",
-                      t.recommended
-                        ? "bg-accent-50 font-semibold text-accent-900 ring-1 ring-accent-200"
-                        : "text-zinc-600",
-                    )}
-                  >
-                    <span>{t.name}</span>
-                    <span className="tabular-nums">{fmtMoney(t.total)}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-2 text-xs text-zinc-400">
-                Add your first run to see live package pricing.
+              </>
+            )}
+            {step === "measure" && (
+              <p className="mt-2 text-center text-xs text-zinc-400">
+                Nothing saves until you say so — review first, no credits
+                used.
               </p>
             )}
-            <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-              Priced with your standard package templates and a{" "}
-              {jobType === "new"
-                ? "new-construction scope (no tear-off)"
-                : "free tear-off included"}
-              .
-            </p>
           </div>
+        </motion.aside>
+      </div>
 
-          {error && (
-            <p className="anim-enter-fade mt-3 text-xs text-rose-600">
-              Couldn&apos;t save: {error}
-            </p>
-          )}
-
-          {step === "measure" ? (
-            <button
-              type="button"
-              onClick={() => canReview && setStep("review")}
-              disabled={!canReview}
-              className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Review &amp; send
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => setSendOpen(true)}
-                className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
-              >
-                <Mail className="h-4 w-4" />
-                Send proposal
-              </button>
-              <button
-                type="button"
-                onClick={saveDraft}
-                disabled={savingDraft}
-                className="transition-smooth ring-focus press-scale mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-semibold text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {savingDraft ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : savedAt ? (
-                  <Check className="h-4 w-4 text-accent-700" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {savingDraft
-                  ? "Saving…"
-                  : savedAt
-                    ? "Saved — update draft"
-                    : "Save as draft"}
-              </button>
-              {savedAt && (
-                <p className="anim-enter-fade mt-2 text-center text-xs text-zinc-500">
-                  Draft saved to{" "}
-                  <Link
-                    href="/dashboard/proposals"
-                    className="ring-focus rounded-sm font-medium text-accent-700 underline-offset-2 hover:underline"
-                  >
-                    Proposals
-                  </Link>
-                </p>
-              )}
-              <button
-                type="button"
-                onClick={() => setStep("measure")}
-                className="transition-smooth ring-focus mt-2 block w-full text-center text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
-              >
-                ← Back to measurements
-              </button>
-            </>
-          )}
-          {step === "measure" && (
-            <p className="mt-2 text-center text-xs text-zinc-400">
-              Nothing saves until you say so — review first, no credits
-              used.
-            </p>
-          )}
-        </div>
-      </motion.aside>
+      {/* Full package builder drawer — same component the /proposal
+          builder uses. Edits flow back into pkgs so the section cards,
+          summary panel and the saved/sent blob all stay in sync. */}
+      {materialsPkg && (
+        <MaterialsBuilder
+          pkg={materialsPkg}
+          measurements={measurements}
+          discountPct={0}
+          onChange={(next) =>
+            setPkgs((prev) =>
+              prev.map((p) => (p.id === next.id ? next : p)),
+            )
+          }
+          onClose={() => setMaterialsEditId(null)}
+        />
+      )}
 
       {/* Mounted only while open so the modal seeds its client fields
           from the latest proposal state at the moment it opens. */}
