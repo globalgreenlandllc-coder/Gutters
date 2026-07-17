@@ -1406,3 +1406,40 @@ test("cropUint8/cropFloat32 extract the right window (multi-channel too)", () =>
   const cropped = cropUint8(rgb, W, win, 3);
   assert.deepEqual([...cropped.slice(0, 6)], [11, 12, 13, 12, 13, 14]);
 });
+
+test("trimChainEndOvershoot: end past a run pulls back to the intersection", async () => {
+  const { trimChainEndOvershoot } = await import("./solar-geometry.ts");
+  // Vertical chain overshooting 4px past a horizontal run at y=50.
+  const chain = [{ x: 20, y: 10 }, { x: 20, y: 54 }];
+  const runs = [{ a: { x: 0, y: 50 }, b: { x: 100, y: 50 } }];
+  const out = trimChainEndOvershoot(chain, runs, 8);
+  assert.ok(Math.abs(out[1].y - 50) < 1e-6, `end y=${out[1].y}, want 50`);
+  assert.equal(out[1].x, 20);
+  assert.deepEqual(out[0], { x: 20, y: 10 }); // other end untouched
+});
+
+test("trimChainEndOvershoot: big mid-chain crossing is NOT trimmed", async () => {
+  const { trimChainEndOvershoot } = await import("./solar-geometry.ts");
+  // Chain crosses the run 30px before its end — beyond maxTrim, keep as-is.
+  const chain = [{ x: 20, y: 10 }, { x: 20, y: 80 }];
+  const runs = [{ a: { x: 0, y: 50 }, b: { x: 100, y: 50 } }];
+  const out = trimChainEndOvershoot(chain, runs, 8);
+  assert.deepEqual(out[1], { x: 20, y: 80 });
+});
+
+test("trimChainEndOvershoot: trims BOTH ends independently", async () => {
+  const { trimChainEndOvershoot } = await import("./solar-geometry.ts");
+  const chain = [{ x: 20, y: 46 }, { x: 20, y: 10 }, { x: 60, y: 10 }, { x: 60, y: 47 }];
+  const runs = [{ a: { x: 0, y: 44 }, b: { x: 100, y: 44 } }];
+  const out = trimChainEndOvershoot(chain, runs, 8);
+  assert.ok(Math.abs(out[0].y - 44) < 1e-6);
+  assert.ok(Math.abs(out[out.length - 1].y - 44) < 1e-6);
+});
+
+test("trimChainEndOvershoot: no crossing → untouched; degenerate safe", async () => {
+  const { trimChainEndOvershoot } = await import("./solar-geometry.ts");
+  const chain = [{ x: 20, y: 10 }, { x: 20, y: 40 }];
+  const runs = [{ a: { x: 0, y: 50 }, b: { x: 100, y: 50 } }];
+  assert.deepEqual(trimChainEndOvershoot(chain, runs, 8), chain);
+  assert.deepEqual(trimChainEndOvershoot([{ x: 1, y: 1 }], runs, 8), [{ x: 1, y: 1 }]);
+});

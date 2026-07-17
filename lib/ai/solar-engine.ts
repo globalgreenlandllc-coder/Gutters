@@ -23,6 +23,7 @@ import {
   findTierEdges,
   growRoofMask,
   reclaimTrimmedRoof,
+  trimChainEndOvershoot,
   interiorNormal,
   inwardNormalForRing,
   median,
@@ -1695,16 +1696,42 @@ export async function runSolarFirstEstimate(args: {
       }
       if (!dup) kept.push(c);
     }
+    // Perimeter runs in RENDER pixel space — tier chain ends weld onto
+    // these instead of overshooting past them (the tier tracer and the
+    // perimeter are derived independently, so a chain end lands a few px
+    // past the run it meets and draws a scissors crossing on the photo).
+    const perimRenderSegs = [...eaveEdges, ...rakeEdges].map((e) => {
+      const [a, b] = renderEdge(e);
+      return { a, b };
+    });
+    const maxTrimPx = 0.8 / mpp;
     for (const c of kept) {
+      const renderPts = trimChainEndOvershoot(
+        c.points.map(S),
+        perimRenderSegs,
+        maxTrimPx,
+      );
+      // Re-measure after the trim so the priced footage matches what's
+      // drawn (S is a pure translation, so px lengths are true lengths).
+      let ftTrimmed = 0;
+      for (let i = 1; i < renderPts.length; i++) {
+        ftTrimmed +=
+          (Math.hypot(
+            renderPts[i].x - renderPts[i - 1].x,
+            renderPts[i].y - renderPts[i - 1].y,
+          ) *
+            mpp) /
+          METERS_PER_FOOT;
+      }
       eaves = [
         ...eaves,
         {
           id: `tier-eave-${tierEaveCount}`,
           kind: "eave" as const,
-          points: transformToCanvas(c.points.map(S), W, H),
+          points: transformToCanvas(renderPts, W, H),
         },
       ];
-      tierEaveFt += c.ft;
+      tierEaveFt += ftTrimmed;
       tierEaveCount++;
     }
     for (let k = 0; k < tierRakes.length; k++) {

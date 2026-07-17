@@ -746,6 +746,54 @@ export function reclaimTrimmedRoof(args: {
   return { mask: out, reclaimedPx };
 }
 
+/**
+ * Trim a chain's END overshoot at the runs it visually meets. An interior
+ * tier drip line physically ENDS where it reaches the perimeter gutter —
+ * but the tier tracer and the perimeter are derived independently, so a
+ * chain end routinely lands a few px PAST the perimeter run, drawing a
+ * scissors crossing on the photo ("line over crossing"). For each chain
+ * end whose terminal segment crosses a run within `maxTrim` of the end,
+ * the endpoint is pulled back onto the intersection (the least-trimming
+ * crossing wins). Ends that don't cross anything are left alone.
+ */
+export function trimChainEndOvershoot(
+  points: Pt[],
+  segs: readonly { a: Pt; b: Pt }[],
+  maxTrim: number,
+): Pt[] {
+  if (points.length < 2) return points;
+  const out = points.map((p) => ({ x: p.x, y: p.y }));
+  const trimEnd = (endIdx: number, prevIdx: number) => {
+    const p0 = out[endIdx];
+    const p1 = out[prevIdx];
+    const dx = p0.x - p1.x;
+    const dy = p0.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+    let bestT = -1;
+    for (const s of segs) {
+      const ex = s.b.x - s.a.x;
+      const ey = s.b.y - s.a.y;
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((s.a.x - p1.x) * ey - (s.a.y - p1.y) * ex) / den;
+      const u = ((s.a.x - p1.x) * dy - (s.a.y - p1.y) * dx) / den;
+      if (u < 0 || u > 1) continue; // crossing outside the run
+      if (t <= 0 || t >= 1) continue; // not between p1 and the end
+      const overshoot = (1 - t) * len;
+      if (overshoot > maxTrim) continue; // a real mid-chain crossing, not an end overshoot
+      if (t > bestT) bestT = t; // least-trimming crossing
+    }
+    if (bestT > 0) {
+      p0.x = p1.x + dx * bestT;
+      p0.y = p1.y + dy * bestT;
+    }
+  };
+  trimEnd(out.length - 1, out.length - 2);
+  trimEnd(0, 1);
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Interior tier edges — real "roof above a roof" eave lines           */
 /* ------------------------------------------------------------------ */
