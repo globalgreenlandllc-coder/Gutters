@@ -1567,12 +1567,85 @@ export function AerialCanvas({
             );
           })}
 
-        {/* SUGGESTED (un-priced) gutter runs are NOT drawn. The amber
-            dashed "+ N′ suggested — verify" hints cluttered the photo and
-            the owner never wanted them ("no need") — the contractor draws
-            any missing run with the eave tool instead. The data still
-            travels with the takeoff (handoff/pricing untouched: suggested
-            runs never counted in LF anyway). */}
+        {/* SUGGESTED (un-priced) gutter runs — split by canvas mode, both per
+            the owner:
+            - PHOTO (satellite, aerialImageUrl set): NOT drawn. The amber
+              dashes cluttered the photo and the owner never wanted them
+              ("no need") — the contractor draws any missing run with the
+              eave tool instead.
+            - PLAN (blueprint rows): DRAWN. These carry the elevations-first
+              roof-jog returns and the closure's cap-blocked wall spans the
+              owner explicitly asked to see and tap-add; the takeoff notes
+              name them ("available on the canvas as a tap-to-add
+              suggestion"), so hiding them here would make the notes lie.
+            Never counted in LF until accepted, on either mode. */}
+        {!aerialImageUrl &&
+          suggestedEaves.map((line) => {
+            const a = line.points[0];
+            const b = line.points[line.points.length - 1];
+            if (
+              !a || !b ||
+              !Number.isFinite(a.x) || !Number.isFinite(a.y) ||
+              !Number.isFinite(b.x) || !Number.isFinite(b.y)
+            ) {
+              return null;
+            }
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
+            const lenFt = lineLengthFt(line, pxPerFt);
+            const tac = theme === "tactical";
+            const stroke = tac ? "#fbbf24" : "#d97706";
+            const canAccept = !!onAcceptSuggested;
+            return (
+              <g key={`suggested-${line.id}`}>
+                <path
+                  d={pathFor(line)}
+                  stroke={stroke}
+                  strokeWidth={2.2 * renderScale}
+                  strokeDasharray={`${5 * renderScale} ${4 * renderScale}`}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                  opacity={0.9}
+                  pointerEvents="none"
+                />
+                {lenPx >= 20 && (
+                  <text
+                    x={mx}
+                    y={my - 5 * renderScale}
+                    textAnchor="middle"
+                    fontSize={9 * renderScale}
+                    fontWeight={700}
+                    fill={stroke}
+                    stroke={tac ? "rgba(2,6,23,0.7)" : "rgba(255,255,255,0.85)"}
+                    strokeWidth={2.4 * renderScale}
+                    paintOrder="stroke"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    {`+ ${Number.isFinite(lenFt) ? `${Math.round(lenFt)}′ ` : ""}suggested — verify`}
+                  </text>
+                )}
+                {canAccept && (
+                  <path
+                    d={pathFor(line)}
+                    stroke="transparent"
+                    strokeWidth={16 * renderScale}
+                    strokeLinecap="round"
+                    fill="none"
+                    style={{
+                      cursor: tool === "select" ? "copy" : undefined,
+                    }}
+                    onPointerDown={(e) => {
+                      if (tool !== "select") return;
+                      e.stopPropagation();
+                      onAcceptSuggested(line);
+                    }}
+                  />
+                )}
+              </g>
+            );
+          })}
 
         {eaves.map((line, i) => {
           const isSelected = selectedId === line.id;
