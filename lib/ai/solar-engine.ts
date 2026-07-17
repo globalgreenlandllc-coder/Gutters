@@ -1118,11 +1118,16 @@ export async function runSolarFirstEstimate(args: {
     // Wrong tone AND non-planar inside → vegetation/shadow garbage.
     // Wrong tone but PLANAR → real roof under tree shadow (the owner's
     // covered patio measured plane-RMS 0.04–0.24 m; the bush 0.81, the
-    // tree-line 0.75) — stays priced.
+    // tree-line 0.75) — stays priced. THIRD case: a smooth clipped-hedge
+    // crown reads planar (measured RMS 0.24 on the garden-bed bulge) but
+    // sits on NO Solar roof plane — wrong tone + off-plane residual at
+    // ≥⅔ of stations is vegetation even when it's smooth. A real dark
+    // roof section matches its plane (the covered patio measured
+    // residN 0/3 with toneN 0).
     if (
       ev.n >= 3 &&
       ev.toneN / ev.n >= 0.67 &&
-      (ev.planeRms == null || ev.planeRms > 0.28)
+      (ev.planeRms == null || ev.planeRms > 0.28 || ev.residN / ev.n >= 0.67)
     ) {
       demotedEaves.push(e);
     } else {
@@ -1198,6 +1203,45 @@ export async function runSolarFirstEstimate(args: {
     }
     return out;
   });
+  // GRADE FLOOR — a "gutter line" at knee height isn't a gutter. The tier
+  // colors exposed two phantom runs (a garden-bed footprint bulge, a
+  // corner bush) whose station heights hug the ground; no real eave hangs
+  // below ~1.6 m. Such runs are demoted to the unpriced tap-to-add pool
+  // (same routing as the shadow-audit demotions) — this REMOVES phantom
+  // footage from the quote, it can never add any.
+  if (groundM != null) {
+    const gm = groundM;
+    const keptEdges: typeof eaveEdges = [];
+    const keptStations: (number | null)[][] = [];
+    let groundedCount = 0;
+    let groundedFt = 0;
+    eaveEdges.forEach((e, i) => {
+      const med = medOf(eaveStations[i].filter((v): v is number => v != null));
+      if (process.env.SOLAR_SHADOW_DEBUG) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[grade-floor] solar-eave-${i} ${Math.round(e.lengthFt)}ft aboveGrade=${med != null ? (med - gm).toFixed(2) : "null"}m`,
+        );
+      }
+      if (med != null && med - gm < 1.6) {
+        demotedEaves.push(e);
+        groundedCount++;
+        groundedFt += e.lengthFt;
+        return;
+      }
+      keptEdges.push(e);
+      keptStations.push(eaveStations[i]);
+    });
+    if (groundedCount > 0) {
+      eaveEdges.length = 0;
+      eaveEdges.push(...keptEdges);
+      eaveStations.length = 0;
+      eaveStations.push(...keptStations);
+      notes.push(
+        `Grade floor: dropped ${groundedCount} run${groundedCount === 1 ? "" : "s"} (≈${Math.round(groundedFt)} LF) whose "gutter line" sits under 1.6 m above grade — that's a hedge/garden bulge, not a roof edge (kept as tap-to-add, verify on site)`,
+      );
+    }
+  }
   // The house's TYPICAL gutter-line height: median of every station on
   // every eave. "Lower" means below what most of the house's gutters sit
   // at — a taller great-room wing above the median stays untagged (it's
