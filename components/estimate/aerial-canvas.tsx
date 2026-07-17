@@ -144,7 +144,12 @@ export function AerialCanvas({
   // gable (no gutter) vs a gap (a missing run) at a glance. On a satellite
   // image the same dashes painted over the roof and just looked noisy, so
   // they stay hidden there. Toolbar toggle flips either default.
-  const [showRakes, setShowRakes] = useState(() => !!planSource);
+  // Rakes (no-gutter gable edges) are ON for satellite too: with them
+  // hidden, every rake gap in the cyan runs read as "the perimeter
+  // doesn't close" and the eave-vs-rake calls couldn't be verified (or
+  // one-click reclassified) against the photo. The dashed line closes
+  // the visual loop; the toolbar eye still hides them.
+  const [showRakes, setShowRakes] = useState(true);
   // Fullscreen lifts the canvas to the viewport so you can see the
   // full roof while nudging eaves/downspouts. Independent of theme.
   const [fullscreen, setFullscreen] = useState(false);
@@ -1475,6 +1480,11 @@ export function AerialCanvas({
             // (a ~45° roof), capped so it never shoots across the roof.
             const wing = (() => {
               const perim = roofStructure?.perimeter;
+              // Satellite photo view: the dashed line alone — a translucent
+              // wing quad painted over real imagery reads as a phantom
+              // structure. The wing glyph is a plan-mode (drafting paper)
+              // visualization.
+              if (!planSource) return null;
               // Engine faces tile the whole footprint — the approximate
               // 46-px wing would double-shade on top of the real plane.
               if (roofStructure?.faces?.length) return null;
