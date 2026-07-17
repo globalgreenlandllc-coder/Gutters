@@ -286,23 +286,37 @@ export function recoverAttachedRoofs(args: {
   const validH = (v: number) =>
     Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
 
-  // Per-pixel candidate test.
+  // Per-pixel candidate test. SOLAR_SHADOW_DEBUG=1 histograms which gate
+  // rejects each non-mask pixel — the data-driven way to tune recovery
+  // (same pattern as SOLAR_EAVE_AUDIT for the shadow audit).
+  const dbg = process.env.SOLAR_SHADOW_DEBUG
+    ? { dsmInvalid: 0, height: 0, green: 0, rough: 0, lum: 0, passed: 0 }
+    : null;
   const candidates = new Uint8Array(width * height);
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const i = y * width + x;
       if (mask[i] > 0) continue;
       const h = dsm[i];
-      if (!validH(h)) continue;
+      if (!validH(h)) {
+        if (dbg) dbg.dsmInvalid++;
+        continue;
+      }
       const above = h - groundHeightM;
-      if (above < 1.8 || above > 7.5) continue;
+      if (above < 1.8 || above > 7.5) {
+        if (dbg) dbg.height++;
+        continue;
+      }
       // Vegetation: green-dominant in the orthophoto. Slightly loose on
       // purpose — shadowed foliage barely reads green, so the DSM
       // roughness + RGB texture tests below carry those cases.
       const r = rgb[i * 3];
       const g = rgb[i * 3 + 1];
       const b = rgb[i * 3 + 2];
-      if (g > r + 6 && g > b + 6) continue;
+      if (g > r + 6 && g > b + 6) {
+        if (dbg) dbg.green++;
+        continue;
+      }
       // Roughness: local 3×3 height range. A porch roof is planar — even
       // a 45° pitch only changes ~0.3 m across the window; hedge/tree
       // crowns (including dark SHADOWED ones the green test misses) jump
@@ -321,7 +335,10 @@ export function recoverAttachedRoofs(args: {
           if (v > hi) hi = v;
         }
       }
-      if (bad || hi - lo > 0.5) continue;
+      if (bad || hi - lo > 0.5) {
+        if (dbg) dbg.rough++;
+        continue;
+      }
       // Photo texture: roof surfaces are tonally uniform; canopy is
       // speckled even in shadow. Local 3×3 luminance spread.
       let lLo = 255;
@@ -334,9 +351,37 @@ export function recoverAttachedRoofs(args: {
           if (lum > lHi) lHi = lum;
         }
       }
-      if (lHi - lLo > 52) continue;
+      if (lHi - lLo > 52) {
+        if (dbg) dbg.lum++;
+        continue;
+      }
+      if (dbg) dbg.passed++;
       candidates[i] = 1;
     }
+  }
+  if (dbg) {
+    // eslint-disable-next-line no-console
+    console.error(`[shadow-recover pixels] ${JSON.stringify(dbg)}`);
+  }
+
+  // CLOSE the candidate speckle before component analysis. A dark roof
+  // under partial tree overhang passes the pixel tests only in patches —
+  // overhanging branches fail the height band and the canopy boundary
+  // fails roughness — so a real 20 m² porch/garage roof arrives as
+  // swiss-cheese fragments whose bboxFill flunks the shape gate (the
+  // 6232 dark section measured fill 0.40–0.42 in pieces of 10/5/3 m²).
+  // A 0.35 m close bridges pixel-scale holes while a hedge row stays
+  // thin (aspect/fill still reject it) and a sparse tree crown stays
+  // sparse (its candidate pixels are isolated patches, not a solid).
+  const closedCandidates = closeMask(
+    candidates,
+    width,
+    height,
+    0.35 / metersPerPixel,
+  );
+  // Closing must never invent candidates ON the existing mask.
+  for (let i = 0; i < closedCandidates.length; i++) {
+    if (mask[i] > 0) closedCandidates[i] = 0;
   }
 
   // Adjacency zone: main footprint dilated.
@@ -351,8 +396,8 @@ export function recoverAttachedRoofs(args: {
   for (let i = 0; i < componentMask.length; i++) mainArea += componentMask[i];
   let addedTotalPx = 0;
 
-  for (let start = 0; start < candidates.length; start++) {
-    if (candidates[start] === 0 || visited[start]) continue;
+  for (let start = 0; start < closedCandidates.length; start++) {
+    if (closedCandidates[start] === 0 || visited[start]) continue;
     const queue = [start];
     visited[start] = 1;
     let head = 0;
@@ -378,22 +423,74 @@ export function recoverAttachedRoofs(args: {
       if (nearMain[idx] > 0) touchesMain = true;
       const neighbors = [idx - 1, idx + 1, idx - width, idx + width];
       for (const n of neighbors) {
-        if (n < 0 || n >= candidates.length) continue;
-        if (candidates[n] === 0 || visited[n]) continue;
+        if (n < 0 || n >= closedCandidates.length) continue;
+        if (closedCandidates[n] === 0 || visited[n]) continue;
         visited[n] = 1;
         queue.push(n);
       }
     }
     const areaM2 = px.length * m2PerPx;
+    // Shape metrics in the component's OWN frame (PCA-oriented box), not
+    // the axis-aligned bbox: a 45°-rotated house's rectangular porch can
+    // never beat ~0.5 AABB fill purely from rotation (the 6232 dark
+    // section measured 0.33 in an AABB while being a solid diagonal
+    // shape). A hedge row still fails on aspect; a sparse tree crown
+    // still fails on fill — the gates keep their meaning, minus the
+    // rotation penalty.
+    let bboxFill: number;
+    let aspect: number;
+    {
+      let mx = 0;
+      let my = 0;
+      for (const idx of px) {
+        mx += idx % width;
+        my += (idx - (idx % width)) / width;
+      }
+      mx /= px.length;
+      my /= px.length;
+      let sxx = 0;
+      let sxy = 0;
+      let syy = 0;
+      for (const idx of px) {
+        const dx = (idx % width) - mx;
+        const dy = (idx - (idx % width)) / width - my;
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+      }
+      const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      let minU = Infinity;
+      let maxU = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      for (const idx of px) {
+        const x = idx % width;
+        const y = (idx - x) / width;
+        const u = x * c + y * s;
+        const v = -x * s + y * c;
+        if (u < minU) minU = u;
+        if (u > maxU) maxU = u;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+      const bu = maxU - minU + 1;
+      const bv = maxV - minV + 1;
+      bboxFill = px.length / (bu * bv);
+      aspect = Math.max(bu, bv) / Math.max(1, Math.min(bu, bv));
+    }
+    if (process.env.SOLAR_SHADOW_DEBUG && areaM2 >= 2) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[shadow-recover comp] ${Math.round(areaM2)}m² @(${Math.round((minX + maxX) / 2)},${Math.round((minY + maxY) / 2)}) touch=${touchesMain} edge=${touchesEdge} obbFill=${bboxFill.toFixed(2)} obbAspect=${aspect.toFixed(1)}`,
+      );
+    }
     if (!touchesMain || touchesEdge) continue;
     if (areaM2 < 3 || areaM2 > 90) continue;
     // Shape: porches/carports are compact rectangles. A hedge row or a
     // tree line that survived the pixel tests reads long, thin and
-    // sparse — low bbox fill, extreme aspect.
-    const bw = maxX - minX + 1;
-    const bh = maxY - minY + 1;
-    const bboxFill = px.length / (bw * bh);
-    const aspect = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
+    // sparse — low oriented-box fill, extreme aspect.
     if (bboxFill < 0.55 || aspect > 5) continue;
     if (addedTotalPx + px.length > mainArea * 0.5) continue;
     addedTotalPx += px.length;
