@@ -214,6 +214,81 @@ function dpChain(chain: RPt[], tol: number): RPt[] {
   return out;
 }
 
+/** `ring` with the `len` vertices starting at circular index `start` removed
+ *  (order-preserving; handles wraparound past the end of the array). */
+function removeCircularWindow(ring: RPt[], start: number, len: number): RPt[] {
+  const n = ring.length;
+  const drop = new Set<number>();
+  for (let k = 0; k < len; k++) drop.add((start + k) % n);
+  const out: RPt[] = [];
+  for (let i = 0; i < n; i++) if (!drop.has(i)) out.push(ring[i]);
+  return out;
+}
+
+/**
+ * Remove hairpin "there-and-back" excursions from a simplified closed ring.
+ *
+ * The Moore-neighbor tracer follows the OUTER boundary of the whole ink
+ * component the roof outline belongs to — including anything connected to
+ * it that isn't the outline: a downspout leader arrow, a callout line, a
+ * dimension extension with one end free in open space. A true bridge (both
+ * ends already on the loop, e.g. a ridge line spanning two walls) never
+ * shows up in the outer trace at all, but a DANGLING appendage with one free
+ * end makes the tracer walk out along it and back almost the same way. A
+ * stroke has width, so the tip usually surfaces as TWO close vertices (one
+ * per side of the line) rather than one exact reversal point — checked here
+ * as a sliding window of 1-3 vertices whose entry/exit edges reverse past
+ * `cosThresh`.
+ *
+ * A real narrow roof return (a hip tier's inner leg, a shallow notch) ALSO
+ * turns back on itself this sharply, so angle alone can't tell them apart —
+ * the discriminator is WIDTH: an ink artifact's "across" span (the distance
+ * actually spanned inside the window) is stroke-thin, while a real return's
+ * width is architectural (feet, not sub-pixel). Gated on
+ * `internal length <= widthFrac × min(depth in, depth out)`: only a window
+ * that's thin relative to how far it reaches is treated as noise. Iterated
+ * to convergence: a multi-segment dangle collapses one window per pass.
+ */
+function removeHairpinSpikes(pts: RPt[], cosThresh = -0.9, widthFrac = 0.2): RPt[] {
+  let ring = pts.slice();
+  for (let guard = 0; guard < pts.length * 4 + 8; guard++) {
+    const n = ring.length;
+    if (n <= 4) break;
+    let removed = false;
+    for (let L = 1; L <= Math.min(3, n - 4) && !removed; L++) {
+      for (let i = 0; i < n; i++) {
+        const prev = ring[(i - 1 + n) % n];
+        const windowStart = ring[i];
+        const windowEnd = ring[(i + L - 1) % n];
+        const next = ring[(i + L) % n];
+        const inX = windowStart.x - prev.x;
+        const inY = windowStart.y - prev.y;
+        const outX = next.x - windowEnd.x;
+        const outY = next.y - windowEnd.y;
+        const inLen = Math.hypot(inX, inY);
+        const outLen = Math.hypot(outX, outY);
+        if (inLen < 1e-9 || outLen < 1e-9) continue;
+        const cos = (inX * outX + inY * outY) / (inLen * outLen);
+        if (cos >= cosThresh) continue;
+        if (L > 1) {
+          let internalLen = 0;
+          for (let k = 0; k < L - 1; k++) {
+            const a = ring[(i + k) % n];
+            const b = ring[(i + k + 1) % n];
+            internalLen += Math.hypot(b.x - a.x, b.y - a.y);
+          }
+          if (internalLen > widthFrac * Math.min(inLen, outLen)) continue; // too wide — a real narrow return
+        }
+        ring = removeCircularWindow(ring, i, L);
+        removed = true;
+        break;
+      }
+    }
+    if (!removed) break;
+  }
+  return ring;
+}
+
 /** Douglas-Peucker on a CLOSED ring: anchor at vertex 0 and the vertex
  *  farthest from it, simplify the two chains, rejoin. */
 function simplifyRing(pts: RPt[], tol: number): RPt[] {
@@ -470,6 +545,13 @@ export function traceRasterOutline(
       contour.map((p) => ({ x: p.x + 0.5, y: p.y + 0.5 })),
       Math.max(1, span * simplifyTolFrac),
     );
+    if (ring.length < 4) return null;
+    // Strip dangling appendages (leader lines, callout arrows, dimension
+    // extensions) the outer trace picked up as hairpin reversals, THEN
+    // re-simplify — collapsing a dangle can leave near-collinear neighbors.
+    ring = removeHairpinSpikes(ring);
+    if (ring.length < 4) return null;
+    ring = simplifyRing(ring, Math.max(1, span * simplifyTolFrac));
     if (ring.length < 4) return null;
     // Final squaring: reuse rectifyPlanFootprint verbatim — its own hard gates
     // (axis fraction, area drift, corner shove) decide; a bail keeps the raw

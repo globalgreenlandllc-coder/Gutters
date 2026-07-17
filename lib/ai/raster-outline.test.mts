@@ -135,6 +135,28 @@ test("recovers a jogged outline; sheet frame, interior clutter and outside speck
   assert.equal(t.quality.corners, t.ring.length);
 });
 
+test("a dangling leader line (downspout callout, one free end) doesn't become a fake jog", () => {
+  const bm = roofSheet();
+  // A callout/leader stub: one end ON the outline (a true corner), the other
+  // end FREE in open space — unlike a ridge/valley chord, nothing else is
+  // attached to its far tip. This is the shape a downspout leader arrow or a
+  // dimension extension line actually draws on a roof-plan sheet.
+  drawLine(bm, 340, 90, 300, 40, 0, 3);
+
+  const t = traceRasterOutline(bm);
+  assert.ok(t, "trace must succeed");
+  assert.ok(t.axisFrac >= 0.9, `dangle must not survive to drag down axisFrac, got ${t.axisFrac}`);
+  for (const c of ROOF) {
+    assert.ok(hasCornerNear(t.ring, c, 6), `corner (${c.x},${c.y}) missing from ${JSON.stringify(t.ring)}`);
+  }
+  // No vertex survives near the free tip — the dangle was stripped, not kept
+  // as a phantom jog.
+  assert.ok(
+    !t.ring.some((p) => Math.hypot(p.x - 300, p.y - 40) <= 8),
+    `phantom vertex near the leader's free tip: ${JSON.stringify(t.ring)}`,
+  );
+});
+
 test("light-gray watermark diagonal thresholds away", () => {
   // Mascord-style watermark: light gray (200), corner-to-corner, printed
   // UNDER the ink (drawn first — real ink overprints the watermark). At the

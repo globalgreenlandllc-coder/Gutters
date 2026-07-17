@@ -55,6 +55,10 @@ import { simplify } from "@/lib/ai/geometry";
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
 
+/** Owner call: the amber "suggested — verify" dashed overlay cluttered the
+ *  canvas on both PHOTO and PLAN takeoffs, so it's off everywhere now. */
+const SHOW_SUGGESTED_EAVES = false;
+
 export { lineLengthFt };
 
 export function AerialCanvas({
@@ -1577,19 +1581,14 @@ export function AerialCanvas({
             );
           })}
 
-        {/* SUGGESTED (un-priced) gutter runs — split by canvas mode, both per
-            the owner:
-            - PHOTO (satellite, aerialImageUrl set): NOT drawn. The amber
-              dashes cluttered the photo and the owner never wanted them
-              ("no need") — the contractor draws any missing run with the
-              eave tool instead.
-            - PLAN (blueprint rows): DRAWN. These carry the elevations-first
-              roof-jog returns and the closure's cap-blocked wall spans the
-              owner explicitly asked to see and tap-add; the takeoff notes
-              name them ("available on the canvas as a tap-to-add
-              suggestion"), so hiding them here would make the notes lie.
-            Never counted in LF until accepted, on either mode. */}
-        {!aerialImageUrl &&
+        {/* SUGGESTED (un-priced) gutter runs — the owner reversed the earlier
+            PLAN-mode doctrine: the amber dashes cluttered the blueprint
+            canvas too ("I don't need yellow dashed lines"), same complaint
+            as PHOTO mode earlier. Suppressed on BOTH canvas modes now; the
+            underlying suggestions still exist (referenced in the takeoff
+            notes) but are surfaced there as text, not drawn. Never counted
+            in LF regardless. */}
+        {SHOW_SUGGESTED_EAVES &&
           suggestedEaves.map((line) => {
             const a = line.points[0];
             const b = line.points[line.points.length - 1];
