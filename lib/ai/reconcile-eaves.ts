@@ -551,9 +551,19 @@ export function closeVectorPerimeter(
     const gutterSegs: Seg[] = (analysis.gutter_runs ?? [])
       .map((r) => ({ a: asPt(r.start), b: asPt(r.end) }))
       .filter((s): s is Seg => s.a !== null && s.b !== null);
-    const exclusionSegs: Seg[] = (analysis.excluded_edges ?? [])
-      .map((x) => ({ a: asPt(x.start), b: asPt(x.end) }))
-      .filter((s): s is Seg => s.a !== null && s.b !== null);
+    // Exclusion entries keep their SOURCE index + kind so an overridden rake
+    // can be REMOVED from the analysis, not just out-priced: a phantom rake
+    // left in excluded_edges gets resurrected downstream (the run-vs-rake
+    // dedupe deletes restored runs "keeping the gable"; the canvas draws the
+    // wall as a no-gutter dash).
+    const exclusionEntries: { a: Pt; b: Pt; idx: number; kind: string }[] = [];
+    (analysis.excluded_edges ?? []).forEach((x, idx) => {
+      const a = asPt(x.start);
+      const b = asPt(x.end);
+      if (a && b) exclusionEntries.push({ a, b, idx, kind: x.kind });
+    });
+    const exclusionSegs: Seg[] = exclusionEntries.map((s) => ({ a: s.a, b: s.b }));
+    const overriddenExclusionIdx = new Set<number>();
     // Suspect notch legs (deep-notch audit) — never auto-priced, counted +
     // noted UNPRICED instead. Empty on every legacy call site.
     const notchSegs: Seg[] = (opts?.excludeEdges ?? [])
@@ -629,8 +639,21 @@ export function closeVectorPerimeter(
           continue;
         }
         // A restored span is about to be priced (or suggested past the cap) —
-        // that face gets its loud restoration note exactly once.
-        if (restoredHere && restoreFace) restoredFacesNoted.add(restoreFace);
+        // that face gets its loud restoration note exactly once, and the
+        // overridden rake marks on this edge are queued for REMOVAL from the
+        // analysis (a phantom rake left behind gets resurrected downstream:
+        // the run-vs-rake dedupe would delete the restored runs again).
+        if (restoredHere && restoreFace) {
+          restoredFacesNoted.add(restoreFace);
+          for (const x of exclusionEntries) {
+            if (
+              (x.kind === "rake" || x.kind === "dormer_rake") &&
+              overlapFraction(e, x, covTol) > 0
+            ) {
+              overriddenExclusionIdx.add(x.idx);
+            }
+          }
+        }
         newRuns.push({
           id: `${mode === "trace-hip" ? "hclose" : "vclose"}-${newRuns.length + 1}`,
           side: sideOf(outwardOf(e)),
@@ -652,9 +675,21 @@ export function closeVectorPerimeter(
     // a cap suggestion) — a dropped rake that changed nothing stays silent.
     for (const face of restoredFacesNoted) {
       notes.push(
-        `🧭 ${face} wall restored — the ${face} elevation reads one continuous eave with ZERO gables, overriding the trace's rake there (a hip roof carries gutter on every exterior wall). VERIFY on the canvas.`,
+        `🧭 ${face} wall restored — the ${face} elevation reads one continuous eave with ZERO gables, overriding the trace's rake there (a hip roof carries gutter on every exterior wall). The overridden rake mark was removed from the drawing. VERIFY on the canvas.`,
       );
     }
+    // The overridden phantom rakes leave the analysis entirely — pricing,
+    // the dedupe pass and the canvas all see clean data. Only rake-kind
+    // entries on restored edges are removed; every other exclusion stays.
+    const stripOverridden = (a: BlueprintAnalysis): BlueprintAnalysis =>
+      overriddenExclusionIdx.size === 0
+        ? a
+        : {
+            ...a,
+            excluded_edges: (a.excluded_edges ?? []).filter(
+              (_, i) => !overriddenExclusionIdx.has(i),
+            ),
+          };
 
     // The skipped-notch tail rides on whichever closure note fires (or stands
     // alone when closure would otherwise return silently) — an unpriced leg
@@ -704,7 +739,7 @@ export function closeVectorPerimeter(
             notchSentence,
         );
         return {
-          analysis,
+          analysis: stripOverridden(analysis),
           reconcileNotes: notes,
           suggestedRuns: newRuns.map((r) => ({
             start: r.start,
@@ -737,7 +772,10 @@ export function closeVectorPerimeter(
           }`) + notchSentence,
     );
 
-    return { analysis: { ...analysis, gutter_runs, totals }, reconcileNotes: notes };
+    return {
+      analysis: stripOverridden({ ...analysis, gutter_runs, totals }),
+      reconcileNotes: notes,
+    };
   } catch {
     return { analysis, reconcileNotes: notes };
   }

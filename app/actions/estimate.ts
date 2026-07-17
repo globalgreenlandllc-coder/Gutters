@@ -1244,6 +1244,10 @@ export async function runEstimateFromPlan(
     if (closed.reconcileNotes.length > 0) {
       analysis.gutter_runs = closed.analysis.gutter_runs;
       analysis.totals = closed.analysis.totals;
+      // The restoration REMOVES overridden phantom rakes from excluded_edges —
+      // carry that through, or the run-vs-rake dedupe downstream resurrects
+      // the phantom gable and deletes the restored runs again.
+      analysis.excluded_edges = closed.analysis.excluded_edges;
       analysis.notes = [...(analysis.notes ?? []), ...closed.reconcileNotes.map((n) => `➕ ${n}`)];
     }
     // Cap-blocked uncovered wall spans: the closure refused to auto-price
@@ -1285,6 +1289,11 @@ export async function runEstimateFromPlan(
       useEngineDraw: engineDrawEnabled() && !edgeApplied,
       perimeterOnly: perimeterOnlyEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
+      // The MERGED layout verdict (roof page ∪ elevations): on a confirmed
+      // all-hip roof the trace's rake marks are phantoms by definition, so
+      // the run-vs-rake dedupe must stand down (it was deleting restored
+      // gutter runs to "keep" hallucinated gables).
+      allHipConfirmed: isAiTrace && hipVerdict.unanimous,
       roofMasses: roofMasses as import("@/lib/ai/to-masses").RoofMassArea[] | null,
       droppedProjections,
       faceNormals: orientation?.normals ?? null,

@@ -479,6 +479,12 @@ export function blueprintToEstimateResult(
     /** Per-face elevation reads (analysisJson._perFace.per_face) so the engine
      *  can draw each face's gables + pop-outs (porch/patio) by rule. */
     perFace?: Record<string, FaceReadingRaw> | null;
+    /** The caller's MERGED all-hip verdict (roof-plan page ∪ elevations —
+     *  broader than isUnanimousHip(perFace), which can't see the roof page).
+     *  On a confirmed fully-hipped roof every trace rake mark is a phantom,
+     *  so the run-vs-rake dedupe stands down instead of deleting restored
+     *  gutter runs to "keep" a hallucinated gable. */
+    allHipConfirmed?: boolean;
     /** Per-mass roof areas (analysisJson._engine.roofMasses) so a projecting
      *  gable's depth = roof area ÷ span (LAW 2), not a schematic guess. */
     roofMasses?: RoofMassArea[] | null;
@@ -540,7 +546,12 @@ export function blueprintToEstimateResult(
   // (wrong ridge direction). Drop the duplicate gutter and keep the explicit
   // rake: that clears the visual conflict, fixes the skeleton, AND removes a
   // phantom gutter pricing a gable face. Runs at load → no re-analyze needed.
-  {
+  // On a confirmed all-hip roof (roof page + elevations agree: zero gables)
+  // this dedupe is exactly backwards — every rake mark is a trace phantom,
+  // and "keeping the gable" deletes real (often just-restored) gutter runs.
+  // The rake marks still render as dashes for review; they just can't eat
+  // priced runs.
+  if (opts?.allHipConfirmed !== true) {
     const finite = (p?: BlueprintPoint | null) =>
       !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
     const rakes = (analysis.excluded_edges ?? []).filter(

@@ -820,3 +820,68 @@ test("trace-hip cap: blocked additions become unpriced tap-to-add suggestions, n
     `cap note names the suggestions (got: ${r.reconcileNotes.join(" | ")})`,
   );
 });
+
+// ── round-9: an overridden phantom rake LEAVES the analysis ──────────────────
+
+test("restoration REMOVES the overridden rake exclusion — downstream passes can't resurrect the phantom gable", () => {
+  // Trace claims a rake on the right wall; the right face reads continuous
+  // eave + zero gables. The wall must price AND the rake exclusion must be
+  // gone from excluded_edges (the run-vs-rake dedupe was deleting restored
+  // runs to "keep" the phantom). The unrelated ridge exclusion survives.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      { ...run("front", [0, 0], [200, 0], 100), tier: "upper" as const },
+      { ...run("left", [0, 0], [0, 120], 60), tier: "upper" as const },
+      { ...run("back", [0, 120], [200, 120], 100), tier: "upper" as const },
+    ],
+    excluded_edges: [
+      { kind: "rake", start: { x: 200, y: 0 }, end: { x: 200, y: 120 } },
+      { kind: "ridge", start: { x: 40, y: 60 }, end: { x: 160, y: 60 } },
+    ] as BlueprintAnalysis["excluded_edges"],
+    totals: { linear_feet_gutter: 260, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const r = closeVectorPerimeter(a, {
+    mode: "trace-hip",
+    perFace: {
+      right: {
+        readable: true,
+        continuous_eave: true,
+        gable_count: 0,
+        gables: [],
+        roof_form: "hipped",
+      } as never,
+    },
+  });
+  const right = r.analysis.gutter_runs.find((x) => x.id.startsWith("hclose"));
+  assert.ok(right, "right wall priced back");
+  const kinds = (r.analysis.excluded_edges ?? []).map((e) => e.kind);
+  assert.ok(!kinds.includes("rake"), "overridden rake removed from excluded_edges");
+  assert.ok(kinds.includes("ridge"), "unrelated exclusion kept");
+  assert.ok(
+    r.reconcileNotes.some((n) => n.includes("rake mark was removed")),
+    "note says the mark was removed",
+  );
+});
+
+test("no restoration → excluded_edges byte-identical (rake on a face that read a gable)", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      { ...run("front", [0, 0], [200, 0], 100), tier: "upper" as const },
+      { ...run("left", [0, 0], [0, 120], 60), tier: "upper" as const },
+      { ...run("back", [0, 120], [200, 120], 100), tier: "upper" as const },
+    ],
+    excluded_edges: [
+      { kind: "rake", start: { x: 200, y: 0 }, end: { x: 200, y: 120 } },
+    ] as BlueprintAnalysis["excluded_edges"],
+    totals: { linear_feet_gutter: 260, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const r = closeVectorPerimeter(a, {
+    mode: "trace-hip",
+    perFace: {
+      right: { readable: true, continuous_eave: false, gable_count: 1 } as never,
+    },
+  });
+  assert.deepEqual(r.analysis.excluded_edges, a.excluded_edges, "exclusions untouched");
+});
