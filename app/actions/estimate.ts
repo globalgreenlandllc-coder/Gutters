@@ -20,7 +20,9 @@ import {
   mergeLayoutEvidence,
   roofPlanUnanimousHip,
   roofPlanDsFloor,
+  roofPlanViewerSteps,
 } from "@/lib/ai/read-roof-layout";
+import { featureQuadrantSanity } from "@/lib/ai/feature-quadrant-sanity";
 import { polygonCloses } from "@/lib/roof-engine";
 import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
 import { outlineEdges, downspoutMarksFromLabels } from "@/lib/ai/plan-overlay";
@@ -1082,6 +1084,34 @@ export async function runEstimateFromPlan(
     }
   }
 
+  // 🏷 FEATURE-QUADRANT SANITY (roof page is the layout truth): the page
+  // locates each printed feature label (GARAGE/PORCH/PATIO) by outline
+  // quadrant; a run carrying that feature label whose midpoint sits in a
+  // CONTRADICTING quadrant loses the label (the 1168G "GARAGE bleeding down
+  // the right side" fix). LF-neutral relabel only — geometry, lengths, tier
+  // and totals byte-untouched; one aggregated loud note per feature. Runs
+  // AFTER the tier-corner veto (so it sees the veto's retiered runs) and
+  // BEFORE the eave-step reconcile + closure. No feature_quadrants on the
+  // stored reading (old stashes / unlabeled pages) → byte-identical no-op.
+  try {
+    const fqRes = featureQuadrantSanity({
+      analysis,
+      featureQuadrants: roofPlanRead?.feature_quadrants ?? null,
+    });
+    if (fqRes.clearedRunIds.length > 0) {
+      analysis.gutter_runs = fqRes.analysis.gutter_runs;
+      analysis.notes = [...(analysis.notes ?? []), ...fqRes.notes];
+      console.log(
+        `[feature-quadrant-sanity] ${fqRes.clearedRunIds.length} run label(s) cleared: ${fqRes.clearedRunIds.join(", ")}`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[feature-quadrant-sanity] threw (takeoff unchanged):`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+
   // ELEVATIONS-FIRST ROOF JOG (owner doctrine: gutters hang on the ROOF edge;
   // jogs come from the roof shape — the eave-line profile on each ELEVATION
   // first, roof plan next, never a wall jog alone). reconcileEaveSteps
@@ -1107,6 +1137,12 @@ export async function runEstimateFromPlan(
         Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
       > | null,
       faceNormals: orientation?.normals ?? null,
+      // Roof-page LOCATED fascia steps (steps_detail), converted to the
+      // viewer frame — where the page located a side's steps they OUTRANK
+      // that side's elevation read, and a page-straight side arms the
+      // wall-jog flag + the left-right mirror check. Old stashes have no
+      // steps_detail → null → byte-identical legacy behavior.
+      roofPlanSteps: roofPlanViewerSteps(roofPlanRead),
     });
     const stepNotes = [...stepRec.notes, ...stepRec.wallJogFlags];
     if (stepNotes.length > 0) {

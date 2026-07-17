@@ -2,10 +2,12 @@
  * eave-step-reconcile.ts — the ELEVATIONS-FIRST roof-jog cross-check.
  *
  * OWNER DOCTRINE: gutters hang on the ROOF edge, so every jog in the gutter
- * line must come from the ROOF shape. The eave/fascia line profile on each
- * ELEVATION shows every roof step first (a tier drop, a proud wing fascia, an
- * inset porch band); the roof plan comes second; a wall/footprint jog alone
- * proves nothing (the roof often bridges it). Concretely:
+ * line must come from the ROOF shape. The ROOF-PLAN page (when the set prints
+ * one) is the layout truth and its located fascia steps OUTRANK the
+ * elevations' eave-line reads; the elevations are the fallback; a
+ * wall/footprint jog alone proves nothing (the roof often bridges it).
+ * Roof-page steps arrive pre-converted to the VIEWER frame via
+ * read-roof-layout's roofPlanViewerSteps (`roofPlanSteps` arg). Concretely:
  *   - a traced roof jog the elevation CONFIRMS (an eave-line break at the same
  *     position) → tagged "roof-verified", nothing changes;
  *   - an eave-line break the trace MISSED → suggest, don't carve: ONE unpriced
@@ -17,12 +19,13 @@
  *     already covers it).
  *
  * Degradation contract (doctrine: old stored reads → byte-identical): when NO
- * face carries an `eave_steps` key at all (older analyses, stale prompt
- * overrides), the input is returned unchanged — the same `sawPositionField`
- * pattern as tier-corner-veto.ts. An unreadable face, or a face without the
- * field, contributes nothing (silent skip). The returned `analysis` is ALWAYS
- * the caller's own object, geometry and priced LF byte-untouched — every
- * output rides the notes / suggestion channels.
+ * face carries an `eave_steps` key at all AND no roof-page side carries
+ * located steps (older analyses, stale prompt overrides), the input is
+ * returned unchanged — the same `sawPositionField` pattern as
+ * tier-corner-veto.ts. An unreadable face, or a face without the field,
+ * contributes nothing (silent skip). The returned `analysis` is ALWAYS the
+ * caller's own object, geometry and priced LF byte-untouched — every output
+ * rides the notes / suggestion channels.
  *
  * Viewer→plan mapping uses the SAME rightDir convention as place-gables.ts /
  * tier-corner-veto.ts (rightDir = (n.y, −n.x), y-down canvas, house-relative
@@ -243,9 +246,50 @@ function perpendicularDepthFt(
 }
 
 /**
- * Cross-check every readable face's eave-line breaks (`eave_steps`) against
- * the traced footprint's same-face jogs. Notes/suggestions only — the
- * returned analysis is the input object, geometry and priced LF untouched.
+ * MIRROR CHECK (pure, flag-only): for the front/rear sides, does the trace's
+ * own step pattern line up with the roof page's pattern significantly better
+ * under a left-right MIRROR? A canvas x-flip flips the VIEWER fraction of
+ * every front/rear step (the left/right faces instead SWAP under a mirror,
+ * so they can't be compared this way). Compares the total |frac diff| both
+ * ways across ≥2 steps on each side; per-step average must improve by >15%
+ * of the side's length AND the flipped fit must actually land (<10% avg).
+ * Returns ONE loud note naming the qualifying side(s), or null. NEVER flips
+ * geometry — verification is the owner's job.
+ */
+export function detectStepMirror(
+  entries: { face: string; roofFracs: number[]; tracedFracs: number[] }[],
+): string | null {
+  try {
+    const flagged: string[] = [];
+    for (const e of entries) {
+      if (e.face !== "front" && e.face !== "rear") continue;
+      const roof = e.roofFracs.filter((f) => Number.isFinite(f) && f >= 0 && f <= 1);
+      const traced = e.tracedFracs.filter((f) => Number.isFinite(f));
+      if (roof.length < 2 || traced.length < 2) continue; // 1-step: too weak
+      const avgCost = (fr: number[]): number =>
+        fr.reduce((s, f) => s + Math.min(...traced.map((t) => Math.abs(t - f))), 0) /
+        fr.length;
+      const direct = avgCost(roof);
+      const mirrored = avgCost(roof.map((f) => 1 - f));
+      if (mirrored < 0.1 && direct - mirrored > 0.15) flagged.push(e.face);
+    }
+    if (flagged.length === 0) return null;
+    return (
+      `🪞 TRACE MAY BE MIRRORED left-right — the roof page's fascia steps on the ` +
+      `${flagged.join(" + ")} side${flagged.length > 1 ? "s" : ""} line up with the ` +
+      `trace only when flipped; verify the canvas orientation against the plan.`
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cross-check every readable face's eave-line breaks (`eave_steps`) — and,
+ * when the roof-plan page located its fascia steps, THOSE (they outrank the
+ * elevation where both report a side) — against the traced footprint's
+ * same-face jogs. Notes/suggestions only — the returned analysis is the
+ * input object, geometry and priced LF untouched.
  */
 export function reconcileEaveSteps(args: {
   analysis: BlueprintAnalysis;
@@ -253,6 +297,13 @@ export function reconcileEaveSteps(args: {
   /** Compass→canvas normals for compass-keyed reads; house-relative keys use
    *  the fixed front-at-bottom drafting convention regardless. */
   faceNormals?: FaceNormals | null;
+  /** Roof-plan page fascia steps, ALREADY converted to the viewer frame per
+   *  face (read-roof-layout.ts roofPlanViewerSteps — the one converter that
+   *  owns the plan-frame → viewer-frame convention). Where a face appears
+   *  here it OUTRANKS that face's elevation eave_steps; `[]` = an explicit
+   *  straight side (arms the wall-jog flag); null/absent = no roof-page
+   *  positions → byte-identical legacy behavior. */
+  roofPlanSteps?: Partial<Record<string, FaceEaveStep[] | undefined>> | null;
 }): EaveStepReconcileResult {
   const unchanged: EaveStepReconcileResult = {
     analysis: args.analysis,
@@ -262,15 +313,24 @@ export function reconcileEaveSteps(args: {
     wallJogFlags: [],
   };
   try {
-    const perFace = args.perFace;
-    if (!perFace) return unchanged;
+    // perFace may be absent while the roof page still located steps — the
+    // page alone is a valid source (it outranks the elevations anyway).
+    const perFace = args.perFace ?? {};
 
-    // 1. DEGRADATION — no face anywhere carries the eave_steps key (old stored
-    //    reads / stale prompt override) → byte-identical passthrough.
+    // Roof-page located steps (viewer frame, pre-converted). A face present
+    // here OUTRANKS that face's elevation eave_steps.
+    const roofFaces = Object.entries(args.roofPlanSteps ?? {}).filter(
+      (e): e is [string, FaceEaveStep[]] => Array.isArray(e[1]),
+    );
+
+    // 1. DEGRADATION — no face anywhere carries the eave_steps key AND the
+    //    roof page located no steps (old stored reads / stale prompt
+    //    override) → byte-identical passthrough.
     const entries = Object.entries(perFace).filter(
       (e): e is [string, FaceReadingRaw] => !!e[1],
     );
-    const sawField = entries.some(([, r]) => Array.isArray(r.eave_steps));
+    const sawField =
+      entries.some(([, r]) => Array.isArray(r.eave_steps)) || roofFaces.length > 0;
     if (!sawField) return unchanged;
 
     const ring = (args.analysis.building_footprint ?? [])
@@ -296,12 +356,38 @@ export function reconcileEaveSteps(args: {
     const suggestedEaves: EaveStepSuggestion[] = [];
     const verifiedJogIds: string[] = [];
     const wallJogFlags: string[] = [];
+    /** front/rear step patterns for the mirror check (roof-page-ruled only —
+     *  the elevations ARE viewer-frame by definition, only the plan-frame
+     *  page can expose a flipped canvas). */
+    const mirrorEntries: { face: string; roofFracs: number[]; tracedFracs: number[] }[] = [];
 
-    for (const [face, r] of entries) {
-      // (6) unreadable face, or the field absent on THIS face → silent skip.
-      if (r.readable === false) continue;
-      const stepsRaw = r.eave_steps;
-      if (!Array.isArray(stepsRaw)) continue;
+    // Union of faces: every elevation face + every roof-page side with
+    // located steps (a side the elevations never read can still be checked).
+    const perFaceMap = new Map(entries);
+    const roofMap = new Map(roofFaces);
+    const faces = [...new Set([...perFaceMap.keys(), ...roofMap.keys()])];
+
+    for (const face of faces) {
+      const r = perFaceMap.get(face);
+      const roofArr = roofMap.get(face);
+      const fromRoofPlan = roofArr !== undefined;
+
+      let stepsRaw: FaceEaveStep[];
+      if (fromRoofPlan) {
+        // PRIORITY: the roof page located this side's steps — it rules, even
+        // over a readable elevation's own eave_steps (note says which ruled).
+        stepsRaw = roofArr;
+        if (r && r.readable !== false && Array.isArray(r.eave_steps)) {
+          notes.push(
+            `📄 Roof-plan page fascia steps ruled the ${face} side — the page's located steps outrank the ${face} elevation's eave-step read (both sources reported this side).`,
+          );
+        }
+      } else {
+        // (6) unreadable face, or the field absent on THIS face → silent skip.
+        if (!r || r.readable === false) continue;
+        if (!Array.isArray(r.eave_steps)) continue;
+        stepsRaw = r.eave_steps;
+      }
 
       // (2) resolve this face's outline sub-edges + along-face u axis.
       const rd = viewerPositionToPlanDir(face, "right_end", args.faceNormals);
@@ -332,8 +418,17 @@ export function reconcileEaveSteps(args: {
           s.position_frac <= 1,
       );
 
-      const hipped = r.roof_form === "hipped";
+      const hipped = r?.roof_form === "hipped";
       const matchedTraced = new Set<number>();
+
+      // Mirror-check inputs (front/rear, roof-page-ruled sides only).
+      if (fromRoofPlan && (face === "front" || face === "rear")) {
+        mirrorEntries.push({
+          face,
+          roofFracs: elevSteps.map((s) => s.position_frac as number),
+          tracedFracs: traced.map((t) => (t.u - uMin) / width),
+        });
+      }
 
       for (const s of elevSteps) {
         const frac = s.position_frac as number;
@@ -364,9 +459,11 @@ export function reconcileEaveSteps(args: {
           matchedTraced.add(hit);
           verifiedJogIds.push(`${face}@${frac.toFixed(2)}`);
           notes.push(
-            `ROOF-VERIFIED JOG — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, matching the traced roof step there${
-              s.kind === "tier_drop" ? " (tier change)" : ""
-            }. Geometry and priced LF unchanged.`,
+            fromRoofPlan
+              ? `ROOF-VERIFIED JOG — the roof-plan page's fascia line breaks at ~${Math.round(frac * 100)}% across the ${face} side, matching the traced roof step there. Geometry and priced LF unchanged.`
+              : `ROOF-VERIFIED JOG — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, matching the traced roof step there${
+                  s.kind === "tier_drop" ? " (tier change)" : ""
+                }. Geometry and priced LF unchanged.`,
           );
           hipAnchor = { innerPt: traced[hit].innerPt, depthU: traced[hit].depthU };
         } else {
@@ -385,9 +482,13 @@ export function reconcileEaveSteps(args: {
             ...(s.kind === "tier_drop" || hipped ? { tier: "lower" as const } : {}),
           });
           notes.push(
-            `ROOF STEPS HERE (elevations-first) — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
-              perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
-            }, estimated — verify) is available to tap-add.`,
+            fromRoofPlan
+              ? `ROOF STEPS HERE (roof-plan page) — the roof-plan page's fascia line breaks at ~${Math.round(frac * 100)}% across the ${face} side, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
+                  perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
+                }, estimated — verify) is available to tap-add.`
+              : `ROOF STEPS HERE (elevations-first) — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
+                  perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
+                }, estimated — verify) is available to tap-add.`,
           );
           hipAnchor = { innerPt: inner, depthU };
         }
@@ -412,16 +513,27 @@ export function reconcileEaveSteps(args: {
         }
       }
 
-      // (5) TRACED jog with NO elevation step, on a face that was readable AND
-      // reported the field (even []) → the roof wins: loud flag, run kept.
+      // (5) TRACED jog with NO step from the ruling source, on a side that
+      // actually reported the field (even []) → the roof wins: loud flag,
+      // run kept. A roof-page `[]` is the strongest form — the page shows
+      // one flush fascia plane across the whole side.
       const unmatched = traced.filter((_, ti) => !matchedTraced.has(ti));
       for (const t of unmatched.slice(0, 3)) {
         const frac = Math.round(((t.u - uMin) / width) * 100);
         wallJogFlags.push(
-          `WALL JOG, STRAIGHT ROOF — the traced outline steps on the ${face} face (~${frac}% across), but the ${face} elevation shows a straight eave line there; the roof may bridge the wall jog — verify. Nothing was removed or unpriced.`,
+          fromRoofPlan
+            ? `WALL JOG, STRAIGHT ROOF — the traced outline steps on the ${face} face (~${frac}% across), but the roof-plan page shows no fascia step there${
+                stepsRaw.length === 0 ? " (one flush fascia plane across the side)" : ""
+              }; the roof may bridge the wall jog — verify. Nothing was removed or unpriced.`
+            : `WALL JOG, STRAIGHT ROOF — the traced outline steps on the ${face} face (~${frac}% across), but the ${face} elevation shows a straight eave line there; the roof may bridge the wall jog — verify. Nothing was removed or unpriced.`,
         );
       }
     }
+
+    // 🪞 MIRROR CHECK — one loud note when the roof page's front/rear step
+    // patterns fit the trace significantly better flipped left-right.
+    const mirrorNote = detectStepMirror(mirrorEntries);
+    if (mirrorNote) notes.push(mirrorNote);
 
     return { analysis: args.analysis, notes, suggestedEaves, verifiedJogIds, wallJogFlags };
   } catch {

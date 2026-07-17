@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { PlanSource } from "./blueprint-from-plans";
-import type { ElevationFaceName, FaceReadingRaw } from "./face-merge";
+import type { ElevationFaceName, FaceEaveStep, FaceReadingRaw } from "./face-merge";
 
 /**
  * read-roof-layout.ts — read the ROOF FRAMING / ROOF PLAN page as the
@@ -39,6 +39,43 @@ const MODEL = process.env.BLUEPRINT_ROOFPLAN_MODEL || "claude-sonnet-5";
 export const ROOF_PLAN_SIDES = ["front", "rear", "left", "right"] as const;
 export type RoofPlanSideName = (typeof ROOF_PLAN_SIDES)[number];
 
+/**
+ * One fascia step LOCATED along its side. FIXED PLAN-FRAME CONVENTION (the
+ * prompt teaches the same one, and roofPlanFracToViewerFrac converts it):
+ *  - position_frac is the fraction of the side's FULL length where the fascia
+ *    line breaks. For the HORIZONTAL sides (front/rear) frac runs
+ *    house-LEFT (0) → house-RIGHT (1); for the VERTICAL sides (left/right)
+ *    frac runs REAR (0) → FRONT (1). "house-left/right" are as you FACE the
+ *    front (the same words the elevations use).
+ *  - direction "outward" = the fascia BEYOND the break (at the higher frac)
+ *    sits FARTHER from the house center than the fascia before it; "inward" =
+ *    it steps closer to the center.
+ */
+export type RoofPlanStepDetail = {
+  position_frac: number | null;
+  direction: "outward" | "inward" | "unknown";
+};
+
+/** Quadrant of the roof outline (front per the drafting convention, left/
+ *  right as you face the front). "center" = genuinely straddles the middle. */
+export const ROOF_PLAN_QUADRANTS = [
+  "front-left",
+  "front-right",
+  "rear-left",
+  "rear-right",
+  "center",
+] as const;
+export type RoofPlanQuadrant = (typeof ROOF_PLAN_QUADRANTS)[number];
+
+/** Where the roof page's printed feature labels sit, by outline quadrant.
+ *  null per feature = the page doesn't label it (never inferred). */
+export type RoofPlanFeatureQuadrants = {
+  garage?: RoofPlanQuadrant | null;
+  porch?: RoofPlanQuadrant | null;
+  outdoor_living?: RoofPlanQuadrant | null;
+  patio?: RoofPlanQuadrant | null;
+} | null;
+
 export type RoofPlanSide = {
   /** One guttered eave line runs this side's full width (tier steps don't
    *  break it; a rake does). null = genuinely unreadable. */
@@ -50,6 +87,11 @@ export type RoofPlanSide = {
   steps: number | null;
   /** Downspout dots/"D.S." marks printed on this side. */
   ds_marks: number | null;
+  /** WHERE each fascia step sits along this side (see RoofPlanStepDetail for
+   *  the fixed plan-frame convention). [] = an explicit "one flush fascia
+   *  plane" answer (load-bearing); null/absent = positions not read — every
+   *  consumer degrades to the count-only legacy behavior. */
+  steps_detail?: RoofPlanStepDetail[] | null;
 };
 
 export type RoofPlanReading = {
@@ -62,6 +104,10 @@ export type RoofPlanReading = {
   total_ds_marks: number | null;
   /** Part of the roof is flat/low-slope (drains to scuppers, not gutters). */
   flat_sections: boolean | null;
+  /** Outline quadrant of each printed feature label (GARAGE / PORCH /
+   *  OUTDOOR LIVING / PATIO). null/absent = the page labels none of them —
+   *  the quadrant-sanity pass degrades to a byte-identical no-op. */
+  feature_quadrants?: RoofPlanFeatureQuadrants;
   confidence: "high" | "medium" | "low";
   notes: string[];
 };
@@ -81,6 +127,48 @@ const asBool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : nul
 const asCount = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
 
+const asQuadrant = (v: unknown): RoofPlanQuadrant | null =>
+  typeof v === "string" && (ROOF_PLAN_QUADRANTS as readonly string[]).includes(v)
+    ? (v as RoofPlanQuadrant)
+    : null;
+
+/** Defensive steps_detail parse: non-array → null ("positions not read");
+ *  non-object entries dropped; a near-miss frac (−0.05…1.05) is clamped into
+ *  [0,1]; anything wilder becomes null — NEVER clamped into a phantom corner
+ *  step (same doctrine as the elevation eave_steps garbage test). */
+function parseStepsDetail(v: unknown): RoofPlanStepDetail[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: RoofPlanStepDetail[] = [];
+  for (const e of v.slice(0, 12)) {
+    if (!e || typeof e !== "object" || Array.isArray(e)) continue;
+    const o = e as Record<string, unknown>;
+    let frac: number | null = null;
+    if (typeof o.position_frac === "number" && Number.isFinite(o.position_frac)) {
+      frac =
+        o.position_frac >= -0.05 && o.position_frac <= 1.05
+          ? Math.max(0, Math.min(1, o.position_frac))
+          : null;
+    }
+    out.push({
+      position_frac: frac,
+      direction:
+        o.direction === "outward" || o.direction === "inward" ? o.direction : "unknown",
+    });
+  }
+  return out;
+}
+
+function parseFeatureQuadrants(v: unknown): RoofPlanFeatureQuadrants {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  return {
+    garage: asQuadrant(o.garage),
+    porch: asQuadrant(o.porch),
+    outdoor_living: asQuadrant(o.outdoor_living),
+    patio: asQuadrant(o.patio),
+  };
+}
+
 function parseSide(v: unknown): RoofPlanSide {
   const s =
     v && typeof v === "object" && !Array.isArray(v)
@@ -91,6 +179,7 @@ function parseSide(v: unknown): RoofPlanSide {
     gable_end: asBool(s.gable_end),
     steps: asCount(s.steps),
     ds_marks: asCount(s.ds_marks),
+    steps_detail: parseStepsDetail(s.steps_detail),
   };
 }
 
@@ -121,6 +210,7 @@ export function parseRoofPlanReading(raw: unknown): RoofPlanReading | null {
     hips_at_corners: asBool(r.hips_at_corners),
     total_ds_marks: asCount(r.total_ds_marks),
     flat_sections: asBool(r.flat_sections),
+    feature_quadrants: parseFeatureQuadrants(r.feature_quadrants),
     confidence:
       r.confidence === "high" || r.confidence === "medium" ? r.confidence : "low",
     notes: Array.isArray(r.notes)
@@ -135,6 +225,7 @@ export function emptyRoofPlanReading(reason: string): RoofPlanReading {
     gable_end: null,
     steps: null,
     ds_marks: null,
+    steps_detail: null,
   });
   return {
     readable: false,
@@ -143,6 +234,7 @@ export function emptyRoofPlanReading(reason: string): RoofPlanReading {
     hips_at_corners: null,
     total_ds_marks: null,
     flat_sections: null,
+    feature_quadrants: null,
     confidence: "low",
     notes: [],
   };
@@ -168,8 +260,11 @@ function sideHasVerdict(s: RoofPlanSide): boolean {
  *  - `gable_end:true` ⇒ roof_form "gabled", gable_count 1 — vetoes hip
  *    unanimity and keeps that side's rake unpriced (gutter-protective in the
  *    no-overbilling direction);
- *  - `eave_steps` is deliberately ABSENT (the page reports a count, not
- *    positions) so every eave-step consumer degrades to its legacy behavior.
+ *  - `eave_steps` is deliberately ABSENT here even when the page located the
+ *    steps (steps_detail): roof-page step positions travel through their OWN
+ *    channel (roofPlanViewerSteps → reconcileEaveSteps' roofPlanSteps arg) so
+ *    the source priority ("roof page outranks the elevation") stays explicit
+ *    instead of being laundered through a synthesized face.
  */
 export function roofPlanAsFaceEvidence(
   reading: RoofPlanReading | null | undefined,
@@ -202,6 +297,65 @@ export function roofPlanAsFaceEvidence(
     };
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* PURE: roof-page fascia steps → viewer-frame eave steps               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Convert a roof-page PLAN-FRAME step fraction (see RoofPlanStepDetail:
+ * front/rear run house-LEFT→RIGHT, left/right run REAR→FRONT) into the
+ * VIEWER-FRAME fraction the elevation eave_steps use (0 = viewer's far left
+ * as you look AT that elevation). Fixed convention, derived from the same
+ * rightDir mapping as viewerPositionToPlanDir (place-gables.ts, y-down,
+ * front-at-bottom):
+ *  - front: viewer left→right IS house left→right            → identity
+ *  - rear:  viewer left→right is house RIGHT→LEFT            → 1 − frac
+ *  - left:  viewer left→right runs REAR→FRONT                → identity
+ *  - right: viewer left→right runs FRONT→REAR                → 1 − frac
+ */
+export function roofPlanFracToViewerFrac(
+  side: RoofPlanSideName,
+  frac: number,
+): number {
+  return side === "front" || side === "left" ? frac : 1 - frac;
+}
+
+/**
+ * Adapt the reading's per-side steps_detail into VIEWER-FRAME FaceEaveStep
+ * arrays keyed by face — the shape reconcileEaveSteps' `roofPlanSteps` arg
+ * takes. Returns null when the reading is absent/unreadable or NO side
+ * carries a steps_detail array (older stashes / stale prompt overrides) —
+ * the reconcile then degrades byte-identical. A side's `[]` is preserved
+ * (an explicit "one flush fascia plane" — load-bearing for the wall-jog
+ * flag). `direction` is deliberately null on every converted step: the plan
+ * view reads outward/inward (a PLAN offset), not up/down (a HEIGHT change),
+ * and guessing the height direction could aim a hip inner-return leg at the
+ * wrong side — so converted steps never emit that leg.
+ */
+export function roofPlanViewerSteps(
+  reading: RoofPlanReading | null | undefined,
+): Partial<Record<RoofPlanSideName, FaceEaveStep[]>> | null {
+  if (!reading || !reading.readable) return null;
+  const out: Partial<Record<RoofPlanSideName, FaceEaveStep[]>> = {};
+  let saw = false;
+  for (const face of ROOF_PLAN_SIDES) {
+    const detail = reading.sides[face]?.steps_detail;
+    if (!Array.isArray(detail)) continue;
+    saw = true;
+    out[face] = detail.map((s) => ({
+      position_frac:
+        typeof s.position_frac === "number" && Number.isFinite(s.position_frac)
+          ? roofPlanFracToViewerFrac(face, Math.max(0, Math.min(1, s.position_frac)))
+          : null,
+      direction: null,
+      offset_ft: null,
+      kind: "unknown" as const,
+      notes: "roof-plan page fascia step",
+    }));
+  }
+  return saw ? out : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,9 +631,37 @@ For EACH of front / rear / left / right report:
   - steps: how many FASCIA STEPS the side shows — parallel, offset eave
     lines where a lower tier (porch, garage, patio cover) steps in front of
     or below the main eave; 0 when the eave is one plane; null unknown.
+  - steps_detail: LOCATE each fascia step you counted in steps — one entry
+    per step, read off the roof OUTLINE itself:
+      position_frac: where along the side the fascia line breaks, as a
+      fraction of that side's FULL length. FIXED CONVENTION — for the FRONT
+      and REAR sides the fraction runs house-LEFT (0) → house-RIGHT (1); for
+      the LEFT and RIGHT sides it runs REAR (0) → FRONT (1). (House left/
+      right are as you FACE the front, per <orient>.) Measure against the
+      side's full extent, not one sub-segment. Null when you can see the
+      step but cannot place it.
+      direction: "outward" when the fascia BEYOND the break (toward the
+      higher fraction) sits FARTHER from the house center than the fascia
+      before it; "inward" when it steps closer; "unknown".
+    Report [] when the side's fascia is ONE flush plane (an explicit,
+    load-bearing answer — it lets a phantom traced jog be flagged); null
+    when the side is unreadable.
   - ds_marks: downspout marks printed on that side (see <downspouts>);
     null unknown.
 </per_side>
+
+<feature_quadrants>
+Locate each LABELED feature by quadrant of the roof outline. Read the room /
+area labels printed on or beside the plan — GARAGE, PORCH, OUTDOOR LIVING,
+PATIO / COVERED PATIO — and report which quadrant of the outline each sits
+in: front-left / front-right / rear-left / rear-right (front per <orient>,
+left/right as you FACE the front), or "center" when it genuinely straddles
+the middle. This pins the labels the takeoff hangs on the gutter runs — a
+garage read at the front-right corner stops GARAGE labels from bleeding down
+the whole right side. Only report a feature whose label you can actually
+READ on this page; null the ones the page doesn't label — never infer a
+garage's position from habit or symmetry.
+</feature_quadrants>
 
 <downspouts>
 Count EVERY downspout mark on the page: filled dots or small squares at the
@@ -524,6 +706,8 @@ export const ROOF_PLAN_PROMPT_MARKERS = [
   "gable_end",
   "ds_marks",
   "hips_at_corners",
+  "steps_detail",
+  "feature_quadrants",
 ];
 
 const SIDE_SCHEMA = {
@@ -548,8 +732,37 @@ const SIDE_SCHEMA = {
       type: ["integer", "null"],
       description: "Downspout dots / D.S. marks printed on this side. Null unknown.",
     },
+    steps_detail: {
+      type: ["array", "null"],
+      description:
+        "One entry per fascia step counted in `steps`, locating it along the side. [] = one flush fascia plane (explicit). Null = positions unreadable.",
+      items: {
+        type: "object",
+        properties: {
+          position_frac: {
+            type: ["number", "null"],
+            description:
+              "Where along the side the fascia line breaks, as a fraction of the side's FULL length. front/rear: house-LEFT (0) → house-RIGHT (1); left/right: REAR (0) → FRONT (1). Null when unplaceable.",
+          },
+          direction: {
+            type: "string",
+            enum: ["outward", "inward", "unknown"],
+            description:
+              "outward = the fascia beyond the break (higher fraction) sits FARTHER from the house center; inward = closer.",
+          },
+        },
+        required: ["position_frac", "direction"],
+      },
+    },
   },
   required: ["eave_continuous", "gable_end"],
+} as const;
+
+const QUADRANT_SCHEMA = {
+  type: ["string", "null"],
+  enum: ["front-left", "front-right", "rear-left", "rear-right", "center", null],
+  description:
+    "Quadrant of the roof outline this label sits in. Null when the page doesn't print the label — never inferred.",
 } as const;
 
 const RECORD_ROOF_PLAN_TOOL: Anthropic.Tool = {
@@ -588,6 +801,17 @@ const RECORD_ROOF_PLAN_TOOL: Anthropic.Tool = {
       flat_sections: {
         type: ["boolean", "null"],
         description: "Part of the roof is flat/low-slope (drains to scuppers/roof drains, not eave gutters).",
+      },
+      feature_quadrants: {
+        type: ["object", "null"],
+        description:
+          "Outline quadrant of each printed feature label (GARAGE / PORCH / OUTDOOR LIVING / PATIO). Null when the page labels none.",
+        properties: {
+          garage: QUADRANT_SCHEMA,
+          porch: QUADRANT_SCHEMA,
+          outdoor_living: QUADRANT_SCHEMA,
+          patio: QUADRANT_SCHEMA,
+        },
       },
       confidence: { type: "string", enum: ["high", "medium", "low"] },
       notes: { type: "array", items: { type: "string" } },

@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { reconcileEaveSteps, elevationStepsForVectorGate } from "./eave-step-reconcile.ts";
+import { reconcileEaveSteps, elevationStepsForVectorGate, detectStepMirror } from "./eave-step-reconcile.ts";
 import type { BlueprintAnalysis, BlueprintRun } from "./blueprint-from-plans.ts";
 import type { FaceEaveStep, FaceReadingRaw } from "./face-merge.ts";
 
@@ -361,6 +361,183 @@ test("reconcileEaveSteps never throws on garbage analysis", () => {
     });
     assert.equal(out.analysis, bad);
   });
+});
+
+// ————————————————— roof-page steps (steps_detail channel) —————————————————
+// roofPlanSteps arrive PRE-CONVERTED to the viewer frame (read-roof-layout's
+// roofPlanViewerSteps owns the plan→viewer convention; tested there).
+
+/** A viewer-frame roof-page step (direction always null — plan view). */
+function roofStep(frac: number | null): FaceEaveStep {
+  return { position_frac: frac, direction: null, offset_ft: null, kind: "unknown", notes: "roof-plan page fascia step" };
+}
+
+test("(R1) roofPlanSteps absent/null → byte-identical with the legacy call (deep-equal pin)", () => {
+  const a1 = analysisOf(STEPPED, steppedRuns());
+  const a2 = structuredClone(a1);
+  const perFace = { front: face({ face: "front", continuous_eave: false, eave_steps: [step(0.6, "down")] }) };
+  const legacy = reconcileEaveSteps({ analysis: a1, perFace });
+  const withNull = reconcileEaveSteps({ analysis: a2, perFace: structuredClone(perFace), roofPlanSteps: null });
+  assert.deepEqual(withNull.notes, legacy.notes);
+  assert.deepEqual(withNull.suggestedEaves, legacy.suggestedEaves);
+  assert.deepEqual(withNull.verifiedJogIds, legacy.verifiedJogIds);
+  assert.deepEqual(withNull.wallJogFlags, legacy.wallJogFlags);
+});
+
+test("(R2) roof-page steps OUTRANK the elevation's — matched at the page's frac, the elevation's phantom frac ignored, note names the ruling source", () => {
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: {
+      // the elevation misread the step at 0.2 — alone it would emit an
+      // unmatched unpriced suggestion there
+      front: face({ face: "front", continuous_eave: false, eave_steps: [step(0.2, "down")] }),
+    },
+    roofPlanSteps: { front: [roofStep(0.6)] }, // the page pins it where the trace steps
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.verifiedJogIds.length, 1, "the page's step matches the traced jog");
+  assert.match(out.verifiedJogIds[0], /front@0\.60/);
+  assert.deepEqual(out.suggestedEaves, [], "the elevation's 0.2 step never ran — outranked");
+  const ruled = out.notes.find((n) => /outrank/.test(n));
+  assert.ok(ruled, "note names which source ruled");
+  assert.match(ruled!, /Roof-plan page fascia steps ruled the front side/);
+  const verified = out.notes.find((n) => /ROOF-VERIFIED JOG/.test(n));
+  assert.ok(verified);
+  assert.match(verified!, /roof-plan page's fascia line/, "verified note cites the page, not the elevation");
+  assert.deepEqual(out.wallJogFlags, []);
+});
+
+test("(R3) roof-page step on a side with NO elevation read at all → suggestion still emitted (page alone is a source)", () => {
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.25)] },
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.suggestedEaves.length, 1);
+  const [p0] = out.suggestedEaves[0].points;
+  assert.ok(Math.abs(p0.x - 25) < 1e-6 && Math.abs(p0.y - 60) < 1e-6, `base at (25,60), got ${JSON.stringify(p0)}`);
+  const note = out.notes.find((n) => /ROOF STEPS HERE/.test(n));
+  assert.ok(note);
+  assert.match(note!, /roof-plan page/);
+});
+
+test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → wall-jog flag naming the page", () => {
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front" }) }, // elevation never reported the field
+    roofPlanSteps: { front: [] }, // the page: one flush fascia plane
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.wallJogFlags.length, 1);
+  assert.match(out.wallJogFlags[0], /WALL JOG, STRAIGHT ROOF/);
+  assert.match(out.wallJogFlags[0], /roof-plan page/);
+  assert.match(out.wallJogFlags[0], /one flush fascia plane/);
+  assert.match(out.wallJogFlags[0], /Nothing was removed or unpriced/);
+  assert.equal(out.analysis.gutter_runs.length, snap.gutter_runs.length, "no run deleted");
+});
+
+test("(R5) roof-page steps never emit the hip inner-return leg (direction is null by design)", () => {
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { rear: face({ face: "rear", roof_form: "hipped" }) },
+    roofPlanSteps: { rear: [roofStep(0.75)] },
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.suggestedEaves.length, 1, "perpendicular return only — no inner leg without a height direction");
+  assert.equal(out.suggestedEaves[0].tier, "lower", "hipped face still tags the return lower");
+});
+
+// ————————————————— mirror check —————————————————
+
+/** Footprint with TWO real front-face steps at u=45 and u=80 (fracs 0.45, 0.8). */
+const TWO_STEP: Pt[] = [
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  { x: 100, y: 60 },
+  { x: 80, y: 60 },
+  { x: 80, y: 52 },
+  { x: 45, y: 52 },
+  { x: 45, y: 44 },
+  { x: 0, y: 44 },
+];
+
+function twoStepRuns(): BlueprintRun[] {
+  return [
+    run({ x: 80, y: 60 }, { x: 100, y: 60 }),
+    run({ x: 45, y: 52 }, { x: 80, y: 52 }),
+    run({ x: 0, y: 44 }, { x: 45, y: 44 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+}
+
+test("(M1) detectStepMirror — fires only when the flipped fit is decisively better across ≥2 steps", () => {
+  // mirrored fixture: roof fracs {0.2, 0.45} vs traced {0.55, 0.8} — flipped they land exactly.
+  const note = detectStepMirror([
+    { face: "front", roofFracs: [0.2, 0.45], tracedFracs: [0.55, 0.8] },
+  ]);
+  assert.ok(note, "fires on the flipped fixture");
+  assert.match(note!, /TRACE MAY BE MIRRORED left-right/);
+  assert.match(note!, /front side/);
+  assert.match(note!, /verify the canvas orientation/);
+
+  // aligned → silent
+  assert.equal(
+    detectStepMirror([{ face: "front", roofFracs: [0.45, 0.8], tracedFracs: [0.45, 0.8] }]),
+    null,
+  );
+  // 1 step → silent (too weak either way)
+  assert.equal(
+    detectStepMirror([{ face: "front", roofFracs: [0.2], tracedFracs: [0.8, 0.55] }]),
+    null,
+  );
+  assert.equal(
+    detectStepMirror([{ face: "front", roofFracs: [0.2, 0.45], tracedFracs: [0.8] }]),
+    null,
+  );
+  // absent → silent
+  assert.equal(detectStepMirror([]), null);
+  // left/right faces are excluded (a left-right mirror SWAPS them instead)
+  assert.equal(
+    detectStepMirror([{ face: "left", roofFracs: [0.2, 0.45], tracedFracs: [0.55, 0.8] }]),
+    null,
+  );
+});
+
+test("(M2) mirror note flows through reconcileEaveSteps on a flipped roof-page read; silent when aligned", () => {
+  const a = analysisOf(TWO_STEP, twoStepRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    // traced front steps sit at fracs {0.45, 0.8}; the page reads {0.2, 0.55}
+    // — flipped ({0.8, 0.45}) they land exactly, direct they don't.
+    roofPlanSteps: { front: [roofStep(0.2), roofStep(0.55)] },
+  });
+  assertUntouched(a, snap, out);
+  const mirror = out.notes.filter((n) => /TRACE MAY BE MIRRORED/.test(n));
+  assert.equal(mirror.length, 1, "exactly ONE loud mirror note");
+  assert.equal(out.analysis.gutter_runs.length, snap.gutter_runs.length, "flag-only — geometry never flipped");
+
+  // aligned read on the same footprint → no mirror note
+  const b = analysisOf(TWO_STEP, twoStepRuns());
+  const snapB = structuredClone(b);
+  const out2 = reconcileEaveSteps({
+    analysis: b,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.45), roofStep(0.8)] },
+  });
+  assertUntouched(b, snapB, out2);
+  assert.ok(!out2.notes.some((n) => /TRACE MAY BE MIRRORED/.test(n)));
+  assert.equal(out2.verifiedJogIds.length, 2, "aligned page steps verify both traced jogs");
 });
 
 test("elevationStepsForVectorGate — old reads → null; readable reads flatten; unreadable dropped", () => {

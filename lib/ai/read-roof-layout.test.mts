@@ -18,10 +18,15 @@ import {
   mergeLayoutEvidence,
   roofPlanUnanimousHip,
   roofPlanDsFloor,
+  roofPlanFracToViewerFrac,
+  roofPlanViewerSteps,
   describeRoofPlanReading,
+  ROOF_PLAN_SIDES,
   type RoofPlanReading,
   type RoofPlanSide,
+  type RoofPlanSideName,
 } from "./read-roof-layout.ts";
+import { viewerPositionToPlanDir } from "./tier-corner-veto.ts";
 import { explainUnanimousHip, type FaceReadingRaw } from "./face-merge.ts";
 
 /* ------------------------------------------------------------------ */
@@ -29,7 +34,14 @@ import { explainUnanimousHip, type FaceReadingRaw } from "./face-merge.ts";
 /* ------------------------------------------------------------------ */
 
 function side(over: Partial<RoofPlanSide> = {}): RoofPlanSide {
-  return { eave_continuous: null, gable_end: null, steps: null, ds_marks: null, ...over };
+  return {
+    eave_continuous: null,
+    gable_end: null,
+    steps: null,
+    ds_marks: null,
+    steps_detail: null,
+    ...over,
+  };
 }
 
 function hipSide(over: Partial<RoofPlanSide> = {}): RoofPlanSide {
@@ -387,4 +399,158 @@ test("describeRoofPlanReading: unreadable states the reason and the fallback", (
   const s = describeRoofPlanReading(emptyRoofPlanReading("529 upstream"));
   assert.match(s, /unreadable \(529 upstream\)/);
   assert.match(s, /fell back to the elevations/);
+});
+
+/* ------------------------------------------------------------------ */
+/* steps_detail — parser garbage tolerance                             */
+/* ------------------------------------------------------------------ */
+
+test("parseRoofPlanReading: steps_detail — near-miss clamped, wild frac → null, garbage entries dropped, non-array → null", () => {
+  const r = parseRoofPlanReading({
+    readable: true,
+    sides: {
+      front: {
+        eave_continuous: true,
+        gable_end: false,
+        steps: 3,
+        steps_detail: [
+          { position_frac: 0.25, direction: "outward" },
+          { position_frac: 1.03, direction: "inward" }, // near miss → clamp to 1
+          { position_frac: -0.02, direction: "sideways" }, // clamp to 0, direction coerced
+          { position_frac: 3.7, direction: "outward" }, // wild → null, NEVER clamped into a corner
+          { position_frac: "0.5", direction: "outward" }, // wrong type → null frac
+          "garbage", // non-object entry dropped
+          null,
+        ],
+      },
+      rear: { eave_continuous: true, gable_end: false, steps_detail: [] },
+      left: { eave_continuous: true, gable_end: false, steps_detail: "flat" },
+      right: { eave_continuous: true, gable_end: false },
+    },
+    hips_at_corners: true,
+    confidence: "high",
+  });
+  assert.ok(r);
+  assert.deepEqual(r.sides.front.steps_detail, [
+    { position_frac: 0.25, direction: "outward" },
+    { position_frac: 1, direction: "inward" },
+    { position_frac: 0, direction: "unknown" },
+    { position_frac: null, direction: "outward" },
+    { position_frac: null, direction: "outward" },
+  ]);
+  assert.deepEqual(r.sides.rear.steps_detail, [], "explicit [] survives (load-bearing straight side)");
+  assert.equal(r.sides.left.steps_detail, null, "non-array → null (positions not read)");
+  assert.equal(r.sides.right.steps_detail, null, "absent → null");
+});
+
+/* ------------------------------------------------------------------ */
+/* feature_quadrants — parser garbage tolerance                        */
+/* ------------------------------------------------------------------ */
+
+test("parseRoofPlanReading: feature_quadrants — valid kept, garbage → null per key, non-object/absent → null", () => {
+  const r = parseRoofPlanReading({
+    readable: true,
+    sides: {},
+    hips_at_corners: true,
+    confidence: "high",
+    feature_quadrants: {
+      garage: "front-right",
+      porch: "middle", // not a quadrant word → null
+      patio: 42,
+      outdoor_living: "center",
+    },
+  });
+  assert.ok(r);
+  assert.deepEqual(r.feature_quadrants, {
+    garage: "front-right",
+    porch: null,
+    patio: null,
+    outdoor_living: "center",
+  });
+
+  const absent = parseRoofPlanReading({ readable: true, sides: {}, hips_at_corners: true, confidence: "high" });
+  assert.equal(absent!.feature_quadrants, null, "absent → null (old stashes degrade)");
+  const garbage = parseRoofPlanReading({
+    readable: true, sides: {}, hips_at_corners: true, confidence: "high",
+    feature_quadrants: ["front-right"],
+  });
+  assert.equal(garbage!.feature_quadrants, null, "array → null");
+  assert.equal(emptyRoofPlanReading("x").feature_quadrants, null);
+});
+
+/* ------------------------------------------------------------------ */
+/* roofPlanFracToViewerFrac — the fixed-convention converter           */
+/* ------------------------------------------------------------------ */
+
+test("roofPlanFracToViewerFrac: fixed convention on all four sides", () => {
+  // front: plan house-LEFT→RIGHT is exactly the viewer's left→right.
+  assert.equal(roofPlanFracToViewerFrac("front", 0.25), 0.25);
+  // rear: facing the rear elevation the viewer's left is the house's RIGHT.
+  assert.equal(roofPlanFracToViewerFrac("rear", 0.25), 0.75);
+  // left: plan REAR→FRONT is the viewer's left→right on the left elevation.
+  assert.equal(roofPlanFracToViewerFrac("left", 0.25), 0.25);
+  // right: plan REAR→FRONT reverses — the viewer's left is the house FRONT.
+  assert.equal(roofPlanFracToViewerFrac("right", 0.25), 0.75);
+  // the mapping is an involution: converting twice returns the input
+  for (const s of ROOF_PLAN_SIDES) {
+    const twice = roofPlanFracToViewerFrac(s, roofPlanFracToViewerFrac(s, 0.3));
+    assert.ok(Math.abs(twice - 0.3) < 1e-12, `${s} involution, got ${twice}`);
+  }
+});
+
+test("roofPlanFracToViewerFrac: agrees with viewerPositionToPlanDir on every side (same rightDir convention)", () => {
+  // Plan-frame frac 1 means: house-RIGHT end for front/rear, FRONT end for
+  // left/right. Whatever viewer end that converts to, the tier-corner-veto's
+  // own viewer→plan mapping must point that end at the SAME plan direction.
+  const planDirOfFrac1: Record<RoofPlanSideName, { x: number; y: number }> = {
+    front: { x: 1, y: 0 }, // house-right (+x)
+    rear: { x: 1, y: 0 },
+    left: { x: 0, y: 1 }, // front (+y, y-down front-at-bottom)
+    right: { x: 0, y: 1 },
+  };
+  for (const s of ROOF_PLAN_SIDES) {
+    const vf = roofPlanFracToViewerFrac(s, 1);
+    assert.ok(vf === 0 || vf === 1, `frac 1 maps to a viewer end on ${s}`);
+    const end = vf === 1 ? "right_end" : "left_end";
+    assert.deepEqual(
+      viewerPositionToPlanDir(s, end, null),
+      planDirOfFrac1[s],
+      `${s}: viewer ${end} must be the plan direction of plan-frac 1`,
+    );
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* roofPlanViewerSteps — the adapter                                    */
+/* ------------------------------------------------------------------ */
+
+test("roofPlanViewerSteps: no steps_detail anywhere / unreadable / absent → null (byte-identical degrade)", () => {
+  assert.equal(roofPlanViewerSteps(null), null);
+  assert.equal(roofPlanViewerSteps(undefined), null);
+  assert.equal(roofPlanViewerSteps(emptyRoofPlanReading("faint")), null);
+  assert.equal(roofPlanViewerSteps(fullHipReading()), null, "count-only sides (steps_detail absent) → null");
+});
+
+test("roofPlanViewerSteps: converts to the viewer frame, preserves [], nulls direction, keeps null fracs", () => {
+  const reading = fullHipReading();
+  reading.sides.front = hipSide({
+    steps: 2,
+    steps_detail: [
+      { position_frac: 0.2, direction: "outward" },
+      { position_frac: null, direction: "unknown" },
+    ],
+  });
+  reading.sides.rear = hipSide({ steps: 1, steps_detail: [{ position_frac: 0.25, direction: "inward" }] });
+  reading.sides.right = hipSide({ steps: 0, steps_detail: [] });
+  const out = roofPlanViewerSteps(reading);
+  assert.ok(out);
+  assert.equal(out.front!.length, 2);
+  assert.equal(out.front![0].position_frac, 0.2, "front is identity");
+  assert.equal(out.front![0].direction, null, "plan outward/inward never guessed into up/down");
+  assert.equal(out.front![0].offset_ft, null);
+  assert.equal(out.front![0].kind, "unknown");
+  assert.equal(out.front![1].position_frac, null, "unplaceable step passes through as null");
+  assert.equal(out.rear![0].position_frac, 0.75, "rear flips (viewer left = house right)");
+  assert.deepEqual(out.right, [], "explicit straight side preserved");
+  assert.equal("left" in out, false, "side without the field omitted");
 });
