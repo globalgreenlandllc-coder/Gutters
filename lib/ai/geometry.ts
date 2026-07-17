@@ -630,7 +630,14 @@ export function convexCornersOf(
     const v2x = next.x - curr.x;
     const v2y = next.y - curr.y;
     const cross = v1x * v2y - v1y * v2x;
-    if (cross * cwSign > 0) corners.push(curr);
+    // CONVEX (outside) corners. Sign check derived on reference squares
+    // in y-down screen coords: a visually-CW ring has NEGATIVE signedArea
+    // here (cwSign −1) and its convex corners have cross > 0; a CCW ring
+    // has cross < 0 at convex corners. Both cases ⇒ cross·cwSign < 0.
+    // The old `> 0` comparison returned the REFLEX corners on CW rings
+    // (downspouts at inside corners, 3 drops on a 250 LF house) and
+    // NOTHING on CCW rings.
+    if (cross * cwSign < 0) corners.push(curr);
   }
   return corners;
 }

@@ -1443,3 +1443,106 @@ test("trimChainEndOvershoot: no crossing → untouched; degenerate safe", async 
   assert.deepEqual(trimChainEndOvershoot(chain, runs, 8), chain);
   assert.deepEqual(trimChainEndOvershoot([{ x: 1, y: 1 }], runs, 8), [{ x: 1, y: 1 }]);
 });
+
+test("collapseTaperWedges: step + long taper collapses to the wall chord", async () => {
+  const { collapseTaperWedges } = await import("./solar-geometry.ts");
+  // Sarasota shape: wall (272,139)->(403,143), step up to (404,125),
+  // taper down to (634,146), then the rest of a plausible ring (CW in
+  // screen coords = negative area; matches the traced winding).
+  const ring = [
+    { x: 266, y: 334 },
+    { x: 272, y: 139 },
+    { x: 403, y: 143 },
+    { x: 404, y: 125 },
+    { x: 634, y: 146 },
+    { x: 630, y: 287 },
+    { x: 627, y: 472 },
+    { x: 483, y: 467 },
+    { x: 487, y: 341 },
+  ];
+  const out = collapseTaperWedges(ring, 0.1);
+  assert.equal(out.collapsed, 1);
+  assert.equal(out.points.length, ring.length - 2);
+  assert.ok(!out.points.some((p) => p.x === 404 && p.y === 125), "apex still present");
+  assert.ok(!out.points.some((p) => p.x === 403 && p.y === 143), "step base still present");
+});
+
+test("collapseTaperWedges: mirrored winding (taper first) also collapses", async () => {
+  const { collapseTaperWedges } = await import("./solar-geometry.ts");
+  const ring = [
+    { x: 266, y: 334 },
+    { x: 272, y: 139 },
+    { x: 403, y: 143 },
+    { x: 404, y: 125 },
+    { x: 634, y: 146 },
+    { x: 630, y: 287 },
+    { x: 627, y: 472 },
+    { x: 483, y: 467 },
+    { x: 487, y: 341 },
+  ].reverse();
+  const out = collapseTaperWedges(ring, 0.1);
+  assert.equal(out.collapsed, 1);
+});
+
+test("collapseTaperWedges: a REAL bump-out (step out, parallel run, step back) is kept", async () => {
+  const { collapseTaperWedges } = await import("./solar-geometry.ts");
+  // Clerestory-style bump: steps out 1.5m, runs PARALLEL to the wall,
+  // steps back — the long middle edge lands ~15px off the wall line at
+  // its far end (not ≤6px), so it must survive.
+  const ring = [
+    { x: 0, y: 200 },
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: -15 },
+    { x: 200, y: -15 },
+    { x: 200, y: 0 },
+    { x: 300, y: 0 },
+    { x: 300, y: 200 },
+  ];
+  const out = collapseTaperWedges(ring, 0.1);
+  assert.equal(out.collapsed, 0);
+  assert.equal(out.points.length, ring.length);
+});
+
+test("collapseTaperWedges: INWARD taper notch is never collapsed (would add roof)", async () => {
+  const { collapseTaperWedges } = await import("./solar-geometry.ts");
+  const ring = [
+    { x: 266, y: 334 },
+    { x: 272, y: 139 },
+    { x: 403, y: 143 },
+    { x: 404, y: 161 }, // step INWARD (down into the roof)
+    { x: 634, y: 146 },
+    { x: 630, y: 287 },
+    { x: 627, y: 472 },
+    { x: 483, y: 467 },
+    { x: 487, y: 341 },
+  ];
+  const out = collapseTaperWedges(ring, 0.1);
+  assert.equal(out.collapsed, 0);
+});
+
+test("convexCornersOf: returns OUTSIDE corners for both windings", async () => {
+  const { convexCornersOf } = await import("./geometry.ts");
+  // L-shape, visually clockwise in y-down coords. 5 convex + 1 reflex.
+  const L = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 100 },
+    { x: 100, y: 100 },
+    { x: 100, y: 200 },
+    { x: 0, y: 200 },
+  ];
+  for (const ring of [L, [...L].reverse()]) {
+    const corners = convexCornersOf(
+      { points: ring, bbox: { x: 0, y: 0, width: 200, height: 200 }, areaFraction: 0.1 },
+      900,
+      580,
+    );
+    assert.equal(corners.length, 5, `got ${corners.length} corners`);
+    // The reflex inner-L corner must NOT be in the list.
+    assert.ok(
+      !corners.some((c) => Math.hypot(c.x - 100, c.y - 100) < 30),
+      "reflex corner returned",
+    );
+  }
+});

@@ -2158,7 +2158,20 @@ export function cleanFootprint(
   // direction) collapse to their on-grid chord — the parked-car /
   // driveway-shadow corner fix. Outward-only, so it never adds roof.
   const bulge = collapseOffGridBulges(rect.points, metersPerPixel);
-  const dech = dechamferPolygon(bulge.points, metersPerPixel);
+  // TAPER WEDGES: a short outward step followed by a LONG barely-off-grid
+  // edge that lands back on the wall line at the far corner. Real walls
+  // don't taper at 3–5°; this is the dark-pavement bulge shape that
+  // collapseOffGridBulges misses (its pattern needs two clearly off-grid
+  // edges; here the step is grid-aligned and the taper is nearly so).
+  const wedge = collapseTaperWedges(bulge.points, metersPerPixel);
+  if (process.env.SOLAR_WEDGE_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[wedge] in=${bulge.points.length}v collapsed=${wedge.collapsed} ring=` +
+        wedge.points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" "),
+    );
+  }
+  const dech = dechamferPolygon(wedge.points, metersPerPixel);
   return {
     points: dech.points,
     squaredCorners: dech.squared,
@@ -2177,6 +2190,161 @@ export function cleanFootprint(
           reason: reg.reason ?? "regularization skipped",
         },
   };
+}
+
+/**
+ * Collapse TAPER WEDGES: the pattern [wall A] → [short outward step s]
+ * → [long taper B landing back on A's line]. Google's mask bulges onto
+ * dark pavement/shadow beside the roof as a thin triangle: the boundary
+ * steps ~1–2 m outward, then slides back to the true corner along a
+ * 3–5° taper — too long and too near-grid for the bulge/staircase passes
+ * (observed on the Sarasota test address: an 18 px step + 231 px taper
+ * drew the top gutter over the driveway). A real wall never tapers at
+ * 3°, and a real bump-out RETURNS with a second step — the one-way
+ * taper is artifact signature. Collapse = remove the step, wall becomes
+ * the straight A-start → B-end chord. OUTWARD-only (never adds roof),
+ * and only when B's far end already sits on A's line (≤ maxEndOffM).
+ */
+export function collapseTaperWedges(
+  points: Pt[],
+  metersPerPixel: number,
+  opts?: {
+    maxStepM?: number;
+    maxTaperDeg?: number;
+    minTaperM?: number;
+    maxEndOffM?: number;
+  },
+): { points: Pt[]; collapsed: number } {
+  const maxStepPx = (opts?.maxStepM ?? 2.2) / metersPerPixel;
+  const maxTaperDeg = opts?.maxTaperDeg ?? 6;
+  const minTaperPx = (opts?.minTaperM ?? 4) / metersPerPixel;
+  const maxEndOffPx = (opts?.maxEndOffM ?? 1.2) / metersPerPixel;
+  let pts = points.map((p) => ({ x: p.x, y: p.y }));
+  let collapsed = 0;
+  if (pts.length < 5) return { points: pts, collapsed };
+
+  const area2 = (ring: Pt[]): number => {
+    let s = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      s += a.x * b.y - b.x * a.y;
+    }
+    return s;
+  };
+  const lineDist = (p: Pt, a: Pt, b: Pt): number => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return Math.hypot(p.x - a.x, p.y - a.y);
+    return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
+  };
+  const angDeg = (ax: number, ay: number, bx: number, by: number): number => {
+    const d =
+      Math.abs(Math.atan2(ay, ax) - Math.atan2(by, bx)) % (2 * Math.PI);
+    const dd = Math.min(d, 2 * Math.PI - d);
+    return (Math.min(dd, Math.PI - dd) * 180) / Math.PI;
+  };
+  // Wall baseline behind pts[idx]: walk backward through near-collinear
+  // edges so junction debris (a 7 px stub between collinear wall pieces)
+  // can't shrink the baseline below trustworthiness.
+  const chainBack = (idx: number): Pt => {
+    const n = pts.length;
+    let q = pts[(idx + n - 1) % n];
+    let dx = pts[idx].x - q.x;
+    let dy = pts[idx].y - q.y;
+    let acc = Math.hypot(dx, dy);
+    let cursor = (idx + n - 1) % n;
+    for (let k = 0; k < 2 && acc < minTaperPx; k++) {
+      const prev = pts[(cursor + n - 1) % n];
+      const ex = pts[cursor].x - prev.x;
+      const ey = pts[cursor].y - prev.y;
+      if (angDeg(dx, dy, ex, ey) > 4) break;
+      q = prev;
+      acc += Math.hypot(ex, ey);
+      cursor = (cursor + n - 1) % n;
+    }
+    return q;
+  };
+
+  // Try to collapse a wedge whose step chain starts at pts[i]: wall
+  // baseline behind pts[i], then 1..3 short debris edges stepping
+  // outward (net displacement <= one step), then the long shallow taper
+  // returning to the wall line. Removing vertices i..i+k merges wall and
+  // taper into the straight chord.
+  const tryCollapseAt = (i: number): boolean => {
+    const n = pts.length;
+    const wallQ = chainBack(i);
+    if (Math.hypot(pts[i].x - wallQ.x, pts[i].y - wallQ.y) < minTaperPx) {
+      return false;
+    }
+    for (let k = 1; k <= 3 && n - (k + 1) >= 4; k++) {
+      let ok = true;
+      for (let e = 0; e < k; e++) {
+        const a = pts[(i + e) % n];
+        const b = pts[(i + e + 1) % n];
+        if (Math.hypot(b.x - a.x, b.y - a.y) >= maxStepPx) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      const pS = pts[(i + k) % n]; // taper start (top of the step chain)
+      const disp = Math.hypot(pS.x - pts[i].x, pS.y - pts[i].y);
+      if (disp < 2 || disp > maxStepPx) continue;
+      const pE = pts[(i + k + 1) % n]; // taper end (the true corner)
+      if (Math.hypot(pE.x - pS.x, pE.y - pS.y) < minTaperPx) continue;
+      if (
+        angDeg(
+          pts[i].x - wallQ.x,
+          pts[i].y - wallQ.y,
+          pE.x - pS.x,
+          pE.y - pS.y,
+        ) > maxTaperDeg
+      ) {
+        continue;
+      }
+      // Taper starts a full step OFF the wall line and RETURNS toward
+      // it. A real bump-out runs PARALLEL (far end stays a full step
+      // off) and must never collapse — hence the 0.7 return ratio.
+      const offNear = lineDist(pS, wallQ, pts[i]);
+      const offFar = lineDist(pE, wallQ, pts[i]);
+      if (offNear < disp * 0.5) continue;
+      if (offFar > maxEndOffPx || offFar > offNear * 0.7) continue;
+      const remove = new Set<number>();
+      for (let e = 0; e <= k; e++) remove.add((i + e) % n);
+      const trial = pts.filter((_, idx) => !remove.has(idx));
+      if (trial.length < 4) continue;
+      // OUTWARD only: removing the wedge must SHRINK the polygon (and
+      // never eat a meaningful share of the roof).
+      const a0 = Math.abs(area2(pts));
+      const a1 = Math.abs(area2(trial));
+      if (a1 > a0 || a0 - a1 > a0 * 0.06) continue;
+      if (polygonSelfIntersects(trial)) continue;
+      pts = trial;
+      collapsed++;
+      return true;
+    }
+    return false;
+  };
+
+  // The wedge appears in either winding order — [wall, step, taper] or
+  // [taper, step, wall] — so scan the ring in both directions (reversing
+  // twice restores the original orientation).
+  for (let dir = 0; dir < 2; dir++) {
+    for (let pass = 0; pass < 2; pass++) {
+      let changed = false;
+      for (let i = 0; i < pts.length && pts.length >= 5; i++) {
+        if (tryCollapseAt(i)) {
+          changed = true;
+          i--;
+        }
+      }
+      if (!changed) break;
+    }
+    pts = [...pts].reverse();
+  }
+  return { points: pts, collapsed };
 }
 
 /**
