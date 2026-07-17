@@ -118,11 +118,32 @@ function edgeCoverage(a: Pt, b: Pt, s: { a: Pt; b: Pt }, tol: number): number {
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
-/** Index of the outline's principal edge on the side facing `n` (roughly
- *  perpendicular to n, furthest out that way), or -1. */
-function principalEdgeIndex(poly: Pt[], n: Pt): number {
-  let best = -1;
-  let bestScore = -Infinity;
+/**
+ * Index of the outline's principal edge on the side facing `n` (roughly
+ * perpendicular to n), or -1. The caller uses this to strip ONE edge from
+ * the eave set when that face's elevation read continuous_eave===false (a
+ * full gable end, no gutter).
+ *
+ * On a FLUSH face there is only one candidate and picking it is unambiguous.
+ * But a jog splits a face into multiple sub-edges facing the same direction
+ * — e.g. a recessed gable wall AND a farther-out flanking main wall — and
+ * picking blindly "furthest out that way" always grabs the main wall, never
+ * the (nearer) gable, mislabeling the wrong wall as a rake. `avoid` (existing
+ * priced gutter_run segments, same units as `poly`) lets the caller rule OUT
+ * any candidate the AI already traced a real gutter onto: that can't be the
+ * un-guttered gable continuous_eave:false is describing, since the model
+ * would not both call a face gable-only AND draw a solid gutter across a
+ * piece of it. Falls back to the plain furthest-out pick when every
+ * candidate is (or none are) already guttered, so single-edge faces are
+ * untouched — this only changes the ambiguous multi-edge case.
+ */
+function principalEdgeIndex(
+  poly: Pt[],
+  n: Pt,
+  avoid?: readonly { a: Pt; b: Pt }[],
+  avoidTol?: number,
+): number {
+  const candidates: { i: number; score: number; guttered: boolean }[] = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];
     const b = poly[(i + 1) % poly.length];
@@ -132,12 +153,16 @@ function principalEdgeIndex(poly: Pt[], n: Pt): number {
     if (len <= 0) continue;
     if (Math.abs((dx / len) * n.x + (dy / len) * n.y) > 0.5) continue;
     const score = ((a.x + b.x) / 2) * n.x + ((a.y + b.y) / 2) * n.y;
-    if (score > bestScore) {
-      bestScore = score;
-      best = i;
-    }
+    const guttered =
+      !!avoid && avoid.some((s) => edgeCoverage(a, b, s, avoidTol ?? 1) > 0.5);
+    candidates.push({ i, score, guttered });
   }
-  return best;
+  if (candidates.length === 0) return -1;
+  const ungutteredOnly = candidates.filter((c) => !c.guttered);
+  const pool = ungutteredOnly.length > 0 ? ungutteredOnly : candidates;
+  let best = pool[0];
+  for (const c of pool) if (c.score > best.score) best = c;
+  return best.i;
 }
 
 /** Min distance from a point to a polygon's boundary — used to assign a placed
@@ -229,10 +254,16 @@ export function buildEngineTakeoff(
     // fallback for old rows) — a cardinal-only loop left perFace["north"]
     // undefined on modern reads and this protection silently disarmed.
     if (perFace) {
+      // Existing priced gutter runs, as segments principalEdgeIndex can check
+      // a jog's sub-edges against — a sub-edge already carrying a real traced
+      // gutter can't be the un-guttered gable continuous_eave:false names.
+      const guttered = (analysis.gutter_runs ?? [])
+        .map((r) => ({ a: r.start as Pt, b: r.end as Pt }))
+        .filter((s) => isFinitePt(s.a) && isFinitePt(s.b));
       for (const slot of resolveFaceSlots(perFace, faceNormals)) {
         const r = perFace[slot.key];
         if (r && r.readable !== false && r.continuous_eave === false) {
-          const idx = principalEdgeIndex(outline, slot.normal);
+          const idx = principalEdgeIndex(outline, slot.normal, guttered, eaveTol);
           const pos = idx >= 0 ? eaveEdges.indexOf(idx) : -1;
           if (pos >= 0) eaveEdges.splice(pos, 1);
         }

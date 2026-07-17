@@ -473,3 +473,58 @@ test("engine-takeoff: cardinal-keyed rows are unchanged — house-relative resul
   assert.equal(houseRel!.eaveLfFt, 140, "house-relative read drops the same edge");
   assert.deepEqual(houseRel!.takeoff.masses[0].edges, cardinal!.takeoff.masses[0].edges);
 });
+
+// ── DEFECT 3: a JOGGED gable face must drop the gable's own sub-edge, not ───
+// ── whichever sub-edge happens to sit farthest out on that face ────────────
+
+test("engine-takeoff: continuous_eave:false on a JOGGED face drops the un-guttered gable sub-edge, not the flanking main wall", () => {
+  // The right side isn't flush: it steps in for a recessed gable between two
+  // main-wall pieces that are BOTH already guttered (the AI traced real runs
+  // on them) — exactly what a "gable dips in" elevation produces. The old
+  // furthest-out pick always grabbed a main-wall piece (score ties broken by
+  // polygon order) and mislabeled it a rake while leaving the true (nearer,
+  // recessed) gable priced as an eave.
+  const jogged = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 30 }, // right-upper main wall (guttered)
+    { x: 90, y: 30 }, // step in
+    { x: 90, y: 50 }, // the recessed gable's own wall (NOT guttered)
+    { x: 100, y: 50 }, // step back out
+    { x: 100, y: 80 }, // right-lower main wall (guttered)
+    { x: 0, y: 80 },
+  ];
+  const a = analysis({
+    building_footprint: jogged,
+    gutter_runs: [
+      run([0, 0], [100, 0]),
+      run([100, 0], [100, 30]),
+      run([100, 50], [100, 80]),
+      run([100, 80], [0, 80]),
+      run([0, 80], [0, 0]),
+    ],
+  });
+  const perFace = {
+    east: {
+      face: "east",
+      readable: true,
+      unreadable_reason: null,
+      gable_count: 1,
+      continuous_eave: false,
+      gables: [],
+      projections: [],
+      projection_cues: [],
+      confidence: "high",
+    },
+  } as Record<string, import("./face-merge.ts").FaceReadingRaw>;
+  const b = buildEngineTakeoff(a, perFace);
+  assert.ok(b);
+  // Perimeter: 50+15+5+10+5+15+50+40 = 190 ft. Only the 10 ft recessed gable
+  // sub-edge (90,30)-(90,50) should drop → 180 ft. The old furthest-out pick
+  // ties on the two 15 ft main-wall pieces (score 100 each) and polygon-order
+  // breaks the tie onto the FIRST one it sees — 190-15 = 175 ft, wrong wall
+  // dashed. (Mass decomposition may re-tile this footprint's own internal
+  // seams, so eaveLfFt — not raw mass-edge counts, which are an unrelated
+  // subsystem's internal structure — is the decomposition-agnostic check.)
+  assert.equal(b!.eaveLfFt, 180, "drops only the 10 ft recessed gable, not a 15 ft main-wall piece (175 = bug)");
+});

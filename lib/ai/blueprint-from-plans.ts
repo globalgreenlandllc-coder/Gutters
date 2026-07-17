@@ -758,11 +758,15 @@ SELF-CHECK BEFORE EMITTING JSON:
 5. GABLE CHECK (per 2b + 2c): two passes. (a) WHOLE-SIDE: every side you
    marked a GABLE END in 2c carries ZERO gutter_run on its MAIN face — its
    two slopes are excluded_edges of kind "rake"; if you placed an upper-tier
-   eave on a gable-end side's main face, delete it. BUT preserve any
-   LOWER-tier porch/patio/entry eave on that side per the EXCEPTION in 2c —
-   a gable end can still have a lower covered porch that keeps its gutter.
-   Do NOT strip the eave off a HIPPED end (a trapezoid roofline with a
-   visible horizontal eave) either — that eave stays. (b) PER-RUN:
+   eave on a gable-end side's main face, delete it. This applies REGARDLESS
+   of whether the footprint steps/jogs there — a gable end flush with its
+   neighboring walls (no pop-out, no setback) is still a gable end and still
+   gets ZERO gutter on its main face; do not let "the wall doesn't jog" talk
+   you into leaving a gutter_run there. BUT preserve any LOWER-tier
+   porch/patio/entry eave on that side per the EXCEPTION in 2c — a gable end
+   can still have a lower covered porch that keeps its gutter. Do NOT strip
+   the eave off a HIPPED end (a trapezoid roofline with a visible horizontal
+   eave) either — that eave stays. (b) PER-RUN:
    every remaining gutter_run must sit under a HORIZONTAL roofline segment;
    if a run sits under a SLOPED roofline or across a "^" gable peak, delete
    it (re-class as a rake). Confirm every gable peak carries ZERO gutter.
@@ -806,6 +810,18 @@ the building sections, and the elevations: if there is living space
 above the garage (bedroom, bonus, media room) or its outer wall rises
 the full two stories, the garage eaves are "upper" tier (~20 ft), NOT
 lower. Only a detached or clearly 1-story garage roof is "lower".
+
+A PROJECTING section is NOT automatically lower-tier either — tier is
+about the roof PLANE'S HEIGHT off grade, not whether the footprint pops
+out. A bay window, cantilevered second-floor overhang, second-floor
+deck/balcony cover, or upper dormer that sits ABOVE the first floor is
+"upper" tier even though it juts out past the main wall below it, as
+long as its own eave line is still up at the 2-story height. Check the
+elevation's actual eave HEIGHT for that jog, not just whether the
+footprint jogs there: a bump-out reads "lower" only when its roofline
+visibly drops to the short (9-11 ft) porch/patio height in the SAME
+elevation, not merely because building_footprint has a jog at that
+position.
 
 Cues from the roof plan:
 - Lower-tier runs are usually on bump-outs that protrude from the main

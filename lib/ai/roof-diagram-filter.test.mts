@@ -229,6 +229,25 @@ test("collectStepEdges: interior mass boundaries kept + deduped across the two m
   assert.deepEqual(collectStepEdges(edges, PERIM, Infinity), []);
 });
 
+test("collectStepEdges: a DIAGONAL mass-decomposition seam is dropped — real tier boundaries are always H/V", () => {
+  const tol = 2;
+  const edges = [
+    // A genuine axis-aligned tier boundary — kept.
+    { edge: { p1: { x: 30, y: 20 }, p2: { x: 70, y: 20 } }, massName: "upper" },
+    // Decomposition noise: a 45° diagonal "seam" between two masses —
+    // no real architectural tier step ever runs diagonally. Midpoint is
+    // still well clear of PERIM so it isn't dropped as perimeter/eave.
+    { edge: { p1: { x: 20, y: 30 }, p2: { x: 60, y: 70 } }, massName: "lower" },
+    // Near-axis (within the ~12° tolerance) still counts as aligned.
+    { edge: { p1: { x: 10, y: 15 }, p2: { x: 90, y: 22 } }, massName: "lower" },
+  ];
+  const out = collectStepEdges(edges, PERIM, tol);
+  assert.equal(out.length, 2, "the 45° diagonal seam is excluded; the H edge and the near-axis edge survive");
+  assert.ok(!out.some((o) => o.massName === "lower" && o.edge.p2.y === 70), "the diagonal seam never appears");
+  assert.ok(out.some((o) => o.massName === "upper"));
+  assert.ok(out.some((o) => o.edge.p1.x === 10 && o.edge.p1.y === 15), "near-axis edge treated as aligned");
+});
+
 test("collectStepEdges is LF-neutral: inputs are not mutated and mass eave sums are unchanged", () => {
   const mkEdges = () => [
     { edge: { p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 }, gutter: true }, massName: "main" },

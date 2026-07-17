@@ -52,9 +52,29 @@ export type EaveStepSuggestion = {
   tier?: EaveTier;
 };
 
+/** Owner escalation: when the roof-plan page rules a WHOLE side flush
+ *  (stepsRaw.length === 0 — its strongest possible signal, "one flush
+ *  fascia plane across the side") and the traced footprint still carries a
+ *  jog there, straighten it into the diagram instead of only flagging it —
+ *  "everything should be jogged on the diagram only if it's jogged on the
+ *  roof layout." Default ON; BLUEPRINT_EAVE_STEP_STRAIGHTEN=0 restores the
+ *  old flag-only behavior. */
+export function eaveStepStraightenEnabled(override?: boolean): boolean {
+  if (typeof override === "boolean") return override;
+  return process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN !== "0";
+}
+
 export type EaveStepReconcileResult = {
-  /** ALWAYS the caller's analysis object — geometry and LF byte-untouched.
-   *  (Notes are returned separately; the caller merges them.) */
+  /** The caller's analysis object. Geometry and priced LF are byte-untouched
+   *  EXCEPT for the narrow flush-face straightening escalation (see
+   *  eaveStepStraightenEnabled): there, building_footprint loses the jog's
+   *  interior vertices and excluded_edges loses any rake entry that sat on
+   *  them — gutter_runs are NEVER rewritten here (their coordinates already
+   *  sit correctly on the new straight edge; any newly-exposed gap is priced
+   *  or suggested by the normal downstream perimeter-closure pass, same as
+   *  any other mid-wall gap). Straightening notes name the LF as unchanged
+   *  BY THIS PASS; closure may still add real footage for the newly-exposed
+   *  span, exactly like any other uncovered wall gap. */
   analysis: BlueprintAnalysis;
   /** Roof-verified confirmations + suggest-don't-carve notes (loud). */
   notes: string[];
@@ -97,6 +117,10 @@ const SCHEMATIC_DEPTH_FT = 4;
 
 /** Along-face scalar that increases to the viewer's RIGHT. */
 const faceU = (p: Pt, rd: Pt): number => p.x * rd.x + p.y * rd.y;
+
+/** Coordinate-tolerance point match (excluded_edges carry independently-
+ *  parsed {x,y}, never ring object references). */
+const near = (a: Pt, b: Pt, tol: number): boolean => Math.hypot(a.x - b.x, a.y - b.y) <= tol;
 
 type FaceEdge = { L: Pt; R: Pt; uL: number; uR: number; out: number };
 
@@ -154,6 +178,73 @@ function pointAtU(edges: FaceEdge[], u: number, eps = 1e-6): Pt {
   const denom = pick.uR - pick.uL;
   const s = denom !== 0 ? Math.max(0, Math.min(1, (u - pick.uL) / denom)) : 0;
   return { x: pick.L.x + (pick.R.x - pick.L.x) * s, y: pick.L.y + (pick.R.y - pick.L.y) * s };
+}
+
+/**
+ * Collapse a face's jogged sub-edges into ONE straight edge — the flush-face
+ * escalation's core geometry op. Only fires on a genuine "one flush plane +
+ * a recessed notch(es)" shape: the face's two OUTERMOST sub-edges (edges[0]
+ * and the last one, both already sorted by uL) must sit at the same depth
+ * within `depthTolU`, so the new edge is one sensible flush line rather than
+ * a forced diagonal across what might actually be a real multi-level
+ * staircase.
+ *
+ * edges[0].R and edges[1].L are usually NOT the same ring vertex — a real
+ * notch has a PERPENDICULAR connector edge (the jog's own return leg)
+ * sitting between them, which faceEdges() deliberately excludes from `edges`
+ * (it runs along the normal, not across the face). So this walks the RING
+ * by index span from edges[0].L to edges[last].R, trying BOTH winding
+ * directions — picking "whichever is shorter" is not safe on its own (a
+ * short-way-around through an UNRELATED part of the building can beat the
+ * jog's own longer local detour), so the accepted direction is instead the
+ * one whose interior vertices actually CONTAIN every intermediate sub-edge's
+ * own L/R points (edges[1..last-1]), confirming the walk passes through this
+ * face's own jog and nothing else. A sanity cap keeps the removed span
+ * small and local even then. Returns null (no-op) on anything short of
+ * that; the caller falls back to flag-only.
+ */
+function spliceStraightFace(
+  ring: readonly Pt[],
+  edges: readonly FaceEdge[],
+  depthTolU: number,
+): { ring: Pt[]; removedSubEdges: { a: Pt; b: Pt }[] } | null {
+  if (edges.length < 2) return null;
+  if (Math.abs(edges[0].out - edges[edges.length - 1].out) > depthTolU) return null;
+  const n = ring.length;
+  const headIdx = ring.indexOf(edges[0].L);
+  const tailIdx = ring.indexOf(edges[edges.length - 1].R);
+  if (headIdx < 0 || tailIdx < 0 || headIdx === tailIdx) return null;
+  const mustContain = new Set<Pt>();
+  for (let i = 0; i + 1 < edges.length; i++) {
+    mustContain.add(edges[i].R);
+    mustContain.add(edges[i + 1].L);
+  }
+  for (const dir of [1, -1] as const) {
+    const span =
+      dir === 1
+        ? (((tailIdx - headIdx) % n) + n) % n
+        : (((headIdx - tailIdx) % n) + n) % n;
+    if (span < 1 || span > n - 2 || span > Math.max(6, edges.length * 3)) continue;
+    const interiorIdx: number[] = [];
+    for (let k = 1; k < span; k++) interiorIdx.push((((headIdx + dir * k) % n) + n) % n);
+    const interiorSet = new Set(interiorIdx.map((i) => ring[i]));
+    let ok = mustContain.size > 0;
+    for (const p of mustContain) {
+      if (!interiorSet.has(p)) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    const dropIdx = new Set(interiorIdx);
+    const spliced: Pt[] = [];
+    for (let i = 0; i < n; i++) if (!dropIdx.has(i)) spliced.push(ring[i]);
+    return {
+      ring: spliced,
+      removedSubEdges: edges.map((e) => ({ a: e.L, b: e.R })),
+    };
+  }
+  return null;
 }
 
 /** A TRACED roof step on one face: two same-face sub-edges meeting (in u) at
@@ -333,10 +424,17 @@ export function reconcileEaveSteps(args: {
       entries.some(([, r]) => Array.isArray(r.eave_steps)) || roofFaces.length > 0;
     if (!sawField) return unchanged;
 
-    const ring = (args.analysis.building_footprint ?? [])
+    let ring = (args.analysis.building_footprint ?? [])
       .filter((p) => isFinitePt(p as Pt))
       .map((p) => ({ x: p.x, y: p.y }));
     if (ring.length < 4) return unchanged;
+    // Flush-face straightening escalation (see eaveStepStraightenEnabled):
+    // tracked separately from `ring` above/below so a bail anywhere keeps
+    // building_footprint/excluded_edges byte-identical, same as every other
+    // guard in this file.
+    let excludedEdges = (args.analysis.excluded_edges ?? []).slice();
+    let footprintTouched = false;
+    const straightenOn = eaveStepStraightenEnabled();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of ring) {
       if (p.x < minX) minX = p.x;
@@ -346,6 +444,9 @@ export function reconcileEaveSteps(args: {
     }
     const ringSpan = Math.max(maxX - minX, maxY - minY);
     if (!(Number.isFinite(ringSpan) && ringSpan > 0)) return unchanged;
+    // Coordinate-match tolerance for excluded_edges cleanup (they carry
+    // independently-parsed {x,y}, not ring object references).
+    const vTol = Math.max(1, ringSpan * 0.002);
 
     const ftPerUnit = medianFtPerUnit(args.analysis.gutter_runs);
     const ftToU = (ft: number): number =>
@@ -403,6 +504,39 @@ export function reconcileEaveSteps(args: {
       // Traced roof jogs on this face (perpendicular connectors between
       // same-face sub-edges at different depths).
       const minDepthU = Math.max(ftToU(2), ringSpan * 0.02); // ≥ ~2 ft, noise-floored
+
+      // FLUSH-FACE STRAIGHTENING (owner escalation, eaveStepStraightenEnabled):
+      // the roof-plan page's strongest signal — a WHOLE side ruled flush,
+      // stepsRaw.length === 0 — outranks a traced jog outright here, instead
+      // of only flagging it. Only a genuine "one flush plane + notch" shape
+      // qualifies (spliceStraightFace's own depth/contiguity gates); anything
+      // messier falls through to the existing flag-only path below.
+      if (straightenOn && fromRoofPlan && stepsRaw.length === 0 && edges.length > 1) {
+        const spliced = spliceStraightFace(ring, edges, minDepthU / 2);
+        if (spliced) {
+          ring = spliced.ring;
+          footprintTouched = true;
+          const before = excludedEdges.length;
+          excludedEdges = excludedEdges.filter(
+            (ee) =>
+              !spliced.removedSubEdges.some(
+                (s) =>
+                  (near(ee.start as Pt, s.a, vTol) && near(ee.end as Pt, s.b, vTol)) ||
+                  (near(ee.start as Pt, s.b, vTol) && near(ee.end as Pt, s.a, vTol)),
+              ),
+          );
+          const droppedRakes = before - excludedEdges.length;
+          notes.push(
+            `📄 JOG STRAIGHTENED — the roof-plan page shows one flush fascia plane across the ${face} side; the traced jog there (${edges.length - 1} step${edges.length - 1 === 1 ? "" : "s"}) was straightened out of the diagram.` +
+              (droppedRakes > 0
+                ? ` ${droppedRakes} stale no-gutter mark${droppedRakes === 1 ? "" : "s"} on the removed span cleared too.`
+                : "") +
+              ` Any newly-exposed span prices (or suggests) the same as any other uncovered wall gap.`,
+          );
+          continue; // this face's jog is gone — nothing left to trace/flag
+        }
+      }
+
       const traced = tracedStepsOf(edges, minDepthU, Math.max(width * 0.03, 1e-6));
       const tolU = Math.max(ftToU(4), width * 0.06);
 
@@ -534,6 +668,16 @@ export function reconcileEaveSteps(args: {
     // patterns fit the trace significantly better flipped left-right.
     const mirrorNote = detectStepMirror(mirrorEntries);
     if (mirrorNote) notes.push(mirrorNote);
+
+    // Flush-face straightening writes back onto the CALLER's own analysis
+    // object (same reference args.analysis === the caller's `analysis`) —
+    // every other pass in this file mutates analysis.notes the same way, so
+    // this needs no new plumbing at the call site. gutter_runs is
+    // deliberately never touched (see the type doctrine comment above).
+    if (footprintTouched) {
+      args.analysis.building_footprint = ring;
+      args.analysis.excluded_edges = excludedEdges;
+    }
 
     return { analysis: args.analysis, notes, suggestedEaves, verifiedJogIds, wallJogFlags };
   } catch {

@@ -310,6 +310,24 @@ export function shouldDrawTierSteps(
  * these edges are already EXCLUDED from the drawn eaves/rakes by the
  * perimeter-only filter, this only routes them to a display channel.
  */
+/** tan(12°) — an edge within ~12° of horizontal or vertical counts as
+ *  axis-aligned. Mirrors the same tolerance raster-outline.ts's
+ *  pageAxisAlignedFraction uses for the same judgment call elsewhere. */
+const AXIS_TOL_TAN = 0.2126;
+
+/** A real tier boundary in this codebase's domain model (rectilinear
+ *  buildings) is always horizontal or vertical. A mass-decomposition seam
+ *  that comes out diagonal is decomposition noise — residual footprint
+ *  skew, an irregular mass shape the decomposer couldn't cleanly split —
+ *  not an actual architectural step; drawing it reads as a random slash
+ *  across the roof. Display-only gate, mirrors pageAxisAlignedFraction's
+ *  tolerance. */
+function isAxisAligned(p1: DiagramPt, p2: DiagramPt): boolean {
+  const dx = Math.abs(p2.x - p1.x);
+  const dy = Math.abs(p2.y - p1.y);
+  return dy <= dx * AXIS_TOL_TAN || dx <= dy * AXIS_TOL_TAN;
+}
+
 export function collectStepEdges<T extends { p1: DiagramPt; p2: DiagramPt }>(
   edges: readonly StepEdgeSource<T>[],
   footprint: readonly DiagramPt[],
@@ -326,6 +344,7 @@ export function collectStepEdges<T extends { p1: DiagramPt; p2: DiagramPt }>(
     const { p1, p2 } = s.edge;
     if (!finite(p1) || !finite(p2)) continue;
     if (Math.hypot(p2.x - p1.x, p2.y - p1.y) <= dedupTol) continue;
+    if (!isAxisAligned(p1, p2)) continue;
     const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
     if (distToPolygonBoundary(mid, footprint) <= tol) continue;
     const dup = out.some(

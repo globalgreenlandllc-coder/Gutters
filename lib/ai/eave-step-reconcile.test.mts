@@ -443,6 +443,108 @@ test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → wall-jo
   assert.equal(out.analysis.gutter_runs.length, snap.gutter_runs.length, "no run deleted");
 });
 
+// ————————————————— flush-face straightening (owner escalation) —————————————————
+
+/** A real "gable dips in" shape: front face is flush at y=60 on BOTH the left
+ *  (x 0-30) and right (x 70-100) main-wall pieces, with a recessed gable
+ *  wall at y=50 (x 30-70) in between — the exact shape a roof-plan page
+ *  ruling "one flush fascia plane" for the whole side contradicts. */
+const NOTCHED: Pt[] = [
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  { x: 100, y: 60 },
+  { x: 70, y: 60 },
+  { x: 70, y: 50 },
+  { x: 30, y: 50 },
+  { x: 30, y: 60 },
+  { x: 0, y: 60 },
+];
+
+function notchedRuns(): BlueprintRun[] {
+  return [
+    run({ x: 0, y: 60 }, { x: 30, y: 60 }), // main-left (flanking, already guttered)
+    run({ x: 70, y: 60 }, { x: 100, y: 60 }), // main-right (flanking, already guttered)
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+    run({ x: 0, y: 0 }, { x: 0, y: 60 }, { side: "left" }),
+    run({ x: 100, y: 0 }, { x: 100, y: 60 }, { side: "right" }),
+    // No run for the gable (30,50)-(70,50) or its two connectors — matches
+    // real AI output: a face read as gable-only never gets a gutter there.
+  ];
+}
+
+test("(R6) flush-face straightening — roof-page rules the WHOLE front flush, the traced notch is removed from the footprint", () => {
+  const a = analysisOf(NOTCHED, notchedRuns());
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front", continuous_eave: false }) },
+    roofPlanSteps: { front: [] }, // the page: one flush fascia plane, no steps
+  });
+  // The jog is GONE — a straight edge from (0,60) to (100,60), no interior
+  // corners left. wallJogFlags must be empty (nothing left to flag) and the
+  // straightening note fires instead.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 0, y: 60 },
+    ],
+    "the notch's 4 interior vertices are gone; the face is one flush edge",
+  );
+  assert.deepEqual(out.wallJogFlags, [], "nothing left to flag — the jog was corrected, not just noted");
+  const straightened = out.notes.find((n) => /JOG STRAIGHTENED/.test(n));
+  assert.ok(straightened, `expected a JOG STRAIGHTENED note, got: ${JSON.stringify(out.notes)}`);
+  assert.match(straightened!, /front/);
+  // Every existing run's own length_ft is untouched (sum-preserving; no run
+  // was deleted, moved, or resized here) — only the shape changed.
+  assert.deepEqual(
+    out.analysis.gutter_runs.map((r) => r.length_ft),
+    a.gutter_runs.map((r) => r.length_ft),
+    "no run's length_ft changed",
+  );
+  // The gable had no run at all, so nothing to preserve there — this pass
+  // never invents one; that's the downstream perimeter-closure pass's job
+  // (same as any other uncovered wall gap), not this reconcile.
+  assert.equal(out.analysis.gutter_runs.length, notchedRuns().length, "run COUNT unchanged");
+});
+
+test("(R6b) flush-face straightening is OFF when BLUEPRINT_EAVE_STEP_STRAIGHTEN=0 — falls back to flag-only", () => {
+  const prev = process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN;
+  try {
+    process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN = "0";
+    const a = analysisOf(NOTCHED, notchedRuns());
+    const snap = structuredClone(a);
+    const out = reconcileEaveSteps({
+      analysis: a,
+      perFace: { front: face({ face: "front", continuous_eave: false }) },
+      roofPlanSteps: { front: [] },
+    });
+    assertUntouched(a, snap, out);
+    assert.ok(out.wallJogFlags.length > 0, "kill switch restores the old flag-only behavior");
+    assert.ok(!out.notes.some((n) => /JOG STRAIGHTENED/.test(n)));
+  } finally {
+    if (prev === undefined) delete process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN;
+    else process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN = prev;
+  }
+});
+
+test("(R6c) an ASYMMETRIC step (STEPPED fixture) never straightens — ends sit at different depths", () => {
+  // Reuses the existing (R4) fixture: the roof-page rules the whole side
+  // flush, but the traced jog's two ends are at DIFFERENT depths (50 vs 60)
+  // — not a "flush plane + notch," so this must stay flag-only, unchanged
+  // from before this feature existed.
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front" }) },
+    roofPlanSteps: { front: [] },
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.wallJogFlags.length, 1, "asymmetric step still only flags — straightening correctly declines");
+});
+
 test("(R5) roof-page steps never emit the hip inner-return leg (direction is null by design)", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
