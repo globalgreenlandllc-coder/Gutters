@@ -4,13 +4,18 @@ import { useMemo, useState, useTransition } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
+  Bot,
   Check,
   Copy,
+  CreditCard,
+  Database,
   Eye,
+  ExternalLink,
   Key,
   Lock,
   Loader2,
   Mail,
+  Map as MapIcon,
   Plug,
   RefreshCw,
   Send,
@@ -107,6 +112,59 @@ const PROVIDER_META: Record<
     tone: "violet",
   },
 };
+
+// Where an admin goes to top up the provider's own account balance —
+// distinct from ADD_KEY_HINTS (which is about grabbing a credential).
+// Rendered as a persistent "Billing" link on any configured key, and
+// promoted to a call-to-action when a Test comes back quota_exceeded.
+const PROVIDER_BILLING_URL: Partial<Record<ApiKeyProvider, string>> = {
+  OPENAI: "https://platform.openai.com/settings/organization/billing/overview",
+  ANTHROPIC: "https://console.anthropic.com/settings/billing",
+  FAL: "https://fal.ai/dashboard/billing",
+  GEMINI: "https://console.cloud.google.com/billing",
+  GOOGLE_MAPS: "https://console.cloud.google.com/billing",
+  GOOGLE_SOLAR: "https://console.cloud.google.com/billing",
+  MAPBOX: "https://account.mapbox.com/billing/",
+  RESEND: "https://resend.com/settings/billing",
+};
+
+const CATEGORIES: {
+  key: string;
+  label: string;
+  icon: typeof MapIcon;
+  providers: ApiKeyProvider[];
+}[] = [
+  {
+    key: "mapping",
+    label: "Mapping & imagery",
+    icon: MapIcon,
+    providers: ["GOOGLE_MAPS", "GOOGLE_SOLAR", "MAPBOX", "NEARMAP", "EAGLEVIEW"],
+  },
+  {
+    key: "ai",
+    label: "AI vision & inference",
+    icon: Bot,
+    providers: ["OPENAI", "ANTHROPIC", "GEMINI", "FAL"],
+  },
+  {
+    key: "comms",
+    label: "Communications",
+    icon: Mail,
+    providers: ["RESEND"],
+  },
+  {
+    key: "payments",
+    label: "Payments",
+    icon: CreditCard,
+    providers: ["STRIPE_SECRET", "STRIPE_WEBHOOK"],
+  },
+  {
+    key: "data",
+    label: "Public data",
+    icon: Database,
+    providers: ["SOCRATA"],
+  },
+];
 
 // Per-provider hint that renders inside the Add Key dialog. Tells the
 // admin where to actually grab the credential from + what format to
@@ -218,40 +276,62 @@ export function ApiKeysPage({
           </div>
         </header>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {ALL_PROVIDERS.map((provider) => {
-            const meta = PROVIDER_META[provider];
-            const list = byProvider.get(provider) ?? [];
-            const active = list.find((r) => r.active);
-            const inactive = list.filter((r) => !r.active);
-            return (
-              <ProviderCard
-                key={provider}
-                provider={provider}
-                label={meta.label}
-                sub={meta.sub}
-                tone={meta.tone}
-                active={active}
-                inactive={inactive}
-                onAdd={() => setPhase({ kind: "add", provider })}
-                onRotate={(row) => setPhase({ kind: "rotate", row })}
-                onReveal={(row) => setPhase({ kind: "reveal", row })}
-                onTest={(row) => testApiKey(row.id)}
-                onRevoke={async (row) => {
-                  if (
-                    !window.confirm(
-                      `Revoke ${meta.label} key (…${row.fingerprint.slice(-4)})? Apps using it will start failing immediately.`,
-                    )
-                  ) {
-                    return;
-                  }
-                  await revokeApiKey(row.id);
-                  await refetch();
-                }}
-              />
-            );
-          })}
-        </div>
+        {CATEGORIES.map((cat) => {
+          const configuredInCat = cat.providers.filter((p) =>
+            byProvider.get(p)?.some((r) => r.active),
+          ).length;
+          const CatIcon = cat.icon;
+          return (
+            <section key={cat.key} className="space-y-3">
+              <div className="flex items-center gap-2 px-0.5">
+                <CatIcon className="h-4 w-4 text-zinc-400" />
+                <h2 className="font-label text-xs text-zinc-500">
+                  {cat.label}
+                </h2>
+                <span className="text-xs text-zinc-300">·</span>
+                <span className="text-xs text-zinc-400">
+                  {configuredInCat}/{cat.providers.length}
+                </span>
+                <div className="h-px flex-1 bg-zinc-100" />
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {cat.providers.map((provider) => {
+                  const meta = PROVIDER_META[provider];
+                  const list = byProvider.get(provider) ?? [];
+                  const active = list.find((r) => r.active);
+                  const inactive = list.filter((r) => !r.active);
+                  return (
+                    <ProviderCard
+                      key={provider}
+                      provider={provider}
+                      label={meta.label}
+                      sub={meta.sub}
+                      tone={meta.tone}
+                      billingUrl={PROVIDER_BILLING_URL[provider]}
+                      active={active}
+                      inactive={inactive}
+                      onAdd={() => setPhase({ kind: "add", provider })}
+                      onRotate={(row) => setPhase({ kind: "rotate", row })}
+                      onReveal={(row) => setPhase({ kind: "reveal", row })}
+                      onTest={(row) => testApiKey(row.id)}
+                      onRevoke={async (row) => {
+                        if (
+                          !window.confirm(
+                            `Revoke ${meta.label} key (…${row.fingerprint.slice(-4)})? Apps using it will start failing immediately.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        await revokeApiKey(row.id);
+                        await refetch();
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
 
         <section className="surface p-5 shadow-card">
           <div className="flex items-center justify-between">
@@ -330,6 +410,7 @@ function ProviderCard({
   label,
   sub,
   tone,
+  billingUrl,
   active,
   inactive,
   onAdd,
@@ -342,14 +423,17 @@ function ProviderCard({
   label: string;
   sub: string;
   tone: Parameters<typeof Badge>[0]["tone"];
+  /** Where to add funds to the provider's own account, if known. */
+  billingUrl?: string;
   active: ApiKeyRow | undefined;
   inactive: ApiKeyRow[];
   onAdd: () => void;
   onRotate: (row: ApiKeyRow) => void;
   onReveal: (row: ApiKeyRow) => void;
   onRevoke: (row: ApiKeyRow) => void | Promise<void>;
-  /** Hits a provider endpoint to validate the stored key. RESEND is
-   *  wired today; other providers return "not implemented". */
+  /** Hits a provider endpoint to validate the stored key and, for the
+   *  paid providers, run one minimal real request so "out of credits"
+   *  is detected instead of guessed. */
   onTest?: (row: ApiKeyRow) => Promise<TestApiKeyResult>;
 }) {
   const [showHistory, setShowHistory] = useState(false);
@@ -378,14 +462,22 @@ function ProviderCard({
           </div>
           <p className="mt-1 text-xs text-zinc-500">{sub}</p>
         </div>
-        {active ? (
-          <Badge tone="emerald">
-            <Check className="h-3 w-3" />
-            Active
-          </Badge>
-        ) : (
-          <Badge tone="amber">Missing</Badge>
-        )}
+        <div className="flex flex-col items-end gap-1.5">
+          {active ? (
+            <Badge tone="emerald">
+              <Check className="h-3 w-3" />
+              Active
+            </Badge>
+          ) : (
+            <Badge tone="amber">Missing</Badge>
+          )}
+          {testResult?.reason === "quota_exceeded" && (
+            <Badge tone="rose">
+              <CreditCard className="h-3 w-3" />
+              Out of credits
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="mt-4 flex-1">
@@ -428,7 +520,34 @@ function ProviderCard({
         )}
       </div>
 
-      {active && testResult && (
+      {active && testResult && testResult.reason === "quota_exceeded" && (
+        <div className="anim-enter-fade mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+          <div className="flex items-start gap-1.5">
+            <CreditCard className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="font-medium">{testResult.status}</div>
+              {testResult.error && (
+                <div className="mt-0.5 break-words font-mono text-[10px] opacity-80">
+                  {testResult.error}
+                </div>
+              )}
+            </div>
+          </div>
+          {billingUrl && (
+            <a
+              href={billingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-smooth ring-focus mt-2 inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Add credits
+            </a>
+          )}
+        </div>
+      )}
+
+      {active && testResult && testResult.reason !== "quota_exceeded" && (
         <div
           className={cn(
             "anim-enter-fade mt-3 rounded-lg border px-3 py-2 text-xs",
@@ -600,6 +719,18 @@ function ProviderCard({
               <RefreshCw className="h-3.5 w-3.5" />
               Rotate
             </Button>
+            {billingUrl && (
+              <a
+                href={billingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-smooth ring-focus inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                title={`Manage ${label} billing / add credits`}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Billing
+              </a>
+            )}
             <button
               onClick={() => onRevoke(active)}
               className="transition-smooth ring-focus ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
