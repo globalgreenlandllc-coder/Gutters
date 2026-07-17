@@ -1563,33 +1563,27 @@ export function AerialCanvas({
             : isSelected
               ? t.eaveSelected
               : t.eave;
-          // Glow via a LAYERED wide under-stroke instead of a CSS
-          // drop-shadow filter. Filters forced a per-path raster pass
-          // on every one of the ~60 re-renders/second while drawing or
-          // dragging — the single biggest cause of the tool feeling
-          // slow. A translucent halo stroke reads the same and is a
-          // plain vector fill. Low-glow keeps only the selected halo.
+          // NO side-glow on regular lines: the owner traces the eave by
+          // eye against the photo, and any halo under-stroke fattens the
+          // line and hides the roof edge. Only the SELECTED line gets a
+          // subtle halo so "which one am I editing" stays obvious.
           const haloColor = isLower
             ? "rgba(251,191,36,0.9)"
             : theme === "tactical"
               ? "rgba(0,229,255,0.9)"
               : "rgba(20,104,140,0.75)";
-          const haloOpacity =
-            lowGlow && !isSelected
-              ? 0
-              : (isSelected ? 0.5 : 0.3) * (theme === "tactical" ? 1 : 0.6);
           const path = pathFor(line);
           return (
             <g key={line.id}>
-              {haloOpacity > 0 && (
+              {isSelected && !lowGlow && (
                 <path
                   d={path}
                   stroke={haloColor}
-                  strokeWidth={(isSelected ? 12 : 9) * renderScale}
+                  strokeWidth={8 * renderScale}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   fill="none"
-                  opacity={haloOpacity}
+                  opacity={0.3}
                   pointerEvents="none"
                 />
               )}
@@ -1600,9 +1594,7 @@ export function AerialCanvas({
               <path
                 d={path}
                 stroke={stroke}
-                strokeWidth={
-                  (isSelected ? 5 : isHover ? 4.5 : 3.5) * renderScale
-                }
+                strokeWidth={(isSelected ? 4 : isHover ? 3.6 : 2.8) * renderScale}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
@@ -1760,18 +1752,14 @@ export function AerialCanvas({
                   dots stay clickable even when an label is right there. */}
               {isSelected &&
                 line.points.map((pt, idx) => {
-                  // Pure screen-constant sizing. visibleSize = 14
-                  // viewBox units AT renderScale=1 (default zoom);
-                  // shrinking in lockstep with the zoom so 14 px on
-                  // screen is the constant size at every zoom level.
-                  // No floor on the visible square — at extreme zoom
-                  // we'd rather have a tiny dot than a giant box that
-                  // hides the corner.
-                  // Hit radius gets a small viewBox floor so the
-                  // grab zone stays usable even when zoomed out hard.
+                  // Small ROUND handles — the old 14-unit squares
+                  // covered the very roof corner the owner was trying
+                  // to align to. A 4.5-unit ring shows the corner
+                  // through its center; the grab zone stays big via
+                  // the invisible hit circle (screen-constant, with a
+                  // viewBox floor for hard zoom-out).
                   const hitR = Math.max(14 * renderScale, 6);
-                  const visibleSize = 14 * renderScale;
-                  const half = visibleSize / 2;
+                  const dotR = 4.5 * renderScale;
                   return (
                     <g key={idx}>
                       <circle
@@ -1789,15 +1777,20 @@ export function AerialCanvas({
                           });
                         }}
                       />
-                      <rect
-                        x={pt.x - half}
-                        y={pt.y - half}
-                        width={visibleSize}
-                        height={visibleSize}
-                        rx={2.5 * renderScale}
-                        fill={t.handleFill}
+                      <circle
+                        cx={pt.x}
+                        cy={pt.y}
+                        r={dotR}
+                        fill="none"
                         stroke={t.handleStroke}
-                        strokeWidth={2.5 * renderScale}
+                        strokeWidth={1.6 * renderScale}
+                        pointerEvents="none"
+                      />
+                      <circle
+                        cx={pt.x}
+                        cy={pt.y}
+                        r={1.2 * renderScale}
+                        fill={t.handleStroke}
                         pointerEvents="none"
                       />
                     </g>
@@ -1886,21 +1879,8 @@ export function AerialCanvas({
 
         {drawing && (
           <g pointerEvents="none">
-            {/* Halo under-stroke instead of a drop-shadow filter — the
-                preview re-renders on every cursor frame, and a filter
-                here forced a raster pass per frame (the "slow" drag). */}
-            {theme === "tactical" && tool !== "add-gable" && (
-              <line
-                x1={drawing.start.x}
-                y1={drawing.start.y}
-                x2={drawing.end.x}
-                y2={drawing.end.y}
-                stroke="rgba(0,229,255,0.9)"
-                strokeWidth={8 * renderScale}
-                strokeLinecap="round"
-                opacity={0.3}
-              />
-            )}
+            {/* No halo on the preview — while tracing, the owner needs
+                the photo's roof edge visible right beside the line. */}
             <line
               x1={drawing.start.x}
               y1={drawing.start.y}

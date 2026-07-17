@@ -17,6 +17,7 @@ import { runSolarFirstEstimate } from "../lib/ai/solar-engine.ts";
 import type { BuildingInsights } from "../lib/ai/solar.ts";
 
 const SCRATCH =
+  process.env.SOLAR_VERIFY_OUT ??
   "/private/tmp/claude-501/-Users-dmitriyapetenok-Documents-gutters-project/d6dbc9c0-98c0-45a6-bd46-8fb0269129af/scratchpad";
 
 // Pull the key from the project .env without loading the whole app.
@@ -237,6 +238,24 @@ for (const d of result.downspouts) {
 writeFileSync(`${SCRATCH}/${slug}-overlay.png`, PNG.sync.write(png));
 writeFileSync(
   `${SCRATCH}/${slug}-report.json`,
-  JSON.stringify({ address: geo.formatted, notes, measurements: result.measurements, traceQuality: result.traceQuality }, null, 2),
+  JSON.stringify(
+    {
+      address: geo.formatted,
+      notes,
+      measurements: result.measurements,
+      traceQuality: result.traceQuality,
+      canvasPxPerFt: result.canvasPxPerFt,
+      // Full geometry so accuracy work can diff runs offline without
+      // re-hitting the live APIs.
+      eaves: result.eaves,
+      rakes: result.rakes,
+      suggestedEaves: result.suggestedEaves,
+      downspouts: result.downspouts,
+      perimeter: result.roofStructure.perimeter,
+      ridges: result.roofStructure.ridges,
+    },
+    null,
+    2,
+  ),
 );
 console.log(`\nwrote ${slug}-overlay.png + ${slug}-report.json`);

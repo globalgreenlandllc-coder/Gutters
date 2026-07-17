@@ -379,6 +379,13 @@ export async function runSolarFirstEstimate(args: {
         metersPerPixel: mpp,
         groundHeightM: ground,
         allowMask,
+        // The drip edge sits ≲1 m past the wall line the mask traces;
+        // the old 3 m budget let the BFS crawl metres onto a shadowed
+        // tree canopy that hugs the roof height (dark enough to pass
+        // the green test, smooth at its crown) — the "trace catches
+        // the landscaping" complaint. 1.6 m still recovers overhangs
+        // and mask-smoothed corners.
+        maxGrowM: 1.6,
       });
       let growMask = baseMask;
       if (grown.grownPx > 0) {
@@ -478,6 +485,9 @@ export async function runSolarFirstEstimate(args: {
         : ` (${cleaned.cleanup.reason})`) +
       (cleaned.squaredCorners > 0
         ? `, squared ${cleaned.squaredCorners} chamfered corner${cleaned.squaredCorners === 1 ? "" : "s"} to 90°`
+        : "") +
+      (cleaned.notchChains > 0
+        ? `, rebuilt ${cleaned.notchChains} rounded notch${cleaned.notchChains === 1 ? "" : "es"} as square 90° steps`
         : "") +
       `, gutter line offset +${overhangM} m` +
       (traced.touchesEdge
@@ -803,6 +813,35 @@ export async function runSolarFirstEstimate(args: {
     const v = classifyAt(a, b, nrm);
     countSrc(v.src);
     classified.push({ a, b, idx: i, kind: v.kind, lengthFt, via: v.via, nrm });
+  }
+  // NOTCH-STEP CONTINUITY: a SHORT perimeter edge (a staircase step in
+  // a garage/patio notch) that classified as rake purely by azimuth
+  // tie-break or default, sitting BETWEEN two eave edges, gets the
+  // gutter back. On a real hip roof the gutter wraps the whole notch —
+  // a sub-9-ft riser between two gutter walls is almost never a gable
+  // end, but it FACES like one, so the azimuth vote calls it rake and
+  // silently drops priced LF. A DSM height-profile verdict stands (a
+  // genuine short gable reads as a climb and stays unpriced).
+  {
+    let wrapped = 0;
+    const m = classified.length;
+    for (let k = 0; k < m; k++) {
+      const e = classified[k];
+      if (e.kind !== "rake" || e.lengthFt > 9) continue;
+      if (e.via.startsWith("DSM")) continue;
+      const prev = classified[(k - 1 + m) % m];
+      const next = classified[(k + 1) % m];
+      if (prev.kind === "eave" && next.kind === "eave") {
+        e.kind = "eave";
+        e.via = `${e.via} → eave (short notch step between gutter runs)`;
+        wrapped++;
+      }
+    }
+    if (wrapped > 0) {
+      notes.push(
+        `Wrapped the gutter around ${wrapped} short notch step${wrapped === 1 ? "" : "s"} (a riser between two gutter runs carries gutter too)`,
+      );
+    }
   }
   if (formSplits > 0) {
     notes.push(

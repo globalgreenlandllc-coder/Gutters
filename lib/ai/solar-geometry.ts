@@ -1839,6 +1839,9 @@ export type CleanedFootprint = {
   points: Pt[];
   /** Chamfered corners squared away by dechamferPolygon. */
   squaredCorners: number;
+  /** Short-edge chains rebuilt into 90° staircase steps
+   *  (rectifyShortEdgeChains) — the garage/patio notch fix. */
+  notchChains: number;
   cleanup:
     | {
         kind: "regularized";
@@ -1883,10 +1886,15 @@ export function cleanFootprint(
   const reg = regularizeRing(simplified, metersPerPixel);
   if (!reg.changed && polygonSelfIntersects(simplified)) return null;
 
-  const dech = dechamferPolygon(reg.points, metersPerPixel);
+  // Rebuild short-diagonal chains (garage/patio notches) into 90°
+  // staircase steps BEFORE dechamfer — dechamfer then mops up any
+  // remaining single chamfers with its own tighter caps.
+  const rect = rectifyShortEdgeChains(reg.points, metersPerPixel);
+  const dech = dechamferPolygon(rect.points, metersPerPixel);
   return {
     points: dech.points,
     squaredCorners: dech.squared,
+    notchChains: rect.rebuiltChains,
     cleanup: reg.changed
       ? {
           kind: "regularized",
@@ -1900,6 +1908,220 @@ export function cleanFootprint(
           reason: reg.reason ?? "regularization skipped",
         },
   };
+}
+
+/**
+ * STAIRCASE-REBUILD short-edge chains ("Manhattan-ize the notch").
+ *
+ * The garage / patio inside-notch keeps coming out of the mask as a
+ * chain of short 2–10 ft edges meeting at 50–75° — mask smoothing that
+ * regularizeRing can't fix (each mini-edge is 30°+ off the grid, so
+ * angle-snapping rightly refuses to rotate it) and dechamferPolygon
+ * can't either (it only splices ONE short edge between two long walls).
+ * Real architecture there is a rectilinear staircase of 90° steps.
+ *
+ * For every maximal run of consecutive SHORT edges whose bounding long
+ * walls agree on a grid (their directions match modulo 90°), rebuild
+ * the run as axis-aligned steps in that local frame:
+ *   • each short edge is quantized to the nearer axis (H/V),
+ *   • corners re-land on the original vertices' coordinates,
+ *   • the final step approaches the trailing wall PERPENDICULAR so the
+ *     corner at the junction is exactly 90°.
+ *
+ * A genuine long diagonal (45° wing wall) is never touched: it is
+ * longer than maxEdgeM, so it acts as a chain BOUNDARY — and a chain
+ * whose two bounding walls disagree (grid wall on one side, 45° wing on
+ * the other) is skipped entirely.
+ *
+ * Guards, per chain: every rebuilt vertex must stay within
+ * maxLocalDriftM of the original chain (and vice versa). Globally: the
+ * polygon must stay simple and keep its area within ±7 %, else the
+ * whole pass returns the input unchanged.
+ */
+export function rectifyShortEdgeChains(
+  points: Pt[],
+  metersPerPixel: number,
+  opts?: {
+    maxEdgeM?: number;
+    minWallM?: number;
+    frameTolDeg?: number;
+    maxLocalDriftM?: number;
+  },
+): { points: Pt[]; rebuiltChains: number } {
+  const maxEdgePx = (opts?.maxEdgeM ?? 3.2) / metersPerPixel;
+  const minWallPx = (opts?.minWallM ?? 3.2) / metersPerPixel;
+  const frameTolDeg = opts?.frameTolDeg ?? 10;
+  const driftPx = (opts?.maxLocalDriftM ?? 1.3) / metersPerPixel;
+  const n = points.length;
+  if (n < 6) return { points, rebuiltChains: 0 };
+
+  const edgeVec = (i: number) => ({
+    x: points[(i + 1) % n].x - points[i].x,
+    y: points[(i + 1) % n].y - points[i].y,
+  });
+  const edgeLen = (i: number) => {
+    const v = edgeVec(i);
+    return Math.hypot(v.x, v.y);
+  };
+  // Angular distance between two directions modulo 90° (grid family).
+  const ang90 = (a: number, b: number): number => {
+    const step = Math.PI / 2;
+    let d = (a - b) % step;
+    if (d < 0) d += step;
+    d = Math.min(d, step - d);
+    return (d * 180) / Math.PI;
+  };
+  const distToPolyline = (p: Pt, line: Pt[]): number => {
+    let best = Infinity;
+    for (let i = 0; i + 1 < line.length; i++) {
+      const a = line[i];
+      const b = line[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const l2 = dx * dx + dy * dy;
+      const t =
+        l2 === 0
+          ? 0
+          : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+      best = Math.min(
+        best,
+        Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)),
+      );
+    }
+    return best;
+  };
+
+  const isShort: boolean[] = [];
+  for (let i = 0; i < n; i++) isShort.push(edgeLen(i) < maxEdgePx);
+  if (!isShort.some(Boolean) || isShort.every(Boolean)) {
+    return { points, rebuiltChains: 0 };
+  }
+
+  // Maximal circular runs of short edges.
+  const chains: { s: number; e: number }[] = [];
+  let i0 = 0;
+  while (isShort[i0]) i0 = (i0 + 1) % n; // start on a wall edge
+  let i = i0;
+  do {
+    if (isShort[i]) {
+      let e = i;
+      while (isShort[(e + 1) % n]) e = (e + 1) % n;
+      chains.push({ s: i, e });
+      i = (e + 1) % n;
+    } else {
+      i = (i + 1) % n;
+    }
+  } while (i !== i0);
+
+  const skip = new Set<number>();
+  const insertAfter = new Map<number, Pt[]>();
+  let rebuiltChains = 0;
+
+  for (const { s, e } of chains) {
+    const lead = (s - 1 + n) % n; // long wall before the chain
+    const trail = (e + 1) % n; // long wall after the chain
+    if (edgeLen(lead) < minWallPx || edgeLen(trail) < minWallPx) continue;
+    const leadV = edgeVec(lead);
+    const trailV = edgeVec(trail);
+    const leadA = Math.atan2(leadV.y, leadV.x);
+    const trailA = Math.atan2(trailV.y, trailV.x);
+    // Bounding walls must share a grid, or there IS no local frame to
+    // staircase in (e.g. grid wall on one side, 45° wing on the other).
+    if (ang90(leadA, trailA) > frameTolDeg) continue;
+
+    // Local frame: rotate so the leading wall is horizontal.
+    const cos = Math.cos(-leadA);
+    const sin = Math.sin(-leadA);
+    const rot = (p: Pt): Pt => ({
+      x: p.x * cos - p.y * sin,
+      y: p.x * sin + p.y * cos,
+    });
+    const unrot = (p: Pt): Pt => ({
+      x: p.x * cos + p.y * sin,
+      y: -p.x * sin + p.y * cos,
+    });
+
+    // Chain vertices: A (junction with lead wall), mids, B (junction
+    // with trail wall).
+    const chainIdx: number[] = [];
+    for (let k = s; ; k = (k + 1) % n) {
+      chainIdx.push(k);
+      if (k === e) break;
+    }
+    const orig: Pt[] = [points[s]];
+    for (const k of chainIdx) orig.push(points[(k + 1) % n]);
+    const f = orig.map(rot);
+    const A = f[0];
+    const B = f[f.length - 1];
+
+    // Trailing wall axis in this frame decides the final approach.
+    const tv = rot({ x: trailV.x, y: trailV.y });
+    const trailHoriz = Math.abs(tv.x) >= Math.abs(tv.y);
+
+    const built: Pt[] = [A];
+    for (let j = 1; j < f.length; j++) {
+      const cur = built[built.length - 1];
+      const v = f[j];
+      if (j < f.length - 1) {
+        const horiz = Math.abs(v.x - cur.x) >= Math.abs(v.y - cur.y);
+        built.push(horiz ? { x: v.x, y: cur.y } : { x: cur.x, y: v.y });
+      } else {
+        // Land exactly on B; approach perpendicular to the trailing
+        // wall so the junction corner comes out 90°.
+        built.push(
+          trailHoriz ? { x: B.x, y: cur.y } : { x: cur.x, y: B.y },
+        );
+        built.push(v);
+      }
+    }
+    // Collapse zero-length steps and collinear middles.
+    const clean: Pt[] = [];
+    for (const p of built) {
+      const prev = clean[clean.length - 1];
+      if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 0.75) {
+        clean[clean.length - 1] = p;
+        continue;
+      }
+      clean.push(p);
+    }
+    for (let j = clean.length - 2; j >= 1; j--) {
+      const a = clean[j - 1];
+      const m = clean[j];
+      const b = clean[j + 1];
+      const collinear =
+        (Math.abs(a.x - m.x) < 0.4 && Math.abs(m.x - b.x) < 0.4) ||
+        (Math.abs(a.y - m.y) < 0.4 && Math.abs(m.y - b.y) < 0.4);
+      if (collinear) clean.splice(j, 1);
+    }
+    if (clean.length < 2) continue;
+
+    // Local drift gates, both directions.
+    const okOut = clean.every((p) => distToPolyline(p, f) <= driftPx);
+    const okIn = f.every((p) => distToPolyline(p, clean) <= driftPx);
+    if (!okOut || !okIn) continue;
+
+    const mids = clean.slice(1, clean.length - 1).map(unrot);
+    for (const k of chainIdx) {
+      if (k !== s) skip.add(k); // drop original mid vertices
+    }
+    insertAfter.set(s, mids);
+    rebuiltChains++;
+  }
+
+  if (rebuiltChains === 0) return { points, rebuiltChains: 0 };
+
+  const out: Pt[] = [];
+  for (let k = 0; k < n; k++) {
+    if (skip.has(k)) continue;
+    out.push(points[k]);
+    const ins = insertAfter.get(k);
+    if (ins) out.push(...ins);
+  }
+  if (out.length < 4) return { points, rebuiltChains: 0 };
+  if (polygonSelfIntersects(out)) return { points, rebuiltChains: 0 };
+  const ratio = polygonArea(out) / Math.max(1, polygonArea(points));
+  if (ratio < 0.93 || ratio > 1.07) return { points, rebuiltChains: 0 };
+  return { points: out, rebuiltChains };
 }
 
 export function polygonArea(points: Pt[]): number {

@@ -186,7 +186,12 @@ export function AerialSection({
               <div className="aspect-[16/10]">
                 <PresentationCanvas
                   eaves={takeoff!.eaves}
-                  rakes={takeoff!.rakes}
+                  // CLIENT-CLEAN photo: the gray-dashed rakes are a
+                  // working layer ("no gutter here") for the contractor.
+                  // The homeowner's deliverable shows the perimeter,
+                  // priced gutter runs and downspouts only — same rule
+                  // as the presentation diagram above.
+                  rakes={editable ? takeoff!.rakes : []}
                   downspouts={takeoff!.downspouts}
                   roofStructure={takeoff!.roofStructure}
                   onEavesChange={editable ? handleEavesChange : undefined}
