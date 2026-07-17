@@ -226,6 +226,20 @@ const mapLine = (l: { points: { x: number; y: number }[] }, color: [number, numb
     drawLine(png, canvasToImg(l.points[i - 1], W, H), canvasToImg(l.points[i], W, H), color, thick);
   }
 };
+// Traced footprint perimeter (dark blue, thin) — under everything, so a
+// perimeter edge that got neither an eave nor a rake shows as bare blue.
+{
+  const perim = result.roofStructure.perimeter;
+  for (let i = 0; i < perim.length; i++) {
+    drawLine(
+      png,
+      canvasToImg(perim[i], W, H),
+      canvasToImg(perim[(i + 1) % perim.length], W, H),
+      [40, 60, 255],
+      1,
+    );
+  }
+}
 for (const r of result.roofStructure.ridges) mapLine(r, [255, 165, 0], 1); // orange ridges
 for (const r of result.rakes) mapLine(r, [255, 60, 60], 1); // red rakes
 for (const e of result.eaves) mapLine(e, [0, 255, 255], 2); // cyan eaves
