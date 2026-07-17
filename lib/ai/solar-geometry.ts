@@ -478,8 +478,10 @@ export function growRoofMask(args: {
   };
 
   const out = mask.slice();
-  // Multi-source BFS from the mask boundary with a step budget.
-  let frontier: number[] = [];
+  // Multi-source BFS from the mask boundary with a step budget. Each
+  // frontier entry carries the height of its ORIGINAL seed pixel (the
+  // mask-boundary pixel the growth chain started from).
+  let frontier: { idx: number; seedH: number }[] = [];
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const i = y * width + x;
@@ -490,7 +492,7 @@ export function growRoofMask(args: {
         mask[i - width] === 0 ||
         mask[i + width] === 0
       ) {
-        frontier.push(i);
+        frontier.push({ idx: i, seedH: dsm[i] });
       }
     }
   }
@@ -500,8 +502,8 @@ export function growRoofMask(args: {
   const growCap = Math.round(maskArea * 0.45);
 
   for (let step = 0; step < maxSteps && frontier.length > 0; step++) {
-    const next: number[] = [];
-    for (const idx of frontier) {
+    const next: { idx: number; seedH: number }[] = [];
+    for (const { idx, seedH } of frontier) {
       const x = idx % width;
       const y = (idx - x) / width;
       const hHere = dsm[idx];
@@ -521,16 +523,130 @@ export function growRoofMask(args: {
         // locally smooth at its crown) got annexed — and the tier engine
         // then drew a gutter loop around a TREE next to the porch.
         if (validH(hHere) && Math.abs(dsm[ni] - hHere) > 0.6) continue;
+        // SEED-RELATIVE CAP: per-step continuity alone lets the BFS walk
+        // DOWN the drip-edge height ramp (each mixed pixel drops ≤0.6 m,
+        // chained steps descend the whole cliff) and annex a fringe of
+        // driveway/lawn beside the roof — the wobble that bent the
+        // garage corner. A roof's drip zone stays near its seed height;
+        // the ramp to grade does not.
+        if (validH(seedH) && validH(dsm[ni]) && Math.abs(dsm[ni] - seedH) > 1.2)
+          continue;
         if (args.allowMask && args.allowMask[ni] === 0) continue;
         out[ni] = 1;
         grownPx++;
         if (grownPx > growCap) return { mask, grownPx: 0 }; // runaway — distrust
-        next.push(ni);
+        next.push({ idx: ni, seedH });
       }
     }
     frontier = next;
   }
   return { mask: out, grownPx };
+}
+
+/**
+ * RECLAIM shadowed roof the plane-trim cut. Google's raw ML building
+ * mask already marked these pixels as building; trimMaskToRoofPlanes
+ * removed them because Solar's plane list doesn't cover them (low
+ * porch/patio tiers rarely get panel planes) or they sit past the +2 m
+ * bbox padding. When such a pixel is HEIGHT-CONTINUOUS with the kept
+ * roof beside it, the roof plainly continues there — usually under
+ * tree shadow ("logically continue the roof under the trees").
+ *
+ * Safety comes from the raw-mask restriction: tree canopy beside the
+ * house is NOT in the raw building mask, so this pass cannot re-annex
+ * it (the failure mode that motivated the trim). On top of that each
+ * pixel must be locally flat + tonally uniform (crown/speckle gates)
+ * and stay within a tight height band of its seed chain.
+ */
+export function reclaimTrimmedRoof(args: {
+  /** Google's raw ML building mask (pre-trim). */
+  rawMask: Uint8Array;
+  /** The kept (post-trim) mask to grow back from. */
+  kept: Uint8Array;
+  dsm: Float32Array;
+  dsmNoData: number;
+  rgb: Uint8Array;
+  width: number;
+  height: number;
+  metersPerPixel: number;
+}): { mask: Uint8Array; reclaimedPx: number } {
+  const { rawMask, kept, dsm, dsmNoData, width, height } = args;
+  const validH = (v: number) =>
+    Number.isFinite(v) && Math.abs(v - dsmNoData) > 0.001 && v > -450 && v < 9000;
+
+  // DSM flatness only — NO luminance gate here. The pass exists to
+  // cross lit→shadow boundaries (that 3×3 contrast is exactly what a
+  // speckle test rejects); domed tree crowns are caught by the height
+  // range, and the raw-mask restriction keeps canopy out anyway.
+  const flatRoof = (x: number, y: number): boolean => {
+    if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return false;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const j = (y + dy) * width + (x + dx);
+        const v = dsm[j];
+        if (!validH(v)) return false;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    return hi - lo <= 0.55; // domed crown / cliff
+  };
+
+  const out = kept.slice();
+  let frontier: { idx: number; seedH: number }[] = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      if (kept[i] === 0) continue;
+      if (
+        kept[i - 1] === 0 ||
+        kept[i + 1] === 0 ||
+        kept[i - width] === 0 ||
+        kept[i + width] === 0
+      ) {
+        frontier.push({ idx: i, seedH: dsm[i] });
+      }
+    }
+  }
+  let keptArea = 0;
+  for (let i = 0; i < kept.length; i++) keptArea += kept[i];
+  const cap = Math.round(keptArea * 0.18);
+  let reclaimedPx = 0;
+
+  // No step budget: the pass is bounded by the raw mask itself (it can
+  // only re-admit pixels Google called building) plus the area cap.
+  while (frontier.length > 0) {
+    const next: { idx: number; seedH: number }[] = [];
+    for (const { idx, seedH } of frontier) {
+      const x = idx % width;
+      const y = (idx - x) / width;
+      const hHere = dsm[idx];
+      for (const [nx, ny] of [
+        [x - 1, y],
+        [x + 1, y],
+        [x, y - 1],
+        [x, y + 1],
+      ] as const) {
+        const ni = ny * width + nx;
+        if (nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1) continue;
+        if (out[ni] > 0) continue;
+        if (rawMask[ni] === 0) continue; // ML never called it building
+        const h = dsm[ni];
+        if (!validH(h)) continue;
+        if (validH(hHere) && Math.abs(h - hHere) > 0.45) continue; // per-step
+        if (validH(seedH) && Math.abs(h - seedH) > 1.0) continue; // vs chain seed
+        if (!flatRoof(nx, ny)) continue;
+        out[ni] = 1;
+        reclaimedPx++;
+        if (reclaimedPx > cap) return { mask: kept, reclaimedPx: 0 }; // distrust
+        next.push({ idx: ni, seedH });
+      }
+    }
+    frontier = next;
+  }
+  return { mask: out, reclaimedPx };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1842,6 +1958,9 @@ export type CleanedFootprint = {
   /** Short-edge chains rebuilt into 90° staircase steps
    *  (rectifyShortEdgeChains) — the garage/patio notch fix. */
   notchChains: number;
+  /** Off-grid outward bulges collapsed to their on-grid chord
+   *  (collapseOffGridBulges) — the driveway-shadow corner fix. */
+  collapsedBulges: number;
   cleanup:
     | {
         kind: "regularized";
@@ -1890,11 +2009,16 @@ export function cleanFootprint(
   // staircase steps BEFORE dechamfer — dechamfer then mops up any
   // remaining single chamfers with its own tighter caps.
   const rect = rectifyShortEdgeChains(reg.points, metersPerPixel);
-  const dech = dechamferPolygon(rect.points, metersPerPixel);
+  // Shadow/DSM-halo bulges (two off-grid edges straddling a grid
+  // direction) collapse to their on-grid chord — the parked-car /
+  // driveway-shadow corner fix. Outward-only, so it never adds roof.
+  const bulge = collapseOffGridBulges(rect.points, metersPerPixel);
+  const dech = dechamferPolygon(bulge.points, metersPerPixel);
   return {
     points: dech.points,
     squaredCorners: dech.squared,
     notchChains: rect.rebuiltChains,
+    collapsedBulges: bulge.collapsed,
     cleanup: reg.changed
       ? {
           kind: "regularized",
@@ -2122,6 +2246,110 @@ export function rectifyShortEdgeChains(
   const ratio = polygonArea(out) / Math.max(1, polygonArea(points));
   if (ratio < 0.93 || ratio > 1.07) return { points, rebuiltChains: 0 };
   return { points: out, rebuiltChains };
+}
+
+/**
+ * Collapse OFF-GRID OUTWARD BULGES. A shadow/DSM-halo blob at a roof
+ * corner (classically: the dark driveway strip beside a parked car)
+ * survives the mask trims and reaches cleanup as TWO medium edges that
+ * straddle a grid direction — e.g. 27° and 57° around a true 45° hip
+ * edge. Neither edge is short enough for the notch rebuild, angle-snap
+ * rightly refuses to rotate them, and the photo refine can only
+ * translate walls — so the bulge ships as a bent corner.
+ *
+ * Rule: for a vertex B between edges A→B and B→C, drop B when
+ *   • BOTH edges are off-grid (>8° from every allowed family), and
+ *   • the chord A→C IS on-grid (≤6°), and
+ *   • B deviates ≤ maxApexM from the chord, on the OUTSIDE — removing
+ *     an outward bulge only ever SHRINKS the outline (never fabricates
+ *     roof; a notch is left alone).
+ * Real architecture keeps its corners: a bay or wing corner has at
+ * least one on-grid edge, which fails the first gate.
+ */
+export function collapseOffGridBulges(
+  points: Pt[],
+  metersPerPixel: number,
+  opts?: { maxApexM?: number; offGridDeg?: number; chordSnapDeg?: number },
+): { points: Pt[]; collapsed: number } {
+  const maxApexPx = (opts?.maxApexM ?? 2.0) / metersPerPixel;
+  const offGridDeg = opts?.offGridDeg ?? 8;
+  const chordSnapDeg = opts?.chordSnapDeg ?? 6;
+  let pts = points;
+  let collapsed = 0;
+  if (pts.length < 5) return { points: pts, collapsed };
+
+  // Dominant frame from the longer edges (quadruple-angle mean), same
+  // convention as regularizeRing; families = {θ, θ+45°} modulo 90°.
+  const frameTheta = (ring: Pt[]): number => {
+    let fx = 0;
+    let fy = 0;
+    const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % n];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 3 / metersPerPixel) continue;
+      const a4 = 4 * Math.atan2(b.y - a.y, b.x - a.x);
+      fx += len * Math.cos(a4);
+      fy += len * Math.sin(a4);
+    }
+    return Math.atan2(fy, fx) / 4;
+  };
+  const ang90 = (a: number, b: number): number => {
+    const step = Math.PI / 2;
+    let d = (a - b) % step;
+    if (d < 0) d += step;
+    d = Math.min(d, step - d);
+    return (d * 180) / Math.PI;
+  };
+  const theta = frameTheta(pts);
+  const offFamily = (ang: number): number =>
+    Math.min(ang90(ang, theta), ang90(ang, theta + Math.PI / 4));
+
+  const orient = Math.sign(
+    pts.reduce((s, p, i) => {
+      const q = pts[(i + 1) % pts.length];
+      return s + (p.x * q.y - q.x * p.y);
+    }, 0),
+  );
+
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+    for (let i = 0; i < pts.length && pts.length > 4; i++) {
+      const n = pts.length;
+      const A = pts[(i - 1 + n) % n];
+      const B = pts[i];
+      const C = pts[(i + 1) % n];
+      const a1 = Math.atan2(B.y - A.y, B.x - A.x);
+      const a2 = Math.atan2(C.y - B.y, C.x - B.x);
+      if (offFamily(a1) <= offGridDeg || offFamily(a2) <= offGridDeg) continue;
+      const chordA = Math.atan2(C.y - A.y, C.x - A.x);
+      if (offFamily(chordA) > chordSnapDeg) continue;
+      const chordLen = Math.hypot(C.x - A.x, C.y - A.y);
+      if (chordLen < 1e-6) continue;
+      const cross =
+        (C.x - A.x) * (B.y - A.y) - (C.y - A.y) * (B.x - A.x);
+      const apex = Math.abs(cross) / chordLen;
+      if (apex > maxApexPx || apex < 0.5) continue;
+      // Outward test: B on the outside of chord A→C means dropping it
+      // SHRINKS the polygon. For our ring orientation, an outward apex
+      // has cross sign OPPOSITE to the ring's signed area.
+      if (Math.sign(cross) === orient) continue;
+      const next = [...pts.slice(0, i), ...pts.slice(i + 1)];
+      if (next.length < 4) continue;
+      if (polygonSelfIntersects(next)) continue;
+      pts = next;
+      collapsed++;
+      changed = true;
+      i--;
+    }
+    if (!changed) break;
+  }
+  if (collapsed > 0) {
+    const ratio = polygonArea(pts) / Math.max(1, polygonArea(points));
+    if (ratio < 0.93) return { points, collapsed: 0 };
+  }
+  return { points: pts, collapsed };
 }
 
 export function polygonArea(points: Pt[]): number {

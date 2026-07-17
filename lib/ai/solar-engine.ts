@@ -22,6 +22,7 @@ import {
   expandWindowToAspect,
   findTierEdges,
   growRoofMask,
+  reclaimTrimmedRoof,
   interiorNormal,
   inwardNormalForRing,
   median,
@@ -309,6 +310,44 @@ export async function runSolarFirstEstimate(args: {
       }
       baseMask = chosen;
       allowMask = trim.allowMask;
+      // RECLAIM: the trim cuts everything Solar's plane list doesn't
+      // cover — including real LOW-TIER roof (porch/patio) the raw ML
+      // mask had, typically sitting under tree shadow. Grow those
+      // pixels back where the height runs continuously off the kept
+      // roof. Restricted to raw-mask pixels, so tree canopy (never in
+      // the raw building mask) cannot return. Reclaimed area also
+      // extends the allow zone so the drip-edge growth can reach its
+      // real edge later.
+      {
+        const rec = reclaimTrimmedRoof({
+          rawMask: layers.mask,
+          kept: baseMask,
+          dsm: layers.dsm,
+          dsmNoData: layers.dsmNoData,
+          rgb: layers.rgb,
+          width: layers.grid.width,
+          height: layers.grid.height,
+          metersPerPixel: mpp,
+        });
+        if (rec.reclaimedPx > 8) {
+          baseMask = rec.mask;
+          const m2 = Math.round(rec.reclaimedPx * mpp * mpp);
+          if (allowMask) {
+            const nextAllow = allowMask.slice();
+            for (let i = 0; i < rec.mask.length; i++) {
+              if (rec.mask[i] > 0) nextAllow[i] = 1;
+            }
+            allowMask = nextAllow;
+          }
+          // Sub-1 m² reclaims still apply (a sliver can carry a whole
+          // corner) but aren't worth a note line.
+          if (m2 >= 1) {
+            notes.push(
+              `Recovered ${m2} m² of shadowed roof the plane-trim cut (the building mask had it and the height data runs continuously off the kept roof — roof continues under the tree shadow)`,
+            );
+          }
+        }
+      }
       const outM2 = Math.round(trim.cutOutsidePx * mpp * mpp);
       if (outM2 + planeM2 > 0) {
         notes.push(
@@ -463,6 +502,60 @@ export async function runSolarFirstEstimate(args: {
     }
   }
 
+  // ---- Debug dump (env-gated; used by scripts/verify-solar-engine) ----
+  // SOLAR_DEBUG_DIR=<dir> writes two diagnostic PNGs: mask-stages (red =
+  // trimmed off the raw mask, cyan = kept, yellow = added by grow/
+  // recover/close) and dsm-above (height over grade, blue→red 0–8 m).
+  // Never set in the app — verify-script forensics only.
+  if (process.env.SOLAR_DEBUG_DIR) {
+    try {
+      const { writeFileSync } = await import("node:fs");
+      const Wd = layers.grid.width;
+      const Hd = layers.grid.height;
+      const stages = new PNG({ width: Wd, height: Hd });
+      for (let i = 0; i < Wd * Hd; i++) {
+        let r = layers.rgb[i * 3];
+        let g = layers.rgb[i * 3 + 1];
+        let b = layers.rgb[i * 3 + 2];
+        const inRaw = layers.mask[i] > 0;
+        const inBase = baseMask[i] > 0;
+        const inWork = workMask[i] > 0;
+        if (inWork && !inBase) {
+          r = (r + 510) / 3; g = (g + 510) / 3; b = b / 3; // yellow: grown/recovered/welded
+        } else if (inBase) {
+          r = r / 2; g = (g + 255) / 2; b = (b + 255) / 2; // cyan: kept after trim
+        } else if (inRaw) {
+          r = (r + 510) / 3; g = g / 3; b = b / 3; // red: trimmed away
+        }
+        const o = i * 4;
+        stages.data[o] = r; stages.data[o + 1] = g; stages.data[o + 2] = b; stages.data[o + 3] = 255;
+      }
+      writeFileSync(
+        `${process.env.SOLAR_DEBUG_DIR}/mask-stages.png`,
+        PNG.sync.write(stages),
+      );
+      const hmap = new PNG({ width: Wd, height: Hd });
+      for (let i = 0; i < Wd * Hd; i++) {
+        const v = layers.dsm[i];
+        const ok =
+          Number.isFinite(v) && Math.abs(v - layers.dsmNoData) > 0.001;
+        const above = ok && groundM != null ? v - groundM : 0;
+        const t = Math.max(0, Math.min(1, above / 8));
+        const o = i * 4;
+        hmap.data[o] = Math.round(255 * t);
+        hmap.data[o + 1] = Math.round(80 + 120 * t);
+        hmap.data[o + 2] = Math.round(255 * (1 - t));
+        hmap.data[o + 3] = 255;
+      }
+      writeFileSync(
+        `${process.env.SOLAR_DEBUG_DIR}/dsm-above.png`,
+        PNG.sync.write(hmap),
+      );
+    } catch {
+      // debug-only; never let forensics break the estimate
+    }
+  }
+
   const cleaned = cleanFootprint(traced.boundary, mpp);
   if (!cleaned || cleaned.points.length < 4) {
     notes.push("Footprint cleanup degenerated — legacy tracer");
@@ -488,6 +581,9 @@ export async function runSolarFirstEstimate(args: {
         : "") +
       (cleaned.notchChains > 0
         ? `, rebuilt ${cleaned.notchChains} rounded notch${cleaned.notchChains === 1 ? "" : "es"} as square 90° steps`
+        : "") +
+      (cleaned.collapsedBulges > 0
+        ? `, straightened ${cleaned.collapsedBulges} shadow bulge${cleaned.collapsedBulges === 1 ? "" : "s"} back onto the roof line`
         : "") +
       `, gutter line offset +${overhangM} m` +
       (traced.touchesEdge
