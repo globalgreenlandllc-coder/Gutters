@@ -242,7 +242,8 @@ const mapLine = (l: { points: { x: number; y: number }[] }, color: [number, numb
 }
 for (const r of result.roofStructure.ridges) mapLine(r, [255, 165, 0], 1); // orange ridges
 for (const r of result.rakes) mapLine(r, [255, 60, 60], 1); // red rakes
-for (const e of result.eaves) mapLine(e, [0, 255, 255], 2); // cyan eaves
+for (const e of result.eaves)
+  mapLine(e, e.tier === "lower" ? [255, 170, 30] : [0, 255, 255], 2); // cyan eaves, amber lower-tier
 for (const s of result.suggestedEaves) mapLine(s, [255, 255, 0], 1); // yellow suggestions
 for (const d of result.downspouts) {
   const p = canvasToImg({ x: d.x, y: d.y }, W, H);

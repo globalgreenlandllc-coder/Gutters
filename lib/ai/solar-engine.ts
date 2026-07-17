@@ -1166,11 +1166,120 @@ export async function runSolarFirstEstimate(args: {
     });
     return [L(e.t0), L(e.t1)];
   };
-  let eaves: EditableLine[] = eaveEdges.map((e, i) => ({
-    id: `solar-eave-${i}`,
-    kind: "eave" as const,
-    points: transformToCanvas(renderEdge(e), W, H),
-  }));
+  // TIER-COLOR SPLIT: one straight line on the photo often carries TWO
+  // gutters — the main-roof eave continuing onto an attached garage/porch
+  // whose gutter hangs LOWER. Collinear, but physically separate runs.
+  // Sample the gutter-line height (DSM, 0.7 m inside the edge) along each
+  // eave; a sustained ≥0.7 m step splits the run there, and any piece
+  // whose gutter line sits ≥0.7 m below the house's main gutter line is
+  // tagged tier:"lower" — the canvas colors it amber ("LOWER ROOF"), the
+  // diagram gives it the low-roof color. Display/labeling only: LF is the
+  // same footage (pieces sum), a split joint is a CLOSED end for the
+  // end-cap count (countOpenEaveEnds matches coincident endpoints), and
+  // corner counts come from the polygon, not the runs.
+  const tierInsetPx = 0.7 / mpp;
+  const medOf = (vals: number[]): number | null => {
+    if (vals.length === 0) return null;
+    const s = [...vals].sort((x, y) => x - y);
+    return s[Math.floor(s.length / 2)];
+  };
+  const eaveStations: (number | null)[][] = eaveEdges.map((e) => {
+    const lenM = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) * mpp;
+    const n = Math.max(4, Math.ceil(lenM / 0.6));
+    const out: (number | null)[] = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      out.push(
+        sample(
+          e.a.x + (e.b.x - e.a.x) * t + e.nrm.nx * tierInsetPx,
+          e.a.y + (e.b.y - e.a.y) * t + e.nrm.ny * tierInsetPx,
+        ),
+      );
+    }
+    return out;
+  });
+  // The house's TYPICAL gutter-line height: median of every station on
+  // every eave. "Lower" means below what most of the house's gutters sit
+  // at — a taller great-room wing above the median stays untagged (it's
+  // the exception, not the rule). Caveat: heights are absolute elevation,
+  // so a steeply sloped lot can shade one side lower; 0.7 m of drop needs
+  // ~3.5% grade across a 20 m house before it false-tags.
+  const mainGutterH = (() => {
+    const pool: number[] = [];
+    for (const hs of eaveStations) for (const h of hs) if (h != null) pool.push(h);
+    if (pool.length < 8) return null;
+    pool.sort((x, y) => x - y);
+    return pool[Math.floor(pool.length * 0.5)];
+  })();
+  const LOWER_DROP_M = 0.7;
+  const MIN_PIECE_FT = 4;
+  let lowerRunCount = 0;
+  let lowerRunFt = 0;
+  let eaves: EditableLine[] = [];
+  // UNSPLIT mirror of the perimeter runs. Every count that feeds money or
+  // placement (downspout placement, open-end caps, corner counts, trace
+  // quality) uses THIS list so the tier split can never move a number —
+  // splitting a run in two must not change what the customer pays.
+  const eavesUnsplit: EditableLine[] = [];
+  eaveEdges.forEach((e, i) => {
+    const [ra, rb] = renderEdge(e);
+    eavesUnsplit.push({
+      id: `solar-eave-${i}`,
+      kind: "eave" as const,
+      points: transformToCanvas([ra, rb], W, H),
+    });
+    const hs = eaveStations[i];
+    const n = hs.length - 1;
+    // One sustained step per run: strongest |median(4 after) − median(4
+    // before)| ≥ 0.7 m, at least MIN_PIECE_FT from either end.
+    let splitF: number | null = null;
+    {
+      const WIN = 4;
+      const minEndF = Math.min(0.45, MIN_PIECE_FT / Math.max(e.lengthFt, 1));
+      let best = 0;
+      for (let s = WIN; s <= n - WIN + 1; s++) {
+        const f = s / n;
+        if (f < minEndF || f > 1 - minEndF) continue;
+        const before = hs.slice(s - WIN, s).filter((v): v is number => v != null);
+        const after = hs.slice(s, s + WIN).filter((v): v is number => v != null);
+        if (before.length < 3 || after.length < 3) continue;
+        const d = Math.abs((medOf(after) ?? 0) - (medOf(before) ?? 0));
+        if (d >= LOWER_DROP_M && d > best) {
+          best = d;
+          splitF = f;
+        }
+      }
+    }
+    const pieces = splitF != null ? [[0, splitF] as const, [splitF, 1] as const] : [[0, 1] as const];
+    pieces.forEach(([f0, f1], j) => {
+      const pieceH = medOf(
+        hs
+          .slice(Math.round(f0 * n), Math.round(f1 * n) + 1)
+          .filter((v): v is number => v != null),
+      );
+      const lower =
+        mainGutterH != null && pieceH != null && pieceH < mainGutterH - LOWER_DROP_M;
+      if (lower) {
+        lowerRunCount++;
+        lowerRunFt += e.lengthFt * (f1 - f0);
+      }
+      const lerpR = (t: number): Pt => ({
+        x: ra.x + (rb.x - ra.x) * t,
+        y: ra.y + (rb.y - ra.y) * t,
+      });
+      eaves.push({
+        id: pieces.length > 1 ? `solar-eave-${i}-${j}` : `solar-eave-${i}`,
+        kind: "eave" as const,
+        points: transformToCanvas([lerpR(f0), lerpR(f1)], W, H),
+        ...(lower ? { tier: "lower" as const } : {}),
+      });
+    });
+  });
+  if (lowerRunCount > 0) {
+    notes.push(
+      `Tier colors: ${lowerRunCount} run${lowerRunCount === 1 ? "" : "s"} (≈${Math.round(lowerRunFt)} LF) marked LOWER ROOF — gutter line ≥ ${LOWER_DROP_M} m below the main roof's, incl. splits where one straight line steps down mid-run (same footage, now labeled per tier)`,
+    );
+  }
   let rakes: EditableLine[] = rakeEdges.map((e, i) => ({
     id: `solar-rake-${i}`,
     kind: "rake" as const,
@@ -1659,9 +1768,17 @@ export async function runSolarFirstEstimate(args: {
     })(),
     areaFraction: polygonArea(ringRender) / (W * H),
   };
+  // Counting/placement view: unsplit perimeter runs + everything that
+  // isn't a perimeter run (tier loops). Identical geometry to `eaves`,
+  // just without the tier-split joints — so downspout placement and the
+  // end-cap/corner counts can't shift when a run is split for coloring.
+  const eavesForCounts: EditableLine[] = [
+    ...eavesUnsplit,
+    ...eaves.filter((e) => !e.id.startsWith("solar-eave-")),
+  ];
   const downspouts = placeDownspoutsOnPolygon(
     roofPolygon,
-    eaves,
+    eavesForCounts,
     W,
     H,
     stories,
@@ -1770,11 +1887,11 @@ export async function runSolarFirstEstimate(args: {
 
   // ---- Measurements ---------------------------------------------------
   const cornerSplit = classifyPolygonCorners(roofPolygon, W, H);
-  const openEnds = countOpenEaveEnds(eaves);
+  const openEnds = countOpenEaveEnds(eavesForCounts);
   const measurements = measurementsFromVision({
     eaveLF: totalEaveLF,
     downspoutCount: downspouts.length,
-    cornerCount: countCorners(eaves),
+    cornerCount: countCorners(eavesForCounts),
     stories,
     outsideCorners:
       cornerSplit.outside + cornerSplit.inside > 0
@@ -1799,7 +1916,7 @@ export async function runSolarFirstEstimate(args: {
   const cys = canvasRing.map((p) => p.y);
   let traceQuality = assessSatelliteTrace({
     source: "ai",
-    eaves,
+    eaves: eavesForCounts,
     totalEaveLF,
     footprintAreaFt2,
     footprintBboxCanvas: {
