@@ -1135,6 +1135,13 @@ export async function runEstimateFromPlan(
       analysis.totals = closed.analysis.totals;
       analysis.notes = [...(analysis.notes ?? []), ...closed.reconcileNotes.map((n) => `➕ ${n}`)];
     }
+    // Cap-blocked uncovered wall spans: the closure refused to auto-price
+    // them (the runs already exceed the ring's own perimeter — a hot scale
+    // read), but they're real unguttered geometry — surface each as an
+    // unpriced tap-to-add suggestion on the canvas.
+    for (const s of closed.suggestedRuns ?? []) {
+      suggestedEavesFromPlan.push({ points: [s.start, s.end], tier: "upper" });
+    }
   }
 
   const result = blueprintToEstimateResult(

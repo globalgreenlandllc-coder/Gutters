@@ -260,3 +260,16 @@ test("degenerate inputs: no perimeter → nothing drawn; bad points dropped", ()
   assert.deepEqual(out.ridges, []);
   assert.deepEqual(out.hips, [good]);
 });
+
+// ── round-6: tier-step gate ──────────────────────────────────────────────────
+
+test("shouldDrawTierSteps: only a real multi-level roof draws step lines", async () => {
+  const { shouldDrawTierSteps } = await import("./roof-diagram-filter.ts");
+  assert.equal(shouldDrawTierSteps([{ tier: "upper" }, { tier: "lower" }]), true);
+  // All-upper (the 310-LF 1168G roll that painted full-height seams): no steps.
+  assert.equal(shouldDrawTierSteps([{ tier: "upper" }, { tier: "upper" }]), false);
+  assert.equal(shouldDrawTierSteps([{ tier: "unknown" }, {}]), false);
+  assert.equal(shouldDrawTierSteps([]), false);
+  assert.equal(shouldDrawTierSteps(null), false);
+  assert.equal(shouldDrawTierSteps(undefined), false);
+});

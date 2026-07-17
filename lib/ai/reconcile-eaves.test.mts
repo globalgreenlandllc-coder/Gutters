@@ -346,8 +346,8 @@ test("trace-hip closure: cap trips when closing would exceed the ring's own peri
   });
   assert.equal(analysis.gutter_runs.length, 4, "nothing auto-priced past the cap");
   assert.ok(
-    reconcileNotes.some((n) => /Hip closure SKIPPED/.test(n)),
-    "cap emits a loud skip note",
+    reconcileNotes.some((n) => /Hip closure CAPPED/.test(n)),
+    "cap emits a loud capped note",
   );
 });
 
@@ -519,4 +519,82 @@ test("all-hip read (no gables): closure byte-identical under house-relative vs c
     assert.deepEqual(hr.analysis, cd.analysis, `${mode}: identical analysis`);
     assert.deepEqual(hr.reconcileNotes, cd.reconcileNotes, `${mode}: identical notes`);
   }
+});
+
+// ── round-6: per-sub-span coverage + the cap→suggestions channel ─────────────
+
+test("closure prices a MID-WALL gap the binary coverage test used to swallow", () => {
+  // Rear wall (200 px) covered only at its corners: two 60-px runs leave an
+  // 80-px (40 ft… at 0.5 ft/px → 40 ft) unguttered middle. The old >50%
+  // whole-edge test skipped the wall entirely.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100),
+      run("left", [0, 0], [0, 120], 60),
+      run("right", [200, 0], [200, 120], 60),
+      run("back", [0, 120], [60, 120], 30), // rear left corner only
+      run("back", [140, 120], [200, 120], 30), // rear right corner only
+    ],
+    totals: { linear_feet_gutter: 280, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
+  const added = analysis.gutter_runs.slice(5);
+  assert.equal(added.length, 1, "exactly the mid-wall gap");
+  assert.equal(added[0].length_ft, 40, "80 px × 0.5 ft/px");
+  // Geometry sits on the gap, not the whole wall.
+  const xs = [added[0].start.x, added[0].end.x].sort((p, q) => p - q);
+  assert.ok(Math.abs(xs[0] - 60) <= 12 && Math.abs(xs[1] - 140) <= 12, `gap span (got ${xs})`);
+  assert.equal(analysis.totals.linear_feet_gutter, 320);
+  assert.ok(reconcileNotes.length > 0);
+});
+
+test("closure ignores sub-6-ft mid-wall gaps (label noise), keeps 2-ft floor for whole edges", () => {
+  // Rear wall covered except a 10-px (5 ft) sliver — noise, not gutter.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 100),
+      run("left", [0, 0], [0, 120], 60),
+      run("right", [200, 0], [200, 120], 60),
+      run("back", [0, 120], [110, 120], 55),
+      run("back", [120, 120], [200, 120], 40),
+    ],
+    totals: { linear_feet_gutter: 315, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis } = closeVectorPerimeter(a, {
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
+  assert.equal(analysis.gutter_runs.length, 5, "5-ft sliver not priced");
+});
+
+test("trace-hip cap: blocked additions become unpriced tap-to-add suggestions, never silent", () => {
+  // Runs already total 350 LF on a ring whose perimeter is 320 ft at the
+  // runs' own scale — the cap must refuse to add the uncovered rear wall,
+  // but the wall must surface as a suggestion.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      // ONE hot run (0.75 ft/px vs the 0.5 median) — internal inconsistency
+      // is what the cap detects; a uniformly-hot read scales the perimeter
+      // estimate with it and sails through.
+      { ...run("front", [0, 0], [200, 0], 150), tier: "upper" as const },
+      { ...run("left", [0, 0], [0, 120], 60), tier: "upper" as const },
+      { ...run("right", [200, 0], [200, 120], 60), tier: "upper" as const },
+    ],
+    totals: { linear_feet_gutter: 270, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const r = closeVectorPerimeter(a, {
+    mode: "trace-hip",
+    perFace: { north: { readable: true, continuous_eave: true } },
+  });
+  assert.equal(r.analysis.gutter_runs.length, 3, "nothing auto-priced past the cap");
+  assert.equal(r.analysis.totals.linear_feet_gutter, 270, "priced total untouched");
+  assert.ok(r.suggestedRuns && r.suggestedRuns.length >= 1, "uncovered wall surfaced");
+  assert.ok(
+    r.reconcileNotes.some((n) => n.includes("CAPPED") && n.includes("tap-to-add")),
+    `cap note names the suggestions (got: ${r.reconcileNotes.join(" | ")})`,
+  );
 });

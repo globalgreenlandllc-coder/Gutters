@@ -287,6 +287,20 @@ export function classifyRunPlacement(
 export type StepEdgeSource<T> = { edge: T; massName?: string };
 
 /**
+ * Tier steps are only a real drawing element on a MULTI-LEVEL roof — one
+ * where at least one gutter run sits on a LOWER tier. On a single-level roof
+ * the mass decomposition still slices the footprint into rectangles, but its
+ * seams are geometry bookkeeping, not roof steps — drawing them painted
+ * full-height "step" lines across an all-hip, all-upper rambler that has no
+ * steps at all. Pure gate for the steps channel.
+ */
+export function shouldDrawTierSteps(
+  runs: readonly { tier?: string | null }[] | undefined | null,
+): boolean {
+  return (runs ?? []).some((r) => r?.tier === "lower");
+}
+
+/**
  * Select the tier-STEP edges to draw: interior mass-boundary edges (midpoint
  * farther than `tol` from the footprint perimeter) with finite, non-degenerate
  * geometry, deduplicated across masses (two tier masses SHARE their boundary,

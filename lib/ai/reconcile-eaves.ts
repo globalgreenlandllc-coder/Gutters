@@ -123,6 +123,34 @@ function coveredFraction(e: Edge, segs: Seg[], tol: number): number {
   return total;
 }
 
+/**
+ * Complement of coveredFraction: the UNCOVERED [t0,t1] intervals of edge `e`
+ * (0..1 along it) after merging every overlapping segment's projection. A
+ * wall the runs only cover at its corners returns its mid-wall GAP — the
+ * span the binary >50% coverage test used to swallow whole (runs covering
+ * 60% of a rear wall hid a ~17 ft unguttered middle on a fully-hipped roof).
+ */
+function uncoveredIntervals(e: Edge, segs: Seg[], tol: number): [number, number][] {
+  const ivals: [number, number][] = [];
+  const t = (p: Pt) => ((p.x - e.a.x) * e.ux + (p.y - e.a.y) * e.uy) / e.len;
+  for (const s of segs) {
+    if (overlapFraction(e, s, tol) <= 0) continue;
+    let t0 = t(s.a);
+    let t1 = t(s.b);
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    ivals.push([Math.max(0, t0), Math.min(1, t1)]);
+  }
+  ivals.sort((p, q) => p[0] - q[0]);
+  const gaps: [number, number][] = [];
+  let cursor = 0;
+  for (const [lo, hi] of ivals) {
+    if (lo > cursor) gaps.push([cursor, lo]);
+    cursor = Math.max(cursor, hi);
+  }
+  if (cursor < 1) gaps.push([cursor, 1]);
+  return gaps;
+}
+
 /** Reflect a point across the centroid on the chosen axis. */
 function reflect(p: Pt, c: Pt, axis: "x" | "y" | "both"): Pt {
   return {
@@ -143,6 +171,15 @@ function mirrorSide(side: Side, axis: "x" | "y" | "both"): Side {
 export type ReconcileResult = {
   analysis: BlueprintAnalysis;
   reconcileNotes: string[];
+  /** Uncovered wall spans the closure could NOT price (the trace-hip cap
+   *  tripped — the runs and the ring disagree on total LF). Surfaced as
+   *  unpriced tap-to-add suggestions instead of being silently dropped.
+   *  Absent on every path that priced (or found) nothing. */
+  suggestedRuns?: {
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+    lengthFt: number;
+  }[];
 };
 
 /**
@@ -453,42 +490,58 @@ export function closeVectorPerimeter(
     let uncoveredFt = 0;
     let uncoveredCount = 0;
     let skippedGableEnd = 0;
+    const gableSkipCounted = new Set<number>();
     let notchSkipped = 0;
     let notchSkippedFt = 0;
     edges.forEach((e, i) => {
-      if (coveredFraction(e, gutterSegs, covTol) > COVER) return;
-      if (coveredFraction(e, exclusionSegs, covTol) > COVER) return;
+      // Mostly-notch edges stay a whole-edge skip: counted + noted UNPRICED.
       if (notchSegs.length > 0 && coveredFraction(e, notchSegs, covTol) > COVER) {
         notchSkipped++;
         notchSkippedFt += round1(e.len * ftPerPx);
         return;
       }
-      if (!hasEvidence) {
-        const lenFt = round1(e.len * ftPerPx);
-        if (lenFt >= 2) {
+      // Per-SUB-SPAN coverage. The old binary test (>50% covered → done)
+      // swallowed real mid-wall gaps: two corner runs covering 60% of a rear
+      // wall hid an unguttered ~17 ft middle on a fully-hipped roof. Price
+      // (or count) each uncovered gap instead.
+      const gaps = uncoveredIntervals(
+        e,
+        [...gutterSegs, ...exclusionSegs, ...notchSegs],
+        covTol,
+      );
+      for (const [t0, t1] of gaps) {
+        const frac = t1 - t0;
+        const lenFt = round1(frac * e.len * ftPerPx);
+        // A fully-uncovered edge keeps the historic 2 ft floor; a PARTIAL
+        // mid-wall gap uses a 6 ft floor — smaller gaps are trace/label
+        // noise at the run ends, not missing gutter.
+        const floor = frac > 0.98 ? 2 : 6;
+        if (lenFt < floor) continue;
+        if (!hasEvidence) {
           uncoveredFt += lenFt;
           uncoveredCount++;
+          continue;
         }
-        return;
+        if (gableEndEdges.has(i)) {
+          if (!gableSkipCounted.has(i)) {
+            gableSkipCounted.add(i);
+            skippedGableEnd++;
+          }
+          continue;
+        }
+        newRuns.push({
+          id: `${mode === "trace-hip" ? "hclose" : "vclose"}-${newRuns.length + 1}`,
+          side: sideOf(outwardOf(e)),
+          start: { x: e.a.x + e.ux * e.len * t0, y: e.a.y + e.uy * e.len * t0 },
+          end: { x: e.a.x + e.ux * e.len * t1, y: e.a.y + e.uy * e.len * t1 },
+          length_ft: lenFt,
+          length_px: round1(e.len * frac),
+          drains_to: [],
+          // Trace-hip closes MAIN-ring walls (the footprint is the upper roof);
+          // vector mode keeps the honest "unknown".
+          tier: mode === "trace-hip" ? "upper" : "unknown",
+        });
       }
-      if (gableEndEdges.has(i)) {
-        skippedGableEnd++;
-        return;
-      }
-      const lenFt = round1(e.len * ftPerPx);
-      if (lenFt < 2) return; // jog sliver — not worth a run
-      newRuns.push({
-        id: `${mode === "trace-hip" ? "hclose" : "vclose"}-${newRuns.length + 1}`,
-        side: sideOf(outwardOf(e)),
-        start: { x: e.a.x, y: e.a.y },
-        end: { x: e.b.x, y: e.b.y },
-        length_ft: lenFt,
-        length_px: e.len,
-        drains_to: [],
-        // Trace-hip closes MAIN-ring walls (the footprint is the upper roof);
-        // vector mode keeps the honest "unknown".
-        tier: mode === "trace-hip" ? "upper" : "unknown",
-      });
     });
 
     // The skipped-notch tail rides on whichever closure note fires (or stands
@@ -528,11 +581,25 @@ export function closeVectorPerimeter(
       );
       const addFt = newRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0);
       if (upperPricedFt + addFt > perimeterFt * 1.1) {
+        // The cap means the RUNS are already hot against the ring's own
+        // perimeter (an inflated scale read) — auto-pricing more would
+        // compound it. But the uncovered walls are still real geometry on a
+        // fully-hipped roof: surface them as unpriced TAP-TO-ADD suggestions
+        // instead of a silent drop, so the owner sees exactly which spans
+        // carry no gutter and decides.
         notes.push(
-          `Hip closure SKIPPED — adding ${round1(addFt)} LF would push the upper-tier total past the footprint's own ~${round1(perimeterFt)} ft perimeter; the trace and runs disagree. ${newRuns.length} unguttered edge(s) left UNPRICED for review.` +
+          `Hip closure CAPPED — adding ${round1(addFt)} LF would push the upper-tier total (${round1(upperPricedFt)} LF) past the footprint's own ~${round1(perimeterFt)} ft perimeter; the run lengths and the ring disagree (a hot scale read inflates every run). ${newRuns.length} unguttered wall span(s) left UNPRICED — each is available on the canvas as a tap-to-add suggestion; verify the scale before quoting.` +
             notchSentence,
         );
-        return { analysis, reconcileNotes: notes };
+        return {
+          analysis,
+          reconcileNotes: notes,
+          suggestedRuns: newRuns.map((r) => ({
+            start: r.start,
+            end: r.end,
+            lengthFt: r.length_ft ?? 0,
+          })),
+        };
       }
     }
 

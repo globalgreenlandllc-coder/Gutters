@@ -28,6 +28,7 @@ import {
   classifyRunPlacement,
   collectStepEdges,
   filterRoofDiagramLines,
+  shouldDrawTierSteps,
 } from "./roof-diagram-filter";
 import { facesFromRoofLines } from "./roof-faces-from-lines";
 import type { RoofMassArea } from "./to-masses";
@@ -944,7 +945,12 @@ export function blueprintToEstimateResult(
     // boundary, labeled with the mass/tier name — so a multi-tier plan reads
     // as tiers instead of a bare outline. Infinity tol off the perimeter-only
     // path = no steps (those edges already draw as eaves/rakes there).
-    roofSteps = collectStepEdges(
+    // ONLY on a real multi-level roof: with every run on one tier the
+    // decomposition seams are bookkeeping, not steps — drawing them painted
+    // full-height lines across an all-upper hip roof.
+    roofSteps = !shouldDrawTierSteps(analysis.gutter_runs)
+      ? []
+      : collectStepEdges(
       engineBundle.takeoff.masses.flatMap((m) =>
         m.edges.map((e) => ({ edge: e, massName: m.name })),
       ),
@@ -1336,8 +1342,40 @@ export function blueprintToEstimateResult(
           `⚖ Engine drew ~${diff} LF MORE guttered eave than is priced (${engineBundle.eaveLfFt} drawn vs ${eaveLF} billed, a ${(gapPct * 100).toFixed(0)}% gap). Likely projecting side-eaves (porch/garage/entry gable returns) the measured runs missed — they show on the canvas but add $0. VERIFY and add them if real.`,
         );
       } else {
+        // Priced > drawn: the engine may be under-counting — OR the run
+        // lengths are hot against their own drawn geometry (an inflated
+        // dimensioned-wall scale read). Check the runs' internal consistency:
+        // every run carries length_ft AND pixel geometry, so their ft-per-px
+        // ratios should agree; name the worst deviator so the owner knows
+        // where to start. Flag-only — priced LF is never touched here.
+        const ratios = (analysis.gutter_runs ?? [])
+          .map((r) => {
+            const px =
+              typeof r.length_px === "number" && r.length_px > 0
+                ? r.length_px
+                : isGoodPoint(r.start) && isGoodPoint(r.end)
+                  ? Math.hypot(r.end.x - r.start.x, r.end.y - r.start.y)
+                  : 0;
+            return px > 0 && typeof r.length_ft === "number" && r.length_ft > 0
+              ? { id: r.id, feature: r.feature, ratio: r.length_ft / px, ft: r.length_ft }
+              : null;
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        let inflated = "";
+        if (ratios.length >= 3) {
+          const sorted = [...ratios].sort((a, b) => a.ratio - b.ratio);
+          const median = sorted[Math.floor(sorted.length / 2)].ratio;
+          const worst = ratios.reduce((w, r) =>
+            Math.abs(r.ratio / median - 1) > Math.abs(w.ratio / median - 1) ? r : w,
+          );
+          const dev = worst.ratio / median - 1;
+          if (Math.abs(dev) > 0.2) {
+            inflated = ` The runs also disagree with EACH OTHER on scale: "${worst.id}"${worst.feature ? ` (${worst.feature})` : ""} prices its ${worst.ft} LF ${Math.round(Math.abs(dev) * 100)}% ${dev > 0 ? "hotter" : "colder"} per pixel than the median run — the lengths look inflated vs their own drawn geometry; verify the scale before quoting.`;
+          }
+        }
         notes.push(
-          `⚖ Engine LF ${engineBundle.eaveLfFt} vs priced LF ${eaveLF} — a ${(gapPct * 100).toFixed(0)}% gap. VERIFY against the real roof: the engine may be under-counting eaves (edges classed as gable rakes, or runs not on the perimeter) on a hip-dominant roof.`,
+          `⚖ Engine LF ${engineBundle.eaveLfFt} vs priced LF ${eaveLF} — a ${(gapPct * 100).toFixed(0)}% gap. VERIFY against the real roof: the engine may be under-counting eaves (edges classed as gable rakes, or runs not on the perimeter) on a hip-dominant roof.` +
+            inflated,
         );
       }
     }
