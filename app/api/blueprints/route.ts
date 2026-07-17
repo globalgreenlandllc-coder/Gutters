@@ -21,6 +21,7 @@ import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
+import { readRoofPlanLayout, describeRoofPlanReading } from "@/lib/ai/read-roof-layout";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
@@ -513,6 +514,33 @@ export async function POST(request: Request) {
           ? readAllElevations(source, stage1 && stage1.ok ? stage1.classification : null)
           : Promise.resolve(null);
 
+      // 📄 ROOF-PLAN PAGE READ (owner doctrine: the roof framing / roof plan
+      // page, when the set has one, IS the layout truth — hips at every
+      // corner, gutter callouts, D.S. dots, tier steps — ranked ABOVE the
+      // elevations, which are the fallback because not every set prints such
+      // a page). Only spent on SCANNED/raster sets (no vector linework on any
+      // sheet — the vector engine can't run there and the estimate path leans
+      // on the AI trace + elevations); runs CONCURRENTLY with the elevation
+      // reads. Fail-safe: never throws — a transient outage (the 1168G 529s)
+      // stores readable:false and every consumer degrades to the elevations.
+      // Disable with BLUEPRINT_ROOFPLAN_READ=0.
+      const scannedSet =
+        isPdf &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) < 4 &&
+        (vectorGeometry?.footprint?.segments?.length ?? 0) < 4;
+      const roofPlanPage =
+        stage1 && stage1.ok
+          ? (stage1.classification.roof_plan_page ??
+            (stage1.classification.sheets ?? []).find(
+              (s) => s.sheet_type === "roof_plan" && Number.isFinite(s.page_index),
+            )?.page_index ??
+            null)
+          : null;
+      const roofPlanP =
+        scannedSet && roofPlanPage != null && process.env.BLUEPRINT_ROOFPLAN_READ !== "0"
+          ? readRoofPlanLayout(source, { page: roofPlanPage })
+          : Promise.resolve(null);
+
       // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of
       // ensemble — three independent Opus reads PLUS a Gemini read when a
       // Gemini key is configured (genuine cross-provider second opinion);
@@ -612,6 +640,22 @@ export async function POST(request: Request) {
         ];
         console.log(
           `[/api/blueprints after()] elevation reads: ${elevations.usage.calls} face(s), ${elevations.review_flags.length} flag(s)`,
+        );
+      }
+
+      // Roof-plan layout read (started above, resolved now). Stored verbatim
+      // in the stash; the estimate path does the priority merge. A throw is
+      // impossible by contract (readable:false instead), so a transient
+      // failure never sinks the run.
+      const roofPlanRead = await roofPlanP;
+      if (roofPlanRead) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📄 Roof-plan page ${roofPlanRead.page ?? "?"}: ${describeRoofPlanReading(roofPlanRead.reading)}`,
+          ...roofPlanRead.reading.notes.slice(0, 3).map((n) => `📄 Roof-plan note: ${n}`),
+        ];
+        console.log(
+          `[/api/blueprints after()] roof-plan read: page=${roofPlanRead.page} readable=${roofPlanRead.reading.readable} hips_at_corners=${roofPlanRead.reading.hips_at_corners} ds=${roofPlanRead.reading.total_ds_marks}`,
         );
       }
 
@@ -776,6 +820,12 @@ export async function POST(request: Request) {
           elevation_unreadable: elevations.elevation_unreadable,
           usage: elevations.usage,
         };
+      }
+      if (roofPlanRead) {
+        // Same free-form stash convention as _perFace/_classifier: the
+        // estimate path re-parses it defensively (parseRoofPlanReading), so
+        // old rows without the field stay byte-identical.
+        analysisJson._roofPlanRead = roofPlanRead;
       }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {

@@ -323,6 +323,50 @@ export function reconcileEaves(analysis: BlueprintAnalysis): ReconcileResult {
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 /**
+ * The minimal slice of a FaceReadingRaw the closure consumes. Widened (from
+ * `{ readable, continuous_eave }`) so the ELEVATION-EAVE-WINS restoration can
+ * see the gable info — the runtime objects every caller passes are full
+ * FaceReadingRaw, so no call-site change is needed; legacy objects without
+ * gable fields simply never qualify for restoration (today's behavior).
+ */
+type ClosureFaceRead = {
+  readable?: boolean;
+  continuous_eave?: boolean;
+  gable_count?: number | null;
+  gables?: readonly ({ is_hip_end?: boolean | null } | null | undefined)[] | null;
+  roof_form?: string | null;
+};
+
+/**
+ * ELEVATION-EAVE-WINS gate: does this face read UNAMBIGUOUSLY say
+ * "one continuous eave, ZERO gables"? Only such a read may override the
+ * trace's rake claims on its wall (a face with no gable end has an eave on
+ * that wall — a rake there is a hallucination). Mirrors explainUnanimousHip's
+ * hip-end discounting (an `is_hip_end:true` entry is a hip recorded through
+ * the gable channel, not a gable) so the two hip features stay consistent.
+ *
+ *  - a face reading ANY gable NEVER qualifies (suppression semantics intact);
+ *  - unreadable / missing faces never qualify;
+ *  - roof_form "gabled"/"mixed" vetoes even with an empty gables array;
+ *  - an EXPLICIT zero is required (gables: [] or gable_count: 0) — legacy
+ *    reads without gable info degrade to today's no-restoration behavior.
+ */
+function readsZeroGableContinuousEave(r: ClosureFaceRead | undefined | null): boolean {
+  if (!r || r.readable === false) return false;
+  if (r.continuous_eave !== true) return false;
+  if (r.roof_form === "gabled" || r.roof_form === "mixed") return false;
+  const entries = Array.isArray(r.gables)
+    ? r.gables.filter((g): g is NonNullable<typeof g> => !!g && typeof g === "object")
+    : null;
+  const hipEnds = entries ? entries.filter((g) => g.is_hip_end === true).length : 0;
+  const listed = entries ? entries.length - hipEnds : null;
+  const counted =
+    typeof r.gable_count === "number" ? Math.max(0, r.gable_count - hipEnds) : null;
+  if ((listed ?? 0) > 0 || (counted ?? 0) > 0) return false;
+  return listed === 0 || counted === 0;
+}
+
+/**
  * VECTOR-footprint closure — a stronger pass than reconcileEaves, valid ONLY
  * when building_footprint is the plan's own vector outline (the estimate-time
  * A9/A4 swap applied), not an AI freehand trace.
@@ -342,6 +386,12 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
  *  - a face read as a FULL GABLE END (continuous_eave === false) keeps its
  *    principal edge unguttered (same rule as the engine), respecting the
  *    derived compass orientation;
+ *  - ELEVATION-EAVE-WINS (the inverse): a face read as readable + one
+ *    CONTINUOUS eave + ZERO gables overrides the trace's rake claims on its
+ *    principal edge — the rake is a hallucination there, so those exclusions
+ *    are dropped from the covered set and the wall prices as eave (or, past
+ *    the trace-hip cap, surfaces as a tap-to-add suggestion). Loud note;
+ *    deep-notch excludeEdges always keep winning;
  *  - sub-2-ft slivers are skipped;
  *  - everything added is flagged loudly for review.
  * Pure + never throws.
@@ -350,7 +400,7 @@ export function closeVectorPerimeter(
   analysis: BlueprintAnalysis,
   opts?: {
     faceNormals?: FaceNormals | null;
-    perFace?: Record<string, { readable?: boolean; continuous_eave?: boolean } | undefined> | null;
+    perFace?: Record<string, ClosureFaceRead | undefined> | null;
     /** "vector": the footprint is the plan's own CAD outline (default — the
      *  original behavior). "trace-hip": the footprint is a squared AI trace on
      *  a raster plan, allowed ONLY because the caller verified the elevations
@@ -447,6 +497,40 @@ export function closeVectorPerimeter(
       }
     }
 
+    // ── ELEVATION-EAVE-WINS restoration (inverse of the suppression above) ──
+    // The closure treats the trace's excluded_edges (rake claims) as COVERED
+    // spans, so a HALLUCINATED rake permanently unprices a wall. When a face's
+    // elevation read is readable, reads one CONTINUOUS eave, and reports ZERO
+    // gables, a rake claim on that face's principal edge is contradicted by
+    // the stronger evidence — a roof with no gable on a face carries an eave
+    // on that wall (the 1168G failure: transient-529 front/rear reads left the
+    // trace's invented "gable ends on the left and right" standing, drawing
+    // both long walls as no-gutter dashes — 151 LF priced vs ~269 true).
+    // Same slot → principal-edge mapping as the gable-end suppression, so the
+    // two features stay symmetric. The deep-notch excludeEdges are NEVER
+    // dropped (audited pocket legs stay unpriced), and the trace-hip cap still
+    // applies downstream (capped spans surface as tap-to-add suggestions).
+    const restoreEdges = new Map<number, string>();
+    if (opts?.perFace) {
+      for (const slot of resolveFaceSlots(opts.perFace, opts.faceNormals)) {
+        if (!readsZeroGableContinuousEave(opts.perFace[slot.key])) continue;
+        const n = slot.normal;
+        let best = -1;
+        let bestScore = -Infinity;
+        edges.forEach((e, i) => {
+          if (Math.abs(e.ux * n.x + e.uy * n.y) > 0.5) return; // runs along n
+          const score = e.mid.x * n.x + e.mid.y * n.y;
+          if (score > bestScore) {
+            bestScore = score;
+            best = i;
+          }
+        });
+        // A gable-end edge (some OTHER face read a full-wall gable there)
+        // must never be restored — suppression always wins.
+        if (best >= 0 && !gableEndEdges.has(best)) restoreEdges.set(best, slot.key);
+      }
+    }
+
     // ── EVIDENCE GATE ────────────────────────────────────────────────────
     // "Unclassified exterior edge ⇒ eave" is only a safe default when a
     // READABLE elevation face confirms the eave-vs-gable-end split for that
@@ -493,6 +577,7 @@ export function closeVectorPerimeter(
     const gableSkipCounted = new Set<number>();
     let notchSkipped = 0;
     let notchSkippedFt = 0;
+    const restoredFacesNoted = new Set<string>();
     edges.forEach((e, i) => {
       // Mostly-notch edges stay a whole-edge skip: counted + noted UNPRICED.
       if (notchSegs.length > 0 && coveredFraction(e, notchSegs, covTol) > COVER) {
@@ -500,15 +585,29 @@ export function closeVectorPerimeter(
         notchSkippedFt += round1(e.len * ftPerPx);
         return;
       }
+      // ELEVATION-EAVE-WINS: on a restore-qualified edge (its face reads one
+      // continuous eave, zero gables) drop the trace's rake exclusions from
+      // the covered set — but ONLY when doing so actually uncovers span
+      // (otherwise the covered set, and every output byte, is unchanged).
+      // Real gutter runs and the deep-notch legs always keep covering.
+      const restoreFace = restoreEdges.get(i);
+      let covSegs: Seg[] = [...gutterSegs, ...exclusionSegs, ...notchSegs];
+      let restoredHere = false;
+      if (restoreFace && exclusionSegs.some((s) => overlapFraction(e, s, covTol) > 0)) {
+        const withoutExclusions: Seg[] = [...gutterSegs, ...notchSegs];
+        if (
+          coveredFraction(e, withoutExclusions, covTol) <
+          coveredFraction(e, covSegs, covTol) - 1e-9
+        ) {
+          covSegs = withoutExclusions;
+          restoredHere = true;
+        }
+      }
       // Per-SUB-SPAN coverage. The old binary test (>50% covered → done)
       // swallowed real mid-wall gaps: two corner runs covering 60% of a rear
       // wall hid an unguttered ~17 ft middle on a fully-hipped roof. Price
       // (or count) each uncovered gap instead.
-      const gaps = uncoveredIntervals(
-        e,
-        [...gutterSegs, ...exclusionSegs, ...notchSegs],
-        covTol,
-      );
+      const gaps = uncoveredIntervals(e, covSegs, covTol);
       for (const [t0, t1] of gaps) {
         const frac = t1 - t0;
         const lenFt = round1(frac * e.len * ftPerPx);
@@ -529,6 +628,9 @@ export function closeVectorPerimeter(
           }
           continue;
         }
+        // A restored span is about to be priced (or suggested past the cap) —
+        // that face gets its loud restoration note exactly once.
+        if (restoredHere && restoreFace) restoredFacesNoted.add(restoreFace);
         newRuns.push({
           id: `${mode === "trace-hip" ? "hclose" : "vclose"}-${newRuns.length + 1}`,
           side: sideOf(outwardOf(e)),
@@ -543,6 +645,16 @@ export function closeVectorPerimeter(
         });
       }
     });
+
+    // ELEVATION-EAVE-WINS notes — one per restored face, LOUD, and pushed
+    // before the closure/cap note so the reader sees WHY those spans exist.
+    // Fires only when a restored span actually priced (or will be surfaced as
+    // a cap suggestion) — a dropped rake that changed nothing stays silent.
+    for (const face of restoredFacesNoted) {
+      notes.push(
+        `🧭 ${face} wall restored — the ${face} elevation reads one continuous eave with ZERO gables, overriding the trace's rake there (a hip roof carries gutter on every exterior wall). VERIFY on the canvas.`,
+      );
+    }
 
     // The skipped-notch tail rides on whichever closure note fires (or stands
     // alone when closure would otherwise return silently) — an unpriced leg

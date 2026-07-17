@@ -54,6 +54,66 @@ export type ElevationReadResult = {
   usage: { input_tokens: number; output_tokens: number; calls: number };
 };
 
+/**
+ * TRANSIENT-ERROR RETRY for the per-face vision calls.
+ *
+ * The 1168G production failure: two of the four elevation reads died on
+ * Anthropic `529 {"type":"overloaded_error"}` (a transient server-side
+ * condition). With front+rear unreadable the hip-unanimity check couldn't
+ * form, and the vision trace's hallucinated "gable ends on the left and
+ * right" stood — 151 LF priced vs ~269 true. A single bounded retry pass
+ * turns that class of outage back into a normal read.
+ *
+ * Bounds (money-safe, latency-safe):
+ *  - at most 2 extra attempts PER FACE, ~2s then ~5s backoff + ≤400ms jitter
+ *    (≤ ~7.5s of added sleep per face — the blueprint routes have generous
+ *    maxDuration, but we never spin forever);
+ *  - retried ONLY for transient failures: HTTP 529 (overloaded_error), 5xx,
+ *    429 rate limits, 408 and network/timeout errors;
+ *  - NEVER for other 4xx (401/403 auth, 400 out-of-credits/billing) — those
+ *    fail fast with today's exact message;
+ *  - a face that STILL fails keeps today's `elevation_unreadable` note with
+ *    "(after N retries)" appended, so the panel shows the retry happened.
+ */
+const TRANSIENT_RETRY_DELAYS_MS = [2000, 5000] as const;
+
+function isTransientAiError(e: unknown): boolean {
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === "number") {
+    // 529 = Anthropic overloaded_error; any 5xx = transient server-side;
+    // 429 = rate limit; 408 = request timeout. Every OTHER 4xx (auth,
+    // billing, out-of-credits 400) must fail fast — no retry.
+    return status === 529 || status === 429 || status === 408 || (status >= 500 && status <= 599);
+  }
+  // No HTTP status ⇒ connection-level failure (the SDK's APIConnectionError,
+  // aborted sockets, DNS, fetch timeouts) — transient by nature.
+  const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e ?? "");
+  return /overloaded_error|APIConnection|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network|timed? ?out/i.test(msg);
+}
+
+/** Run `fn`, retrying transient failures per the schedule above. On final
+ *  failure rethrows the last error with "(after N retries)" appended when at
+ *  least one retry happened (so the existing `read failed: <msg>` note shows
+ *  it). Non-transient errors pass through byte-identical on attempt 1. */
+async function withTransientRetries<T>(fn: () => Promise<T>): Promise<T> {
+  let retries = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (retries >= TRANSIENT_RETRY_DELAYS_MS.length || !isTransientAiError(err)) {
+        if (retries > 0 && err instanceof Error) {
+          err.message = `${err.message} (after ${retries} ${retries === 1 ? "retry" : "retries"})`;
+        }
+        throw err;
+      }
+      const delayMs = TRANSIENT_RETRY_DELAYS_MS[retries] + Math.random() * 400;
+      retries++;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 export const ELEVATION_FACE_SYSTEM = `
 You are a senior rain-gutter estimator reading ONE exterior elevation of a house
 to support a gutter takeoff. You are reading this face IN ISOLATION.
@@ -493,7 +553,10 @@ export async function readElevationFace(
     const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM, {
       requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form", "eave_below_main", "eave_steps"],
     });
-    const response = await client.messages.create({
+    // Wrapped in the bounded transient retry (529 overloaded / 5xx / 429 /
+    // network) — see withTransientRetries above. 4xx auth/billing failures
+    // pass straight through to the fail-safe catch with today's message.
+    const response = await withTransientRetries(() => client.messages.create({
       model: MODEL,
       // Sized for the WORST face, not the typical one: a 20-gable elevation
       // is ~2k tokens of tool JSON, and a truncated tool call loses the whole
@@ -528,7 +591,7 @@ export async function readElevationFace(
       ],
       tools: [RECORD_FACE_TOOL],
       tool_choice: { type: "tool", name: RECORD_FACE_TOOL.name },
-    });
+    }));
 
     const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
     const usage = { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens };

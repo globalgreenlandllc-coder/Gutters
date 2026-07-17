@@ -15,6 +15,12 @@ import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
 import { closeVectorPerimeter } from "@/lib/ai/reconcile-eaves";
 import { explainUnanimousHip } from "@/lib/ai/face-merge";
+import {
+  parseRoofPlanReading,
+  mergeLayoutEvidence,
+  roofPlanUnanimousHip,
+  roofPlanDsFloor,
+} from "@/lib/ai/read-roof-layout";
 import { polygonCloses } from "@/lib/roof-engine";
 import { buildEdgeTakeoff } from "@/lib/ai/edge-takeoff";
 import { outlineEdges, downspoutMarksFromLabels } from "@/lib/ai/plan-overlay";
@@ -970,6 +976,33 @@ export async function runEstimateFromPlan(
     analysis.notes = [...(analysis.notes ?? []), `🧭 ${titleOrientation.note}`];
   }
 
+  // 📄 ROOF-PLAN PAGE AS LAYOUT TRUTH (owner doctrine): when the set printed
+  // a roof framing / roof plan page, its per-side verdicts — hips at every
+  // corner, gutter callouts, downspout dots, tier steps — outrank the
+  // elevations (the fallback, since not every set has such a page), which in
+  // turn outrank the vision trace's own claims. The read is stored by the
+  // analysis routes for scanned/raster sets (_roofPlanRead); mergeLayoutEvidence
+  // does the priority merge (roof page wins where it read; elevations fill the
+  // gaps and keep everything the plan view can't see). Absent or unreadable →
+  // perFaceEff === perFace and every consumer below is byte-identical (old
+  // stashes have no field at all).
+  const roofPlanStash = (
+    row.analysisJson as { _roofPlanRead?: { reading?: unknown } | null } | null
+  )?._roofPlanRead;
+  const roofPlanRead = parseRoofPlanReading(roofPlanStash?.reading ?? null);
+  const layoutMerge = mergeLayoutEvidence(
+    roofPlanRead,
+    perFace as Partial<
+      Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
+    > | null,
+  );
+  const perFaceEff: Record<string, unknown> | null = layoutMerge.usedRoofPlan
+    ? (layoutMerge.perFace as unknown as Record<string, unknown>)
+    : perFace;
+  if (layoutMerge.usedRoofPlan && layoutMerge.notes.length > 0) {
+    analysis.notes = [...(analysis.notes ?? []), ...layoutMerge.notes];
+  }
+
   // CROSS-VIEW TIER-CORNER VETO + DEEP-NOTCH AUDIT — scanned/raster path only
   // (the AI-trace fallback; vector-derived outlines don't carve phantom
   // pockets and carry classifier-audited tiers). Runs AFTER the squaring
@@ -994,7 +1027,10 @@ export async function runEstimateFromPlan(
     try {
       const veto = tierCornerVeto({
         analysis,
-        perFace: perFace as Partial<
+        // Merged layout evidence: the roof-plan page's per-side verdicts win,
+        // elevations fill the gaps (synthesized faces carry no projections /
+        // eave_steps keys, so they can never invent a pin).
+        perFace: perFaceEff as Partial<
           Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
         > | null,
         faceNormals: orientation?.normals ?? null,
@@ -1064,7 +1100,10 @@ export async function runEstimateFromPlan(
   try {
     const stepRec = reconcileEaveSteps({
       analysis,
-      perFace: perFace as Partial<
+      // Merged layout evidence (roof page > elevations). Synthesized roof-page
+      // faces deliberately carry NO eave_steps key ("not read"), so a set with
+      // no readable elevation eave-steps still degrades byte-identical.
+      perFace: perFaceEff as Partial<
         Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
       > | null,
       faceNormals: orientation?.normals ?? null,
@@ -1109,9 +1148,32 @@ export async function runEstimateFromPlan(
   // flagged UNPRICED on purpose) — running closure would re-introduce the
   // blind "continuous gutters" default it exists to remove. Skip it.
   // (isAiTrace hoisted above the tier/notch audit.)
-  const hipVerdict = explainUnanimousHip(
-    perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
-  );
+  // 📄 The roof-plan page can establish unanimous hip BY ITSELF: readable,
+  // hips at every corner, a continuous eave on all four sides, no gable end.
+  // This is the 529-outage fix — on the 1168G scan two elevation reads died
+  // transiently, unanimity couldn't form, and the trace's hallucinated "gable
+  // ends left and right" unpriced both long walls while page 6 printed the
+  // full hip layout. When the page doesn't decide it, the merged evidence
+  // (roof page filled + elevations) gets the same vote it always had.
+  const roofPlanHip = roofPlanUnanimousHip(roofPlanRead);
+  const hipVerdict = roofPlanHip
+    ? { unanimous: true as const, reason: null }
+    : explainUnanimousHip(
+        perFaceEff as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
+      );
+  if (roofPlanHip && isAiTrace) {
+    const elevAlone = explainUnanimousHip(
+      perFace as Partial<Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>> | null,
+    );
+    analysis.notes = [
+      ...(analysis.notes ?? []),
+      `📄 Roof-plan page: hips at every corner, a continuous eave on all four sides, no gable ends — used as the layout source (${
+        elevAlone.unanimous
+          ? "agrees with the elevations"
+          : `elevations degraded: ${elevAlone.reason}`
+      }). Every exterior wall carries a gutter eave.`,
+    ];
+  }
   const hipClosureOk = isAiTrace && hipVerdict.unanimous;
   // A skipped closure must say WHY on the panel: the contractor is looking at
   // a "Closure check: N walls not priced" flag and deserves the reason the
@@ -1133,7 +1195,11 @@ export async function runEstimateFromPlan(
   if (!edgeApplied && (!isAiTrace || hipClosureOk)) {
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
-      perFace: perFace as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,
+      // Merged layout evidence: a roof-page face reading a continuous eave
+      // with zero gables qualifies for the closure's ELEVATION-EAVE-WINS
+      // restoration — the trace's hallucinated rakes on a hip side get their
+      // gutters back even when that side's elevation read died.
+      perFace: perFaceEff as Record<string, { readable?: boolean; continuous_eave?: boolean }> | null,
       mode: isAiTrace ? "trace-hip" : "vector",
       // Deep-notch audit suspects: closure must never bill a carved pocket's
       // legs as eaves (counted + noted UNPRICED inside). Empty → unchanged.
@@ -1150,6 +1216,18 @@ export async function runEstimateFromPlan(
     // unpriced tap-to-add suggestion on the canvas.
     for (const s of closed.suggestedRuns ?? []) {
       suggestedEavesFromPlan.push({ points: [s.start, s.end], tier: "upper" });
+    }
+  }
+
+  // 💧 Printed downspout marks on the roof-plan page are a FLOOR for the
+  // takeoff's downspout count (printed marks beat the 1-per-40 ft rule —
+  // same doctrine as the elevations' min-downspouts constraint). Note-only:
+  // positions aren't read off the page, so nothing is fabricated; the owner
+  // tap-adds the missing drops on the canvas.
+  if (roofPlanRead) {
+    const dsFloor = roofPlanDsFloor(roofPlanRead, (analysis.downspouts ?? []).length);
+    if (dsFloor) {
+      analysis.notes = [...(analysis.notes ?? []), dsFloor.note];
     }
   }
 

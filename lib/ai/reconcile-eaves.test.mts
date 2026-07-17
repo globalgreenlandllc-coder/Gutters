@@ -570,6 +570,228 @@ test("closure ignores sub-6-ft mid-wall gaps (label noise), keeps 2-ft floor for
   assert.equal(analysis.gutter_runs.length, 5, "5-ft sliver not priced");
 });
 
+// ── ELEVATION-EAVE-WINS — a zero-gable continuous-eave face overrides rakes ──
+// The 1168G production failure: two of four elevation reads died on Anthropic
+// 529 overloaded_error; the trace's hallucinated "gable ends on the left and
+// right" stood as excluded_edges, permanently unpricing both long walls (151
+// LF priced vs ~269 true). The faces that DID read (left, right) both reported
+// one continuous eave and ZERO gables — that evidence must win over the rake.
+
+/** Trace rakes on the left (x=0) and right (x=200) walls. */
+const LR_RAKES = [
+  { id: "x-left", kind: "rake", start: { x: 0, y: 0 }, end: { x: 0, y: 120 }, reason: "gable end (hallucinated)" },
+  { id: "x-right", kind: "rake", start: { x: 200, y: 0 }, end: { x: 200, y: 120 }, reason: "gable end (hallucinated)" },
+];
+
+/** Front+rear guttered (0.2 ft/px); left/right walls claimed as rakes. */
+const the1168G = () =>
+  base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("back", [0, 120], [200, 120], 40),
+    ],
+    excluded_edges: LR_RAKES,
+    totals: { linear_feet_gutter: 80, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+
+/** left/right read fine (continuous, zero gables); front/rear died on 529s. */
+const LR_ONLY_FACES = {
+  left: { readable: true, continuous_eave: true, gable_count: 0, gables: [] },
+  right: { readable: true, continuous_eave: true, gable_count: 0, gables: [] },
+  front: { readable: false },
+  rear: { readable: false },
+};
+
+test("1168G scenario: readable zero-gable faces restore BOTH rake-claimed walls; note names both; totals grow", () => {
+  for (const mode of ["trace-hip", "vector"] as const) {
+    const { analysis, reconcileNotes, suggestedRuns } = closeVectorPerimeter(the1168G(), {
+      perFace: LR_ONLY_FACES,
+      mode,
+    });
+    // Both long walls priced (120 px × 0.2 ft/px = 24 ft each) — or, if a cap
+    // ever refused, surfaced as suggestions. Here the cap clears (128 ft ring).
+    const added = analysis.gutter_runs.filter((r) => r.id.startsWith(mode === "trace-hip" ? "hclose" : "vclose"));
+    assert.equal(added.length, 2, `${mode}: both rake-claimed walls priced`);
+    const xs = added.map((r) => r.start.x).sort((p, q) => p - q);
+    assert.ok(Math.abs(xs[0] - 0) < 1 && Math.abs(xs[1] - 200) < 1, `${mode}: runs sit on the left+right walls`);
+    for (const r of added) assert.equal(r.length_ft, 24, `${mode}: 120 px at the runs' own 0.2 ft/px`);
+    assert.equal(analysis.totals.linear_feet_gutter, 128, `${mode}: 80 + 24 + 24`);
+    assert.equal(suggestedRuns, undefined, `${mode}: nothing left to suggest`);
+    // Loud note per restored face, naming the face and the override.
+    for (const face of ["left", "right"]) {
+      assert.ok(
+        reconcileNotes.some(
+          (n) => n.includes(`🧭 ${face} wall restored`) && n.includes("ZERO gables") && n.includes("VERIFY on the canvas"),
+        ),
+        `${mode}: restoration note names the ${face} face (got: ${reconcileNotes.join(" | ")})`,
+      );
+    }
+  }
+});
+
+test("a face reading 1 gable NEVER restores its wall (suppression semantics intact)", () => {
+  const { analysis, reconcileNotes } = closeVectorPerimeter(the1168G(), {
+    perFace: {
+      ...LR_ONLY_FACES,
+      right: {
+        readable: true,
+        continuous_eave: true,
+        gable_count: 1,
+        gables: [{ is_hip_end: false }],
+      },
+    },
+    mode: "trace-hip",
+  });
+  const added = analysis.gutter_runs.filter((r) => r.id.startsWith("hclose"));
+  assert.equal(added.length, 1, "only the left wall restored");
+  assert.ok(Math.abs(added[0].start.x - 0) < 1, "the priced run is the LEFT wall");
+  assert.ok(
+    !reconcileNotes.some((n) => n.includes("right wall restored")),
+    "no restoration note for the gabled right face",
+  );
+  // gable_count alone (no entries array) also blocks.
+  const counted = closeVectorPerimeter(the1168G(), {
+    perFace: { ...LR_ONLY_FACES, right: { readable: true, continuous_eave: true, gable_count: 2 } },
+    mode: "trace-hip",
+  });
+  assert.equal(counted.analysis.gutter_runs.filter((r) => r.id.startsWith("hclose")).length, 1);
+});
+
+test("unreadable / missing / ambiguous faces never restore", () => {
+  // Unreadable face.
+  const unreadable = closeVectorPerimeter(the1168G(), {
+    perFace: { ...LR_ONLY_FACES, left: { readable: false }, right: { readable: false }, front: { readable: true, continuous_eave: true, gable_count: 0, gables: [] } },
+    mode: "trace-hip",
+  });
+  assert.equal(
+    unreadable.analysis.gutter_runs.filter((r) => r.id.startsWith("hclose")).length,
+    0,
+    "unreadable left/right faces restore nothing (front's principal edge is already guttered)",
+  );
+  assert.ok(!unreadable.reconcileNotes.some((n) => n.includes("wall restored")));
+  // A broken eave line (continuous_eave false, zero gables) is NOT unambiguous.
+  const broken = closeVectorPerimeter(the1168G(), {
+    perFace: { ...LR_ONLY_FACES, left: { readable: true, continuous_eave: false, gable_count: 0, gables: [] } },
+    mode: "trace-hip",
+  });
+  assert.ok(
+    !broken.analysis.gutter_runs.some((r) => r.id.startsWith("hclose") && Math.abs(r.start.x - 0) < 1),
+    "continuous_eave=false face does not restore its wall",
+  );
+  // LEGACY read objects (no gable info at all) degrade to today: no restore.
+  const legacy = closeVectorPerimeter(the1168G(), {
+    perFace: { left: { readable: true, continuous_eave: true }, right: { readable: true, continuous_eave: true } },
+    mode: "trace-hip",
+  });
+  assert.equal(legacy.analysis.gutter_runs.filter((r) => r.id.startsWith("hclose")).length, 0, "no explicit zero-gable evidence → no restoration");
+  assert.ok(!legacy.reconcileNotes.some((n) => n.includes("wall restored")));
+  // roof_form "gabled"/"mixed" vetoes even with an empty gables array.
+  const contradictory = closeVectorPerimeter(the1168G(), {
+    perFace: { ...LR_ONLY_FACES, left: { readable: true, continuous_eave: true, gable_count: 0, gables: [], roof_form: "mixed" } },
+    mode: "trace-hip",
+  });
+  assert.ok(
+    !contradictory.analysis.gutter_runs.some((r) => r.id.startsWith("hclose") && Math.abs(r.start.x - 0) < 1),
+    "a contradictory roof_form stays conservative",
+  );
+});
+
+test("restoration past the trace-hip cap → tap-to-add suggestions, not priced runs (note still fires)", () => {
+  // One hot run (0.75 ft/px vs the 0.2 median) inflates the upper total so the
+  // cap refuses the restored walls — they must surface as suggestions.
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      { ...run("front", [0, 0], [200, 0], 40), tier: "upper" as const },
+      { ...run("back", [0, 120], [200, 120], 40), tier: "upper" as const },
+      { ...run("front", [90, 0], [100, 0], 60), id: "phantom", tier: "upper" as const },
+    ],
+    excluded_edges: LR_RAKES,
+    totals: { linear_feet_gutter: 140, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const r = closeVectorPerimeter(a, { perFace: LR_ONLY_FACES, mode: "trace-hip" });
+  assert.equal(r.analysis.gutter_runs.length, 3, "nothing auto-priced past the cap");
+  assert.equal(r.analysis.totals.linear_feet_gutter, 140, "priced total untouched");
+  assert.ok(r.suggestedRuns && r.suggestedRuns.length === 2, "both restored walls surfaced as suggestions");
+  assert.ok(r.reconcileNotes.some((n) => n.includes("CAPPED") && n.includes("tap-to-add")));
+  assert.ok(
+    r.reconcileNotes.some((n) => n.includes("left wall restored")) &&
+      r.reconcileNotes.some((n) => n.includes("right wall restored")),
+    "restoration notes still fire on the suggestion path",
+  );
+});
+
+test("deep-notch excludeEdges are NEVER restored, even on a zero-gable face", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("back", [0, 120], [200, 120], 40),
+    ],
+    // The right wall is ALSO rake-claimed, but the notch audit owns the left wall.
+    excluded_edges: [LR_RAKES[1]],
+    totals: { linear_feet_gutter: 80, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: LR_ONLY_FACES,
+    mode: "trace-hip",
+    excludeEdges: [{ a: { x: 0, y: 0 }, b: { x: 0, y: 120 } }],
+  });
+  const added = analysis.gutter_runs.filter((r) => r.id.startsWith("hclose"));
+  assert.equal(added.length, 1, "only the rake-claimed right wall restored");
+  assert.ok(Math.abs(added[0].start.x - 200) < 1, "the notch-audited left wall got NO run");
+  assert.equal(analysis.totals.linear_feet_gutter, 104, "80 + 24 — the notch leg is NOT billed");
+  assert.ok(
+    reconcileNotes.some((n) => /suspect notch leg\(s\).*left UNPRICED per the deep-notch audit/.test(n)),
+    "notch skip still noted",
+  );
+  assert.ok(
+    !reconcileNotes.some((n) => n.includes("left wall restored")),
+    "no restoration note for the notch-audited wall",
+  );
+});
+
+test("restoration is a no-op when the rake-claimed wall is already fully guttered (no phantom note)", () => {
+  const a = base({
+    building_footprint: FOOT,
+    gutter_runs: [
+      run("front", [0, 0], [200, 0], 40),
+      run("back", [0, 120], [200, 120], 40),
+      run("left", [0, 0], [0, 120], 24),
+      run("right", [200, 0], [200, 120], 24),
+    ],
+    excluded_edges: LR_RAKES, // contradictory rakes over guttered walls
+    totals: { linear_feet_gutter: 128, downspout_count: 0, outside_corner_miters: 0, inside_corner_miters: 0 },
+  });
+  const { analysis, reconcileNotes } = closeVectorPerimeter(a, {
+    perFace: LR_ONLY_FACES,
+    mode: "trace-hip",
+  });
+  assert.equal(analysis.gutter_runs.length, 4, "nothing added");
+  assert.equal(analysis.totals.linear_feet_gutter, 128, "total unchanged");
+  assert.ok(!reconcileNotes.some((n) => n.includes("wall restored")), "no restoration note when nothing changed");
+});
+
+// ── FIX 1 source-text guard — read-elevations.ts is `server-only`, so its
+// retry helper can't be imported under node (the package throws on import
+// outside a React server context). Following the repo's precedent
+// (read-elevations.test.mts "source-text check"), pin the load-bearing
+// markers of the transient-retry contract instead; runtime behavior is
+// verified manually (see the implementation notes in read-elevations.ts).
+test("per-face elevation reads carry a bounded transient retry (source-text check — module is server-only)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./read-elevations.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+  assert.ok(src.includes("TRANSIENT_RETRY_DELAYS_MS = [2000, 5000]"), "bounded 2s/5s backoff schedule");
+  assert.ok(src.includes("status === 529"), "retries Anthropic 529 overloaded");
+  assert.ok(/overloaded_error/.test(src), "recognizes overloaded_error bodies");
+  assert.ok(src.includes("status >= 500 && status <= 599"), "retries 5xx");
+  assert.ok(src.includes("status === 429"), "retries rate limits");
+  assert.ok(src.includes("must fail fast"), "4xx auth/billing documented as fail-fast (no retry)");
+  assert.ok(src.includes("(after ${retries}"), "final failure appends '(after N retries)' to the unreadable note");
+  assert.ok(src.includes("withTransientRetries(() => client.messages.create("), "the per-face vision call is wrapped");
+});
+
 test("trace-hip cap: blocked additions become unpriced tap-to-add suggestions, never silent", () => {
   // Runs already total 350 LF on a ring whose perimeter is 320 ft at the
   // runs' own scale — the cap must refuse to add the uncovered rear wall,

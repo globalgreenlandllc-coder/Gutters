@@ -22,6 +22,7 @@ import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
+import { readRoofPlanLayout, describeRoofPlanReading } from "@/lib/ai/read-roof-layout";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
 import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
@@ -274,6 +275,28 @@ export async function POST(
           ? readAllElevations(finalSource, stage1 && stage1.ok ? stage1.classification : null)
           : Promise.resolve(null);
 
+      // 📄 ROOF-PLAN PAGE READ — same wire-in as the upload path (owner
+      // doctrine: the roof framing / roof plan page is the layout truth,
+      // ranked above the elevations). Scanned/raster sets only; runs
+      // concurrently with the elevation reads; never throws (a transient
+      // outage stores readable:false). Disable with BLUEPRINT_ROOFPLAN_READ=0.
+      const scannedSet =
+        isPdf &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) < 4 &&
+        (vectorGeometry?.footprint?.segments?.length ?? 0) < 4;
+      const roofPlanPage =
+        stage1 && stage1.ok
+          ? (stage1.classification.roof_plan_page ??
+            (stage1.classification.sheets ?? []).find(
+              (s) => s.sheet_type === "roof_plan" && Number.isFinite(s.page_index),
+            )?.page_index ??
+            null)
+          : null;
+      const roofPlanP =
+        scannedSet && roofPlanPage != null && process.env.BLUEPRINT_ROOFPLAN_READ !== "0"
+          ? readRoofPlanLayout(finalSource, { page: roofPlanPage })
+          : Promise.resolve(null);
+
       // Best-of ensemble: three independent Opus reads + a Gemini read when a
       // Gemini key is configured (cross-provider). Keep the best.
       const geminiReaders = (await geminiAvailable())
@@ -355,6 +378,20 @@ export async function POST(
           ...finalAnalysis.notes,
           ...elevations.review_flags.map((f) => `🧭 ${f}`),
         ];
+      }
+
+      // Roof-plan layout read (started above, resolved now) — same
+      // fail-safe contract as the upload path: never throws.
+      const roofPlanRead = await roofPlanP;
+      if (roofPlanRead) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📄 Roof-plan page ${roofPlanRead.page ?? "?"}: ${describeRoofPlanReading(roofPlanRead.reading)}`,
+          ...roofPlanRead.reading.notes.slice(0, 3).map((n) => `📄 Roof-plan note: ${n}`),
+        ];
+        console.log(
+          `[/api/blueprints/${id}/reanalyze] roof-plan read: page=${roofPlanRead.page} readable=${roofPlanRead.reading.readable} hips_at_corners=${roofPlanRead.reading.hips_at_corners} ds=${roofPlanRead.reading.total_ds_marks}`,
+        );
       }
 
       // v2 EDGE TAKEOFF — one expensive vision call that classifies the
@@ -507,6 +544,11 @@ export async function POST(
           elevation_unreadable: elevations.elevation_unreadable,
           usage: elevations.usage,
         };
+      }
+      if (roofPlanRead) {
+        // Same free-form stash convention as _perFace/_classifier: the
+        // estimate path re-parses it defensively (parseRoofPlanReading).
+        analysisJson._roofPlanRead = roofPlanRead;
       }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {

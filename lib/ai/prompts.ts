@@ -21,6 +21,7 @@ export type PromptKey =
   | "address.roof_structure.system"
   | "blueprint.classify.system"
   | "blueprint.elevation.system"
+  | "blueprint.roofplan.system"
   | "blueprint.takeoff.system";
 
 export const PROMPT_KEYS: PromptKey[] = [
@@ -28,6 +29,7 @@ export const PROMPT_KEYS: PromptKey[] = [
   "address.roof_structure.system",
   "blueprint.classify.system",
   "blueprint.elevation.system",
+  "blueprint.roofplan.system",
   "blueprint.takeoff.system",
 ];
 
@@ -64,6 +66,13 @@ export const PROMPT_META: Record<
     model: "Claude Sonnet 5",
     description:
       "Reads ONE exterior elevation in isolation — enumerates ALL its gables (stacked/nested count separately, no upper limit), classifies eave vs rake, reports set-back and eave-in-front per gable, and defaults gables to flush. One independent call per face so the front is never mirrored onto the back. ⚠ An override saved here SHADOWS the code default — reset after engine updates.",
+  },
+  "blueprint.roofplan.system": {
+    label: "Roof-plan layout reader",
+    category: "blueprint",
+    model: "Claude Sonnet 5",
+    description:
+      "Reads the roof framing / roof plan page as the LAYOUT TRUTH on scanned sets: walks all four sides for hip-eave vs gable end, counts printed downspout marks, notes fascia/tier steps. Its verdicts outrank the elevations (the fallback). ⚠ An override saved here SHADOWS the code default — reset after engine updates.",
   },
   "blueprint.takeoff.system": {
     label: "Gutter takeoff (Stage 2)",
