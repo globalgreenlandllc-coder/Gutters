@@ -23,6 +23,7 @@ import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { readRoofPlanLayout, describeRoofPlanReading } from "@/lib/ai/read-roof-layout";
+import { computeRasterOutlineStash } from "@/lib/ai/raster-outline";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
 import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
@@ -297,6 +298,36 @@ export async function POST(
           ? readRoofPlanLayout(finalSource, { page: roofPlanPage })
           : Promise.resolve(null);
 
+      // 📄 RASTER ROOF OUTLINE — same wire-in as the upload path:
+      // deterministic (no AI spend), scanned sets only. The roof-plan page's
+      // embedded scan is traced + hard-gated against the classifier's printed
+      // overalls; the stash is stored verbatim and the estimate path swaps
+      // the vision-traced footprint SHAPE for it (priced LF untouched).
+      // Failure stores {ok:false, reasons} — never sinks the run.
+      // Kill switch: BLUEPRINT_RASTER_OUTLINE=0.
+      const rasterOutlineP =
+        scannedSet && roofPlanPage != null && finalSource.kind === "pdf"
+          ? computeRasterOutlineStash({
+              pdfBase64: finalSource.base64,
+              page: roofPlanPage,
+              printedDimsFt:
+                stage1 && stage1.ok
+                  ? [
+                      stage1.classification.building_dimensions?.width_ft,
+                      stage1.classification.building_dimensions?.depth_ft,
+                    ]
+                  : null,
+              statedBoxFt2:
+                stage1 &&
+                stage1.ok &&
+                stage1.classification.building_dimensions?.width_ft &&
+                stage1.classification.building_dimensions?.depth_ft
+                  ? stage1.classification.building_dimensions.width_ft *
+                    stage1.classification.building_dimensions.depth_ft
+                  : null,
+            })
+          : Promise.resolve(null);
+
       // Best-of ensemble: three independent Opus reads + a Gemini read when a
       // Gemini key is configured (cross-provider). Keep the best.
       const geminiReaders = (await geminiAvailable())
@@ -391,6 +422,18 @@ export async function POST(
         ];
         console.log(
           `[/api/blueprints/${id}/reanalyze] roof-plan read: page=${roofPlanRead.page} readable=${roofPlanRead.reading.readable} hips_at_corners=${roofPlanRead.reading.hips_at_corners} ds=${roofPlanRead.reading.total_ds_marks}`,
+        );
+      }
+
+      // Raster roof outline (started above, resolved now) — same stash
+      // convention as the upload path; the estimate path does the swap.
+      const rasterOutline = await rasterOutlineP;
+      if (rasterOutline) {
+        console.log(
+          `[/api/blueprints/${id}/reanalyze] raster outline: page=${rasterOutline.page} ok=${rasterOutline.ok}` +
+            (rasterOutline.ok
+              ? ` (${rasterOutline.ring?.length ?? 0} corners @ ${rasterOutline.ftPerPx} ft/px)`
+              : ` — ${rasterOutline.reasons.join("; ")}`),
         );
       }
 
@@ -549,6 +592,12 @@ export async function POST(
         // Same free-form stash convention as _perFace/_classifier: the
         // estimate path re-parses it defensively (parseRoofPlanReading).
         analysisJson._roofPlanRead = roofPlanRead;
+      }
+      if (rasterOutline) {
+        // JSON-small by contract: the ring only (never the bitmap), and the
+        // ring only when the gates passed. Consumed by applyRasterOutline on
+        // the estimate path; old rows without the field stay byte-identical.
+        analysisJson._rasterOutline = rasterOutline;
       }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {

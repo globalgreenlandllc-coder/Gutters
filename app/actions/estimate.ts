@@ -8,6 +8,7 @@ import { engineDrawEnabled, engineTakeoffEnabled, perimeterOnlyEnabled } from "@
 import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
 import { rectifyPlanFootprint, auditNotches } from "@/lib/ai/rectify-plan-takeoff";
+import { applyRasterOutline, type RasterOutlineStash } from "@/lib/ai/raster-outline";
 import { tierCornerVeto } from "@/lib/ai/tier-corner-veto";
 import { reconcileEaveSteps } from "@/lib/ai/eave-step-reconcile";
 import { humanizeAiError } from "@/lib/ai/humanize-error";
@@ -808,6 +809,75 @@ export async function runEstimateFromPlan(
     // keep the AI geometry on any failure
   }
 
+  // 📄 ROOF OUTLINE FROM THE PLAN'S OWN INK — the raster equivalent of the
+  // A9/A4 vector swaps, for SCANNED sets where no sheet has vector linework.
+  // The analysis routes traced the roof-plan page's embedded scan
+  // deterministically and hard-gated it against the classifier's printed
+  // overalls (_rasterOutline stash). When the gates passed, the sheet's
+  // printed outline REPLACES the vision trace's shape: placed at TRUE scale
+  // through feet (raster ft/px ÷ the runs' median ft-per-unit — NOT squeezed
+  // onto the trace's bbox, which would inherit the trace's wrong size),
+  // anchored at the trace's bbox center so the runs stay nearby, best axis
+  // flip chosen against the trace. Runs/excluded edges/downspouts snap onto
+  // the new perimeter as followers with length_ft untouched — priced LF is
+  // unchanged by construction; only the SHAPE becomes the sheet's. Runs
+  // BEFORE the squaring / tier-corner veto / eave-step reconcile so every
+  // downstream pass sees the sheet-true shape (the squaring then skips —
+  // footprintSource is no longer the AI trace and the ring is already
+  // rectilinear). ANY bail is byte-identical + a loud reason trail.
+  let rasterApplied = false;
+  if (!edgeApplied && !roofApplied && footprintSource === "AI trace (best-of read)") {
+    try {
+      const rasterStash = (
+        row.analysisJson as { _rasterOutline?: RasterOutlineStash | null } | null
+      )?._rasterOutline;
+      if (rasterStash) {
+        const res = applyRasterOutline({
+          footprint: analysis.building_footprint,
+          runs: analysis.gutter_runs,
+          excludedEdges: analysis.excluded_edges ?? [],
+          downspouts: analysis.downspouts ?? [],
+          raster: rasterStash,
+          scaleFeetPerUnit: analysis.scale?.feet_per_unit ?? null,
+        });
+        if (res.applied) {
+          analysis.building_footprint = res.footprint;
+          analysis.gutter_runs = res.runs;
+          analysis.excluded_edges = res.excludedEdges;
+          analysis.downspouts = res.downspouts;
+          rasterApplied = true;
+          footprintSource = `roof-plan raster outline (${res.footprint.length} corners)`;
+          const sizeVerdict =
+            res.traceAreaDeltaPct <= -8
+              ? `~${Math.abs(Math.round(res.traceAreaDeltaPct))}% undersized`
+              : res.traceAreaDeltaPct >= 8
+                ? `~${Math.round(res.traceAreaDeltaPct)}% oversized`
+                : "misjogged";
+          analysis.notes = [
+            ...(analysis.notes ?? []),
+            `📄 ROOF OUTLINE FROM THE PLAN'S OWN INK — the roof-plan page's printed outline (page ${rasterStash.page ?? "?"}) replaced the vision trace's shape (the trace read ${sizeVerdict} vs the sheet); gutter runs snapped onto it, priced LF unchanged. Verify on the canvas.`,
+          ];
+          vecTrace.push(
+            `✓ USED roof-plan raster outline (page ${rasterStash.page ?? "?"}, ${res.footprint.length} corners, flip ${res.flip}, ${Math.round(res.disagreementFrac * 100)}% trace disagreement)`,
+          );
+        } else {
+          analysis.notes = [
+            ...(analysis.notes ?? []),
+            `⏸ Raster outline unusable: ${res.reasons.join("; ")} — kept the vision trace.`,
+          ];
+          vecTrace.push(
+            `raster outline unusable (${res.reasons.join("; ")}) — kept the vision trace`,
+          );
+        }
+      } else {
+        vecTrace.push("no raster outline in stash (pre-raster analysis) — Re-analyze to trace the sheet's ink");
+      }
+    } catch (e) {
+      vecTrace.push(`raster swap threw: ${e instanceof Error ? e.message : String(e)}`);
+      // keep the AI geometry on any failure
+    }
+  }
+
   // SQUARE UP the raw-vision footprint. On a scanned/flattened PDF none of the
   // vector swaps above can fire, so the footprint is a pure VISION trace — which
   // comes back nearly rectilinear but with a wall or two a few degrees off,
@@ -1019,7 +1089,11 @@ export async function runEstimateFromPlan(
   //    closeVectorPerimeter as excludeEdges so they stay UNPRICED.
   //  - When the pinned lower corner is at the REAR but the traced rear edge
   //    runs straight, an UN-PRICED tap-to-add return is suggested (F4).
-  const isAiTrace = footprintSource === "AI trace (best-of read)";
+  // The raster-outline swap replaces the trace's SHAPE, but the runs and
+  // their lengths are still the vision read — every scanned-path guard
+  // (tier-corner veto, notch audit, trace-hip closure + its perimeter cap)
+  // must keep treating it as a trace, NOT as a CAD vector outline.
+  const isAiTrace = rasterApplied || footprintSource === "AI trace (best-of read)";
   const notchExcludes: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
   const suggestedEavesFromPlan: {
     points: { x: number; y: number }[];

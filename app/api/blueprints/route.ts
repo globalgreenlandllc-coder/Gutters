@@ -22,6 +22,7 @@ import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
 import { readAllElevations } from "@/lib/ai/read-elevations";
 import { readRoofPlanLayout, describeRoofPlanReading } from "@/lib/ai/read-roof-layout";
+import { computeRasterOutlineStash } from "@/lib/ai/raster-outline";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
@@ -541,6 +542,36 @@ export async function POST(request: Request) {
           ? readRoofPlanLayout(source, { page: roofPlanPage })
           : Promise.resolve(null);
 
+      // 📄 RASTER ROOF OUTLINE — deterministic (no AI spend), scanned sets
+      // only: pull the roof-plan page's embedded scan, trace the printed
+      // outline's own ink, and gate it hard against the classifier's printed
+      // overalls. The stash is stored verbatim; the estimate path swaps the
+      // vision-traced footprint SHAPE for it (priced LF untouched) exactly
+      // like the vector-outline swap on CAD sets. Failure stores {ok:false,
+      // reasons} — never sinks the run. Kill switch: BLUEPRINT_RASTER_OUTLINE=0.
+      const rasterOutlineP =
+        scannedSet && roofPlanPage != null && source.kind === "pdf"
+          ? computeRasterOutlineStash({
+              pdfBase64: source.base64,
+              page: roofPlanPage,
+              printedDimsFt:
+                stage1 && stage1.ok
+                  ? [
+                      stage1.classification.building_dimensions?.width_ft,
+                      stage1.classification.building_dimensions?.depth_ft,
+                    ]
+                  : null,
+              statedBoxFt2:
+                stage1 &&
+                stage1.ok &&
+                stage1.classification.building_dimensions?.width_ft &&
+                stage1.classification.building_dimensions?.depth_ft
+                  ? stage1.classification.building_dimensions.width_ft *
+                    stage1.classification.building_dimensions.depth_ft
+                  : null,
+            })
+          : Promise.resolve(null);
+
       // Stage 2: geometry trace, constrained by Stage 1 findings. Best-of
       // ensemble — three independent Opus reads PLUS a Gemini read when a
       // Gemini key is configured (genuine cross-provider second opinion);
@@ -656,6 +687,18 @@ export async function POST(request: Request) {
         ];
         console.log(
           `[/api/blueprints after()] roof-plan read: page=${roofPlanRead.page} readable=${roofPlanRead.reading.readable} hips_at_corners=${roofPlanRead.reading.hips_at_corners} ds=${roofPlanRead.reading.total_ds_marks}`,
+        );
+      }
+
+      // Raster roof outline (started above, resolved now). Stored verbatim in
+      // the stash; the estimate path does the footprint swap + follower snap.
+      const rasterOutline = await rasterOutlineP;
+      if (rasterOutline) {
+        console.log(
+          `[/api/blueprints after()] raster outline: page=${rasterOutline.page} ok=${rasterOutline.ok}` +
+            (rasterOutline.ok
+              ? ` (${rasterOutline.ring?.length ?? 0} corners @ ${rasterOutline.ftPerPx} ft/px)`
+              : ` — ${rasterOutline.reasons.join("; ")}`),
         );
       }
 
@@ -826,6 +869,12 @@ export async function POST(request: Request) {
         // estimate path re-parses it defensively (parseRoofPlanReading), so
         // old rows without the field stay byte-identical.
         analysisJson._roofPlanRead = roofPlanRead;
+      }
+      if (rasterOutline) {
+        // JSON-small by contract: the ring only (never the bitmap), and the
+        // ring only when the gates passed. Consumed by applyRasterOutline on
+        // the estimate path; old rows without the field stay byte-identical.
+        analysisJson._rasterOutline = rasterOutline;
       }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
