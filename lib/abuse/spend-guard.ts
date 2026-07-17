@@ -86,7 +86,7 @@ export async function checkAiSpendAllowed(args: {
       return {
         ok: false,
         reason:
-          "AI analysis is temporarily paused (spend guard). Please try again later or contact support.",
+          "Sorry — AI analysis is temporarily unavailable. Please try again later.",
       };
     }
 
@@ -152,7 +152,7 @@ export async function checkAiSpendAllowed(args: {
       return {
         ok: false,
         reason:
-          "AI analysis is temporarily paused (spend guard). Please try again later or contact support.",
+          "Sorry — AI analysis is temporarily unavailable. Please try again later.",
       };
     }
 

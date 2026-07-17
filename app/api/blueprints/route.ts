@@ -462,6 +462,9 @@ export async function POST(request: Request) {
         // estimate). Abort loudly; the FAILED message tells the owner what
         // to fix. Transient classifier errors still fall through.
         if (isFatalAiOutage(stage1.reason)) {
+          // Raw provider reason goes to the server log only — the stored
+          // errorMessage is user-facing and deliberately generic.
+          console.error("[/api/blueprints] fatal AI outage:", stage1.reason);
           await db.planAnalysis.update({
             where: { id: analysis.id },
             data: { status: "FAILED", errorMessage: humanizeAiError(stage1.reason) },
@@ -540,6 +543,7 @@ export async function POST(request: Request) {
           costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
           meta: { planId: analysis.id, failed: true },
         });
+        console.error("[/api/blueprints] analysis failed:", result.reason);
         await db.planAnalysis.update({
           where: { id: analysis.id },
           data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },

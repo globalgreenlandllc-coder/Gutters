@@ -242,6 +242,7 @@ export async function POST(
         // Abort with the plain billing/auth message instead of overwriting
         // a good stored analysis with a degraded one (see /api/blueprints).
         if (isFatalAiOutage(stage1.reason)) {
+          console.error("[/api/blueprints/reanalyze] fatal AI outage:", stage1.reason);
           await db.planAnalysis.update({
             where: { id },
             data: { status: "FAILED", errorMessage: humanizeAiError(stage1.reason) },
@@ -307,6 +308,7 @@ export async function POST(
           costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
           meta: { planId: id, failed: true, reanalyze: true },
         });
+        console.error("[/api/blueprints/reanalyze] analysis failed:", result.reason);
         await db.planAnalysis.update({
           where: { id },
           data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },

@@ -555,7 +555,10 @@ function PropertyHeader({
             Reused (no credit)
           </Badge>
         )}
-        <span>· {durationMs} ms</span>
+        {/* Notes arrive empty for non-admin users (stripped server-side
+            in runEstimate/runEstimateFromPlan) — the ms timing is the
+            same diagnostic class, so it rides along with them. */}
+        {notes.length > 0 && <span>· {durationMs} ms</span>}
         {notes.map((n) => (
           <span key={n} className="rounded-full bg-zinc-100 px-2 py-0.5">
             {n}

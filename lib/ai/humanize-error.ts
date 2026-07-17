@@ -26,13 +26,20 @@ export function isFatalAiOutage(raw: string | null | undefined): boolean {
 export function humanizeAiError(raw: string | null | undefined): string {
   const s = String(raw ?? "").trim();
   if (!s) return "Analysis failed — please retry.";
-  if (/credit balance is too low|insufficient\s+cred|\bbilling\b/i.test(s))
-    return "The AI service is out of credits, so the plan couldn't be analyzed. Add credits to the Anthropic account (Plans & Billing), then retry — this is a billing limit, not a problem with the plan.";
+  // PLATFORM-side failures (our provider account out of credits, dead
+  // key) are NOT the user's business — "the AI service is out of
+  // credits" reads like the product is broke and tells them nothing
+  // actionable. They get a plain apology; the raw cause goes to the
+  // server logs / admin alerting at the call sites.
+  if (
+    /credit balance is too low|insufficient\s+cred|\bbilling\b|authentication|invalid.*api.?key|unauthorized|\b401\b/i.test(
+      s,
+    )
+  )
+    return "Sorry — analysis is temporarily unavailable. Please try again in a little while (your plans and credits weren't touched).";
   if (/rate.?limit|\b429\b|overloaded|too many requests/i.test(s))
-    return "The AI service is temporarily rate-limited or overloaded. Wait a moment and retry.";
+    return "The analysis service is busy right now. Wait a moment and retry.";
   if (/\btimed?\s?out\b|ETIMEDOUT|ECONNRESET|ECONNREFUSED/i.test(s))
     return "The analysis timed out before it finished. Retry; if it keeps happening the plan set may be unusually large.";
-  if (/authentication|invalid.*api.?key|unauthorized|\b401\b/i.test(s))
-    return "The AI service rejected the API key (invalid or unauthorized). Check the API key configuration.";
   return s;
 }

@@ -211,6 +211,9 @@ export async function runEstimate(
       costCents: EST_COST_CENTS.SATELLITE_ESTIMATE,
       meta: { address: norm, failed: true },
     });
+    // Raw cause to the server log; users get the humanized (and for
+    // billing/auth failures, deliberately generic) message.
+    console.error("[runEstimate] pipeline failed:", e);
     const message = humanizeAiError(
       e instanceof Error ? e.message : "AI pipeline failed",
     );
@@ -249,6 +252,12 @@ export async function runEstimate(
     costCents: EST_COST_CENTS.SATELLITE_ESTIMATE,
     meta: { address: norm, reused: isReused, runId: created.id },
   });
+
+  // The engine's stage-by-stage log ("Trimmed N m² …", "Snapped N
+  // walls …") is an internal diagnostic — ADMIN eyes only. Contractors
+  // get the clean result; anything they must act on still arrives via
+  // traceQuality and the double-check banner.
+  if (!isAdmin) result.notes = [];
 
   return {
     ok: true,
@@ -1186,6 +1195,10 @@ export async function runEstimateFromPlan(
         : null,
     },
   );
+
+  // Same admin-only rule as the address path: the analysis log is an
+  // internal diagnostic, not part of the contractor's deliverable.
+  if (!isAdmin) result.notes = [];
 
   return {
     ok: true,
