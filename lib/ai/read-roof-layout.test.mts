@@ -21,6 +21,7 @@ import {
   roofPlanFracToViewerFrac,
   roofPlanViewerSteps,
   describeRoofPlanReading,
+  hasNoPerSideVerdict,
   ROOF_PLAN_SIDES,
   type RoofPlanReading,
   type RoofPlanSide,
@@ -399,6 +400,65 @@ test("describeRoofPlanReading: unreadable states the reason and the fallback", (
   const s = describeRoofPlanReading(emptyRoofPlanReading("529 upstream"));
   assert.match(s, /unreadable \(529 upstream\)/);
   assert.match(s, /fell back to the elevations/);
+});
+
+/* ------------------------------------------------------------------ */
+/* hasNoPerSideVerdict — gates the bounded re-ask                      */
+/* ------------------------------------------------------------------ */
+
+test("hasNoPerSideVerdict: readable but every field null/empty → true (the exact 'no per-side verdicts' case)", () => {
+  const empty: RoofPlanReading = {
+    readable: true,
+    unreadable_reason: null,
+    sides: { front: side(), rear: side(), left: side(), right: side() },
+    hips_at_corners: null,
+    total_ds_marks: null,
+    flat_sections: null,
+    confidence: "low",
+    notes: [],
+  };
+  assert.equal(hasNoPerSideVerdict(empty), true);
+  // Cross-check against the panel string it's meant to predict.
+  assert.match(describeRoofPlanReading(empty), /no per-side verdicts could be made out/);
+});
+
+test("hasNoPerSideVerdict: unreadable is a DIFFERENT case, never triggers the re-ask", () => {
+  assert.equal(hasNoPerSideVerdict(emptyRoofPlanReading("too low-res")), false);
+});
+
+test("hasNoPerSideVerdict: any single real verdict flips it false", () => {
+  const base = () => ({
+    readable: true,
+    unreadable_reason: null,
+    sides: { front: side(), rear: side(), left: side(), right: side() },
+    hips_at_corners: null,
+    total_ds_marks: null,
+    flat_sections: null,
+    confidence: "low",
+    notes: [],
+  }) as RoofPlanReading;
+
+  assert.equal(hasNoPerSideVerdict({ ...base(), hips_at_corners: true }), false, "hips_at_corners alone counts");
+  const eave = base();
+  eave.sides.front = side({ eave_continuous: true });
+  assert.equal(hasNoPerSideVerdict(eave), false, "one eave_continuous:true counts");
+  const gable = base();
+  gable.sides.left = side({ gable_end: true });
+  assert.equal(hasNoPerSideVerdict(gable), false, "one gable_end:true counts");
+  const stepped = base();
+  stepped.sides.rear = side({ steps: 1 });
+  assert.equal(hasNoPerSideVerdict(stepped), false, "a positive step count counts");
+  assert.equal(hasNoPerSideVerdict({ ...base(), total_ds_marks: 0 }), false, "even 0 marks is a real (non-null) verdict");
+  assert.equal(hasNoPerSideVerdict({ ...base(), flat_sections: true }), false, "flat_sections:true counts");
+  // eave_continuous:false / gable_end:false are still real verdicts the
+  // summary just doesn't happen to list — but they're not what
+  // hasNoPerSideVerdict checks (it mirrors describeRoofPlanReading's exact
+  // "nothing to say" condition, which only lists TRUE eaves/gables) — a
+  // side that's ALL false everywhere legitimately still re-asks, since nothing
+  // positive was confirmed.
+  const allFalse = base();
+  for (const f of ROOF_PLAN_SIDES) allFalse.sides[f] = side({ eave_continuous: false, gable_end: false });
+  assert.equal(hasNoPerSideVerdict(allFalse), true);
 });
 
 /* ------------------------------------------------------------------ */

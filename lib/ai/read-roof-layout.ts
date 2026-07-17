@@ -572,6 +572,62 @@ export function describeRoofPlanReading(reading: RoofPlanReading): string {
     : "read, but no per-side verdicts could be made out.";
 }
 
+/**
+ * TRANSIENT-ERROR RETRY for the roof-plan vision call. Copied from (not
+ * imported from) read-elevations.ts's own withTransientRetries — that file
+ * carries `import "server-only"` and a static Anthropic SDK import, and
+ * importing from it here would pull those into this module's top level,
+ * breaking the "pure, node --test-able" contract in the file header. Same
+ * bounds, same doctrine: only 529/5xx/429/408/network failures retry (auth
+ * and billing 4xx fail fast); a still-failing call rethrows with "(after N
+ * retries)" appended.
+ */
+const TRANSIENT_RETRY_DELAYS_MS = [2000, 5000] as const;
+
+function isTransientAiError(e: unknown): boolean {
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === "number") {
+    return status === 529 || status === 429 || status === 408 || (status >= 500 && status <= 599);
+  }
+  const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e ?? "");
+  return /overloaded_error|APIConnection|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network|timed? ?out/i.test(msg);
+}
+
+async function withTransientRetries<T>(fn: () => Promise<T>): Promise<T> {
+  let retries = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (retries >= TRANSIENT_RETRY_DELAYS_MS.length || !isTransientAiError(err)) {
+        if (retries > 0 && err instanceof Error) {
+          err.message = `${err.message} (after ${retries} ${retries === 1 ? "retry" : "retries"})`;
+        }
+        throw err;
+      }
+      const delayMs = TRANSIENT_RETRY_DELAYS_MS[retries] + Math.random() * 400;
+      retries++;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+/** True when the model marked the page `readable` but every per-side and
+ *  whole-roof field came back null/empty — the exact condition
+ *  describeRoofPlanReading falls through to "no per-side verdicts could be
+ *  made out" for. Drives the bounded single re-ask below; an unreadable page
+ *  is a different, already-loud case and is left alone. */
+export function hasNoPerSideVerdict(reading: RoofPlanReading): boolean {
+  if (!reading.readable) return false;
+  if (reading.hips_at_corners != null) return false;
+  if (ROOF_PLAN_SIDES.some((f) => reading.sides[f].eave_continuous === true)) return false;
+  if (ROOF_PLAN_SIDES.some((f) => reading.sides[f].gable_end === true)) return false;
+  if (ROOF_PLAN_SIDES.some((f) => (reading.sides[f].steps ?? 0) > 0)) return false;
+  if (reading.total_ds_marks != null) return false;
+  if (reading.flat_sections === true) return false;
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* The one vision call (server-only via dynamic imports)                */
 /* ------------------------------------------------------------------ */
@@ -820,9 +876,32 @@ const RECORD_ROOF_PLAN_TOOL: Anthropic.Tool = {
   },
 };
 
+const BASE_USER_TEXT = (page: number | null): string =>
+  `Read the roof layout from the ROOF PLAN / ROOF FRAMING page of the attached construction set` +
+  (page != null
+    ? ` — it is page ${page} (1-based). Read ONLY that page; ignore every other sheet. `
+    : `. Locate it (the bird's-eye roof view with hips/ridges/valleys and pitch arrows — NOT the site plan), then read ONLY that page. `) +
+  `Identify the roof outline, orient FRONT (the entry/garage side per the labels, else the bottom of the sheet), ` +
+  `walk all four sides for eave vs gable end and fascia steps, count every downspout mark (check the legend first), ` +
+  `and call record_roof_plan_reading. If the page is too degraded to read, set readable:false — never guess.`;
+
+/** Strengthened re-ask when the first pass came back readable but with zero
+ *  per-side verdicts — usually a dense truss/dimension-heavy sheet where the
+ *  model found the outline but didn't confidently call any individual side.
+ *  Still allowed to return nulls again (never fabricates); this can only
+ *  help, never regress. */
+const RETRY_USER_TEXT = (page: number | null): string =>
+  `${BASE_USER_TEXT(page)} Your first pass found the roof outline but reported no per-side verdict for ANY ` +
+  `side — look again, ONE side at a time (front, then rear, then left, then right): for each, decide ` +
+  `eave_continuous true/false and gable_end true/false before moving to the next side. If a side is ` +
+  `genuinely too degraded to call, leave that side's fields null — but do not leave every side null just ` +
+  `because the sheet is busy with truss/dimension linework; look past that clutter for the printed roof ` +
+  `outline and fascia line on each side.`;
+
 /**
- * Read the roof plan / roof framing page in ONE vision call. Never throws —
- * any failure (missing key, transient 529, truncation) returns
+ * Read the roof plan / roof framing page in ONE vision call (plus a bounded
+ * single re-ask — see hasNoPerSideVerdict below). Never throws — any failure
+ * (missing key, transient 529 after retries, truncation) returns
  * `readable:false` with the reason, so the run degrades to the elevations
  * exactly as before.
  */
@@ -866,66 +945,71 @@ export async function readRoofPlanLayout(
       }
     })();
 
-    const response = await client.messages.create({
-      model: MODEL,
-      // Output is small (~400 tokens of tool JSON), but non-haiku models
-      // spend adaptive-thinking tokens from this same budget and a faint
-      // scan is exactly where thinking runs long — size for that, not the
-      // typical case (same rationale as read-elevations.ts).
-      max_tokens: /haiku/.test(MODEL) ? 4000 : 12000,
-      // Opus 4.7+/Sonnet 5 reject `temperature`. Positive allowlist — same
-      // pattern as read-elevations.ts.
-      ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                `Read the roof layout from the ROOF PLAN / ROOF FRAMING page of the attached construction set` +
-                (spec.page != null
-                  ? ` — it is page ${spec.page} (1-based). Read ONLY that page; ignore every other sheet. `
-                  : `. Locate it (the bird's-eye roof view with hips/ridges/valleys and pitch arrows — NOT the site plan), then read ONLY that page. `) +
-                `Identify the roof outline, orient FRONT (the entry/garage side per the labels, else the bottom of the sheet), ` +
-                `walk all four sides for eave vs gable end and fascia steps, count every downspout mark (check the legend first), ` +
-                `and call record_roof_plan_reading. If the page is too degraded to read, set readable:false — never guess.`,
-            },
-            sourceBlock,
-          ],
-        },
-      ],
-      tools: [RECORD_ROOF_PLAN_TOOL],
-      tool_choice: { type: "tool", name: RECORD_ROOF_PLAN_TOOL.name },
-    });
-
-    const usage = {
-      input_tokens: response.usage.input_tokens,
-      output_tokens: response.usage.output_tokens,
+    const attempt = async (
+      userText: string,
+    ): Promise<{ reading: RoofPlanReading; usage: { input_tokens: number; output_tokens: number } }> => {
+      const response = await withTransientRetries(() =>
+        client.messages.create({
+          model: MODEL,
+          // Output is small (~400 tokens of tool JSON), but non-haiku models
+          // spend adaptive-thinking tokens from this same budget and a faint
+          // scan is exactly where thinking runs long — size for that, not the
+          // typical case (same rationale as read-elevations.ts).
+          max_tokens: /haiku/.test(MODEL) ? 4000 : 12000,
+          // Opus 4.7+/Sonnet 5 reject `temperature`. Positive allowlist — same
+          // pattern as read-elevations.ts.
+          ...(/haiku|sonnet-4-/.test(MODEL) ? { temperature: 0 } : {}),
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+          messages: [{ role: "user", content: [{ type: "text", text: userText }, sourceBlock] }],
+          tools: [RECORD_ROOF_PLAN_TOOL],
+          tool_choice: { type: "tool", name: RECORD_ROOF_PLAN_TOOL.name },
+        }),
+      );
+      const usage = {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+      };
+      // A truncated tool call parses as a PLAUSIBLE reading (defaults fill the
+      // lost tail) — poison for the priority merge. Degrade honestly instead.
+      if (response.stop_reason === "max_tokens") {
+        return {
+          reading: emptyRoofPlanReading("tool output truncated at max_tokens — reading discarded"),
+          usage,
+        };
+      }
+      const toolUse = response.content.find(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+      );
+      if (!toolUse) {
+        return { reading: emptyRoofPlanReading("model returned no structured reading"), usage };
+      }
+      const reading =
+        parseRoofPlanReading(toolUse.input) ??
+        emptyRoofPlanReading("model returned a non-object reading");
+      return { reading, usage };
     };
-    // A truncated tool call parses as a PLAUSIBLE reading (defaults fill the
-    // lost tail) — poison for the priority merge. Degrade honestly instead.
-    if (response.stop_reason === "max_tokens") {
-      return {
-        reading: emptyRoofPlanReading("tool output truncated at max_tokens — reading discarded"),
-        page: spec.page,
-        usage,
-      };
+
+    const first = await attempt(BASE_USER_TEXT(spec.page));
+    let reading = first.reading;
+    let usage = first.usage;
+
+    // Bounded single re-ask (see hasNoPerSideVerdict doc comment). Its own
+    // try/catch: a failure here must never clobber an otherwise-valid first
+    // read — worst case we just keep the empty-verdict reading, same as
+    // today.
+    if (hasNoPerSideVerdict(reading)) {
+      try {
+        const second = await attempt(RETRY_USER_TEXT(spec.page));
+        usage = {
+          input_tokens: usage.input_tokens + second.usage.input_tokens,
+          output_tokens: usage.output_tokens + second.usage.output_tokens,
+        };
+        if (!hasNoPerSideVerdict(second.reading)) reading = second.reading;
+      } catch {
+        // Re-ask failed — keep the first (still-empty) reading.
+      }
     }
-    const toolUse = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-    );
-    if (!toolUse) {
-      return {
-        reading: emptyRoofPlanReading("model returned no structured reading"),
-        page: spec.page,
-        usage,
-      };
-    }
-    const reading =
-      parseRoofPlanReading(toolUse.input) ??
-      emptyRoofPlanReading("model returned a non-object reading");
+
     return { reading, page: spec.page, usage };
   } catch (e) {
     return {
