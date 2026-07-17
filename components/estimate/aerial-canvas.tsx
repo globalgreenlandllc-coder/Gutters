@@ -419,9 +419,7 @@ export function AerialCanvas({
     const items: LabelBox[] = [];
     for (const line of eaves) {
       if (!labelVisibleIds.has(line.id) || line.points.length < 2) continue;
-      const tier = lineTierTag(line);
-      const w = (tier ? 60 : 44) * renderScale;
-      const h = (tier ? 26 : 16) * renderScale;
+      const { w, h } = labelDims(line, renderScale);
       const a = line.points[0];
       const b = line.points[line.points.length - 1];
       const mx = (a.x + b.x) / 2;
@@ -454,18 +452,24 @@ export function AerialCanvas({
         ? orientationChipBoxes(eaves, roofStructure.perimeter, renderScale)
         : []
     ).map((c) => ({ cx: c.at.x, cy: c.at.y, w: c.w, h: c.h }));
-    const inset = 6 * renderScale;
+    // Side insets keep pills on-canvas; the top/bottom get extra room so
+    // pills can't slide under the floating legend (top-right) or the
+    // roof-plan key bar (bottom center) — both are HTML overlays the
+    // solver can't see. Insets scale with zoom = constant on screen.
+    const insetX = 8 * renderScale;
+    const insetTop = 30 * renderScale;
+    const insetBottom = 34 * renderScale;
     return layoutLabels(
       items,
       { segments, discs, rects },
       {
         bounds: {
-          minX: view.x + inset,
-          minY: view.y + inset,
-          maxX: view.x + view.width - inset,
-          maxY: view.y + view.height - inset,
+          minX: view.x + insetX,
+          minY: view.y + insetTop,
+          maxX: view.x + view.width - insetX,
+          maxY: view.y + view.height - insetBottom,
         },
-        gap: 3 * renderScale,
+        gap: 3.5 * renderScale,
       },
     );
   }, [
@@ -2859,6 +2863,23 @@ function lineTierTag(line: EditableLine): string | null {
   );
 }
 
+/** Single-line pill box ("25 LF · ENTRY") — shared by LineLabel and the
+ *  canvas-wide layout pass so the solver reserves exactly the box the
+ *  pill draws. */
+function labelDims(
+  line: EditableLine,
+  renderScale: number,
+  emphasized = false,
+): { w: number; h: number } {
+  const tag = lineTierTag(line);
+  return {
+    w:
+      ((emphasized ? 52 : 44) + (tag ? tag.length * 4.6 + 9 : 0)) *
+      renderScale,
+    h: (emphasized ? 19 : 17) * renderScale,
+  };
+}
+
 function LineLabel({
   line,
   theme,
@@ -2907,14 +2928,12 @@ function LineLabel({
   const isLower =
     line.tier === "lower" ||
     (!!featureLabel && line.feature !== "garage");
-  // All viewBox sizes scale with the current zoom so the label looks
-  // the same on screen at any zoom. Floors keep the label readable at
-  // extreme zoom-out without going invisible. Tier tag widens/heightens
-  // the pill to fit the second line.
-  const w =
-    (tierLabel ? (emphasized ? 70 : 60) : emphasized ? 60 : 44) * renderScale;
-  const h =
-    (tierLabel ? (emphasized ? 30 : 26) : emphasized ? 20 : 16) * renderScale;
+  // SINGLE-LINE pill ("25 LF · ENTRY"): the old two-line pills were twice
+  // as tall, so on plans with clustered short runs (entry/garage jogs)
+  // the de-collision solver stacked them into towers that covered the
+  // drawing. All viewBox sizes scale with the current zoom so the label
+  // looks the same on screen at any zoom.
+  const { w, h } = labelDims(line, renderScale, emphasized);
   const fontSize = (emphasized ? 11 : 10) * renderScale;
 
   // Offset perpendicular to the line so the pill sits OFF the eave.
@@ -2939,7 +2958,7 @@ function LineLabel({
   const sign = fromAnchorX * nx + fromAnchorY * ny >= 0 ? 1 : -1;
   const labelCx = at ? at.cx : cx + nx * sign;
   const labelCy = at ? at.cy : cy + ny * sign;
-  const showLeader = !!at && at.moved > 26 * renderScale;
+  const showLeader = !!at && at.moved > 16 * renderScale;
 
   return (
     <motion.g
@@ -2954,14 +2973,24 @@ function LineLabel({
       }}
     >
       {showLeader && (
-        <line
-          x1={cx}
-          y1={cy}
-          x2={labelCx}
-          y2={labelCy}
-          stroke={tactical ? "rgba(103,232,249,0.4)" : "rgba(20,104,140,0.45)"}
-          strokeWidth={0.9 * renderScale}
-        />
+        <>
+          <line
+            x1={cx}
+            y1={cy}
+            x2={labelCx}
+            y2={labelCy}
+            stroke={tactical ? "rgba(103,232,249,0.5)" : "rgba(20,104,140,0.5)"}
+            strokeWidth={1.1 * renderScale}
+          />
+          {/* Anchor dot on the run so the leader reads as "this label
+              belongs to THAT run", not a stray line. */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={1.8 * renderScale}
+            fill={tactical ? "#67e8f9" : "#14688C"}
+          />
+        </>
       )}
       <rect
         x={labelCx - w / 2}
@@ -2988,7 +3017,7 @@ function LineLabel({
       />
       <text
         x={labelCx}
-        y={labelCy + (tierLabel ? -2 : emphasized ? 4 : 3.5) * renderScale}
+        y={labelCy + 3.5 * renderScale}
         textAnchor="middle"
         fill={tactical ? "#a5f3fc" : "#14688C"}
         fontSize={fontSize}
@@ -2996,21 +3025,19 @@ function LineLabel({
         fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
       >
         {len} LF
+        {tierLabel && (
+          <tspan
+            fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#4a7f99"}
+            fontSize={fontSize * 0.7}
+            fontWeight={700}
+            fontFamily="ui-sans-serif, system-ui"
+            letterSpacing={0.4 * renderScale}
+            dx={5 * renderScale}
+          >
+            {tierLabel}
+          </tspan>
+        )}
       </text>
-      {tierLabel && (
-        <text
-          x={labelCx}
-          y={labelCy + 8 * renderScale}
-          textAnchor="middle"
-          fill={isLower ? "#fbbf24" : tactical ? "#67e8f9" : "#14688C"}
-          fontSize={fontSize * 0.72}
-          fontWeight={700}
-          letterSpacing={0.5 * renderScale}
-          fontFamily="ui-sans-serif, system-ui"
-        >
-          {tierLabel}
-        </text>
-      )}
     </motion.g>
   );
 }

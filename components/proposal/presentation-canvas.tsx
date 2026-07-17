@@ -438,6 +438,38 @@ export function PresentationCanvas({
         </span>
       </div>
 
+      {/* Client legend — explains the ink colors + numbered pins in one
+          glance (and prints cleanly on the PDF). Only when there's
+          something to explain. */}
+      {planMode && (downspouts.length > 0 || eaves.some((l) => l.tier === "lower")) && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-full border border-accent-700/20 bg-[#f7f4ee]/95 px-3 py-1.5 shadow-card">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#10475e]">
+            <span className="inline-block h-[3px] w-4 rounded-full bg-[#115673]" />
+            Gutter
+          </span>
+          {eaves.some((l) => l.tier === "lower") && (
+            <span
+              className="inline-flex items-center gap-1.5 text-[10px] font-semibold"
+              style={{ color: "#7c5320" }}
+            >
+              <span
+                className="inline-block h-[3px] w-4 rounded-full"
+                style={{ background: "#a8712c" }}
+              />
+              Low-roof gutter
+            </span>
+          )}
+          {downspouts.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#10475e]">
+              <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#115673] text-[8px] font-bold text-[#f7f4ee]">
+                1
+              </span>
+              Downspout
+            </span>
+          )}
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -507,11 +539,15 @@ export function PresentationCanvas({
           />
         ))}
 
-        {/* Eaves — clean stroke, soft glow, no draw-in animation */}
+        {/* Eaves — clean stroke, soft glow, no draw-in animation. Lower-
+            roof runs (garage/porch tier) render amber-brown in plan mode
+            so the client reads two gutter systems at a glance — same
+            palette as the satellite diagram's low-roof color. */}
         {eaves.map((line) => {
           const isSelected = selectedId === line.id;
           const isHover = hoverId === line.id;
           const active = isSelected || isHover;
+          const lower = line.tier === "lower";
           return (
             <g key={line.id}>
               {/* Wider invisible hit area so hover/select is forgiving */}
@@ -538,9 +574,13 @@ export function PresentationCanvas({
                     ? // Plan mode: architectural-ink palette. Saturated
                       // blue still reads as "gutter" but no glow —
                       // glows clip on print and look fake on paper.
-                      active
-                      ? "#14688C"
-                      : "#115673"
+                      lower
+                      ? active
+                        ? "#7c5320"
+                        : "#a8712c"
+                      : active
+                        ? "#14688C"
+                        : "#115673"
                     : active
                       ? "#93C6DC"
                       : "#1479B8"
@@ -593,6 +633,7 @@ export function PresentationCanvas({
                 pxPerFt={pxPerFt}
                 at={labelLayout?.placed.get(line.id)}
                 outsideAnchor={eavesCentroid}
+                lower={lower}
               />
             </g>
           );
@@ -743,6 +784,7 @@ function SegmentLabel({
   pxPerFt,
   at,
   outsideAnchor,
+  lower = false,
 }: {
   line: EditableLine;
   emphasized: boolean;
@@ -760,6 +802,9 @@ function SegmentLabel({
   /** Footprint center: the fallback placement kicks the pill AWAY from
    *  this so it lands outside the outline. */
   outsideAnchor?: { x: number; y: number };
+  /** Lower-roof tier run — pill borders/text follow the amber-brown
+   *  low-roof color so label and line read as one system. */
+  lower?: boolean;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -801,7 +846,7 @@ function SegmentLabel({
           y1={cy}
           x2={labelCx}
           y2={labelCy}
-          stroke="rgba(17,86,115,0.38)"
+          stroke={lower ? "rgba(168,113,44,0.45)" : "rgba(17,86,115,0.38)"}
           strokeWidth={0.8 * scale}
         />
       )}
@@ -814,9 +859,13 @@ function SegmentLabel({
         fill={planMode ? "#f7f4ee" : "rgba(2,6,23,0.85)"}
         stroke={
           planMode
-            ? emphasized
-              ? "#115673"
-              : "rgba(17, 86, 115, 0.55)"
+            ? lower
+              ? emphasized
+                ? "#7c5320"
+                : "rgba(168,113,44,0.7)"
+              : emphasized
+                ? "#115673"
+                : "rgba(17, 86, 115, 0.55)"
             : emphasized
               ? "#93C6DC"
               : "rgba(147,198,220,0.45)"
@@ -829,9 +878,11 @@ function SegmentLabel({
         textAnchor="middle"
         fill={
           planMode
-            ? emphasized
-              ? "#10475E"
-              : "#115673"
+            ? lower
+              ? "#7c5320"
+              : emphasized
+                ? "#10475E"
+                : "#115673"
             : emphasized
               ? "#BFDEEA"
               : "#93C6DC"

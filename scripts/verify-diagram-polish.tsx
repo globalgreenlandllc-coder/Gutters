@@ -46,6 +46,12 @@ function runs(perim: P[]): EditableLine[] {
 }
 
 const eaves = runs(PERIM);
+// Tag the porch-bump runs lower-tier so the preview's amber low-roof
+// color + legend render in the harness.
+for (const e of eaves) {
+  const [a, b] = [e.points[0], e.points[1]];
+  if (a.y === 197 && b.y === 197) (e as { tier?: "lower" }).tier = "lower";
+}
 
 // 12 downspouts on corners, all 10' except one porch outlier at 18'
 const dsAt: [number, number, number][] = [
