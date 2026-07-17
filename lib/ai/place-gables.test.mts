@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { placeGablesFromFaces } from "./place-gables.ts";
+import { placeGablesFromFaces, resolveFaceSlots } from "./place-gables.ts";
 import type { FaceReadingRaw, FaceGableRead } from "./face-merge.ts";
 import { runRoofEngine } from "../roof-engine.ts";
 
@@ -280,4 +280,71 @@ test("derived faceNormals (front-at-bottom, front=north): north gables land on t
   const west = placed.find((x) => x.name === "w1")!;
   assert.equal(west.baseCenter.x, 640, "west gable sits on the canvas-RIGHT edge");
   assert.equal(west.facing, "E");
+});
+
+// ── House-relative perFace keys (modern read-elevations rows) ────────────────
+// read-elevations keys faces "front"/"rear"/"left"/"right" (house-relative,
+// straight off the sheet titles). The old cardinal-only loop left those reads
+// invisible: perFace["north"] was undefined, so NO elevation gables placed.
+
+test("HOUSE-RELATIVE read: a real front porch gable PLACES (was: none) at the correct position", () => {
+  const perFace = {
+    front: face({ face: "front", gables: [g({ id: "front_porch", kind: "porch", supported_on: "posts", span_ft: 12, position_frac: 0.25 })] }),
+    rear: face({ face: "rear" }),
+    left: face({ face: "left" }),
+    right: face({ face: "right" }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1, "the house-relative gable places");
+  const gb = gables[0];
+  // Front = canvas bottom (y=510, front-at-bottom convention); the outside
+  // viewer's frac 0.25 lands at x=160 — identical physics to the south face.
+  assert.equal(gb.baseCenter.y, 510);
+  assert.equal(gb.baseCenter.x, 160);
+  assert.equal(gb.facing, "S");
+  assert.equal(gb.eaveCondition, "projecting");
+  assert.equal(gb.span, 120);
+  assert.ok(notes.some((n) => /front/.test(n) && /front_porch/.test(n) && /verify/.test(n)));
+});
+
+test("HOUSE-RELATIVE read: porch depth resolves from the PERPENDICULAR side (right elevation in profile)", () => {
+  const perFace = {
+    front: face({ face: "front", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    right: face({ face: "right", projections: [{ kind: "porch", depth_ft: 8, notes: "porch in profile" }] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  assert.equal(gables[0].projection, 8 * PX_PER_FT, "perp-depth lookup follows the resolved keys");
+  assert.ok(notes.some((n) => /side \(perpendicular\) elevation/.test(n)));
+});
+
+test("cardinal-keyed OLD rows still place identically (fallback path)", () => {
+  const mk = (key: string, faceName: string) => ({
+    [key]: face({ face: faceName as never, gables: [g({ id: "s1", position_frac: 0.25, span_ft: 16 })] }),
+  });
+  const legacy = placeGablesFromFaces(mk("south", "south"), OUTLINE, PX_PER_FT).gables;
+  const modern = placeGablesFromFaces(mk("front", "front"), OUTLINE, PX_PER_FT).gables;
+  assert.equal(legacy.length, 1, "cardinal row still places");
+  assert.deepEqual(legacy, modern, "front (house) and south (cardinal) resolve to the same placement");
+});
+
+test("resolveFaceSlots: house keys win, cardinal keys fall back; normals follow the key family", () => {
+  // Cardinal-only row → cardinal keys, default north-up normals, legacy perp order.
+  const cardinal = resolveFaceSlots({ north: {}, south: {}, east: {}, west: {} });
+  assert.deepEqual(cardinal.map((s) => s.key), ["north", "south", "east", "west"]);
+  assert.deepEqual(cardinal[0].normal, { x: 0, y: -1 });
+  assert.deepEqual(cardinal[0].perpKeys, ["east", "west"]);
+  assert.deepEqual(cardinal[2].perpKeys, ["north", "south"]);
+  // House-relative row → house keys, front-at-bottom canvas normals.
+  const house = resolveFaceSlots({ front: {}, rear: {}, left: {}, right: {} });
+  assert.deepEqual(house.map((s) => s.key), ["rear", "front", "right", "left"]);
+  assert.deepEqual(house[1].normal, { x: 0, y: 1 });
+  assert.deepEqual(house[1].perpKeys, ["right", "left"]);
+  // Derived faceNormals rotate CARDINAL sides only; house sides stay canvas-fixed.
+  const rotated = { north: { x: 0, y: 1 }, south: { x: 0, y: -1 }, east: { x: -1, y: 0 }, west: { x: 1, y: 0 } };
+  assert.deepEqual(resolveFaceSlots({ north: {} }, rotated)[0].normal, { x: 0, y: 1 });
+  assert.deepEqual(resolveFaceSlots({ front: {} }, rotated)[1].normal, { x: 0, y: 1 });
+  // "back" is accepted as an alias of "rear".
+  assert.equal(resolveFaceSlots({ back: {} })[0].key, "back");
+  assert.deepEqual(resolveFaceSlots({ back: {} })[0].normal, { x: 0, y: -1 });
 });

@@ -346,3 +346,130 @@ test("engine-takeoff: a partial read (only 2 faces) can't force all-hip", () => 
   assert.ok(bundle);
   assert.ok(!bundle!.placementNotes.some((n) => n.includes("all-hip")));
 });
+
+// ── DEFECT 1: unanimous hip must suppress PLACED gables too, not just rakes ──
+
+test("engine-takeoff: unanimous hip places ZERO gables — no phantom gable:* ridge/valley zigzag", () => {
+  // A hip-end recorded through the gable channel (is_hip_end:true) does NOT
+  // break hip unanimity — but placeGablesFromFaces would still place it as a
+  // gable, emitting a gable:* ridge-back + two 45° valley legs meeting at a
+  // right angle mid-roof (the dashed zigzag on all-hip scanned rows). When the
+  // faces are unanimously hip, placement must be skipped entirely.
+  const perFace = {
+    front: hipFace("front", {
+      gable_count: 1,
+      gables: [
+        {
+          id: "phantom_hip_end",
+          kind: "main",
+          span_ft: 18,
+          pitch: 6,
+          position_frac: 0.5,
+          eave_condition_guess: "flush",
+          supported_on: "wall",
+          shows_projection_cue: false,
+          is_hip_end: true, // a hip the reader recorded on a second look
+          notes: "",
+        },
+      ],
+    }),
+    rear: hipFace("rear"),
+    left: hipFace("left"),
+    right: hipFace("right"),
+  };
+  const bundle = buildEngineTakeoff(analysis(), perFace);
+  assert.ok(bundle, "bundle built");
+  assert.ok(
+    bundle!.massInputs.every((m) => (m.gables ?? []).length === 0),
+    "zero placed gables on every tier mass",
+  );
+  const interior = bundle!.takeoff.masses.flatMap((m) => m.interior);
+  assert.equal(
+    interior.filter((e) => e.source?.startsWith("gable:")).length,
+    0,
+    "zero gable:* interior lines (no ridge-back, no valley legs — no zigzag)",
+  );
+  const edges = bundle!.takeoff.masses.flatMap((m) => m.edges);
+  assert.equal(
+    edges.filter((e) => e.source?.startsWith("gable:")).length,
+    0,
+    "zero gable:* edges (no phantom side eaves either)",
+  );
+  // Priced LF byte-identical to the same analysis with no per-face read at all.
+  const baseline = buildEngineTakeoff(analysis());
+  assert.equal(bundle!.eaveLfFt, baseline!.eaveLfFt, "eave LF unchanged (180)");
+  assert.equal(bundle!.eaveLfFt, 180);
+  assert.ok(
+    bundle!.placementNotes.some((n) => n.includes("no gables placed")),
+    "the bundle notes say no gables were placed",
+  );
+});
+
+// ── DEFECT 2: house-relative perFace keys must resolve everywhere ────────────
+
+test("engine-takeoff: NON-unanimous house-relative read — gable places AND the gable-end edge drops (snapshot pin)", () => {
+  // Three hip faces + a RIGHT face reading a full-wall gable end with one real
+  // gable. House-relative keys previously left perFace['north'…] undefined, so
+  // (a) the gable never placed and (b) the continuous_eave===false edge drop
+  // never fired. Pin the whole behavior.
+  const perFace = {
+    front: hipFace("front"),
+    rear: hipFace("rear"),
+    left: hipFace("left"),
+    right: hipFace("right", {
+      continuous_eave: false,
+      gable_count: 1,
+      gables: [
+        {
+          id: "right_gable",
+          kind: "main",
+          span_ft: 16,
+          pitch: 6,
+          position_frac: 0.5,
+          eave_condition_guess: "flush",
+          supported_on: "wall",
+          shows_projection_cue: false,
+          notes: "",
+        },
+      ],
+    }),
+  };
+  const bundle = buildEngineTakeoff(analysis(), perFace);
+  assert.ok(bundle);
+  assert.ok(!bundle!.placementNotes.some((n) => n.includes("all-hip")), "not unanimous");
+  // (b)+(c): the right wall (x=100, 80 px) is a gable end → dropped from LF.
+  // eaves = top(100) + bottom(100) + left(80) = 280 px × 0.5 = 140 ft.
+  assert.equal(bundle!.eaveLfFt, 140, "gable-end edge drop fires under house-relative keys");
+  assert.equal(bundle!.takeoff.masses[0].edges.filter((e) => e.gutter).length, 3);
+  // (a): the gable PLACES, centered on the right wall, facing east.
+  const placed = bundle!.massInputs.flatMap((m) => m.gables ?? []);
+  assert.equal(placed.length, 1, "the house-relative gable places (was: none)");
+  assert.equal(placed[0].name, "right_gable");
+  assert.equal(placed[0].baseCenter.x, 100);
+  assert.equal(placed[0].baseCenter.y, 40);
+  assert.equal(placed[0].facing, "E");
+  assert.equal(placed[0].span, 16 / 0.5, "16 ft at 2 px/ft");
+  // Draw: the right wall renders as a RAKE (a full gable end — no cross-gable,
+  // so no gable:* valley legs) and contributes zero gutter.
+  const edges = bundle!.takeoff.masses.flatMap((m) => m.edges);
+  assert.equal(edges.filter((e) => e.type === "rake").length, 1, "the gable-end wall draws as a rake");
+  assert.equal(edges.filter((e) => e.gutter && e.source?.startsWith("gable:")).length, 0, "no gable gutter added");
+});
+
+test("engine-takeoff: cardinal-keyed rows are unchanged — house-relative result mirrors the legacy east read", () => {
+  // The same full-wall gable end read under the OLD cardinal key ("east") and
+  // the new house-relative key ("right") must price identically.
+  const gableEnd = { readable: true, unreadable_reason: null, gable_count: 1, continuous_eave: false, gables: [], projections: [], projection_cues: [], confidence: "high" };
+  const cardinal = buildEngineTakeoff(
+    analysis(),
+    { east: { ...gableEnd, face: "east" } } as unknown as Record<string, import("./face-merge.ts").FaceReadingRaw>,
+  );
+  const houseRel = buildEngineTakeoff(
+    analysis(),
+    { right: { ...gableEnd, face: "right" } } as unknown as Record<string, import("./face-merge.ts").FaceReadingRaw>,
+  );
+  assert.ok(cardinal && houseRel);
+  assert.equal(cardinal!.eaveLfFt, 140, "legacy cardinal read still drops the east edge");
+  assert.equal(houseRel!.eaveLfFt, 140, "house-relative read drops the same edge");
+  assert.deepEqual(houseRel!.takeoff.masses[0].edges, cardinal!.takeoff.masses[0].edges);
+});

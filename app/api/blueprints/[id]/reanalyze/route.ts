@@ -25,6 +25,7 @@ import { readAllElevations } from "@/lib/ai/read-elevations";
 import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
 import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
 import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
+import { elevationStepsForVectorGate } from "@/lib/ai/eave-step-reconcile";
 import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
 import { consumeLimit } from "@/lib/abuse/rate-limit";
 import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
@@ -399,6 +400,10 @@ export async function POST(
               perimeter: roof.perimeter,
               segments: rsegs,
               footprintOutline: fpOutline,
+              // ELEVATIONS-FIRST jog gate — same wire-in as the upload path:
+              // per-face eave-line breaks from the already-awaited elevation
+              // reads; null (old reads) → legacy behavior byte-identical.
+              elevationSteps: elevationStepsForVectorGate(elevations?.per_face ?? null),
             });
             if (repair) {
               outline = repair.perimeter;

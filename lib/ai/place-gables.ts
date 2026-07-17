@@ -3,7 +3,9 @@
  * engine gables on the roof-plan outline, so the engine can DRAW every gable and
  * pop-out (porch, patio, dormers) instead of relying on the freehand trace.
  *
- * For each cardinal face that was read, we find the outline edge on that side and
+ * For each face that was read — modern reads key HOUSE-RELATIVE ("front"/
+ * "rear"/"left"/"right", straight off the sheet titles), legacy rows key by
+ * compass ("north"…) — we find the outline edge on that side and
  * place each gable at its `position_frac` along that edge, facing outward. A
  * gable carried on POSTS / a BEAM (or read as projecting) is promoted to a
  * PROJECTING gable — that's what renders as a real pop-out with guttered side
@@ -89,15 +91,6 @@ function resolveDepthFt(
   }
   return { depthFt: Math.max(3, Math.min(spanFt * 0.6, 8)), source: "schematic default" };
 }
-
-/** The two faces perpendicular to a given face (where its pop-outs' depth is
- *  visible in profile). */
-const PERP: Record<string, string[]> = {
-  north: ["east", "west"],
-  south: ["east", "west"],
-  east: ["north", "south"],
-  west: ["north", "south"],
-};
 
 const clamp01 = (t: number): number => Math.max(0, Math.min(1, t));
 
@@ -216,7 +209,65 @@ function orientEdge(a: Pt, b: Pt, rightDir: Pt): [Pt, Pt] {
   return faceU(a, rightDir) <= faceU(b, rightDir) ? [a, b] : [b, a];
 }
 
-const FACE_NAMES = ["north", "south", "east", "west"] as const;
+/** One resolvable side of the house for a per-face read. */
+export type FaceSlot = {
+  /** The perFace key this side resolves to ("front"… or "north"…). */
+  key: string;
+  /** The side's OUTWARD canvas normal (y-down PDF-pixel space). */
+  normal: Pt;
+  /** perFace keys of the two PERPENDICULAR sides (where this side's pop-outs
+   *  read in profile), in the legacy E/W-then-N/S lookup order. */
+  perpKeys: [string, string];
+};
+
+/** Canvas normals for the house-relative words under the front-at-bottom
+ *  drafting convention (same table as plan-orientation's WORD_NORMALS — a
+ *  house-relative side is canvas-FIXED regardless of the compass rotation,
+ *  which is exactly why modern reads key by it). */
+const HOUSE_NORMALS: Record<string, Pt> = {
+  rear: { x: 0, y: -1 },
+  back: { x: 0, y: -1 },
+  front: { x: 0, y: 1 },
+  right: { x: 1, y: 0 },
+  left: { x: -1, y: 0 },
+};
+
+/** Side order mirrors the legacy FACE_NAMES ["north","south","east","west"]
+ *  so cardinal-keyed rows keep byte-identical output order. */
+const FACE_SIDES: readonly { house: readonly string[]; cardinal: keyof FaceNormals }[] = [
+  { house: ["rear", "back"], cardinal: "north" },
+  { house: ["front"], cardinal: "south" },
+  { house: ["right"], cardinal: "east" },
+  { house: ["left"], cardinal: "west" },
+];
+
+/**
+ * THE shared per-face key resolution (defect: three consumers iterated
+ * cardinal-only names, so modern HOUSE-RELATIVE reads — read-elevations keys
+ * "front"/"rear"/"left"/"right" — were invisible: no elevation gables placed,
+ * no gable-end suppression). For each of the four sides, the house-relative
+ * key wins when the read carries it; otherwise the cardinal key keeps old
+ * stored rows working unchanged. House sides use the fixed front-at-bottom
+ * canvas normals; cardinal sides keep `faceNormals` (derived orientation) with
+ * the north-up default — byte-identical to the legacy per-site lookups.
+ */
+export function resolveFaceSlots(
+  perFace: Record<string, unknown> | null | undefined,
+  faceNormals?: FaceNormals | null,
+): FaceSlot[] {
+  const keys = FACE_SIDES.map((s) => {
+    const house = perFace ? s.house.find((k) => perFace[k] != null) : undefined;
+    return house ?? s.cardinal;
+  });
+  return FACE_SIDES.map((s, i) => {
+    const normal =
+      keys[i] === s.cardinal
+        ? faceNormals?.[s.cardinal] ?? DEFAULT_FACE_NORMALS[s.cardinal]
+        : HOUSE_NORMALS[keys[i]];
+    const [p, q] = i < 2 ? [2, 3] : [0, 1];
+    return { key: keys[i], normal, perpKeys: [keys[p], keys[q]] as [string, string] };
+  });
+}
 
 /**
  * Place the per-face gables on the outline. `pxPerFt` converts span/projection
@@ -234,8 +285,9 @@ export function placeGablesFromFaces(
     return { gables, notes };
   }
 
-  for (const face of FACE_NAMES) {
-    const n = options?.faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
+  for (const slot of resolveFaceSlots(perFace, options?.faceNormals)) {
+    const face = slot.key;
+    const n = slot.normal;
     // The engine draws by CANVAS letter — under a derived orientation the
     // compass-north gable projects wherever north points on this sheet.
     const letter = facingLetterOf(n);
@@ -252,7 +304,7 @@ export function placeGablesFromFaces(
     const uSpan = uMax - uMin;
 
     // Depth of a pop-out on THIS face is measured on the PERPENDICULAR faces.
-    const perpProjections: FaceProjection[] = (PERP[face] ?? []).flatMap((pf) =>
+    const perpProjections: FaceProjection[] = slot.perpKeys.flatMap((pf) =>
       perFace[pf]?.readable !== false ? perFace[pf]?.projections ?? [] : [],
     );
 

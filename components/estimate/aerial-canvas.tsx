@@ -50,6 +50,7 @@ import {
   type PlacedLabel,
 } from "@/lib/diagram-labels";
 import { gableWingFaces } from "@/lib/roof-skeleton";
+import { isNearPerimeter } from "@/lib/roof-structure-view";
 import { simplify } from "@/lib/ai/geometry";
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
@@ -60,6 +61,8 @@ export function AerialCanvas({
   eaves,
   rakes = [],
   downspouts,
+  suggestedEaves = [],
+  onAcceptSuggested,
   onEavesChange,
   onRakesChange,
   onDownspoutsChange,
@@ -76,6 +79,15 @@ export function AerialCanvas({
    *  gray-dashed lines for verification; non-interactive. */
   rakes?: EditableLine[];
   downspouts: Downspout[];
+  /** UN-PRICED suggested gutter runs (tier-break hints from the engine /
+   *  solar pipeline). Rendered amber-dashed with a "+ suggested — verify"
+   *  affordance; NEVER summed into the priced LF. Tapping one calls
+   *  onAcceptSuggested so the owner component can move it into the priced
+   *  eaves. Visible even without the callback (visible beats dead). */
+  suggestedEaves?: EditableLine[];
+  /** Accept a suggested run: the owner removes it from suggestedEaves and
+   *  appends it to the priced eaves. Omit to render suggestions read-only. */
+  onAcceptSuggested?: (line: EditableLine) => void;
   onEavesChange: (next: EditableLine[]) => void;
   /** Reclassify a side EAVE⇄GABLE: an eave the AI guttered that's really a
    *  gable end (no gutter) gets converted to a rake — drops its LF and
@@ -1467,6 +1479,12 @@ export function AerialCanvas({
               // 46-px wing would double-shade on top of the real plane.
               if (roofStructure?.faces?.length) return null;
               if (!perim || perim.length < 3 || lenPx < 12) return null;
+              // WING GUARD: a rake whose midpoint is off the perimeter is an
+              // interior artifact (a clerestory/tier boundary the AI called a
+              // rake) — a translucent wing quad there is an unlabeled box
+              // floating mid-roof. Skip the wing; the dashed rake line still
+              // draws. Real perimeter gable-end wings are untouched.
+              if (!isNearPerimeter({ x: mx, y: my }, perim)) return null;
               let cx = 0, cy = 0;
               for (const p of perim) { cx += p.x; cy += p.y; }
               cx /= perim.length;
@@ -1548,6 +1566,77 @@ export function AerialCanvas({
               </g>
             );
           })}
+
+        {/* SUGGESTED (un-priced) gutter runs — amber dashed hints the engine
+            couldn't confirm (tier-break returns, interior drops). Tap one to
+            accept it into the priced eaves (select tool); it becomes a normal
+            editable run. Never counted in LF until accepted. */}
+        {suggestedEaves.map((line) => {
+          const a = line.points[0];
+          const b = line.points[line.points.length - 1];
+          if (
+            !a || !b ||
+            !Number.isFinite(a.x) || !Number.isFinite(a.y) ||
+            !Number.isFinite(b.x) || !Number.isFinite(b.y)
+          ) {
+            return null;
+          }
+          const mx = (a.x + b.x) / 2;
+          const my = (a.y + b.y) / 2;
+          const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
+          const lenFt = lineLengthFt(line, pxPerFt);
+          const tac = theme === "tactical";
+          const stroke = tac ? "#fbbf24" : "#d97706";
+          const canAccept = !!onAcceptSuggested;
+          return (
+            <g key={`suggested-${line.id}`}>
+              <path
+                d={pathFor(line)}
+                stroke={stroke}
+                strokeWidth={2.2 * renderScale}
+                strokeDasharray={`${5 * renderScale} ${4 * renderScale}`}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+                opacity={0.9}
+                pointerEvents="none"
+              />
+              {lenPx >= 20 && (
+                <text
+                  x={mx}
+                  y={my - 5 * renderScale}
+                  textAnchor="middle"
+                  fontSize={9 * renderScale}
+                  fontWeight={700}
+                  fill={stroke}
+                  stroke={tac ? "rgba(2,6,23,0.7)" : "rgba(255,255,255,0.85)"}
+                  strokeWidth={2.4 * renderScale}
+                  paintOrder="stroke"
+                  style={{ pointerEvents: "none" }}
+                >
+                  {`+ ${Number.isFinite(lenFt) ? `${Math.round(lenFt)}′ ` : ""}suggested — verify`}
+                </text>
+              )}
+              {canAccept && (
+                <path
+                  d={pathFor(line)}
+                  stroke="transparent"
+                  strokeWidth={16 * renderScale}
+                  strokeLinecap="round"
+                  fill="none"
+                  style={{
+                    cursor: tool === "select" ? "copy" : undefined,
+                  }}
+                  onPointerDown={(e) => {
+                    if (tool !== "select") return;
+                    e.stopPropagation();
+                    onAcceptSuggested(line);
+                  }}
+                />
+              )}
+            </g>
+          );
+        })}
 
         {eaves.map((line, i) => {
           const isSelected = selectedId === line.id;

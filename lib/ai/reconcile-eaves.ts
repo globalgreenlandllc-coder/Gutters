@@ -38,7 +38,8 @@ import type {
   BlueprintRun,
 } from "./blueprint-from-plans";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
-import { DEFAULT_FACE_NORMALS, type FaceNormals } from "./plan-orientation";
+import type { FaceNormals } from "./plan-orientation";
+import { resolveFaceSlots } from "./place-gables";
 
 type Edge = {
   a: Pt;
@@ -381,13 +382,17 @@ export function closeVectorPerimeter(
     };
 
     // Principal edge of each face read as a full gable end → keep unguttered.
+    // resolveFaceSlots tries the modern HOUSE-RELATIVE keys first (cardinal
+    // fallback for old rows) — a cardinal-only loop couldn't see modern reads,
+    // so a full-wall gable end was silently priced by the closure. NEVER bill
+    // across a gable end.
     const gableEndEdges = new Set<number>();
     const gableEndFaces: string[] = [];
     if (opts?.perFace) {
-      for (const face of ["north", "south", "east", "west"] as const) {
-        const r = opts.perFace[face];
+      for (const slot of resolveFaceSlots(opts.perFace, opts.faceNormals)) {
+        const r = opts.perFace[slot.key];
         if (!r || r.readable === false || r.continuous_eave !== false) continue;
-        const n = opts.faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
+        const n = slot.normal;
         let best = -1;
         let bestScore = -Infinity;
         edges.forEach((e, i) => {
@@ -400,7 +405,7 @@ export function closeVectorPerimeter(
         });
         if (best >= 0) {
           gableEndEdges.add(best);
-          gableEndFaces.push(face);
+          gableEndFaces.push(slot.key);
         }
       }
     }

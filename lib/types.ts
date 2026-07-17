@@ -42,7 +42,12 @@ export type EaveFeature =
   | "main"
   | "unknown";
 
-export type RoofStructureLineKind = "ridge" | "valley" | "hip" | "gable";
+export type RoofStructureLineKind =
+  | "ridge"
+  | "valley"
+  | "hip"
+  | "gable"
+  | "step";
 
 export type RoofStructureLine = {
   id: string;
@@ -79,6 +84,12 @@ export type RoofStructure = {
    *  overlay. `downhill` = unit direction the plane slopes down toward.
    *  Optional; absent on satellite/older stored takeoffs. */
   faces?: { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[];
+  /** Tier STEP edges (kind "step") — interior mass boundaries where one roof
+   *  level drops to another (the engine's tier decomposition). Drawn as thin
+   *  solid lines so multi-tier plans read as tiers, not bare outlines.
+   *  `label` optionally names the mass/tier. Decorative, never priced.
+   *  Optional; absent on satellite and pre-steps stored takeoffs. */
+  steps?: RoofStructureLine[];
   /** 0–1, surfaces an "approximation only" warning when low. */
   confidence: number;
 };

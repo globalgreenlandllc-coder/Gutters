@@ -452,3 +452,71 @@ test("trace-hip closure WITHOUT excludeEdges is byte-identical to today (pinned 
   assert.deepEqual(empty.analysis, analysis);
   assert.deepEqual(empty.reconcileNotes, reconcileNotes);
 });
+
+// ── House-relative perFace keys in closeVectorPerimeter ──────────────────────
+// Modern read-elevations rows key faces "front"/"rear"/"left"/"right". The old
+// gable-end loop iterated cardinal names only, so a house-relative full-wall
+// gable read was INVISIBLE and the closure priced gutter straight across a
+// gable end. Doctrine: never bill across a gable end.
+
+test("HOUSE-RELATIVE full-wall gable read suppresses closure pricing on that wall (LF lower, note names it)", () => {
+  const fixture = () =>
+    base({
+      building_footprint: FOOT,
+      gutter_runs: [
+        run("front", [0, 0], [200, 0], 100),
+        run("left", [0, 0], [0, 120], 60),
+      ],
+    });
+  // WITHOUT the gable read: both open walls close (right 60 + rear 100).
+  const open = closeVectorPerimeter(fixture(), {
+    perFace: { front: { readable: true, continuous_eave: true } },
+  });
+  assert.equal(open.analysis.gutter_runs.length, 4, "baseline: right + rear both priced");
+  // WITH a house-relative RIGHT face reading a full-wall gable end: the right
+  // wall must stay unpriced.
+  const withGable = closeVectorPerimeter(fixture(), {
+    perFace: {
+      front: { readable: true, continuous_eave: true },
+      right: { readable: true, continuous_eave: false },
+    },
+  });
+  assert.equal(withGable.analysis.gutter_runs.length, 3, "only the rear wall priced");
+  assert.ok(
+    !withGable.analysis.gutter_runs.some(
+      (r) => r.id.startsWith("vclose") && Math.abs(r.start.x - 200) < 1 && Math.abs(r.end.x - 200) < 1,
+    ),
+    "the right (gable-end) wall got NO run",
+  );
+  const totalOf = (a: typeof open.analysis) =>
+    a.gutter_runs.reduce((s, r) => s + (r.length_ft ?? 0), 0);
+  assert.ok(totalOf(withGable.analysis) < totalOf(open.analysis), "priced LF is LOWER with the gable read");
+  assert.ok(
+    withGable.reconcileNotes.some((n) => /gable-end/.test(n) && /right/.test(n)),
+    "the note names the suppressed face",
+  );
+  // EXACT parity with the legacy cardinal key: an "east" read must suppress the
+  // same wall with identical priced runs (only the note's face word differs).
+  const cardinal = closeVectorPerimeter(fixture(), {
+    perFace: {
+      front: { readable: true, continuous_eave: true },
+      east: { readable: true, continuous_eave: false },
+    },
+  });
+  assert.deepEqual(withGable.analysis, cardinal.analysis, "house-relative ≡ cardinal suppression");
+});
+
+test("all-hip read (no gables): closure byte-identical under house-relative vs cardinal keys", () => {
+  const cardinalHip = Object.fromEntries(
+    ["north", "south", "east", "west"].map((f) => [
+      f,
+      { readable: true, continuous_eave: true, gable_count: 0, gables: [] },
+    ]),
+  );
+  for (const mode of ["trace-hip", "vector"] as const) {
+    const hr = closeVectorPerimeter(twoOpenWalls(), { perFace: HIP_FACES, mode });
+    const cd = closeVectorPerimeter(twoOpenWalls(), { perFace: cardinalHip, mode });
+    assert.deepEqual(hr.analysis, cd.analysis, `${mode}: identical analysis`);
+    assert.deepEqual(hr.reconcileNotes, cd.reconcileNotes, `${mode}: identical notes`);
+  }
+});

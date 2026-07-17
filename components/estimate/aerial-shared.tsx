@@ -770,6 +770,9 @@ export function RoofStructureOverlay({
         // (full-footprint coverage) instead of nothing. Empty on satellite
         // and older stored takeoffs, where shading stays off as before.
         faces: (structure.faces ?? []) as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        // Tier STEP edges (interior mass boundaries) — verbatim; empty on
+        // satellite and pre-steps stored takeoffs.
+        steps: (structure.steps ?? []).map((l) => ({ points: l.points })),
       };
     }
     // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
@@ -882,6 +885,9 @@ export function RoofStructureOverlay({
             }))
           : base.gables,
       dormers: [...aiDormers, ...userDormers],
+      // Stored tier steps pass through verbatim on the legacy-derive path
+      // too — the grid never re-derives them (empty on rows without them).
+      steps: (structure.steps ?? []).map((l) => ({ points: l.points })),
     };
   }, [
     derive,
@@ -893,6 +899,7 @@ export function RoofStructureOverlay({
     structure.valleys,
     structure.gables,
     structure.faces,
+    structure.steps,
   ]);
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";
@@ -904,6 +911,10 @@ export function RoofStructureOverlay({
   const ridgeC = onDark ? "rgba(203,213,225,0.85)" : "rgba(51,65,85,0.78)";
   const hipC = onDark ? "rgba(125,211,252,0.85)" : "rgba(14,116,144,0.78)";
   const valleyC = onDark ? "rgba(196,181,253,0.9)" : "rgba(109,40,217,0.75)";
+  // Tier STEPS: thin SOLID, warm and subtle — visibly different from the
+  // ridge/hip solids and the dashed valleys, and thinner than everything
+  // else so a step reads as "the roof level changes here", not a priced run.
+  const stepC = onDark ? "rgba(253,186,116,0.75)" : "rgba(180,83,9,0.55)";
   const gableC = onDark ? "rgba(148,163,184,0.95)" : "rgba(71,85,105,0.85)";
   const gableText = onDark ? "#cbd5e1" : "#475569";
 
@@ -939,6 +950,15 @@ export function RoofStructureOverlay({
       for (let i = 1; i < l.points.length; i++) {
         anchorSegs.push([l.points[i - 1], l.points[i]]);
       }
+    }
+  }
+  // Tier steps are real drawn geometry — an interior ridge legitimately
+  // terminates ON a step boundary (a clerestory ridge dying into its own
+  // box), so steps count as anchors. Steps themselves are drawn directly
+  // below (exact mass-decomposition edges, never dangling artifacts).
+  for (const s of skel.steps ?? []) {
+    for (let i = 1; i < s.points.length; i++) {
+      anchorSegs.push([s.points[i - 1], s.points[i]]);
     }
   }
   const lines = dropDanglingLines(rawLines, anchorSegs, 6);
@@ -995,6 +1015,24 @@ export function RoofStructureOverlay({
             fill={faceFill(f.downhill)}
             stroke={faceEdge}
             strokeWidth={0.5 * scale}
+            strokeLinejoin="round"
+          />
+        ) : null,
+      )}
+      {/* Tier STEP edges — thin SOLID interior mass boundaries where one
+          roof level drops to another. Drawn verbatim from the stored takeoff
+          (exact tier decomposition, no dangling-line pass needed) so a
+          multi-tier plan reads as tiers. Display-only, never priced. */}
+      {(skel.steps ?? []).map((l, i) =>
+        l.points.length >= 2 &&
+        segLen(l.points[0], l.points[l.points.length - 1]) > 1.5 ? (
+          <path
+            key={`step-${i}`}
+            d={linePathD(l.points)}
+            fill="none"
+            stroke={stepC}
+            strokeWidth={1.1 * scale}
+            strokeLinecap="round"
             strokeLinejoin="round"
           />
         ) : null,

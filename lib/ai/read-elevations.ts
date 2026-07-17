@@ -10,7 +10,7 @@ import {
   type FaceReadingRaw,
 } from "./face-merge";
 
-export type { ElevationFaceName, FaceGableRead, FaceReadingRaw, MergedFaces } from "./face-merge";
+export type { ElevationFaceName, FaceEaveStep, FaceGableRead, FaceReadingRaw, MergedFaces } from "./face-merge";
 export { mergeFaceReadings } from "./face-merge";
 
 /**
@@ -241,6 +241,30 @@ gable that interrupts the eave line ⇒ continuous_eave = false. Frame-over/dorm
 gables ABOVE the line don't break it — those faces stay true.
 </edges>
 
+<eave_steps>
+The gutter hangs on the ROOF edge, so the eave/fascia LINE PROFILE of this
+face is load-bearing: scan it once, viewer LEFT→RIGHT, across the FULL width.
+EVERY point where the eave line BREAKS to a different height or depth plane is
+an eave STEP — a tier change down to a lower wing/porch roof, a wing's fascia
+riding proud of (in front of) the main fascia, an inset porch band. Report each
+break as an eave_steps entry:
+  - position_frac: where the break sits along the face (0 = far left, 0.5 =
+    center, 1 = far right, as you look at this elevation);
+  - direction: "down" when the eave line drops to a LOWER plane scanning
+    left→right at the break, "up" when it rises;
+  - offset_ft: the VERTICAL fascia offset in feet ONLY when a printed
+    dimension or plate-height line makes it readable — otherwise null (never
+    eyeball it);
+  - kind: "tier_drop" (a full roof-tier change), "fascia_jog" (same tier, the
+    fascia plane jogs), or "unknown".
+A GABLE TRIANGLE interrupting the eave line is NOT a step — report the gable
+in gables and keep scanning the eave line past it. ALWAYS report eave_steps
+explicitly: [] means one unbroken eave plane across the whole face, and that
+empty array is itself a load-bearing answer (a straight eave vetoes phantom
+wall jogs downstream). A missed step misprices a tier boundary; an invented
+one draws a phantom return — report exactly what the eave line shows.
+</eave_steps>
+
 <stories>
 Report stories_visible: how many above-grade floor LEVELS of wall this
 elevation shows (1, 2, or 3). Read it from the wall, not the roof: one plate
@@ -355,6 +379,40 @@ const RECORD_FACE_TOOL: Anthropic.Tool = {
           required: ["kind", "depth_ft"],
         },
       },
+      eave_steps: {
+        type: "array",
+        description:
+          "EVERY break in this face's eave/fascia line to a different height/depth plane, scanning viewer left→right (tier changes, proud wing fascias, inset porch bands). A gable triangle is NOT a step. Always report explicitly — [] means one unbroken eave plane. See <eave_steps>.",
+        items: {
+          type: "object",
+          properties: {
+            position_frac: {
+              type: ["number", "null"],
+              description:
+                "Where the eave line breaks along the face: 0 = far left, 0.5 = center, 1 = far right, as you look at this elevation.",
+            },
+            direction: {
+              type: "string",
+              enum: ["up", "down"],
+              description:
+                'Height change scanning left→right at the break: "down" = the eave drops to a lower plane, "up" = it rises.',
+            },
+            offset_ft: {
+              type: ["number", "null"],
+              description:
+                "Vertical fascia offset in feet, ONLY when a printed dimension/plate line makes it readable; else null.",
+            },
+            kind: {
+              type: "string",
+              enum: ["tier_drop", "fascia_jog", "unknown"],
+              description:
+                "What the break is: a full roof-tier change, a same-tier fascia jog, or unknown.",
+            },
+            notes: { type: "string" },
+          },
+          required: ["position_frac", "direction"],
+        },
+      },
       projection_cues: { type: "array", items: { type: "string" } },
       stories_visible: {
         type: ["integer", "null"],
@@ -433,7 +491,7 @@ export async function readElevationFace(
     // gutter under frame-over gables (the Woodinville "no eave-in-front
     // data" warnings). A stale override is bypassed for the code default.
     const system = await getPrompt("blueprint.elevation.system", ELEVATION_FACE_SYSTEM, {
-      requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form", "eave_below_main"],
+      requiredMarkers: ["eave_passes_in_front", "stories_visible", "is_hip_end", "cover_form", "eave_below_main", "eave_steps"],
     });
     const response = await client.messages.create({
       model: MODEL,
@@ -483,6 +541,29 @@ export async function readElevationFace(
     if (!toolUse) return { reading: emptyFace(spec.face, "model returned no structured reading"), usage };
 
     const raw = toolUse.input as Partial<FaceReadingRaw>;
+    // eave_steps parses DEFENSIVELY and stays ABSENT unless the model actually
+    // reported the field (an array): the downstream reconcile treats a missing
+    // key as "not read" and degrades to byte-identical legacy behavior, so a
+    // stale prompt override or an old model can never fake an empty (= straight
+    // eave) answer. Garbage entries are coerced to nulls, never dropped fields.
+    const eaveSteps = Array.isArray(raw.eave_steps)
+      ? raw.eave_steps
+          .filter((s): s is NonNullable<typeof s> => !!s && typeof s === "object")
+          .map((s) => ({
+            position_frac:
+              typeof s.position_frac === "number" && Number.isFinite(s.position_frac)
+                ? s.position_frac
+                : null,
+            direction: s.direction === "up" || s.direction === "down" ? s.direction : null,
+            offset_ft:
+              typeof s.offset_ft === "number" && Number.isFinite(s.offset_ft)
+                ? s.offset_ft
+                : null,
+            kind:
+              s.kind === "tier_drop" || s.kind === "fascia_jog" ? s.kind : ("unknown" as const),
+            notes: typeof s.notes === "string" ? s.notes : "",
+          }))
+      : undefined;
     const reading: FaceReadingRaw = {
       face: spec.face, // trust our spec over the model's echo
       sheet_title: typeof raw.sheet_title === "string" && raw.sheet_title.trim() ? raw.sheet_title.trim() : null,
@@ -492,6 +573,7 @@ export async function readElevationFace(
       gable_count: typeof raw.gable_count === "number" ? raw.gable_count : null,
       continuous_eave: raw.continuous_eave !== false,
       gables: Array.isArray(raw.gables) ? raw.gables : [],
+      ...(eaveSteps ? { eave_steps: eaveSteps } : {}),
       projections: Array.isArray(raw.projections) ? raw.projections : [],
       projection_cues: Array.isArray(raw.projection_cues) ? raw.projection_cues : [],
       stories_visible:

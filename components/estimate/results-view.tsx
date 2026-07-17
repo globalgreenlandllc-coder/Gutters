@@ -404,6 +404,16 @@ export function ResultsView({
                   eaves={eaves}
                   rakes={rakes}
                   downspouts={downspouts}
+                  suggestedEaves={suggestedEaves}
+                  onAcceptSuggested={(line) => {
+                    // Move the tapped suggestion OUT of the un-priced pool
+                    // and INTO the priced eaves — from here on it's a normal
+                    // editable run (drag/delete/re-tier like any other).
+                    setSuggestedEaves((prev) =>
+                      prev.filter((l) => l.id !== line.id),
+                    );
+                    setEaves((prev) => [...prev, { ...line, kind: "eave" }]);
+                  }}
                   onEavesChange={setEaves}
                   onRakesChange={setRakes}
                   onDownspoutsChange={setDownspouts}

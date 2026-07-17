@@ -24,7 +24,11 @@ import { PX_PER_FT } from "@/components/estimate/aerial-constants";
 import { buildEngineTakeoff } from "./engine-takeoff";
 import { consensusStories, isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import { sideOfPerimeterEdge, type FaceNormals } from "./plan-orientation";
-import { filterRoofDiagramLines } from "./roof-diagram-filter";
+import {
+  classifyRunPlacement,
+  collectStepEdges,
+  filterRoofDiagramLines,
+} from "./roof-diagram-filter";
 import { facesFromRoofLines } from "./roof-faces-from-lines";
 import type { RoofMassArea } from "./to-masses";
 import type { DroppedProjection } from "./reconcile-edge-classes";
@@ -658,6 +662,12 @@ export function blueprintToEstimateResult(
     })
     .filter((l): l is EditableLine => l !== null);
 
+  // Priced-run count for the count-derived quantities (end caps, rakeLF
+  // average). Frozen by the engine block below to the PRE-steps drawn set so
+  // the display-only interior-run append can't move a priced number; null =
+  // non-engine path (use eaves.length, as always).
+  let pricedRunCount: number | null = null;
+
   // Engine mode: replace the gutter_runs eaves with the engine's guttered edges
   // (footprint perimeter + confirmed projecting-gable side eaves), projected
   // with the SAME transform so the canvas registers and re-prices consistently.
@@ -699,23 +709,60 @@ export function blueprintToEstimateResult(
       }
       return best && bestD <= donorCap ? best : null;
     };
-    eaves = engineBundle.takeoff.masses
+    // Partition the engine's guttered edges by placement. PRICING mode bills
+    // EVERY guttered engine edge, so every one draws (drawn set = priced set
+    // and the LF correction below lands ≈1). DISPLAY mode prices the AI's
+    // measured runs — the perimeter engine edges draw the outline, and the
+    // AI's own INTERIOR runs (clerestory / upper-tier gutters mid-roof) are
+    // appended right after so every priced foot is VISIBLE. Before this,
+    // interior runs vanished from the drawing while their length_ft still
+    // counted into targetEaveLF, and the uniform correction smeared that
+    // invisible LF onto the perimeter pill labels.
+    const engineGutterEdges = engineBundle.takeoff.masses
       .flatMap((m) => m.edges)
-      .filter((e) => e.gutter && onOuterBoundary(e))
-      .map((e, i): EditableLine => {
-        const donor = nearestDonor(e);
-        const geomSide =
-          outerFp.length >= 3 ? sideOfPerimeterEdge(e.p1, e.p2, outerFp) : null;
-        const side = geomSide ?? donor?.side;
-        return {
-          id: `engine-eave-${i}`,
+      .filter((e) => e.gutter);
+    eaves = (enginePrices
+      ? engineGutterEdges
+      : engineGutterEdges.filter(onOuterBoundary)
+    ).map((e, i): EditableLine => {
+      const donor = nearestDonor(e);
+      const geomSide =
+        outerFp.length >= 3 ? sideOfPerimeterEdge(e.p1, e.p2, outerFp) : null;
+      const side = geomSide ?? donor?.side;
+      return {
+        id: `engine-eave-${i}`,
+        kind: "eave",
+        points: [project(e.p1), project(e.p2)],
+        ...(side ? { side } : {}),
+        ...(donor ? { tier: donor.tier } : {}),
+        ...(donor?.feature ? { feature: donor.feature } : {}),
+      };
+    });
+    // PRICED-COUNT FREEZE: end caps (× runs) and the rakeLF average divide by
+    // the run COUNT. Appending interior runs / unfiltering engine edges is a
+    // DISPLAY fix and must never move a priced quantity — derive those counts
+    // from the same set the pre-steps code drew (perimeter engine edges).
+    pricedRunCount = engineGutterEdges.filter(onOuterBoundary).length;
+    if (!enginePrices) {
+      // PRICED INTERIOR RUNS MUST DRAW (display mode): append the AI-traced
+      // gutter runs whose midpoint sits INTERIOR to the footprint. Finite
+      // coords only — classifyRunPlacement returns "invalid" for garbage
+      // points, and those never draw. NEVER touches targetEaveLF: these runs
+      // were ALWAYS priced; they just weren't drawn.
+      const interiorTol = perimeterOnly ? outerBoundaryTol : Infinity;
+      analysis.gutter_runs.forEach((r, i) => {
+        if (classifyRunPlacement(r, outerFp, interiorTol) !== "interior")
+          return;
+        eaves.push({
+          id: `plan-eave-${i}`,
           kind: "eave",
-          points: [project(e.p1), project(e.p2)],
-          ...(side ? { side } : {}),
-          ...(donor ? { tier: donor.tier } : {}),
-          ...(donor?.feature ? { feature: donor.feature } : {}),
-        };
+          points: [project(r.start), project(r.end)],
+          tier: (r.tier ?? "unknown") as EaveTier,
+          ...(r.side ? { side: r.side as EaveSide } : {}),
+          ...(r.feature ? { feature: r.feature as EaveFeature } : {}),
+        });
       });
+    }
   }
 
   // Also detect "all eaves got projected to the same point" — the
@@ -837,6 +884,11 @@ export function blueprintToEstimateResult(
   // Both stay empty off the edgeLayout path — decorative, never priced.
   let roofGables: RoofStructureLine[] = [];
   let roofFaces: NonNullable<RoofStructure["faces"]> = [];
+  // Tier STEP edges — the interior mass boundaries the perimeter-only filter
+  // drops from the drawn eaves/rakes. On a multi-tier roof these ARE the
+  // picture (where one roof level drops to the next), so they get their own
+  // drawn channel (thin solid, never dashed). Display-only, LF-neutral.
+  let roofSteps: RoofStructureLine[] = [];
 
   // Engine mode: the engine owns the interior skeleton — the clean straight-
   // skeleton (main hips/ridges/valleys) + each gable's ridge-back — so the roof
@@ -863,10 +915,18 @@ export function blueprintToEstimateResult(
       interior
         .filter((e) => e.type === kind && e.source === "skeleton")
         .map((e, i) => ({ id: `engine-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
+    // GABLE-LINE GATE: on a unanimous all-hip read (all 4 elevations agree,
+    // zero gables) there is NO cross-gable to draw — any "gable:…" interior
+    // line is a placement artifact, and its ridge-back + valleys were the
+    // floating zigzag mid-roof on the 1168G scanned row. Belt-and-braces
+    // with the upstream placement fix: the gate holds even on rows whose
+    // stored geometry predates it.
     const gableLines = (kind: "ridge" | "valley") =>
-      interior
-        .filter((e) => e.type === kind && e.source?.startsWith("gable:"))
-        .map((e, i) => ({ id: `engine-gable-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
+      isUnanimousHip(opts?.perFace)
+        ? []
+        : interior
+            .filter((e) => e.type === kind && e.source?.startsWith("gable:"))
+            .map((e, i) => ({ id: `engine-gable-${kind}-${i}`, kind, points: [project(e.p1), project(e.p2)] }));
     if (engineDrewSkeleton) {
       roofRidges = [...skelLines("ridge"), ...gableLines("ridge")];
       roofValleys = [...skelLines("valley"), ...gableLines("valley")];
@@ -877,6 +937,25 @@ export function blueprintToEstimateResult(
       roofRidges = [...roofRidges, ...gableLines("ridge")];
       roofValleys = [...roofValleys, ...gableLines("valley")];
     }
+    // TIER STEPS ARE THE PICTURE: the interior mass-boundary edges the
+    // perimeter-only filter drops from the drawn eaves/rakes (a clerestory
+    // box, an upper tier stepping down to a garage roof). Emit them on their
+    // own drawn channel — deduped across the two masses that share each
+    // boundary, labeled with the mass/tier name — so a multi-tier plan reads
+    // as tiers instead of a bare outline. Infinity tol off the perimeter-only
+    // path = no steps (those edges already draw as eaves/rakes there).
+    roofSteps = collectStepEdges(
+      engineBundle.takeoff.masses.flatMap((m) =>
+        m.edges.map((e) => ({ edge: e, massName: m.name })),
+      ),
+      outerFp,
+      perimeterOnly ? outerBoundaryTol : Infinity,
+    ).map(({ edge, massName }, i) => ({
+      id: `engine-step-${i}`,
+      kind: "step" as const,
+      points: [project(edge.p1), project(edge.p2)],
+      ...(massName ? { label: massName } : {}),
+    }));
   }
 
   // v2 edge-takeoff layout: the whole-perimeter skeleton computed from the
@@ -992,6 +1071,9 @@ export function blueprintToEstimateResult(
     );
     if (syn.eaves.length > 0) {
       eaves = syn.eaves;
+      // The frozen engine count no longer describes what's drawn/priced —
+      // the synthesized layout owns the run count now.
+      pricedRunCount = null;
       // Replace downspouts only when we also had none rendered — if
       // the AI gave good downspout coordinates, keep them.
       if (downspouts.length === 0) {
@@ -1063,6 +1145,7 @@ export function blueprintToEstimateResult(
     roofValleys = scaleLines(roofValleys);
     roofHips = scaleLines(roofHips);
     roofGables = scaleLines(roofGables);
+    roofSteps = scaleLines(roofSteps);
     // Uniform scale about a point — downhill directions are unchanged.
     roofFaces = roofFaces.map((f) => ({ ...f, polygon: f.polygon.map(sp) }));
 
@@ -1145,7 +1228,11 @@ export function blueprintToEstimateResult(
   // endpoints, no source-feet conversion. Estimate rakeLF as the
   // average eave-run length times the rake count so the measurement
   // sheet isn't blank. Contractor can override in the pricing panel.
-  const avgRunLf = eaves.length > 0 ? eaveLF / eaves.length : 0;
+  // Divide by the FROZEN priced-run count in engine mode (see pricedRunCount)
+  // — the display-only interior-run append grows `eaves` but must not shrink
+  // the average and move rakeLF (a priced quantity) on existing rows.
+  const runCountForPricing = pricedRunCount ?? eaves.length;
+  const avgRunLf = runCountForPricing > 0 ? eaveLF / runCountForPricing : 0;
   const rakeLF = Math.round(rakes.length * avgRunLf);
 
   // Stories: the elevation CONSENSUS when the faces were read (a wall count is
@@ -1176,8 +1263,9 @@ export function blueprintToEstimateResult(
     outsideCorners: analysis.totals.outside_corner_miters,
     insideCorners: analysis.totals.inside_corner_miters,
     // Each detached run gets two end caps. Approximation but close
-    // enough for a starting bid.
-    endCaps: Math.max(2, eaves.length * 2),
+    // enough for a starting bid. Count-frozen in engine mode so the
+    // display-only interior-run append can't add priced caps.
+    endCaps: Math.max(2, runCountForPricing * 2),
     downspoutCount: analysis.totals.downspout_count,
     stories,
     wasteFactorPct: 8,
@@ -1211,14 +1299,21 @@ export function blueprintToEstimateResult(
       // coverage (to-masses.ts) — that's "unguttered", not a confirmed gable.
       // On a unanimous-hip read, calling those "gable rakes" contradicts the
       // 4-face check ("15 gable rake(s)" on a zero-gable 1168G) — say what the
-      // elevations actually established.
+      // elevations actually established. Count only the PERIMETER rakes (the
+      // ones actually drawn); interior mass boundaries draw as tier-step
+      // lines and are reported as such — the note must describe what is on
+      // the canvas, not what the decomposition emitted.
       const rakeCount = engineBundle.takeoff.masses
         .flatMap((m) => m.edges)
-        .filter((e) => e.type === "rake").length;
+        .filter((e) => e.type === "rake" && onOuterBoundary(e)).length;
+      const stepNote =
+        roofSteps.length > 0
+          ? `; ${roofSteps.length} tier-step edge(s) drawn as thin solid lines where one roof level drops to another`
+          : "";
       notes.push(
         isUnanimousHip(opts?.perFace)
-          ? `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): all-hip per the 4-face reads (0 gables)${rakeCount > 0 ? `; ${rakeCount} unguttered edge(s) drawn as plain roof edges` : ""} + a clean straight-skeleton. Pricing stays on the measured-run LF.`
-          : `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s) + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
+          ? `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): all-hip per the 4-face reads (0 gables)${rakeCount > 0 ? `; ${rakeCount} unguttered edge(s) drawn as plain roof edges` : ""}${stepNote} + a clean straight-skeleton. Pricing stays on the measured-run LF.`
+          : `⚙ Engine-drawn roof geometry (DISPLAY ONLY — not priced): ${rakeCount} gable rake(s)${stepNote} + a clean straight-skeleton drawn by rule from the 4-face reads. Pricing stays on the measured-run LF.`,
       );
     }
     // Surface the engine (footprint-perimeter) LF next to what we actually
@@ -1308,6 +1403,10 @@ export function blueprintToEstimateResult(
   // confidence score already credited).
   if (perimeterOnly && !opts?.edgeLayout) {
     const engineDrawn = (l: { id: string }) => l.id.startsWith("engine-");
+    // strictAnchor = the raster-path rules: RIDGES must anchor at BOTH
+    // endpoints (a stub dying into a hidden interior cut wall floats and
+    // must drop), and a tiny surviving set (<2 lines, or fragments only)
+    // is emitted EMPTY — nothing over fabricated fragments.
     const filtered = filterRoofDiagramLines(
       {
         ridges: roofRidges.filter(engineDrawn),
@@ -1315,10 +1414,16 @@ export function blueprintToEstimateResult(
         hips: roofHips.filter(engineDrawn),
       },
       roofPerimeter,
+      { strictAnchor: true },
     );
     roofRidges = filtered.ridges;
     roofValleys = filtered.valleys;
     roofHips = filtered.hips;
+    if (filtered.interiorOmitted) {
+      notes.push(
+        "Interior roof lines omitted — not enough evidenced structure to draw them; the perimeter and tier steps are exact.",
+      );
+    }
   }
   // v2 shading back-compat + total-coverage guarantee: layouts stored before
   // faces existed carry none — polygonize the PROJECTED lines instead (the
@@ -1344,6 +1449,7 @@ export function blueprintToEstimateResult(
           hips: roofHips,
           ...(roofGables.length > 0 ? { gables: roofGables } : {}),
           ...(roofFaces.length > 0 ? { faces: roofFaces } : {}),
+          ...(roofSteps.length > 0 ? { steps: roofSteps } : {}),
           // True gable-structure count: v2 layout counts classified gable-end
           // walls; otherwise the engine's per-face placement. Absent when
           // neither is drawing (AI-only path).

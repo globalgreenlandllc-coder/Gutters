@@ -9,6 +9,7 @@ import type { BlueprintAnalysis } from "@/lib/ai/blueprint-from-plans";
 import { extractBuildingOutline, deriveVectorScale } from "@/lib/ai/outline-from-vectors";
 import { rectifyPlanFootprint, auditNotches } from "@/lib/ai/rectify-plan-takeoff";
 import { tierCornerVeto } from "@/lib/ai/tier-corner-veto";
+import { reconcileEaveSteps } from "@/lib/ai/eave-step-reconcile";
 import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
@@ -1034,6 +1035,50 @@ export async function runEstimateFromPlan(
         e instanceof Error ? e.message : e,
       );
     }
+  }
+
+  // ELEVATIONS-FIRST ROOF JOG (owner doctrine: gutters hang on the ROOF edge;
+  // jogs come from the roof shape — the eave-line profile on each ELEVATION
+  // first, roof plan next, never a wall jog alone). reconcileEaveSteps
+  // cross-checks each readable face's eave_steps against the traced
+  // footprint's same-face jogs:
+  //  - a matched jog gets a "roof-verified" note;
+  //  - an eave-line break the trace MISSED becomes an UNPRICED tap-to-add
+  //    suggestion (suggest-don't-carve), + the hip inner-return leg under a
+  //    hip tier step;
+  //  - a traced wall jog under a straight-eave read is flagged loudly (roof
+  //    wins) — the run is never deleted or unpriced.
+  // Outline-agnostic, so it runs on BOTH trace kinds, AFTER the tier-corner
+  // veto and BEFORE the perimeter closure. Notes/suggestions only: geometry
+  // and priced LF are byte-untouched, and old stored reads (no eave_steps
+  // key anywhere) pass through byte-identical.
+  try {
+    const stepRec = reconcileEaveSteps({
+      analysis,
+      perFace: perFace as Partial<
+        Record<string, import("@/lib/ai/face-merge").FaceReadingRaw>
+      > | null,
+      faceNormals: orientation?.normals ?? null,
+    });
+    const stepNotes = [...stepRec.notes, ...stepRec.wallJogFlags];
+    if (stepNotes.length > 0) {
+      analysis.notes = [...(analysis.notes ?? []), ...stepNotes.map((n) => `⚠ ${n}`)];
+    }
+    for (const s of stepRec.suggestedEaves) {
+      suggestedEavesFromPlan.push({ points: [s.points[0], s.points[1]], tier: s.tier });
+    }
+    if (stepNotes.length > 0 || stepRec.suggestedEaves.length > 0) {
+      console.log(
+        `[eave-step-reconcile] ${stepRec.verifiedJogIds.length} jog(s) roof-verified, ` +
+          `${stepRec.suggestedEaves.length} unpriced suggestion(s), ` +
+          `${stepRec.wallJogFlags.length} wall-jog flag(s)`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[eave-step-reconcile] threw (takeoff unchanged):`,
+      e instanceof Error ? e.message : e,
+    );
   }
 
   // VECTOR CLOSURE — only when the footprint is the plan's own vector outline

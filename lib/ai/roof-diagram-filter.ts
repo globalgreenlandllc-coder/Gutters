@@ -86,13 +86,29 @@ function distToPolygonBoundary(p: DiagramPt, poly: readonly DiagramPt[]): number
  * Apply the three roof-plan invariants to the DRAWN interior lines. Input
  * arrays are per kind so the hip/valley length rule knows which lines it
  * applies to; each returned array preserves its input's order and objects.
+ *
+ * `opts.strictAnchor` (the raster/engine path) adds two stricter rules:
+ *   4. RIDGES must anchor at BOTH endpoints — each endpoint must terminate on
+ *      the perimeter, on another KEPT line, or at a junction. A ridge stub
+ *      that died into a HIDDEN interior cut wall (scanned all-hip plans with
+ *      clerestories) floats at one end and reads as a random dash — drop it.
+ *   5. TINY SURVIVING SET — if fewer than 2 lines survive, or only fragments
+ *      do, the interior is not evidenced enough to draw at all: emit EMPTY
+ *      arrays and set `interiorOmitted` so the caller can say so in a note.
+ *      Doctrine: prefer drawing NOTHING over fabricated fragments.
  */
 export function filterRoofDiagramLines<T extends DiagramLine>(
   lines: { ridges: T[]; valleys: T[]; hips: T[] },
   perimeter: readonly DiagramPt[],
-): { ridges: T[]; valleys: T[]; hips: T[] } {
+  opts?: {
+    /** Raster-path strictness: both-endpoint ridge anchoring + the
+     *  tiny-set → empty rule. Off by default (v-line callers keep the
+     *  original single-anchor reachability behavior). */
+    strictAnchor?: boolean;
+  },
+): { ridges: T[]; valleys: T[]; hips: T[]; interiorOmitted: boolean } {
   if (!perimeter || perimeter.length < 3) {
-    return { ridges: [], valleys: [], hips: [] };
+    return { ridges: [], valleys: [], hips: [], interiorOmitted: false };
   }
   const xs = perimeter.map((p) => p.x);
   const ys = perimeter.map((p) => p.y);
@@ -101,7 +117,7 @@ export function filterRoofDiagramLines<T extends DiagramLine>(
     Math.max(...ys) - Math.min(...ys),
   );
   if (!Number.isFinite(span) || span <= 0) {
-    return { ridges: [], valleys: [], hips: [] };
+    return { ridges: [], valleys: [], hips: [], interiorOmitted: false };
   }
   const tol = Math.max(span * 0.02, 2);
 
@@ -111,6 +127,7 @@ export function filterRoofDiagramLines<T extends DiagramLine>(
     ...lines.valleys.map((line) => ({ line, kind: "valley" as const })),
     ...lines.hips.map((line) => ({ line, kind: "hip" as const })),
   ].filter((t) => endpoints(t.line) !== null);
+  const inputCount = pool.length;
 
   // 1. NO CROSSINGS — drop the longest line involved in any proper crossing,
   //    re-check (bounded: each pass removes one line).
@@ -179,10 +196,131 @@ export function filterRoofDiagramLines<T extends DiagramLine>(
   }
   pool = pool.filter((_, i) => reachable[i]);
 
+  // 4. STRICT RIDGE ANCHORING (raster path only) — a ridge must terminate on
+  //    the perimeter, another KEPT line, or a junction at BOTH endpoints.
+  //    Single-anchor reachability (rule 3) keeps a ridge stub whose far end
+  //    died into a hidden interior cut wall; those float mid-canvas on
+  //    scanned all-hip plans. Iterate to a fixpoint: dropping one ridge can
+  //    unanchor another (the result is the unique greatest both-anchored set,
+  //    independent of drop order).
+  if (opts?.strictAnchor) {
+    for (;;) {
+      const endsNow = pool.map((t) => endpoints(t.line)!);
+      const anchored = (p: DiagramPt, self: number): boolean =>
+        distToPolygonBoundary(p, perimeter) <= tol ||
+        endsNow.some((e, j) => j !== self && distToLine(p, e) <= tol);
+      const idx = pool.findIndex(
+        (t, i) =>
+          t.kind === "ridge" && !endsNow[i].every((p) => anchored(p, i)),
+      );
+      if (idx < 0) break;
+      pool.splice(idx, 1);
+    }
+  }
+
+  // 5. TINY SURVIVING SET (raster path only) — fewer than 2 survivors, or
+  //    fragments only, isn't an evidenced roof interior; draw nothing and
+  //    tell the caller (the perimeter + tier steps still carry the picture).
+  let interiorOmitted = false;
+  if (opts?.strictAnchor && inputCount > 0) {
+    const fragLen = span * 0.15;
+    const tiny =
+      pool.length < 2 || pool.every((t) => lineLen(t.line) < fragLen);
+    if (tiny) {
+      interiorOmitted = true;
+      pool = [];
+    }
+  }
+
   const keep = new Set(pool.map((t) => t.line));
   return {
     ridges: lines.ridges.filter((l) => keep.has(l)),
     valleys: lines.valleys.filter((l) => keep.has(l)),
     hips: lines.hips.filter((l) => keep.has(l)),
+    interiorOmitted,
   };
+}
+
+// ── Pure decision helpers for the blueprint→estimate bridge ────────────────
+// blueprint-to-estimate.ts is server-only (not node-testable), so the two
+// view-time decisions it makes about interior geometry live here as pure
+// functions with tests: which priced gutter runs are INTERIOR (and must still
+// draw), and which mass-boundary edges are tier STEPS (and get their own
+// drawn channel). Neither touches priced LF — display classification only.
+
+export type RunPlacement = "perimeter" | "interior" | "invalid";
+
+/**
+ * Classify a priced gutter run against the footprint perimeter. "interior"
+ * = the run's midpoint sits farther than `tol` from every footprint edge
+ * (e.g. a clerestory rectangle mid-roof) — it must be APPENDED to the drawn
+ * eaves in perimeter-only mode or its LF silently smears onto the perimeter
+ * pills via the uniform correction. "invalid" = non-finite coords (never
+ * draw those — garbage points collapse to the viewBox center). A missing /
+ * degenerate footprint or a non-finite tol classifies as "perimeter": with
+ * no boundary to test against, nothing can be called interior.
+ */
+export function classifyRunPlacement(
+  run: {
+    start?: DiagramPt | null;
+    end?: DiagramPt | null;
+  },
+  footprint: readonly DiagramPt[],
+  tol: number,
+): RunPlacement {
+  const s = run.start;
+  const e = run.end;
+  if (
+    !s || !e ||
+    !Number.isFinite(s.x) || !Number.isFinite(s.y) ||
+    !Number.isFinite(e.x) || !Number.isFinite(e.y)
+  ) {
+    return "invalid";
+  }
+  if (!footprint || footprint.length < 3 || !Number.isFinite(tol)) {
+    return "perimeter";
+  }
+  const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
+  return distToPolygonBoundary(mid, footprint) > tol ? "interior" : "perimeter";
+}
+
+export type StepEdgeSource<T> = { edge: T; massName?: string };
+
+/**
+ * Select the tier-STEP edges to draw: interior mass-boundary edges (midpoint
+ * farther than `tol` from the footprint perimeter) with finite, non-degenerate
+ * geometry, deduplicated across masses (two tier masses SHARE their boundary,
+ * so the same step edge arrives once per mass). Order-preserving; keeps the
+ * first occurrence (its mass name becomes the step's label). Pure and
+ * LF-neutral: never mutates inputs, never touches gutter flags or lengths —
+ * these edges are already EXCLUDED from the drawn eaves/rakes by the
+ * perimeter-only filter, this only routes them to a display channel.
+ */
+export function collectStepEdges<T extends { p1: DiagramPt; p2: DiagramPt }>(
+  edges: readonly StepEdgeSource<T>[],
+  footprint: readonly DiagramPt[],
+  tol: number,
+): StepEdgeSource<T>[] {
+  if (!footprint || footprint.length < 3 || !Number.isFinite(tol)) return [];
+  const finite = (p: DiagramPt | null | undefined): p is DiagramPt =>
+    !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const dedupTol = Math.max(tol * 0.5, 1);
+  const samePt = (a: DiagramPt, b: DiagramPt) =>
+    Math.hypot(a.x - b.x, a.y - b.y) <= dedupTol;
+  const out: StepEdgeSource<T>[] = [];
+  for (const s of edges) {
+    const { p1, p2 } = s.edge;
+    if (!finite(p1) || !finite(p2)) continue;
+    if (Math.hypot(p2.x - p1.x, p2.y - p1.y) <= dedupTol) continue;
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    if (distToPolygonBoundary(mid, footprint) <= tol) continue;
+    const dup = out.some(
+      (o) =>
+        (samePt(o.edge.p1, p1) && samePt(o.edge.p2, p2)) ||
+        (samePt(o.edge.p1, p2) && samePt(o.edge.p2, p1)),
+    );
+    if (dup) continue;
+    out.push(s);
+  }
+  return out;
 }

@@ -326,3 +326,41 @@ test("projection position + eave_below_main pass through mergeFaceReadings untou
   assert.equal(oldProj.position, undefined, "old reads stay field-free (the veto's passthrough signal)");
   assert.equal(oldProj.eave_below_main, undefined);
 });
+
+test("eave_steps round-trip through the merge + 2-step review flag", () => {
+  const frontSteps = [
+    { position_frac: 0.3, direction: "down" as const, offset_ft: null, kind: "tier_drop" as const, notes: "" },
+    { position_frac: 0.7, direction: "up" as const, offset_ft: 2, kind: "fascia_jog" as const, notes: "" },
+  ];
+  const reads: FaceReadingRaw[] = [
+    face({ face: "front", eave_steps: frontSteps }),
+    face({ face: "rear", eave_steps: [] }), // explicit straight eave
+    face({ face: "left" }), // old-schema read: no eave_steps key
+  ];
+  const m = mergeFaceReadings(reads, ["front", "rear", "left"]);
+  assert.deepEqual(m.per_face.front.eave_steps, frontSteps, "steps pass through untouched");
+  assert.deepEqual(m.per_face.rear.eave_steps, [], "an explicit [] survives (straight-eave evidence)");
+  assert.equal(m.per_face.left.eave_steps, undefined, "old reads stay field-free (the reconcile's passthrough signal)");
+  const stepFlags = m.review_flags.filter((f) => /eave line steps/.test(f));
+  assert.equal(stepFlags.length, 1, "exactly one density flag");
+  assert.match(stepFlags[0], /front eave line steps 2×/);
+  assert.match(stepFlags[0], /verify tier boundaries/);
+});
+
+test("eave_steps: one step / absent field / unreadable face → NO density flag", () => {
+  const reads: FaceReadingRaw[] = [
+    face({ face: "front", eave_steps: [{ position_frac: 0.5, direction: "down", offset_ft: null }] }),
+    face({ face: "rear" }),
+    face({
+      face: "left",
+      readable: false,
+      unreadable_reason: "low-res",
+      eave_steps: [
+        { position_frac: 0.2, direction: "down", offset_ft: null },
+        { position_frac: 0.8, direction: "up", offset_ft: null },
+      ],
+    }),
+  ];
+  const m = mergeFaceReadings(reads, ["front", "rear", "left"]);
+  assert.equal(m.review_flags.filter((f) => /eave line steps/.test(f)).length, 0);
+});

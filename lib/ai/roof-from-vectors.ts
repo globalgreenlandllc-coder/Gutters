@@ -439,6 +439,54 @@ export function snapPhantomEdges(
   return { perimeter: cleaned, snapped };
 }
 
+// ————————————————————————————————————————————————————————————————————————
+// ELEVATIONS-FIRST JOG GATE (owner doctrine: gutters hang on the ROOF edge;
+// jogs must come from the roof shape, elevations first — a wall/footprint jog
+// alone proves nothing, the roof often bridges it). When the caller supplies
+// per-face eave-line reads, a footprint jog is adopted into the priced
+// outline ONLY when the same face's elevation shows an eave-line break near
+// that position. A face that read a clean straight eave (eave_steps [] AND
+// continuous_eave) VETOES the splice — the jog is surfaced as a note + an
+// unpriced suggestedReturns entry instead. Faces without the field (old
+// stored reads) keep legacy behavior byte-identical.
+// ————————————————————————————————————————————————————————————————————————
+
+/** Per-face eave-line breaks read off the elevations (viewer frame,
+ *  0 = far left → 1 = far right as you look at that elevation). Only faces
+ *  that actually REPORTED the field belong in this list. */
+export type ElevationFaceSteps = {
+  /** House-relative face word: front / rear / back / left / right. */
+  face: string;
+  steps: { position_frac: number | null; direction?: "up" | "down" | null }[];
+  continuous_eave: boolean;
+};
+
+/** A footprint jog the elevation gate REFUSED to splice — surfaced for the
+ *  caller's notes / suggestion channel instead of being carved into pricing. */
+export type BlockedJog = {
+  face: string;
+  /** Viewer-frame 0..1 position of the jog along that face. */
+  position_frac: number;
+  /** The face read a clean straight eave ([] + continuous_eave) — the
+   *  strongest "roof bridges the wall jog" evidence. */
+  straightEave: boolean;
+  note: string;
+};
+
+/** House-relative face of an axis-aligned edge, in the segments' RASTER
+ *  convention (origin top-left, y-down — see pdf-vectors.ts) under the
+ *  front-at-bottom drafting convention: front = max-y side, rear = min-y,
+ *  right = max-x, left = min-x. Same physical convention as
+ *  tier-corner-veto.ts HOUSE_NORMALS. */
+function faceOfAxisEdge(
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  horiz: boolean,
+  c: number,
+): "front" | "rear" | "left" | "right" {
+  if (horiz) return c >= (bbox.minY + bbox.maxY) / 2 ? "front" : "rear";
+  return c >= (bbox.minX + bbox.maxX) / 2 ? "right" : "left";
+}
+
 /**
  * (b) FOOTPRINT JOG ADOPTION. The foundation/floor plan draws the wall line
  * the gutter follows; when its outline shows a step or notch (≥ ~2 ft) whose
@@ -458,12 +506,21 @@ export function snapPhantomEdges(
  * continuous roofline) and the trace is RIGHT; foundation articulation must
  * never be carved into it. If the widths can't tier, support can't be
  * assessed → null, the trace stands.
+ *
+ * `elevationSteps` adds the ELEVATIONS-FIRST gate (see the block comment
+ * above): on a face whose elevation reported its eave-line breaks, a jog is
+ * spliced only when a break sits within tolerance of it; a refused jog comes
+ * back in `blocked` (note + unpriced suggestion — never carved). Faces
+ * without elevation data behave exactly as before; the sheet's own linework
+ * (`drawnAt`) still has the FIRST word — a drawn-straight span never reaches
+ * the elevation gate.
  */
 export function adoptFootprintJogs(
   perimeter: Pt[],
   footprintOutline: Pt[],
   segments?: number[][] | null,
-): { perimeter: Pt[]; adopted: number } | null {
+  elevationSteps?: ElevationFaceSteps[] | null,
+): { perimeter: Pt[]; adopted: number; blocked: BlockedJog[] } | null {
   const n = perimeter.length;
   if (n < 4 || n > 40) return null;
   if (!Array.isArray(footprintOutline) || footprintOutline.length < 5 || footprintOutline.length > 40)
@@ -526,6 +583,81 @@ export function adoptFootprintJogs(
   const fpEdges = axisEdges(mapped, Math.max(0.75, span * 0.002));
   if (!fpEdges) return null;
 
+  // ELEVATIONS-FIRST gate (see block comment above adoptFootprintJogs).
+  const stepsByFace = new Map<string, ElevationFaceSteps>();
+  for (const e of elevationSteps ?? []) {
+    if (e && typeof e.face === "string" && Array.isArray(e.steps)) {
+      const key = e.face === "back" ? "rear" : e.face;
+      stepsByFace.set(key, e);
+    }
+  }
+  const blocked: BlockedJog[] = [];
+  /** One face's verdict on a jog: "confirm" = an eave-line break sits within
+   *  tolerance (splice allowed), "block" = the face reported the field but
+   *  shows NO break there (with the strongest form being a clean straight
+   *  eave), "nodata" = that face never reported the field → legacy. */
+  type Verdict =
+    | { kind: "confirm" | "nodata" }
+    | { kind: "block"; blocked: BlockedJog };
+  const elevationVerdict = (
+    poly: Pt[],
+    horiz: boolean,
+    c: number,
+    lo: number,
+    hi: number,
+  ): Verdict => {
+    if (stepsByFace.size === 0) return { kind: "nodata" }; // legacy
+    const xs = poly.map((p) => p.x);
+    const ys = poly.map((p) => p.y);
+    const bb = {
+      minX: Math.min(...xs),
+      maxX: Math.max(...xs),
+      minY: Math.min(...ys),
+      maxY: Math.max(...ys),
+    };
+    const face = faceOfAxisEdge(bb, horiz, c);
+    const info = stepsByFace.get(face);
+    if (!info) return { kind: "nodata" }; // face never reported the field
+    const [axMin, axMax] = horiz ? [bb.minX, bb.maxX] : [bb.minY, bb.maxY];
+    const width = axMax - axMin;
+    if (!(width > 0)) return { kind: "nodata" };
+    // Viewer left→right along the face (y-down raster, front-at-bottom):
+    // front reads +x, rear −x, right −y, left +y.
+    const flip = face === "rear" || face === "right";
+    const fracOf = (v: number) => (flip ? (axMax - v) / width : (v - axMin) / width);
+    const vOf = (f: number) => (flip ? axMax - f * width : axMin + f * width);
+    const tol = Math.max(span * 0.06, width * 0.06); // ≈4 ft / 6% of the face
+    const jLo = Math.min(lo, hi);
+    const jHi = Math.max(lo, hi);
+    const matched = info.steps.some((s) => {
+      const f = s?.position_frac;
+      if (typeof f !== "number" || !Number.isFinite(f) || f < 0 || f > 1) return false;
+      const v = vOf(f);
+      return v >= jLo - tol && v <= jHi + tol;
+    });
+    if (matched) return { kind: "confirm" };
+    const straightEave = info.steps.length === 0 && info.continuous_eave !== false;
+    const frac = Math.max(0, Math.min(1, fracOf((jLo + jHi) / 2)));
+    const pct = Math.round(frac * 100);
+    const note = straightEave
+      ? `📐 ELEVATIONS-FIRST: the foundation plan steps on the ${face} side (~${pct}% across), but the ${face} elevation reads one straight, unbroken eave line — the roof may bridge the wall jog, so it was NOT carved into the priced outline. Verify the ${face} roofline; add the return on the canvas if the roof really steps.`
+      : `📐 ELEVATIONS-FIRST: the foundation plan steps on the ${face} side (~${pct}% across), but the ${face} elevation's eave-line breaks show no step there — the jog was NOT carved into the priced outline. Verify the ${face} roofline against the elevation.`;
+    return { kind: "block", blocked: { face, position_frac: frac, straightEave, note } };
+  };
+  /** Combine the verdicts of the (up to two) faces a jog's eave-line break is
+   *  visible on: ANY confirmation adopts; otherwise any block blocks (roof
+   *  wins — the elevations read a straight eave where the wall steps); no
+   *  data anywhere → legacy adopt. */
+  const combineVerdicts = (verdicts: Verdict[]): BlockedJog | null => {
+    if (verdicts.some((v) => v.kind === "confirm")) return null;
+    const blocks = verdicts.filter(
+      (v): v is Extract<Verdict, { kind: "block" }> => v.kind === "block",
+    );
+    if (blocks.length === 0) return null; // no data → legacy
+    // Prefer the straight-eave reading — it's the decisive contradiction.
+    return (blocks.find((b) => b.blocked.straightEave) ?? blocks[0]).blocked;
+  };
+
   const JOG_MIN = span * 0.03; // ≈2 ft on a 64-ft building
   const OFFSET_TOL = span * 0.04; // wall→eave overhang plus registration noise
   const MARGIN = JOG_MIN * 0.5;
@@ -584,6 +716,18 @@ export function adoptFootprintJogs(
             if (Math.abs(E.c - A.c) > OFFSET_TOL) continue;
             // The roof sheet drew this sub-span as-is → the trace is right.
             if (drawnAt(E.horiz, E.c, u1, u2)) continue;
+            // ELEVATIONS-FIRST: a mid-wall notch's eave-line breaks (at u1
+            // and u2) show on the face of E — that face's elevation must not
+            // contradict the splice.
+            const veto = combineVerdicts([
+              elevationVerdict(cur, E.horiz, E.c, u1, u1),
+              elevationVerdict(cur, E.horiz, E.c, u2, u2),
+            ]);
+            if (veto) {
+              blocked.push(veto);
+              for (let s = 0; s < 5; s++) usedFp.add((i + s) % m);
+              break; // this footprint jog is decided — never spliced
+            }
             // Insert the notch: sub-span [u1,u2] moves to E.c + d1.
             const a = cur[k];
             const b = cur[(k + 1) % cur.length];
@@ -648,6 +792,25 @@ export function adoptFootprintJogs(
             )
           )
             continue;
+          // ELEVATIONS-FIRST: an end-step jog's eave-line break is visible on
+          // TWO elevations — the face of E (break at uPos along E's axis) and
+          // the perpendicular face on the moved sub-span's side (a depth break
+          // at the NEW plane coordinate E.c + d). E.g. a front-eave step reads
+          // both on the front elevation (fascia depth break at uPos) and on
+          // the side elevation the moved span faces. Either confirming
+          // adopts; a contradiction with no confirmation blocks.
+          {
+            const movedMid = farSide === "hi" ? (uPos + E.hi) / 2 : (E.lo + uPos) / 2;
+            const veto = combineVerdicts([
+              elevationVerdict(cur, E.horiz, E.c, uPos, uPos),
+              elevationVerdict(cur, !E.horiz, movedMid, E.c + d, E.c + d),
+            ]);
+            if (veto) {
+              blocked.push(veto);
+              for (let s = 0; s < 3; s++) usedFp.add((i + s) % m);
+              break; // decided — never spliced
+            }
+          }
           const a = cur[k];
           const b = cur[(k + 1) % cur.length];
           const forward = E.horiz ? b.x > a.x : b.y > a.y; // a at lo when forward
@@ -682,14 +845,18 @@ export function adoptFootprintJogs(
     if (!applied) break;
   }
 
-  if (adopted === 0) return null;
+  if (adopted === 0) {
+    // Nothing spliced. A jog the elevations REFUSED still surfaces (note +
+    // unpriced suggestion channel); with none of those either, legacy null.
+    return blocked.length > 0 ? { perimeter, adopted: 0, blocked } : null;
+  }
   // Collapse duplicate/collinear corners the splices left behind; validate.
   const cleaned = snapAndClean(cur, Math.max(0.75, span * 0.004));
   if (cleaned.length < 4 || cleaned.length > 40) return null;
   if (!isSimplePolygon(cleaned)) return null;
   const ratio = polyArea(cleaned) / Math.max(1e-9, polyArea(perimeter));
   if (ratio < 0.75 || ratio > 1.25) return null;
-  return { perimeter: cleaned, adopted };
+  return { perimeter: cleaned, adopted, blocked };
 }
 
 export type PerimeterRepair = {
@@ -698,6 +865,11 @@ export type PerimeterRepair = {
   jogsAdopted: number;
   /** On-panel notes explaining exactly what moved — the caller appends them. */
   notes: string[];
+  /** Footprint jogs the ELEVATIONS-FIRST gate refused to splice (straight
+   *  eave read where the foundation steps): suggest-don't-carve. Their notes
+   *  are already merged into `notes`; the structured entries ride here for a
+   *  future tap-to-add channel. Absent when the gate never fired. */
+  suggestedReturns?: BlockedJog[];
 };
 
 /**
@@ -712,11 +884,15 @@ export function reconcileRoofPerimeter(opts: {
   segments: number[][];
   /** The foundation/floor-plan outline in ITS OWN page space (optional). */
   footprintOutline?: Pt[] | null;
+  /** Per-face eave-line breaks from the elevation reads (elevations-first jog
+   *  gate — see adoptFootprintJogs). Null/absent = legacy behavior. */
+  elevationSteps?: ElevationFaceSteps[] | null;
 }): PerimeterRepair | null {
   try {
     let perimeter = opts.perimeter;
     let snappedEdges = 0;
     let jogsAdopted = 0;
+    let blocked: BlockedJog[] = [];
 
     const snap = snapPhantomEdges(perimeter, opts.segments);
     if (snap) {
@@ -726,20 +902,42 @@ export function reconcileRoofPerimeter(opts: {
     if (opts.footprintOutline && opts.footprintOutline.length >= 5) {
       // The roof sheet's own linework gates every adoption: a sub-span the
       // sheet DREW straight (heavy) stays — only unsupported flat spans may
-      // take a foundation jog.
-      const jogs = adoptFootprintJogs(perimeter, opts.footprintOutline, opts.segments);
+      // take a foundation jog. The elevations' eave-line reads gate what's
+      // left (elevations-first): a refused jog surfaces in `blocked`.
+      const jogs = adoptFootprintJogs(
+        perimeter,
+        opts.footprintOutline,
+        opts.segments,
+        opts.elevationSteps ?? null,
+      );
       if (jogs) {
         perimeter = jogs.perimeter;
         jogsAdopted = jogs.adopted;
+        blocked = jogs.blocked ?? [];
       }
     }
-    if (snappedEdges === 0 && jogsAdopted === 0) return null;
-    // A clean rectangle IS a valid repair (the articulation was all phantom);
-    // anything under 4 corners or over 40 is not a building.
-    if (perimeter.length < 4 || perimeter.length > 40) return null;
-    if (perimeter === opts.perimeter) return null;
+    const changed = snappedEdges > 0 || jogsAdopted > 0;
+    if (!changed && blocked.length === 0) return null;
+    if (changed) {
+      // A clean rectangle IS a valid repair (the articulation was all
+      // phantom); anything under 4 corners or over 40 is not a building.
+      if (perimeter.length < 4 || perimeter.length > 40) return null;
+      if (perimeter === opts.perimeter) return null;
+    }
 
     const notes: string[] = [];
+    for (const b of blocked) notes.push(b.note);
+    if (!changed) {
+      // Elevation-vetoed jog(s) only — the traced perimeter stands verbatim,
+      // the refusals ride the notes + suggestedReturns channels.
+      return {
+        perimeter: opts.perimeter,
+        snappedEdges: 0,
+        jogsAdopted: 0,
+        notes,
+        suggestedReturns: blocked,
+      };
+    }
     if (jogsAdopted > 0 && snappedEdges > 0) {
       notes.push(
         `📐 Outline check: the roof-sheet trace missed ${jogsAdopted} jog(s) drawn on the foundation plan — adopted them, and ${snappedEdges} traced edge(s) that sat on dimension/leader lines (not drawn roof edges) were snapped back onto the sheet's heavy roof linework. Verify the outline against the foundation page.`,
@@ -753,7 +951,13 @@ export function reconcileRoofPerimeter(opts: {
         `📐 Outline check: ${snappedEdges} traced edge(s) sat on dimension/leader lines, not drawn roof edges — snapped back onto the sheet's heavy roof linework (phantom strips removed). Verify the outline against the roof sheet.`,
       );
     }
-    return { perimeter, snappedEdges, jogsAdopted, notes };
+    return {
+      perimeter,
+      snappedEdges,
+      jogsAdopted,
+      notes,
+      ...(blocked.length > 0 ? { suggestedReturns: blocked } : {}),
+    };
   } catch {
     return null;
   }

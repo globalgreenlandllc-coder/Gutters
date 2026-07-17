@@ -464,6 +464,187 @@ test("reconcileRoofPerimeter: nothing to fix → null; garbage input → null, n
   );
 });
 
+// ————————————————————————————————————————————————————————————————————————
+// ELEVATIONS-FIRST jog gate: a footprint jog splices only when the same
+// face's elevation shows an eave-line break there; a straight-eave read
+// vetoes the splice (suggest-don't-carve); no elevation data → legacy
+// byte-identical. The sheet's own drawnAt veto still has the first word.
+// ————————————————————————————————————————————————————————————————————————
+
+/** The flat-front trace shared by the jog-adoption tests (front = max-y). */
+const GATE_ROOF = pts([
+  [0, 0],
+  [800, 0],
+  [800, 300],
+  [760, 300],
+  [760, 340],
+  [800, 340],
+  [800, 500],
+  [0, 500],
+]);
+
+test("elevations-first gate: an AGREEING eave-line break adopts the jog exactly as today", () => {
+  const legacy = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG);
+  const gated = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, [
+    // jog at x=500 → viewer frac 500/800 ≈ 0.63 on the front face
+    { face: "front", continuous_eave: false, steps: [{ position_frac: 0.63, direction: "down" }] },
+  ]);
+  assert.ok(legacy && gated, "both adopt");
+  assert.deepEqual(gated!.perimeter, legacy!.perimeter, "identical splice");
+  assert.equal(gated!.adopted, 1);
+  assert.deepEqual(gated!.blocked, []);
+});
+
+test("elevations-first gate: a straight-eave read (steps [] + continuous) VETOES the splice — note, not a carve", () => {
+  const out = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, [
+    { face: "front", continuous_eave: true, steps: [] },
+  ]);
+  assert.ok(out, "the refusal still surfaces");
+  assert.equal(out!.adopted, 0, "nothing spliced");
+  assert.deepEqual(out!.perimeter, GATE_ROOF, "perimeter untouched");
+  assert.equal(out!.blocked.length, 1);
+  assert.equal(out!.blocked[0].face, "front");
+  assert.equal(out!.blocked[0].straightEave, true);
+  assert.match(out!.blocked[0].note, /ELEVATIONS-FIRST/);
+  assert.match(out!.blocked[0].note, /straight, unbroken eave/);
+  assert.match(out!.blocked[0].note, /NOT carved/);
+});
+
+test("elevations-first gate: steps reported but NONE near the jog → no splice, flagged (not straight-eave)", () => {
+  const out = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, [
+    { face: "front", continuous_eave: false, steps: [{ position_frac: 0.05, direction: "down" }] },
+  ]);
+  assert.ok(out);
+  assert.equal(out!.adopted, 0);
+  assert.equal(out!.blocked.length, 1);
+  assert.equal(out!.blocked[0].straightEave, false);
+  assert.match(out!.blocked[0].note, /no step there/);
+});
+
+test("elevations-first gate: NO elevation data (or another face only) → legacy behavior byte-identical", () => {
+  const legacy = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG);
+  assert.ok(legacy);
+  const nullGate = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, null);
+  const emptyGate = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, []);
+  const otherFace = adoptFootprintJogs(GATE_ROOF, FP_WITH_JOG, undefined, [
+    { face: "rear", continuous_eave: true, steps: [] }, // the jog is on the FRONT
+  ]);
+  for (const out of [nullGate, emptyGate, otherFace]) {
+    assert.ok(out, "adoption fires");
+    assert.deepEqual(out!.perimeter, legacy!.perimeter);
+    assert.equal(out!.adopted, legacy!.adopted);
+    assert.deepEqual(out!.blocked, []);
+  }
+});
+
+test("elevations-first gate: the drawnAt (sheet linework) veto still wins — the gate never even fires", () => {
+  // Same fixture as the 'never carved into a drawn-straight edge' test: the
+  // front eave IS drawn heavy across the full span, so the sheet veto kills
+  // the adoption before the elevation gate — even an AGREEING step must not
+  // resurrect it, and a straight read must not double-report it as blocked.
+  const roof = pts([
+    [0, 0],
+    [1080, 0],
+    [1080, 300],
+    [1040, 300],
+    [1040, 380],
+    [1080, 380],
+    [1080, 720],
+    [0, 720],
+  ]);
+  const segs: number[][] = [
+    [0, 0, 1080, 0, 2.5],
+    [0, 0, 0, 720, 2.5],
+    [1080, 0, 1080, 300, 2.5],
+    [1040, 300, 1080, 300, 2.5],
+    [1040, 300, 1040, 380, 2.5],
+    [1040, 380, 1080, 380, 2.5],
+    [1080, 380, 1080, 720, 2.5],
+    [0, 720, 1080, 720, 2.5],
+    [100, 200, 900, 200, 1.0],
+    [100, 500, 900, 500, 1.0],
+    [-40, -40, 1120, -40, 0.3],
+    [-40, -40, -40, 760, 0.3],
+  ];
+  const fpAlcove = pts([
+    [5000, 3000],
+    [7160, 3000],
+    [7160, 4440],
+    [6200, 4440],
+    [6200, 4296],
+    [5624, 4296],
+    [5624, 4440],
+    [5000, 4440],
+  ]);
+  assert.equal(
+    adoptFootprintJogs(roof, fpAlcove, segs, [
+      { face: "front", continuous_eave: false, steps: [{ position_frac: 0.42, direction: "down" }] },
+    ]),
+    null,
+    "an agreeing step never resurrects a sheet-vetoed jog",
+  );
+  assert.equal(
+    adoptFootprintJogs(roof, fpAlcove, segs, [
+      { face: "front", continuous_eave: true, steps: [] },
+    ]),
+    null,
+    "a drawn-straight span never reaches the elevation gate (no blocked note)",
+  );
+});
+
+test("reconcileRoofPerimeter: an elevation-vetoed jog surfaces as note + suggestedReturns, perimeter verbatim", () => {
+  // Everything drawn heavy EXCEPT the garage front sub-span (x∈[500,800] at
+  // y=500) — legacy adopts the foundation jog there; a straight front read
+  // must turn that adoption into a note + suggestion instead.
+  const segs: number[][] = [
+    [0, 0, 800, 0, 2.5],
+    [0, 0, 0, 500, 2.5],
+    [800, 0, 800, 300, 2.5],
+    [760, 300, 800, 300, 2.5],
+    [760, 300, 760, 340, 2.5],
+    [760, 340, 800, 340, 2.5],
+    [800, 340, 800, 500, 2.5],
+    [0, 500, 500, 500, 2.5], // front heavy only up to the jog
+    [100, 250, 700, 250, 1.0],
+    [50, 50, 750, 50, 0.3],
+  ];
+  const legacy = reconcileRoofPerimeter({
+    perimeter: GATE_ROOF,
+    segments: segs,
+    footprintOutline: FP_WITH_JOG,
+  });
+  assert.ok(legacy && legacy.jogsAdopted === 1, "sanity: legacy adopts this jog");
+
+  const gated = reconcileRoofPerimeter({
+    perimeter: GATE_ROOF,
+    segments: segs,
+    footprintOutline: FP_WITH_JOG,
+    elevationSteps: [{ face: "front", continuous_eave: true, steps: [] }],
+  });
+  assert.ok(gated, "blocked-only repair still returns (the note must reach the panel)");
+  assert.equal(gated!.jogsAdopted, 0);
+  assert.equal(gated!.snappedEdges, 0);
+  assert.deepEqual(gated!.perimeter, GATE_ROOF, "priced outline verbatim");
+  assert.equal(gated!.notes.length, 1);
+  assert.match(gated!.notes[0], /ELEVATIONS-FIRST/);
+  assert.ok(gated!.suggestedReturns && gated!.suggestedReturns.length === 1);
+  assert.equal(gated!.suggestedReturns![0].face, "front");
+
+  // And an AGREEING read keeps the legacy adoption byte-identical.
+  const agreeing = reconcileRoofPerimeter({
+    perimeter: GATE_ROOF,
+    segments: segs,
+    footprintOutline: FP_WITH_JOG,
+    elevationSteps: [
+      { face: "front", continuous_eave: false, steps: [{ position_frac: 0.63, direction: "down" }] },
+    ],
+  });
+  assert.ok(agreeing);
+  assert.deepEqual(agreeing!.perimeter, legacy!.perimeter);
+  assert.equal(agreeing!.jogsAdopted, 1);
+  assert.equal(agreeing!.suggestedReturns, undefined);
+});
+
 test("classifyGableLabel keyword pinning", () => {
   assert.equal(classifyGableLabel("GABLE END TRUSS"), true);
   assert.equal(classifyGableLabel("STRUCT. GABLE END TRUSS"), true);

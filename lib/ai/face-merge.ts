@@ -64,6 +64,26 @@ export type FaceGableRead = {
   notes: string;
 };
 
+/** One BREAK in the eave/fascia line as read on an elevation, scanning the
+ *  face viewer-LEFT→RIGHT (owner doctrine: gutters hang on the ROOF edge, and
+ *  the eave-line profile is where every roof jog/tier step shows FIRST —
+ *  before the roof plan, and always before a wall/footprint jog). */
+export type FaceEaveStep = {
+  /** Where along the face the eave line breaks: 0 = far left, 1 = far right,
+   *  in the VIEWER's frame as you look at this elevation. Null when the model
+   *  saw a break but couldn't localize it. */
+  position_frac: number | null;
+  /** Height change scanning left→right at the break: "down" = the eave drops
+   *  to a lower plane, "up" = it rises. Null on a defensive parse of garbage. */
+  direction: "up" | "down" | null;
+  /** Vertical fascia offset in FEET, only when a printed dimension / plate
+   *  line makes it readable. NEVER used to size plan geometry (it's vertical). */
+  offset_ft: number | null;
+  /** What the break is: a full tier change, a same-tier fascia jog, or unknown. */
+  kind?: "tier_drop" | "fascia_jog" | "unknown";
+  notes?: string;
+};
+
 /** A mass this elevation sees IN PROFILE (sticking out across the view) with its
  *  measurable DEPTH — the perpendicular view's job (LAW 2). A side elevation
  *  reports front/rear pop-outs here; a front/rear elevation reports side ones.
@@ -100,6 +120,12 @@ export type FaceReadingRaw = {
   gable_count: number | null;
   continuous_eave: boolean;
   gables: FaceGableRead[];
+  /** EVERY break in this face's eave/fascia line, viewer left→right (see
+   *  FaceEaveStep). [] = one unbroken eave plane across the whole face — an
+   *  explicit, load-bearing answer. ABSENT (older reads / stale prompt
+   *  overrides) = "not read": every eave-step consumer must degrade to
+   *  byte-identical legacy behavior when the key is missing. */
+  eave_steps?: FaceEaveStep[] | null;
   /** Pop-outs seen IN PROFILE from this view, with depth (see FaceProjection). */
   projections: FaceProjection[];
   projection_cues: string[];
@@ -325,6 +351,20 @@ export function mergeFaceReadings(
       if (a.gable_count !== b.gable_count) {
         flags.push(`Independent read: ${f} shows ${a.gable_count} gable(s), ${opp} shows ${b.gable_count} — read separately, NOT mirrored. Verify each face.`);
       }
+    }
+  }
+
+  // EAVE-STEP density flag: a face whose eave line breaks 2+ times is a
+  // multi-tier boundary read — worth a human look before pricing (each break
+  // is a place the gutter changes height/plane). Note-only; the deterministic
+  // cross-check against the traced roof happens in eave-step-reconcile.ts.
+  for (const r of reads) {
+    if (!r.readable) continue;
+    const steps = Array.isArray(r.eave_steps) ? r.eave_steps.filter(Boolean) : null;
+    if (steps && steps.length >= 2) {
+      flags.push(
+        `${r.face} eave line steps ${steps.length}× — verify tier boundaries on the ${r.face} face (each break is a gutter height/plane change).`,
+      );
     }
   }
 

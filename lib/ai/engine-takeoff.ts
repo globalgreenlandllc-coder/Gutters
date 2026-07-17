@@ -24,10 +24,10 @@ import type { BlueprintAnalysis } from "./blueprint-from-plans";
 import { polyArea, runRoofEngine, type MassInput, type RoofTakeoff } from "../roof-engine";
 import { decomposeMasses, matchTierAreas } from "../roof-mass-decompose";
 import { cleanRing, isFinitePt, type Pt } from "../roof-skeleton";
-import { placeGablesFromFaces } from "./place-gables";
+import { placeGablesFromFaces, resolveFaceSlots, type PlaceResult } from "./place-gables";
 import { isUnanimousHip, type FaceReadingRaw } from "./face-merge";
 import type { RoofMassArea } from "./to-masses";
-import { DEFAULT_FACE_NORMALS, type FaceNormals } from "./plan-orientation";
+import type { FaceNormals } from "./plan-orientation";
 
 export type EngineTakeoffBundle = {
   takeoff: RoofTakeoff;
@@ -117,8 +117,6 @@ function edgeCoverage(a: Pt, b: Pt, s: { a: Pt; b: Pt }, tol: number): number {
 }
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
-
-const FACE_NAMES = ["north", "south", "east", "west"] as const;
 
 /** Index of the outline's principal edge on the side facing `n` (roughly
  *  perpendicular to n, furthest out that way), or -1. */
@@ -227,12 +225,14 @@ export function buildEngineTakeoff(
     // footprint edge is a rake. The AI marks the diagonal gable rakes, which
     // don't cover that horizontal edge, so default-eave would wrongly count it;
     // the per-face read is the reliable signal. Drop that edge from the eaves.
+    // resolveFaceSlots tries the modern HOUSE-RELATIVE keys first (cardinal
+    // fallback for old rows) — a cardinal-only loop left perFace["north"]
+    // undefined on modern reads and this protection silently disarmed.
     if (perFace) {
-      for (const face of FACE_NAMES) {
-        const n = faceNormals?.[face] ?? DEFAULT_FACE_NORMALS[face];
-        const r = perFace[face];
+      for (const slot of resolveFaceSlots(perFace, faceNormals)) {
+        const r = perFace[slot.key];
         if (r && r.readable !== false && r.continuous_eave === false) {
-          const idx = principalEdgeIndex(outline, n);
+          const idx = principalEdgeIndex(outline, slot.normal);
           const pos = idx >= 0 ? eaveEdges.indexOf(idx) : -1;
           if (pos >= 0) eaveEdges.splice(pos, 1);
         }
@@ -245,7 +245,14 @@ export function buildEngineTakeoff(
     // Place the per-face gables on the outline (posts/beam ⇒ projecting pop-outs
     // with guttered side eaves + ridges/valleys; the rest flush). Without a
     // per-face read this is empty and the engine draws the perimeter only.
-    const placed = placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses, faceNormals });
+    // UNANIMOUS HIP: skip placement entirely (mirrors the rakeSegs veto above).
+    // A hip-end recorded through the gable channel (is_hip_end) doesn't break
+    // hip unanimity but WOULD still be placed — a phantom gable whose ridge-back
+    // + two 45° valley legs chain into the mid-roof dashed zigzag on an all-hip
+    // scanned row. No gables on an all-hip roof, by definition.
+    const placed: PlaceResult = unanimousHip
+      ? { gables: [], notes: [] }
+      : placeGablesFromFaces(perFace, outline, 1 / ftPerPx, { roofMasses, faceNormals });
 
     // Decompose the footprint into its tier MASSES (main body + garage/porch/
     // patio jogs) so each tier draws its own clean hip, instead of one whole-
@@ -299,7 +306,7 @@ export function buildEngineTakeoff(
       placementNotes: unanimousHip
         ? [
             ...placed.notes,
-            "⚙ All four elevations read a continuous eave with no gable — drawn all-hip; the freehand trace's rake marks were ignored (elevations are the gable budget).",
+            "⚙ All four elevations read a continuous eave with no gable — drawn all-hip; no gables placed, and the freehand trace's rake marks were ignored (elevations are the gable budget).",
           ]
         : placed.notes,
     };

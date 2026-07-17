@@ -132,8 +132,10 @@ type Pin = {
 const LOWER_COVER_KINDS = new Set(["porch", "patio"]);
 
 /** Median ft-per-ring-unit from the AI's own measured runs — the same
- *  cross-validated scale closeVectorPerimeter uses. Null when underivable. */
-function medianFtPerUnit(runs: readonly BlueprintRun[] | undefined | null): number | null {
+ *  cross-validated scale closeVectorPerimeter uses. Null when underivable.
+ *  Exported (behavior unchanged) so eave-step-reconcile.ts shares the exact
+ *  same scale derivation instead of drifting on a copy. */
+export function medianFtPerUnit(runs: readonly BlueprintRun[] | undefined | null): number | null {
   const ratios: number[] = [];
   for (const r of runs ?? []) {
     if (

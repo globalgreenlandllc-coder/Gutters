@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  classifyRunPlacement,
+  collectStepEdges,
   filterRoofDiagramLines,
   segmentsCross,
 } from "./roof-diagram-filter.ts";
@@ -75,6 +77,172 @@ test("anchoring cascades: dropping an unanchored line unanchors its dependents",
     PERIM,
   );
   assert.deepEqual(out.ridges, []);
+});
+
+// ── strictAnchor (raster path) ──────────────────────────────────────────────
+
+test("strictAnchor: floating ridge dropped under the both-endpoint rule; connected envelope kept", () => {
+  // A clean hip envelope: 4 corner hips + a junction-anchored main ridge.
+  const hips = [
+    L({ x: 0, y: 0 }, { x: 25, y: 30 }),
+    L({ x: 0, y: 60 }, { x: 25, y: 30 }),
+    L({ x: 100, y: 0 }, { x: 75, y: 30 }),
+    L({ x: 100, y: 60 }, { x: 75, y: 30 }),
+  ];
+  const mainRidge = L({ x: 25, y: 30 }, { x: 75, y: 30 });
+  // A ridge stub whose far end dies into a HIDDEN interior cut wall: one
+  // endpoint T-joins the main ridge (single-anchor reachable → the default
+  // rule keeps it), the other floats mid-roof.
+  const stub = L({ x: 50, y: 30 }, { x: 50, y: 45 });
+
+  const lax = filterRoofDiagramLines(
+    { ridges: [mainRidge, stub], valleys: [], hips },
+    PERIM,
+  );
+  assert.deepEqual(lax.ridges, [mainRidge, stub], "default keeps the reachable stub");
+  assert.equal(lax.interiorOmitted, false);
+
+  const strict = filterRoofDiagramLines(
+    { ridges: [mainRidge, stub], valleys: [], hips },
+    PERIM,
+    { strictAnchor: true },
+  );
+  assert.deepEqual(strict.ridges, [mainRidge], "both-endpoint rule drops the stub");
+  assert.deepEqual(strict.hips, hips, "the connected envelope survives intact");
+  assert.equal(strict.interiorOmitted, false);
+});
+
+test("strictAnchor: tiny surviving set (fragments only) → EMPTY interior + interiorOmitted flag", () => {
+  // Two corner-anchored hip fragments (len ~11 on a 100 span; frag cap 15).
+  const fragA = L({ x: 0, y: 0 }, { x: 8, y: 8 });
+  const fragB = L({ x: 100, y: 0 }, { x: 92, y: 8 });
+  const lax = filterRoofDiagramLines(
+    { ridges: [], valleys: [], hips: [fragA, fragB] },
+    PERIM,
+  );
+  assert.deepEqual(lax.hips, [fragA, fragB], "default keeps anchored fragments");
+  assert.equal(lax.interiorOmitted, false);
+
+  const strict = filterRoofDiagramLines(
+    { ridges: [], valleys: [], hips: [fragA, fragB] },
+    PERIM,
+    { strictAnchor: true },
+  );
+  assert.deepEqual(strict.ridges, []);
+  assert.deepEqual(strict.valleys, []);
+  assert.deepEqual(strict.hips, [], "fragments-only interior draws NOTHING");
+  assert.equal(strict.interiorOmitted, true, "caller gets the omit-note flag");
+});
+
+test("strictAnchor: fewer than 2 survivors → empty + flag; empty input → no flag", () => {
+  // One clean ridge survives everything, but a lone line isn't an evidenced
+  // interior — omitted under strict.
+  const lone = L({ x: 0, y: 30 }, { x: 100, y: 30 });
+  const strict = filterRoofDiagramLines(
+    { ridges: [lone], valleys: [], hips: [] },
+    PERIM,
+    { strictAnchor: true },
+  );
+  assert.deepEqual(strict.ridges, []);
+  assert.equal(strict.interiorOmitted, true);
+
+  const empty = filterRoofDiagramLines(
+    { ridges: [], valleys: [], hips: [] },
+    PERIM,
+    { strictAnchor: true },
+  );
+  assert.equal(empty.interiorOmitted, false, "nothing was omitted — nothing existed");
+});
+
+// ── classifyRunPlacement (interior-run partition for the bridge) ────────────
+
+test("classifyRunPlacement: clerestory rectangle run mid-roof is interior; wall runs are perimeter", () => {
+  const tol = 2;
+  // On the top wall.
+  assert.equal(
+    classifyRunPlacement({ start: { x: 10, y: 0 }, end: { x: 60, y: 0 } }, PERIM, tol),
+    "perimeter",
+  );
+  // Clerestory box edge dead-center (midpoint 20 units from every wall).
+  assert.equal(
+    classifyRunPlacement({ start: { x: 30, y: 20 }, end: { x: 70, y: 20 } }, PERIM, tol),
+    "interior",
+  );
+});
+
+test("classifyRunPlacement: garbage coords are invalid (never drawn); no boundary → perimeter", () => {
+  assert.equal(
+    classifyRunPlacement({ start: { x: NaN, y: 0 }, end: { x: 10, y: 10 } }, PERIM, 2),
+    "invalid",
+  );
+  assert.equal(classifyRunPlacement({ start: null, end: { x: 1, y: 1 } }, PERIM, 2), "invalid");
+  // Infinity tol (perimeter-only OFF) and a degenerate footprint both mean
+  // "cannot call anything interior".
+  assert.equal(
+    classifyRunPlacement({ start: { x: 30, y: 20 }, end: { x: 70, y: 20 } }, PERIM, Infinity),
+    "perimeter",
+  );
+  assert.equal(
+    classifyRunPlacement({ start: { x: 30, y: 20 }, end: { x: 70, y: 20 } }, [], 2),
+    "perimeter",
+  );
+});
+
+test("drawn set = priced set → the LF correction factor lands at exactly 1", () => {
+  // The bridge's decision: perimeter runs draw as engine edges, interior
+  // runs are APPENDED — so the drawn LF sum equals the priced LF sum.
+  const runs = [
+    { start: { x: 0, y: 0 }, end: { x: 100, y: 0 }, length_ft: 100 },
+    { start: { x: 30, y: 20 }, end: { x: 70, y: 20 }, length_ft: 40 }, // clerestory
+  ];
+  const priced = runs.reduce((s, r) => s + r.length_ft, 0);
+  const drawn = runs
+    .filter((r) => classifyRunPlacement(r, PERIM, 2) !== "invalid")
+    .reduce((s, r) => s + r.length_ft, 0);
+  assert.equal(priced / drawn, 1);
+  // A garbage-coord interior run is invalid → excluded from the drawn set.
+  const garbage = { start: { x: NaN, y: 20 }, end: { x: 70, y: 20 }, length_ft: 40 };
+  assert.equal(classifyRunPlacement(garbage, PERIM, 2), "invalid");
+});
+
+// ── collectStepEdges (tier-step emission for the bridge) ────────────────────
+
+test("collectStepEdges: interior mass boundaries kept + deduped across the two masses that share them; perimeter/degenerate/garbage dropped", () => {
+  const tol = 2;
+  const shared = { p1: { x: 30, y: 20 }, p2: { x: 70, y: 20 } };
+  const edges = [
+    // Mass A's copy of the shared tier boundary…
+    { edge: { ...shared }, massName: "upper" },
+    // …and mass B's copy, reversed.
+    { edge: { p1: { x: 70, y: 20 }, p2: { x: 30, y: 20 } }, massName: "main" },
+    // On the perimeter → already drawn as an eave/rake, not a step.
+    { edge: { p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 } }, massName: "main" },
+    // Degenerate + garbage → never drawn.
+    { edge: { p1: { x: 50, y: 30 }, p2: { x: 50, y: 30 } }, massName: "main" },
+    { edge: { p1: { x: NaN, y: 30 }, p2: { x: 60, y: 30 } }, massName: "main" },
+  ];
+  const out = collectStepEdges(edges, PERIM, tol);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].massName, "upper", "first occurrence wins — its mass names the step");
+  assert.deepEqual(out[0].edge, shared);
+  // Infinity tol (perimeter-only OFF) → no steps at all.
+  assert.deepEqual(collectStepEdges(edges, PERIM, Infinity), []);
+});
+
+test("collectStepEdges is LF-neutral: inputs are not mutated and mass eave sums are unchanged", () => {
+  const mkEdges = () => [
+    { edge: { p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 }, gutter: true }, massName: "main" },
+    { edge: { p1: { x: 30, y: 20 }, p2: { x: 70, y: 20 }, gutter: true }, massName: "upper" },
+  ];
+  const edges = mkEdges();
+  const lfOf = (es: ReturnType<typeof mkEdges>) =>
+    es
+      .filter((s) => s.edge.gutter)
+      .reduce((sum, s) => sum + Math.hypot(s.edge.p2.x - s.edge.p1.x, s.edge.p2.y - s.edge.p1.y), 0);
+  const before = lfOf(edges);
+  collectStepEdges(edges, PERIM, 2);
+  assert.equal(lfOf(edges), before, "gutter LF sum untouched");
+  assert.deepEqual(edges, mkEdges(), "input objects untouched");
 });
 
 test("degenerate inputs: no perimeter → nothing drawn; bad points dropped", () => {
