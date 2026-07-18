@@ -21,6 +21,7 @@ import {
   Sparkles,
   User,
   Users,
+  Wallet,
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
@@ -48,6 +49,8 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
       { href: "/dashboard/proposals?filter=done", label: "Done jobs", Icon: PartyPopper },
       { href: "/dashboard/leads", label: "Leads", Icon: MapPin },
       { href: "/dashboard/clients", label: "Clients", Icon: Users },
+      // Overhead + per-job profit — the contractor's own P&L, never client-facing.
+      { href: "/dashboard/financials", label: "Financials", Icon: Wallet },
     ],
   },
   {

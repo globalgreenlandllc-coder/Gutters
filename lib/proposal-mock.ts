@@ -132,6 +132,11 @@ export type Proposal = {
   /** Free-form reason the contractor shows next to the discount so
    *  the homeowner sees WHY (e.g. 'Spring promo', 'Repeat customer'). */
   discountLabel?: string;
+  /** Contractor's manual override of what this job costs THEM (dollars,
+   *  materials + labor basis) — replaces the AI estimate everywhere the
+   *  profit math runs (builder profit panel, /dashboard/financials).
+   *  Never shown to the client. null/absent = trust the AI estimate. */
+  jobCostManual?: number | null;
   /** How the measurements were produced. "manual" = the contractor
    *  walked the site with a tape measure and typed the numbers in
    *  (/dashboard/measure) — there is no takeoff geometry to draw, so

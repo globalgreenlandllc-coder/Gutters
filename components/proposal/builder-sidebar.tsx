@@ -12,6 +12,7 @@ import {
   type Proposal,
 } from "@/lib/proposal-mock";
 import { EditablePrice } from "./editable-price";
+import { ProfitPanel } from "./profit-panel";
 
 export function BuilderSidebar({
   proposal,
@@ -173,6 +174,8 @@ export function BuilderSidebar({
           <Badge tone="neutral">Auto-saved</Badge>
         </div>
       </div>
+
+      <ProfitPanel proposal={proposal} onChange={onChange} />
 
       <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-card">
         <div className="font-label text-[11px] text-zinc-500">

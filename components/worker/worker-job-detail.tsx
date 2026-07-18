@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -13,6 +13,8 @@ import {
   X,
   CheckCircle2,
   Loader2,
+  Plus,
+  Receipt,
   Ruler,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,13 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { WorkerRoof } from "./worker-roof";
 import { fmtMoney, fmtWhen, STATUS_META } from "./format";
-import { respondToJob, markJobComplete } from "@/app/actions/worker-jobs";
+import {
+  respondToJob,
+  markJobComplete,
+  submitJobExpense,
+  listMyJobExpenses,
+  type WorkerExpenseDTO,
+} from "@/app/actions/worker-jobs";
 import type { WorkerJobDTO } from "@/lib/worker-dto";
 
 export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
@@ -129,6 +137,10 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
         </div>
       </div>
 
+      {(job.status === "ACCEPTED" ||
+        job.status === "IN_PROGRESS" ||
+        job.status === "COMPLETED") && <ExpensesCard jobId={job.id} />}
+
       {job.status === "DECLINED" && job.declineReason && (
         <p className="anim-enter rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">You declined: {job.declineReason}</p>
       )}
@@ -197,6 +209,135 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
           <CheckCircle2 className="h-4 w-4" /> Job completed
         </div>
       )}
+    </div>
+  );
+}
+
+const EXPENSE_STATUS_META: Record<
+  WorkerExpenseDTO["status"],
+  { label: string; tone: "amber" | "emerald" | "neutral" }
+> = {
+  PENDING: { label: "Waiting on approval", tone: "amber" },
+  APPROVED: { label: "Approved", tone: "emerald" },
+  DECLINED: { label: "Declined", tone: "neutral" },
+};
+
+/**
+ * Worker-logged extra costs (materials run, dump fee…). Each submission
+ * goes to the owner's Financials page for approval; the status chips
+ * here close the loop so the crew knows what got covered.
+ */
+function ExpensesCard({ jobId }: { jobId: string }) {
+  const [rows, setRows] = useState<WorkerExpenseDTO[] | null>(null);
+  const [label, setLabel] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listMyJobExpenses(jobId).then((r) => {
+      if (!cancelled) setRows(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  async function submit() {
+    setErr(null);
+    setBusy(true);
+    const cents = Math.round(parseFloat(amount) * 100);
+    const r = await submitJobExpense(jobId, label, cents, note);
+    if (!r.ok) {
+      setErr(r.reason);
+      setBusy(false);
+      return;
+    }
+    setLabel("");
+    setAmount("");
+    setNote("");
+    setRows(await listMyJobExpenses(jobId));
+    setBusy(false);
+  }
+
+  return (
+    <div className="surface rounded-2xl border border-zinc-200 bg-white p-4">
+      <h3 className="font-label mb-1 flex items-center gap-1.5 text-zinc-500">
+        <Receipt className="h-3.5 w-3.5" /> Your expenses on this job
+      </h3>
+      <p className="text-xs text-zinc-400">
+        Paid for something out of pocket? Log it — the contractor approves it
+        from their side.
+      </p>
+
+      <div className="mt-3 space-y-1.5">
+        {rows === null && <div className="skeleton h-9 w-full rounded-lg" />}
+        {rows?.map((e) => {
+          const meta = EXPENSE_STATUS_META[e.status];
+          return (
+            <div
+              key={e.id}
+              className={cn(
+                "flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm",
+                e.status === "DECLINED" && "opacity-60",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate text-zinc-800">{e.label}</span>
+              <span className="font-medium tabular-nums text-ink">
+                {fmtMoney(e.amountCents)}
+              </span>
+              <Badge tone={meta.tone}>{meta.label}</Badge>
+            </div>
+          );
+        })}
+        {rows?.length === 0 && (
+          <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-3 text-center text-xs text-zinc-400">
+            Nothing logged yet.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <div className="flex gap-2">
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="What was it? e.g. Sealant + hangers"
+            className="input h-9 min-w-0 flex-1 text-sm"
+          />
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
+              $
+            </span>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+              className="input h-9 w-24 pl-6 text-right text-sm tabular-nums"
+            />
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Note for the contractor (optional)"
+            className="input h-9 min-w-0 flex-1 text-sm"
+          />
+          <Button size="sm" className="h-9" onClick={submit} disabled={busy}>
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            Log it
+          </Button>
+        </div>
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+      </div>
     </div>
   );
 }

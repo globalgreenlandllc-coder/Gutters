@@ -101,6 +101,10 @@ model User {
   jobsOwned         JobAssignment[]        @relation("JobOwner")
   // Admin accuracy-lab runs (SUPER_ADMIN only in practice).
   testLabRuns       TestLabRun[]
+  // Contractor money OS: recurring overhead + per-job expenses + CRM notes.
+  overheadItems     OverheadItem[]
+  jobExpenses       JobExpense[]           @relation("ExpenseOwner")
+  clientNotes       ClientNote[]
 
   // Referral program: shareable code (lazily minted on first visit to
   // Settings) + who referred this account (set once at creation from
@@ -357,6 +361,7 @@ model Proposal {
   installments     PaymentInstallment[]
   changeOrders     ChangeOrder[]
   discountRequests DiscountRequest[]
+  expenses         JobExpense[]
 
   @@index([userId, status])
   @@index([publicToken])
@@ -1101,9 +1106,10 @@ model Worker {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  owner   User            @relation("WorkerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  account User?           @relation("WorkerAccount", fields: [userId], references: [id], onDelete: SetNull)
-  jobs    JobAssignment[]
+  owner    User            @relation("WorkerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  account  User?           @relation("WorkerAccount", fields: [userId], references: [id], onDelete: SetNull)
+  jobs     JobAssignment[]
+  expenses JobExpense[]
 
   @@unique([ownerId, email])
   @@index([ownerId])
@@ -1142,11 +1148,95 @@ model JobAssignment {
   owner    User      @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   worker   Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
   proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+  expenses JobExpense[]
 
   @@index([ownerId, startsAt])
   @@index([workerId, startsAt])
   @@index([proposalId])
   @@map("job_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Contractor money OS: recurring overhead, per-job expenses (owner-logged or
+// worker-submitted), and CRM notes. All owner-tenanted by userId/ownerId.
+
+enum OverheadCadence {
+  MONTHLY
+  YEARLY // amortized as amountCents / 12 in the monthly overhead rollup
+}
+
+// One recurring business cost (truck, insurance, software, shop rent…).
+// The financials page sums these into "monthly overhead" and shows a
+// coverage meter: month-to-date job profit vs this total.
+model OverheadItem {
+  id          String          @id @default(cuid())
+  userId      String
+  label       String
+  amountCents Int
+  cadence     OverheadCadence @default(MONTHLY)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("overhead_items")
+}
+
+enum JobExpenseSource {
+  OWNER // logged by the contractor
+  WORKER // submitted from the worker portal, needs owner approval
+}
+
+enum JobExpenseStatus {
+  PENDING // worker-submitted, awaiting owner decision
+  APPROVED // counts toward the job's cost
+  DECLINED
+}
+
+// An extra cost on a specific job beyond the estimated materials+labor
+// basis: dump fees, extra downspout run, a worker's receipt for sealant.
+// Worker-submitted rows start PENDING and only count into profit once the
+// owner approves. Never visible to the client.
+model JobExpense {
+  id           String           @id @default(cuid())
+  ownerId      String
+  proposalId   String?
+  assignmentId String? // the JobAssignment a worker submitted through
+  workerId     String?
+  source       JobExpenseSource @default(OWNER)
+  status       JobExpenseStatus @default(APPROVED)
+  label        String
+  amountCents  Int
+  note         String?          @db.Text
+  createdAt    DateTime         @default(now())
+  decidedAt    DateTime?
+
+  owner      User           @relation("ExpenseOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  proposal   Proposal?      @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  assignment JobAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  worker     Worker?        @relation(fields: [workerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([proposalId])
+  @@index([workerId])
+  @@map("job_expenses")
+}
+
+// Free-form CRM note pinned to a client. Clients are grouped by their
+// lowercased email (clientKey) — there is no separate Client table; the
+// directory is derived from proposals.
+model ClientNote {
+  id        String   @id @default(cuid())
+  userId    String
+  clientKey String // lowercased client email (fallback: name slug)
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, clientKey])
+  @@map("client_notes")
 }
 
 // ---------------------------------------------------------------------------

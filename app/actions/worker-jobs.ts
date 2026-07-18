@@ -108,6 +108,86 @@ export async function respondToJob(
   return { ok: true, status };
 }
 
+export type WorkerExpenseDTO = {
+  id: string;
+  label: string;
+  amountCents: number;
+  note: string | null;
+  status: "PENDING" | "APPROVED" | "DECLINED";
+  createdAt: string;
+};
+
+/**
+ * A worker logs an extra cost they covered on a job (materials run, dump
+ * fee, extra sealant). The row lands PENDING on the owner's financials
+ * page; it only counts toward job cost — and toward reimbursing the
+ * worker — once the owner approves. Workers can only file against jobs
+ * they hold that are accepted or further along.
+ */
+export async function submitJobExpense(
+  jobId: string,
+  label: string,
+  amountCents: number,
+  note?: string,
+): Promise<VoidResult> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in" };
+  const clean = (label ?? "").trim();
+  const cents = Math.round(amountCents);
+  if (!clean) return { ok: false, reason: "Give the expense a name" };
+  if (!Number.isFinite(cents) || cents <= 0)
+    return { ok: false, reason: "Enter an amount above zero" };
+  const job = await db.jobAssignment.findFirst({
+    where: {
+      id: jobId,
+      worker: { userId: me.user.id },
+      status: { in: ["ACCEPTED", "IN_PROGRESS", "COMPLETED"] },
+    },
+    select: { id: true, ownerId: true, workerId: true, proposalId: true },
+  });
+  if (!job) return { ok: false, reason: "You can only log expenses on jobs you've accepted" };
+  await db.jobExpense.create({
+    data: {
+      ownerId: job.ownerId,
+      workerId: job.workerId,
+      assignmentId: job.id,
+      proposalId: job.proposalId,
+      source: "WORKER",
+      status: "PENDING",
+      label: clean.slice(0, 80),
+      amountCents: cents,
+      note: note?.trim().slice(0, 500) || null,
+    },
+  });
+  revalidatePath(`/worker/jobs/${jobId}`);
+  revalidatePath("/dashboard/financials");
+  return { ok: true };
+}
+
+/** The worker's own submissions on one job, newest first — status included
+ *  so they can see what the owner approved. Never any owner pricing. */
+export async function listMyJobExpenses(jobId: string): Promise<WorkerExpenseDTO[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const rows = await db.jobExpense.findMany({
+    where: {
+      assignmentId: jobId,
+      worker: { userId: me.user.id },
+      source: "WORKER",
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    label: e.label,
+    amountCents: e.amountCents,
+    note: e.note,
+    status: e.status,
+    createdAt: e.createdAt.toISOString(),
+  }));
+}
+
 export async function markJobComplete(jobId: string): Promise<VoidResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
