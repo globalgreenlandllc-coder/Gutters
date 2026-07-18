@@ -1,6 +1,7 @@
 import { Landmark, Repeat, TrendingUp, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getAdminFinancials } from "@/app/actions/admin";
+import { RefundButton } from "./refund-button";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,7 @@ export default async function AdminFinancialsPage() {
         <Cell
           label="Revenue · 30 days"
           value={money(fin.revenue30dCents)}
-          sub={`${money(fin.subscriptionRevenue30dCents)} subs · ${money(fin.creditRevenue30dCents)} credits`}
+          sub={`${money(fin.subscriptionRevenue30dCents)} subs · ${money(fin.creditRevenue30dCents)} credits${fin.refunds30dCents !== 0 ? ` · ${money(fin.refunds30dCents)} refunds` : ""}`}
           Icon={TrendingUp}
         />
         <Cell
@@ -75,19 +76,20 @@ export default async function AdminFinancialsPage() {
               Rows appear here as soon as Stripe is live: add STRIPE_SECRET and
               STRIPE_WEBHOOK in /admin/api-keys, point a Stripe webhook at
               /api/webhooks/stripe (events: checkout.session.completed,
-              invoice.paid, invoice.payment_failed, customer.subscription.*),
-              and the first Pro upgrade or credit purchase will land in this
-              ledger.
+              invoice.paid, invoice.payment_failed, customer.subscription.*,
+              charge.refunded), and the first Pro upgrade or credit purchase
+              will land in this ledger.
             </p>
           </div>
         ) : (
           <>
-            <div className="font-label hidden grid-cols-[minmax(0,1fr)_150px_120px_110px_130px] gap-4 px-5 py-2.5 text-[11px] text-zinc-400 lg:grid">
+            <div className="font-label hidden grid-cols-[minmax(0,1fr)_150px_120px_110px_130px_80px] gap-4 px-5 py-2.5 text-[11px] text-zinc-400 lg:grid">
               <div>Customer · Description</div>
               <div>Type</div>
               <div>Status</div>
               <div className="text-right">Amount</div>
               <div className="text-right">Date</div>
+              <div />
             </div>
             <ul>
               {fin.transactions.map((t) => {
@@ -98,7 +100,7 @@ export default async function AdminFinancialsPage() {
                 return (
                   <li
                     key={t.id}
-                    className="transition-smooth grid grid-cols-1 gap-1 border-t border-zinc-100 px-5 py-3 hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_150px_120px_110px_130px] lg:items-center lg:gap-4"
+                    className="transition-smooth grid grid-cols-1 gap-1 border-t border-zinc-100 px-5 py-3 hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_150px_120px_110px_130px_80px] lg:items-center lg:gap-4"
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-zinc-900">
@@ -135,6 +137,14 @@ export default async function AdminFinancialsPage() {
                         day: "numeric",
                         year: "numeric",
                       })}
+                    </div>
+                    <div className="flex justify-end">
+                      {t.refundable && (
+                        <RefundButton
+                          transactionId={t.id}
+                          grossCents={t.grossCents}
+                        />
+                      )}
                     </div>
                   </li>
                 );

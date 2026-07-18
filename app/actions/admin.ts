@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
+import type Stripe from "stripe";
 import { db } from "@/lib/db";
+import { getStripe } from "@/lib/stripe";
 import { getPlanPricing } from "@/lib/plan-pricing";
 import {
   clearImpersonationCookie,
@@ -392,6 +394,8 @@ export type AdminFinancials = {
   revenue30dCents: number;
   subscriptionRevenue30dCents: number;
   creditRevenue30dCents: number;
+  /** Negative sum of REFUND rows in the last 30 days (0 when none). */
+  refunds30dCents: number;
   allTimeRevenueCents: number;
   transactions: Array<{
     id: string;
@@ -401,6 +405,8 @@ export type AdminFinancials = {
     grossCents: number;
     description: string | null;
     createdAt: string;
+    /** True when the row is a revenue charge the admin can refund in-app. */
+    refundable: boolean;
   }>;
 };
 
@@ -414,7 +420,7 @@ export async function getAdminFinancials(): Promise<AdminFinancials> {
   await requireAdmin();
   const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  const [activeSubs, pastDueSubs, sub30, credit30, allTime, recent] =
+  const [activeSubs, pastDueSubs, sub30, credit30, refund30, allTime, recent] =
     await Promise.all([
       db.subscription.count({ where: { status: "ACTIVE" } }),
       db.subscription.count({ where: { status: "PAST_DUE" } }),
@@ -435,6 +441,14 @@ export async function getAdminFinancials(): Promise<AdminFinancials> {
         _sum: { grossCents: true },
       }),
       db.transaction.aggregate({
+        where: {
+          status: "SUCCEEDED",
+          type: "REFUND",
+          createdAt: { gte: since30d },
+        },
+        _sum: { grossCents: true },
+      }),
+      db.transaction.aggregate({
         where: { status: "SUCCEEDED" },
         _sum: { grossCents: true },
       }),
@@ -447,15 +461,18 @@ export async function getAdminFinancials(): Promise<AdminFinancials> {
 
   const subscriptionRevenue30dCents = sub30._sum.grossCents ?? 0;
   const creditRevenue30dCents = credit30._sum.grossCents ?? 0;
+  const refunds30dCents = refund30._sum.grossCents ?? 0; // ≤ 0
   const proPriceCents = (await getPlanPricing()).pro.priceCents;
 
   return {
     mrrCents: activeSubs * proPriceCents,
     activeSubs,
     pastDueSubs,
-    revenue30dCents: subscriptionRevenue30dCents + creditRevenue30dCents,
+    revenue30dCents:
+      subscriptionRevenue30dCents + creditRevenue30dCents + refunds30dCents,
     subscriptionRevenue30dCents,
     creditRevenue30dCents,
+    refunds30dCents,
     allTimeRevenueCents: allTime._sum.grossCents ?? 0,
     transactions: recent.map((t) => ({
       id: t.id,
@@ -465,8 +482,130 @@ export async function getAdminFinancials(): Promise<AdminFinancials> {
       grossCents: t.grossCents,
       description: t.description,
       createdAt: t.createdAt.toISOString(),
+      refundable:
+        t.status === "SUCCEEDED" &&
+        (t.type === "SUBSCRIPTION" || t.type === "CREDIT_TOPUP") &&
+        !!(t.stripePaymentIntentId || t.stripeInvoiceId),
     })),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Refunds — admin-issued, hard-capped                                */
+/* ------------------------------------------------------------------ */
+
+export type RefundResult =
+  | { ok: true; refundedCents: number }
+  | { ok: false; reason: string };
+
+/** Both-shape reader: invoice.payment_intent (older API versions) vs
+ *  invoice.payments.data[].payment.payment_intent (newer). */
+function invoicePaymentIntentId(inv: unknown): string | null {
+  const legacy = (inv as { payment_intent?: string | { id: string } })
+    .payment_intent;
+  if (typeof legacy === "string") return legacy;
+  if (legacy && typeof legacy === "object") return legacy.id;
+  const payments = (
+    inv as {
+      payments?: {
+        data?: Array<{ payment?: { payment_intent?: string | { id: string } } }>;
+      };
+    }
+  ).payments?.data;
+  for (const p of payments ?? []) {
+    const pi = p.payment?.payment_intent;
+    if (typeof pi === "string") return pi;
+    if (pi && typeof pi === "object") return pi.id;
+  }
+  return null;
+}
+
+/**
+ * Refund a platform charge (subscription invoice or credit pack) from
+ * /admin/financials. Safety: the amount is clamped so the customer can
+ * NEVER get back more than the un-refunded remainder of that charge —
+ * Stripe's own truth (charge.amount − charge.amount_refunded) is the
+ * cap, not our ledger. Bookkeeping (REFUND row + credit clawback) is
+ * done by the charge.refunded webhook, which stays the single billing
+ * writer.
+ */
+export async function issueRefundForTransaction(
+  transactionId: string,
+  amountCents?: number,
+): Promise<RefundResult> {
+  try {
+    const me = await requireAdmin();
+    const tx = await db.transaction.findUnique({ where: { id: transactionId } });
+    if (!tx) return { ok: false, reason: "Transaction not found" };
+    if (
+      tx.status !== "SUCCEEDED" ||
+      (tx.type !== "SUBSCRIPTION" && tx.type !== "CREDIT_TOPUP")
+    ) {
+      return { ok: false, reason: "Only settled charges can be refunded" };
+    }
+    if (
+      amountCents !== undefined &&
+      (!Number.isFinite(amountCents) || amountCents <= 0)
+    ) {
+      return { ok: false, reason: "Refund amount must be a positive number" };
+    }
+
+    const stripe = await getStripe();
+    if (!stripe) return { ok: false, reason: "Stripe is not configured" };
+
+    // Resolve the payment intent behind this ledger row.
+    let paymentIntentId = tx.stripePaymentIntentId;
+    if (!paymentIntentId && tx.stripeInvoiceId) {
+      const inv = await stripe.invoices.retrieve(tx.stripeInvoiceId, {
+        expand: ["payments"],
+      });
+      paymentIntentId = invoicePaymentIntentId(inv);
+    }
+    if (!paymentIntentId || !paymentIntentId.startsWith("pi_")) {
+      return {
+        ok: false,
+        reason:
+          "Couldn't resolve the Stripe payment for this row — refund it from the Stripe dashboard instead.",
+      };
+    }
+
+    // Stripe is the source of truth for what's left to give back.
+    const pi = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ["latest_charge"],
+    });
+    const charge = pi.latest_charge as Stripe.Charge | null;
+    if (!charge || typeof charge === "string") {
+      return { ok: false, reason: "No settled charge behind this payment" };
+    }
+    const remaining = charge.amount - charge.amount_refunded;
+    if (remaining <= 0) {
+      return { ok: false, reason: "This charge is already fully refunded" };
+    }
+    const amount = Math.min(Math.round(amountCents ?? remaining), remaining);
+
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentIntentId,
+      amount,
+    });
+
+    await logAction(me.user.id, "REFUND_ISSUED", "transaction", tx.id, {
+      userId: tx.userId,
+      refundId: refund.id,
+      amountCents: amount,
+      requestedCents: amountCents ?? null,
+      chargeCents: charge.amount,
+      previouslyRefundedCents: charge.amount_refunded,
+    });
+
+    revalidatePath("/admin/financials");
+    return { ok: true, refundedCents: amount };
+  } catch (e) {
+    console.error("[issueRefundForTransaction] threw", e);
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "Refund failed",
+    };
+  }
 }
 
 export async function startImpersonation(

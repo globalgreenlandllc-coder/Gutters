@@ -10,6 +10,7 @@ import {
   subscriptionPeriodEnd,
 } from "@/lib/stripe";
 import { getPlanPricing } from "@/lib/plan-pricing";
+import { computeCreditClawback, computeRefundDelta } from "@/lib/refund-math";
 
 export const maxDuration = 30;
 
@@ -23,6 +24,9 @@ export const maxDuration = 30;
  *     transaction (idempotent on invoice id)
  *   invoice.payment_failed                     → PAST_DUE
  *   customer.subscription.updated / .deleted   → status sync
+ *   charge.refunded                            → negative REFUND ledger row
+ *     (capped at what was actually paid) + proportional clawback of any
+ *     credits the refunded pack granted
  *
  * Endpoint URL for the Stripe dashboard: /api/webhooks/stripe
  * (route is public in middleware.ts; authenticity comes from the
@@ -98,6 +102,10 @@ export async function POST(request: Request) {
           where: { stripeSubscriptionId: sub.id },
           data: { status: "CANCELED", cancelAtPeriodEnd: false },
         });
+        break;
+      }
+      case "charge.refunded": {
+        await handleChargeRefunded(event.data.object as Stripe.Charge);
         break;
       }
       default:
@@ -249,6 +257,105 @@ async function handleInvoicePaid(stripe: Stripe, inv: Stripe.Invoice) {
         settledAt: new Date(),
       },
     });
+  }
+}
+
+/** Refund (issued in-app OR straight from the Stripe dashboard) →
+ *  negative REFUND ledger row + credit clawback.
+ *
+ *  Safety invariants, enforced here regardless of where the refund
+ *  originated:
+ *    · booked refunds for a charge can never exceed what that charge
+ *      actually paid (delta is clamped against the original row)
+ *    · a refunded credit pack claws back its credits proportionally,
+ *      but the wallet never goes below zero
+ *    · `charge.amount_refunded` is cumulative, so retries and partial
+ *      refunds are idempotent by construction (delta ≤ 0 → no-op), with
+ *      a unique ledger key as the backstop for concurrent deliveries.
+ *
+ *  The original row stays SUCCEEDED — revenue sums add SUCCEEDED rows,
+ *  so the negative REFUND row is what nets the money back out; flipping
+ *  the original would double-count the reversal. */
+async function handleChargeRefunded(charge: Stripe.Charge) {
+  const paymentIntentId =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : (charge.payment_intent?.id ?? null);
+  // charge.invoice only exists on older API versions; read it loosely.
+  const rawInvoice = (charge as unknown as { invoice?: string | { id: string } })
+    .invoice;
+  const invoiceId =
+    typeof rawInvoice === "string" ? rawInvoice : (rawInvoice?.id ?? null);
+
+  const original = await db.transaction.findFirst({
+    where: {
+      status: "SUCCEEDED",
+      type: { in: ["SUBSCRIPTION", "CREDIT_TOPUP"] },
+      OR: [
+        ...(paymentIntentId ? [{ stripePaymentIntentId: paymentIntentId }] : []),
+        ...(invoiceId ? [{ stripeInvoiceId: invoiceId }] : []),
+        { stripeChargeId: charge.id },
+      ],
+    },
+  });
+  if (!original) {
+    console.warn("[stripe-webhook] charge.refunded: no ledger match", charge.id);
+    return;
+  }
+
+  const booked = await db.transaction.aggregate({
+    where: { type: "REFUND", stripeChargeId: charge.id },
+    _sum: { grossCents: true },
+  });
+  const delta = computeRefundDelta({
+    amountRefundedCents: charge.amount_refunded,
+    alreadyBookedCents: -(booked._sum.grossCents ?? 0),
+    originalGrossCents: original.grossCents,
+  });
+  if (delta <= 0) return; // already booked (retry) or nothing left to book
+
+  const creditsToClaw =
+    original.type === "CREDIT_TOPUP"
+      ? computeCreditClawback({
+          description: original.description,
+          deltaCents: delta,
+          originalGrossCents: original.grossCents,
+        })
+      : 0;
+
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.transaction.create({
+        data: {
+          userId: original.userId,
+          type: "REFUND",
+          status: "SUCCEEDED",
+          grossCents: -delta,
+          netCents: -delta,
+          stripeChargeId: charge.id,
+          // Idempotency backstop for concurrent deliveries: the unique
+          // column keyed on the cumulative refunded amount.
+          stripePaymentIntentId: `refund:${charge.id}:${charge.amount_refunded}`,
+          description: `Refund — ${original.description ?? original.type}`,
+          settledAt: new Date(),
+        },
+      });
+      if (creditsToClaw > 0) {
+        const wallet = await tx.creditWallet.findUnique({
+          where: { userId: original.userId },
+          select: { bonus: true },
+        });
+        if (wallet) {
+          await tx.creditWallet.update({
+            where: { userId: original.userId },
+            data: { bonus: Math.max(0, wallet.bonus - creditsToClaw) },
+          });
+        }
+      }
+    });
+  } catch (e) {
+    if ((e as { code?: string }).code === "P2002") return; // duplicate delivery
+    throw e;
   }
 }
 

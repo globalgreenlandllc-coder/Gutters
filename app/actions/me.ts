@@ -396,10 +396,10 @@ export async function updateMyProfile(
     data.logoUrl = validateLogoUrl(patch.logo.url);
   }
   if (patch.payments?.stripeUrl !== undefined) {
-    data.stripePaymentUrl = validatePaymentUrl(patch.payments.stripeUrl);
+    data.stripePaymentUrl = validatePaymentUrl(patch.payments.stripeUrl, "stripe");
   }
   if (patch.payments?.squareUrl !== undefined) {
-    data.squarePaymentUrl = validatePaymentUrl(patch.payments.squareUrl);
+    data.squarePaymentUrl = validatePaymentUrl(patch.payments.squareUrl, "square");
   }
 
   await db.contractorProfile.update({
@@ -436,7 +436,18 @@ function validateLogoUrl(url: string | null): string | null {
   return url;
 }
 
-function validatePaymentUrl(url: string | null): string | null {
+// The client portal renders these links as "Pay with Stripe / Square",
+// so they must actually point at those providers — an arbitrary https
+// URL under that label would be a phishing surface on the proposal page.
+const PAYMENT_LINK_DOMAINS: Record<"stripe" | "square", string[]> = {
+  stripe: ["stripe.com"],
+  square: ["square.link", "squareup.com", "square.site"],
+};
+
+function validatePaymentUrl(
+  url: string | null,
+  provider: "stripe" | "square",
+): string | null {
   if (url === null) return null;
   const trimmed = typeof url === "string" ? url.trim() : "";
   if (trimmed.length === 0) return null;
@@ -451,6 +462,17 @@ function validatePaymentUrl(url: string | null): string | null {
   }
   if (trimmed.length > 2048) {
     throw new Error("Payment link is too long.");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const ok = PAYMENT_LINK_DOMAINS[provider].some(
+    (d) => host === d || host.endsWith(`.${d}`),
+  );
+  if (!ok) {
+    throw new Error(
+      provider === "stripe"
+        ? "Stripe link must be a stripe.com URL (e.g. https://buy.stripe.com/…)."
+        : "Square link must be a Square URL (e.g. https://square.link/u/… or https://checkout.square.site/…).",
+    );
   }
   return parsed.toString();
 }
