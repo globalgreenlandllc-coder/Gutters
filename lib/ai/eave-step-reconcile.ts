@@ -293,8 +293,9 @@ function spliceStraightFace(
  * Safety gates, all bail-to-flag-only:
  *  - only roof-page-ruled sides (the elevations alone never flatten);
  *  - per-edge shift capped at `maxShiftU` (~8 ft) — a deep step is a real
- *    mass, not a trace pop-out, even if the page missed it;
- *  - a group whose ANY edge exceeds the cap is left whole.
+ *    mass, not a trace pop-out, even if the page missed it. A deep step
+ *    BOUNDS its group (it survives, its shallow neighbors still flatten);
+ *    a group whose members would still need an over-cap shift is left whole.
  *
  * Followers ride along (the rectifyPlanFootprint pattern): run endpoints,
  * downspout marks and excluded-edge endpoints sitting ON a shifted sub-edge
@@ -321,8 +322,13 @@ function flattenPhantomJogs(args: {
   const { edges, n, roofUs, tolU, minDepthU, gapTolU, maxShiftU } = args;
   if (edges.length < 2) return null;
 
-  // Group boundaries: a physical gap or a page-corroborated (REAL) step ends
-  // the group; a phantom step (or a flush continuation) keeps it open.
+  // Group boundaries: a physical gap, a page-corroborated (REAL) step, or a
+  // DEEP step (> the shift cap — a real building mass this pass must never
+  // press) ends the group; a phantom step (or a flush continuation) keeps it
+  // open. Deep steps used to bail the WHOLE group, which left every shallow
+  // phantom NEXT TO a deep jog uncorrected (the 1168G faces: 9-12 ft real
+  // recesses flanked by 2-4 ft trace pop-outs stayed flag-only) — as a
+  // boundary, the deep jog survives and its shallow neighbors still flatten.
   type Group = { idx: number[]; phantomUs: number[] };
   const groups: Group[] = [];
   let cur: Group = { idx: [0], phantomUs: [] };
@@ -334,7 +340,8 @@ function flattenPhantomJogs(args: {
     const isStep = contiguous && depthU >= minDepthU;
     const stepU = (e1.uR + e2.uL) / 2;
     const isReal = isStep && roofUs.some((u) => Math.abs(u - stepU) <= tolU);
-    if (!contiguous || isReal) {
+    const isDeep = isStep && depthU > maxShiftU;
+    if (!contiguous || isReal || isDeep) {
       groups.push(cur);
       cur = { idx: [i + 1], phantomUs: [] };
     } else {
@@ -439,15 +446,87 @@ function ringEdgeIndex(
   return null;
 }
 
+/** A maximal run of contiguous, COLLINEAR (same-depth) sub-edges linked by
+ *  shared ring vertices — one logical fascia plane. Real traces (and the
+ *  phantom-flatten's output) fragment a straight plane into several
+ *  collinear sub-edges; the carve must see the plane, not the fragments. */
+type Chain = { edges: FaceEdge[]; uL: number; uR: number; out: number };
+
+function buildChains(
+  edges: readonly FaceEdge[],
+  gapTolU: number,
+  collinearTolU: number,
+): Chain[] {
+  const chains: Chain[] = [];
+  let cur: FaceEdge[] = [];
+  const flush = (): void => {
+    if (cur.length === 0) return;
+    let w = 0;
+    let out = 0;
+    for (const e of cur) {
+      const ew = Math.abs(e.uR - e.uL);
+      out += e.out * ew;
+      w += ew;
+    }
+    chains.push({
+      edges: cur,
+      uL: cur[0].uL,
+      uR: cur[cur.length - 1].uR,
+      out: w > 0 ? out / w : cur[0].out,
+    });
+  };
+  for (const e of edges) {
+    const prev = cur[cur.length - 1];
+    if (
+      prev &&
+      Math.abs(e.uL - prev.uR) <= gapTolU &&
+      Math.abs(e.out - prev.out) <= collinearTolU &&
+      prev.R === e.L // linked through one shared ring vertex — genuinely one plane
+    ) {
+      cur.push(e);
+    } else {
+      flush();
+      cur = [e];
+    }
+  }
+  flush();
+  return chains;
+}
+
+/** Collapse a multi-edge chain into ONE ring edge by dropping the interior
+ *  shared vertices (collinear — visually identical). Followers reference
+ *  coordinates, never ring objects, so the drop is safe. Returns the merged
+ *  ring plus a pseudo-edge over the chain's extremes (its L/R are real ring
+ *  objects, consecutive in the merged ring). */
+function mergeChain(
+  ring: readonly Pt[],
+  chain: Chain,
+): { ring: Pt[]; E: FaceEdge } | null {
+  const first = chain.edges[0];
+  const last = chain.edges[chain.edges.length - 1];
+  const E: FaceEdge = { L: first.L, R: last.R, uL: chain.uL, uR: chain.uR, out: chain.out };
+  if (chain.edges.length === 1) return { ring: ring.slice(), E };
+  const drop = new Set<Pt>();
+  for (let i = 0; i + 1 < chain.edges.length; i++) drop.add(chain.edges[i].R);
+  const merged = ring.filter((p) => !drop.has(p));
+  if (merged.length < 4) return null;
+  if (!ringEdgeIndex(merged, E)) return null; // chain wasn't ring-consecutive — bail
+  return { ring: merged, E };
+}
+
 /**
  * Carve one op into the ring. Returns the new ring plus the OLD outer span
  * the recess replaced (the follower-carry anchor) and its u-extent; null on
  * any gate miss (the caller falls back to suggest-don't-carve):
- *  - the step position(s) must sit on ONE straight covering sub-edge with
- *    `marginU` of room (a step already at a corner has nothing to carve);
- *  - an lstep's covering sub-edge must actually REACH the face corner on the
- *    recessed side (its far endpoint is the face extreme — otherwise the
- *    "span to the corner" would cross other structure).
+ *  - the step position(s) must sit on ONE fascia CHAIN (contiguous collinear
+ *    sub-edges merged — see buildChains) with `marginU` of room, and a notch
+ *    pair must share the chain;
+ *  - an lstep recesses from the step to the chain's end on the chosen side:
+ *    at the FACE CORNER the corner vertex slides inward; at an EXISTING
+ *    traced roof step the boundary vertex slides instead and that step's own
+ *    connector absorbs the depth — allowed only when the connector heads
+ *    OUTWARD, or heads inward with at least the carve depth to give (the
+ *    recess must never invert it).
  */
 function carveIntoRing(args: {
   ring: readonly Pt[];
@@ -456,6 +535,10 @@ function carveIntoRing(args: {
   op: CarveOp;
   depthU: number;
   marginU: number;
+  gapTolU: number;
+  collinearTolU: number;
+  minSpanU: number;
+  maxSpanU: number;
   uMin: number;
   uMax: number;
 }): { ring: Pt[]; span: { a: Pt; b: Pt }; uSpan: [number, number] } | null {
@@ -468,37 +551,59 @@ function carveIntoRing(args: {
   };
   const add = (p: Pt): Pt => ({ x: p.x + v.x, y: p.y + v.y });
 
+  const chains = buildChains(edges, args.gapTolU, args.collinearTolU);
+  const chainAt = (u: number): Chain | undefined =>
+    chains.find((c) => u >= c.uL + marginU && u <= c.uR - marginU);
+
   if (op.kind === "notch") {
-    const E = edges.find((e) => op.u1 >= e.uL + marginU && op.u2 <= e.uR - marginU);
-    if (!E) return null;
-    const idx = ringEdgeIndex(args.ring, E);
+    const c = chainAt(op.u1);
+    if (!c || c !== chainAt(op.u2)) return null;
+    const w = op.u2 - op.u1;
+    if (w < args.minSpanU || w > args.maxSpanU) return null;
+    const merged = mergeChain(args.ring, c);
+    if (!merged) return null;
+    const idx = ringEdgeIndex(merged.ring, merged.E);
     if (!idx) return null;
-    const P1 = at(E, op.u1);
-    const P2 = at(E, op.u2);
+    const P1 = at(merged.E, op.u1);
+    const P2 = at(merged.E, op.u2);
     const ins = idx.forward
       ? [P1, add(P1), add(P2), P2]
       : [P2, add(P2), add(P1), P1];
-    const ring = [...args.ring.slice(0, idx.i + 1), ...ins, ...args.ring.slice(idx.i + 1)];
+    const ring = [
+      ...merged.ring.slice(0, idx.i + 1),
+      ...ins,
+      ...merged.ring.slice(idx.i + 1),
+    ];
     return { ring, span: { a: { ...P1 }, b: { ...P2 } }, uSpan: [op.u1, op.u2] };
   }
 
-  // lstep — the recessed span runs from the step to the face corner.
-  const cornerEnd = op.side === "after" ? uMax : uMin;
-  const E = edges.find(
-    (e) =>
-      op.u >= e.uL + marginU &&
-      op.u <= e.uR - marginU &&
-      (op.side === "after" ? e.uR >= cornerEnd - marginU : e.uL <= cornerEnd + marginU),
-  );
-  if (!E) return null;
-  const idx = ringEdgeIndex(args.ring, E);
+  // lstep — the recessed span runs from the step to the chain end.
+  const c = chainAt(op.u);
+  if (!c) return null;
+  const endU = op.side === "after" ? c.uR : c.uL;
+  const span = Math.abs(endU - op.u);
+  if (span < args.minSpanU || span > args.maxSpanU) return null;
+  const atCorner =
+    op.side === "after" ? c.uR >= uMax - marginU : c.uL <= uMin + marginU;
+  if (!atCorner) {
+    // Chain ends at an existing traced step — its connector absorbs the
+    // shift. Find the neighboring sub-edge past the boundary and make sure
+    // the recess can't invert the connector.
+    const next =
+      op.side === "after"
+        ? edges.find((e) => !c.edges.includes(e) && Math.abs(e.uL - c.uR) <= args.gapTolU)
+        : edges.find((e) => !c.edges.includes(e) && Math.abs(e.uR - c.uL) <= args.gapTolU);
+    if (!next) return null;
+    if (next.out <= c.out && c.out - next.out < depthU - 1e-9) return null;
+  }
+  const merged = mergeChain(args.ring, c);
+  if (!merged) return null;
+  const idx = ringEdgeIndex(merged.ring, merged.E);
   if (!idx) return null;
-  const cornerPt = op.side === "after" ? E.R : E.L;
-  const Pu = at(E, op.u);
+  const cornerPt = op.side === "after" ? merged.E.R : merged.E.L;
+  const Pu = at(merged.E, op.u);
   const cornerNew = add(cornerPt);
-  const base = args.ring.map((p) => (p === cornerPt ? cornerNew : p));
-  // Insert the step pair between the kept-outer half and the recessed corner,
-  // ordered by the ring's own winding.
+  const base = merged.ring.map((p) => (p === cornerPt ? cornerNew : p));
   // Winding decides which of the pair comes first; the pair always sits
   // between ring[i] and ring[i+1] (verified for all four side×winding cases).
   const stepPair =
@@ -507,7 +612,7 @@ function carveIntoRing(args: {
   return {
     ring,
     span: { a: { ...Pu }, b: { x: cornerPt.x, y: cornerPt.y } },
-    uSpan: op.side === "after" ? [op.u, E.uR] : [E.uL, op.u],
+    uSpan: op.side === "after" ? [op.u, c.uR] : [c.uL, op.u],
   };
 }
 
@@ -1140,10 +1245,12 @@ export function reconcileEaveSteps(args: {
 
       // Phase B — CARVE the missed steps into the outline (owner escalation
       // round 3, eaveStepCarveEnabled): adjacent pairs that read as a
-      // recessed middle become an inset notch; a lone step becomes an L-step
-      // to the nearer corner. Always inward. The roof page's plan_offset
-      // picks the recessed side; unknown → the SHORTER side recedes. A
-      // mirror-suspect face never carves (its step positions may be flipped).
+      // recessed middle become an inset notch; a lone step recesses from the
+      // step to its fascia chain's end (the face corner, or an existing
+      // traced roof step whose connector absorbs the depth). Always inward.
+      // The roof page's plan_offset picks the recessed side; unknown → the
+      // SHORTER side recedes. A mirror-suspect face never carves (its step
+      // positions may be flipped).
       const carveOn = eaveStepCarveEnabled();
       if (carveOn && pending.length > 0 && !mirrorSuspect) {
         const perpFt = perpendicularDepthFt(face, perFace);
@@ -1154,6 +1261,22 @@ export function reconcileEaveSteps(args: {
         const snapTol = Math.max(vTol, ftToU(0.5));
         const minSpanU = ftToU(2);
         const maxSpanU = width * 0.6;
+
+        // A lone step recesses toward the side the page read as recessed;
+        // unknown → the SHORTER side (never grows the envelope either way).
+        // Span validation is chain-aware inside carveIntoRing.
+        const lstepOpFor = (st: PendingStep): CarveOp => {
+          const off = st.s.plan_offset ?? null;
+          const side: "after" | "before" =
+            off === "inward"
+              ? "after"
+              : off === "outward"
+                ? "before"
+                : st.u - uMin <= uMax - st.u
+                  ? "before"
+                  : "after";
+          return { kind: "lstep", u: st.u, side };
+        };
 
         // Plan the ops: greedy left-to-right pairing, leftovers as L-steps.
         const ordered = pending.slice().sort((p, q) => p.u - q.u);
@@ -1178,18 +1301,20 @@ export function reconcileEaveSteps(args: {
             pi += 2;
             continue;
           }
-          let side: "after" | "before" | null =
-            offA === "inward" ? "after" : offA === "outward" ? "before" : null;
-          if (side === null) side = a.u - uMin <= uMax - a.u ? "before" : "after";
-          const spanU = side === "before" ? a.u - uMin : uMax - a.u;
-          if (spanU >= minSpanU && spanU <= maxSpanU) {
-            ops.push({ steps: [a], op: { kind: "lstep", u: a.u, side } });
-          }
+          ops.push({ steps: [a], op: lstepOpFor(a) });
           pi += 1;
         }
 
         if (carveDepthU > 0) {
-          for (const o of ops.slice(0, 3)) {
+          // A notch whose chain gates decline (a real deep jog between the
+          // pair, say) degrades to TWO independent corner/step recesses —
+          // the steps are still real, they just can't share one inset.
+          const attempts: { steps: PendingStep[]; op: CarveOp }[] = [];
+          for (const o of ops.slice(0, 3)) attempts.push(o);
+          let ai = 0;
+          let applied = 0;
+          while (ai < attempts.length && applied < 4) {
+            const o = attempts[ai++];
             const freshEdges = faceEdges(ring, n, rd);
             const res = carveIntoRing({
               ring,
@@ -1198,10 +1323,22 @@ export function reconcileEaveSteps(args: {
               op: o.op,
               depthU: carveDepthU,
               marginU,
+              gapTolU,
+              collinearTolU: minDepthU / 2,
+              minSpanU,
+              maxSpanU,
               uMin,
               uMax,
             });
-            if (!res) continue; // gates declined — falls back to suggest below
+            if (!res) {
+              if (o.op.kind === "notch") {
+                for (const st of o.steps) {
+                  attempts.push({ steps: [st], op: lstepOpFor(st) });
+                }
+              }
+              continue; // gates declined — falls back to suggest below
+            }
+            applied++;
             ring = res.ring;
             footprintTouched = true;
             const carry = carryCarveFollowers({
@@ -1244,7 +1381,7 @@ export function reconcileEaveSteps(args: {
                   ? `steps in at ~${fracs[0]} and back out at ~${fracs[1]}`
                   : `steps at ~${fracs[0]}`
               }, but the traced roof edge ran straight there; a ~${Math.round(carveDepthFt)} ft ${
-                o.op.kind === "notch" ? "inset" : "corner recess"
+                o.op.kind === "notch" ? "inset" : "recess"
               } was carved into the outline (${
                 perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic depth"
               } — verify on the canvas). Gutters follow the new edge with Σ priced LF preserved; the recess's return walls price or suggest through the closure pass like any other uncovered span.`,

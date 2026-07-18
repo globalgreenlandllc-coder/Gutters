@@ -867,6 +867,185 @@ test("(C2) out-then-in pair (projecting middle) never grows the envelope — bot
   assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
+test("(C4) fragmented fascia — collinear sub-edge chain reads as ONE plane, the inset still carves across it", () => {
+  // The flatten pass (and real traces) leave collinear interior vertices on
+  // a straight fascia; the carve must merge the chain, not bail per-fragment.
+  const FRAG: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 60 },
+    { x: 60, y: 60 },
+    { x: 30, y: 60 },
+    { x: 0, y: 60 },
+  ];
+  const a = analysisOf(FRAG, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.25), roofStep(0.75)] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 75, y: 60 },
+      { x: 75, y: 52 },
+      { x: 25, y: 52 },
+      { x: 25, y: 60 },
+      { x: 0, y: 60 },
+    ],
+    "chain merged (collinear fragments dropped) and the inset carved",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.25", "front@0.75"]);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(C5) a DEEP real jog between the pair — the inset can't span it, so BOTH steps degrade to corner recesses", () => {
+  // 50×60 ft house. Front face: [0,39] at y=120, a REAL 9 ft jog at 39%
+  // down to y=102 for [39,100] — the 1168G shape (deep recesses the trace
+  // carries, page steps the trace missed). The pair (20%, 75%) straddles the
+  // deep jog: no shared chain → each step carves its own corner recess; the
+  // deep jog survives.
+  const DEEPJOG: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 102 },
+    { x: 39, y: 102 },
+    { x: 39, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const djRuns = [
+    run({ x: 0, y: 120 }, { x: 39, y: 120 }),
+    run({ x: 39, y: 102 }, { x: 100, y: 102 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+  const a = analysisOf(DEEPJOG, djRuns);
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.2), roofStep(0.75)] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 94 },
+      { x: 75, y: 94 },
+      { x: 75, y: 102 },
+      { x: 39, y: 102 },
+      { x: 39, y: 120 },
+      { x: 20, y: 120 },
+      { x: 20, y: 112 },
+      { x: 0, y: 112 },
+    ],
+    "two corner recesses on either side of the surviving deep jog",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.20", "front@0.75"]);
+  assert.equal(out.notes.filter((n) => /ROOF JOG CARVED/.test(n)).length, 2);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(C6) lstep to an EXISTING roof step — the recess ends at the traced jog, whose connector absorbs the depth", () => {
+  // Chain [0,60] at y=60 ends at a real deep jog down to y=36. A page step
+  // at 30% marked inward recesses [30,60]: the boundary vertex slides in and
+  // the jog's connector shortens by the carve depth (24 ≥ 8 — safe).
+  const STEPEND: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 36 },
+    { x: 60, y: 36 },
+    { x: 60, y: 60 },
+    { x: 0, y: 60 },
+  ];
+  const seRuns = [
+    run({ x: 0, y: 60 }, { x: 60, y: 60 }),
+    run({ x: 60, y: 36 }, { x: 100, y: 36 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+  const a = analysisOf(STEPEND, seRuns);
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStepDir(0.3, "inward")] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 36 },
+      { x: 60, y: 36 },
+      { x: 60, y: 52 },
+      { x: 30, y: 52 },
+      { x: 30, y: 60 },
+      { x: 0, y: 60 },
+    ],
+    "recess carved from the step to the existing jog boundary",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.30"]);
+  // The upper-plane run split at 30% and its recessed piece rode inward; the
+  // lower-plane run is untouched, and every priced length is sum-preserved.
+  const frontRuns = out.analysis.gutter_runs.filter((r) => r.side === "front");
+  assert.equal(frontRuns.length, 3, "upper run split into outer + recessed pieces");
+  const recessed = frontRuns.find((r) => r.start.y === 52 && r.end.y === 52);
+  assert.ok(recessed, `expected a recessed piece at y=52, got ${JSON.stringify(frontRuns)}`);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(F1) flatten group-split — a shallow phantom NEXT TO a deep real jog still flattens (deep jog is a boundary, not a bail)", () => {
+  // 50×60 ft house. Front: [0,20] y=120 (shallow 4 ft pop-out), [20,50]
+  // y=112, then a DEEP 9 ft drop to y=94 for [50,100]. Page rules the side
+  // flush ([]). Round-2 behavior bailed the WHOLE group on the deep member;
+  // now the deep step bounds the group, the shallow phantom presses flat,
+  // the deep jog survives as flag-only.
+  const STAIR2: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 94 },
+    { x: 50, y: 94 },
+    { x: 50, y: 112 },
+    { x: 20, y: 112 },
+    { x: 20, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const stairRuns = [
+    run({ x: 0, y: 120 }, { x: 20, y: 120 }),
+    run({ x: 20, y: 112 }, { x: 50, y: 112 }),
+    run({ x: 50, y: 94 }, { x: 100, y: 94 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+  const a = analysisOf(STAIR2, stairRuns);
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front" }) },
+    roofPlanSteps: { front: [] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 94 },
+      { x: 50, y: 94 },
+      { x: 50, y: 112 },
+      { x: 20, y: 112 },
+      { x: 0, y: 112 },
+    ],
+    "shallow phantom pressed onto the dominant line; the deep jog untouched",
+  );
+  assert.ok(out.notes.some((n) => /JOG FLATTENED/.test(n)), "flatten fired despite the deep neighbor");
+  assert.equal(out.wallJogFlags.length, 1, "the deep jog stays flag-only");
+  assert.match(out.wallJogFlags[0], /50%/);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
 test("(C3) carve gates decline near a corner / on a jogged span → falls back to suggest-don't-carve", () => {
   // A step at frac 0.01 sits INSIDE the 1-ft corner margin — nothing to
   // carve there (the face corner IS the step); legacy suggestion survives.
