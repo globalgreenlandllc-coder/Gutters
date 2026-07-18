@@ -268,6 +268,10 @@ export function recoverAttachedRoofs(args: {
   metersPerPixel: number;
   groundHeightM: number;
   adjacencyM?: number;
+  /** Pixels recovery must never claim (screened pool enclosures — a
+   *  cage top is smooth, non-green and porch-height, so it passes every
+   *  candidate gate below). */
+  vetoMask?: Uint8Array;
 }): { mask: Uint8Array; addedAreasM2: number[]; addedPx: number } {
   const {
     mask,
@@ -297,6 +301,7 @@ export function recoverAttachedRoofs(args: {
     for (let x = 1; x < width - 1; x++) {
       const i = y * width + x;
       if (mask[i] > 0) continue;
+      if (args.vetoMask && args.vetoMask[i] === 1) continue;
       const h = dsm[i];
       if (!validH(h)) {
         if (dbg) dbg.dsmInvalid++;
@@ -535,6 +540,9 @@ export function growRoofMask(args: {
    *  into the tree canopy beside the roof (smooth photogrammetric
    *  crowns + shadow defeat the pixel-level tests). */
   allowMask?: Uint8Array;
+  /** Pixels growth must never claim (screened pool enclosures — their
+   *  tops pass every roof-like pixel test). */
+  vetoMask?: Uint8Array;
 }): { mask: Uint8Array; grownPx: number } {
   const { mask, dsm, dsmNoData, rgb, width, height, metersPerPixel, groundHeightM } = args;
   const maxSteps = Math.max(1, Math.round((args.maxGrowM ?? 3) / metersPerPixel));
@@ -629,6 +637,7 @@ export function growRoofMask(args: {
         if (validH(seedH) && validH(dsm[ni]) && Math.abs(dsm[ni] - seedH) > 1.2)
           continue;
         if (args.allowMask && args.allowMask[ni] === 0) continue;
+        if (args.vetoMask && args.vetoMask[ni] === 1) continue;
         out[ni] = 1;
         grownPx++;
         if (grownPx > growCap) return { mask, grownPx: 0 }; // runaway — distrust

@@ -40,6 +40,7 @@ import {
   type DsmSampler,
   type Pt,
 } from "./solar-geometry";
+import { detectScreenEnclosures } from "./screen-enclosure";
 import {
   classifyPolygonCorners,
   countCorners,
@@ -189,6 +190,58 @@ export async function runSolarFirstEstimate(args: {
     }
   }
 
+  // ---- Screened-enclosure veto (pool cages / lanais) -----------------
+  // Google's building mask AND its Solar plane list both model screened
+  // pool enclosures as roof, so neither the plane trim nor the height
+  // tests can remove them — the engine then wraps priced gutter around
+  // aluminum screen framing. Pool water visible THROUGH the elevated
+  // surface proves it's screen; subtract it before anything downstream
+  // treats it as gutterable roof. layers.mask itself stays untouched
+  // (the forensic debug PNG still shows the raw mask).
+  let rawMask = layers.mask;
+  let enclosureVeto: Uint8Array | undefined;
+  {
+    // Whole-tile ground: low percentile of DSM outside the mask. The
+    // footprint-band estimate runs later; the veto only needs a coarse
+    // "elevated vs grade" split, and the seed/cap heights are absolute.
+    const hs: number[] = [];
+    for (let i = 0; i < layers.mask.length; i += 2) {
+      if (layers.mask[i] > 0) continue;
+      const v = layers.dsm[i];
+      if (
+        Number.isFinite(v) &&
+        Math.abs(v - layers.dsmNoData) > 0.001 &&
+        v > -450 &&
+        v < 9000
+      ) {
+        hs.push(v);
+      }
+    }
+    if (hs.length > 200) {
+      hs.sort((a, b) => a - b);
+      const det = detectScreenEnclosures({
+        mask: layers.mask,
+        dsm: layers.dsm,
+        dsmNoData: layers.dsmNoData,
+        rgb: layers.rgb,
+        width: layers.grid.width,
+        height: layers.grid.height,
+        metersPerPixel: mpp,
+        groundHeightM: hs[Math.floor(hs.length * 0.15)],
+      });
+      if (det.vetoMaskM2 >= 4) {
+        enclosureVeto = det.veto;
+        rawMask = layers.mask.slice();
+        for (let i = 0; i < rawMask.length; i++) {
+          if (det.veto[i] === 1) rawMask[i] = 0;
+        }
+        notes.push(
+          `Excluded ${det.vetoMaskM2} m² of screened pool enclosure (lanai/pool cage) the building data called roof — pool visible through the screen, no gutters on cage framing`,
+        );
+      }
+    }
+  }
+
   // ---- Roof-plane trim ----------------------------------------------
   // Google's Solar segments map the actual roof planes; the ML building
   // mask sometimes annexes tree canopy / shadow next to them. Two-layer
@@ -197,7 +250,7 @@ export async function runSolarFirstEstimate(args: {
   // plane (center height + pitch × downhill distance) — a tree crown
   // floats meters above the porch plane it hides next to, annexed lawn
   // sits meters below. Skipped when segments are too sparse (<4).
-  let baseMask = layers.mask;
+  let baseMask = rawMask;
   let allowMask: Uint8Array | undefined;
   // Kept for the eave audit below (full-grid px space).
   let planeSegs: import("./solar-geometry").PlaneSeg[] = [];
@@ -269,7 +322,7 @@ export async function runSolarFirstEstimate(args: {
     planeSegs = segs;
     if (segs.length >= 4) {
       const trim = trimMaskToRoofPlanes({
-        mask: layers.mask,
+        mask: rawMask,
         dsm: layers.dsm,
         dsmNoData: layers.dsmNoData,
         width: layers.grid.width,
@@ -281,9 +334,9 @@ export async function runSolarFirstEstimate(args: {
       // every plane test — if the plane layer shrinks the traced
       // component well past what the bbox layer alone leaves, drop the
       // plane layer and keep the bbox trim (round-11 behavior).
-      const aabbOnly = new Uint8Array(layers.mask.length);
-      for (let i = 0; i < layers.mask.length; i++) {
-        if (layers.mask[i] > 0 && trim.allowMask[i] > 0) aabbOnly[i] = 1;
+      const aabbOnly = new Uint8Array(rawMask.length);
+      for (let i = 0; i < rawMask.length; i++) {
+        if (rawMask[i] > 0 && trim.allowMask[i] > 0) aabbOnly[i] = 1;
       }
       let planeM2 = Math.round(trim.cutPlanePx * mpp * mpp);
       let chosen = trim.mask;
@@ -311,6 +364,16 @@ export async function runSolarFirstEstimate(args: {
       }
       baseMask = chosen;
       allowMask = trim.allowMask;
+      // The allow zone is rasterized from Solar's plane bboxes — which
+      // include the cage planes — so the drip-edge growth could crawl
+      // back onto the vetoed enclosure without this subtraction.
+      if (enclosureVeto) {
+        const nextAllow = allowMask.slice();
+        for (let i = 0; i < nextAllow.length; i++) {
+          if (enclosureVeto[i] === 1) nextAllow[i] = 0;
+        }
+        allowMask = nextAllow;
+      }
       // RECLAIM: the trim cuts everything Solar's plane list doesn't
       // cover — including real LOW-TIER roof (porch/patio) the raw ML
       // mask had, typically sitting under tree shadow. Grow those
@@ -321,7 +384,7 @@ export async function runSolarFirstEstimate(args: {
       // real edge later.
       {
         const rec = reclaimTrimmedRoof({
-          rawMask: layers.mask,
+          rawMask,
           kept: baseMask,
           dsm: layers.dsm,
           dsmNoData: layers.dsmNoData,
@@ -426,6 +489,7 @@ export async function runSolarFirstEstimate(args: {
         // the landscaping" complaint. 1.6 m still recovers overhangs
         // and mask-smoothed corners.
         maxGrowM: 1.6,
+        vetoMask: enclosureVeto,
       });
       let growMask = baseMask;
       if (grown.grownPx > 0) {
@@ -455,6 +519,7 @@ export async function runSolarFirstEstimate(args: {
         height: layers.grid.height,
         metersPerPixel: mpp,
         groundHeightM: ground,
+        vetoMask: enclosureVeto,
       });
       if (rec.addedAreasM2.length > 0) {
         workMask = rec.mask;
