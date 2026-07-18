@@ -622,7 +622,49 @@ export async function runSolarFirstEstimate(args: {
     }
   }
 
-  const cleaned = cleanFootprint(traced.boundary, mpp);
+  if (process.env.SOLAR_DEBUG_DIR) {
+    try {
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(
+        `${process.env.SOLAR_DEBUG_DIR}/boundary-raw.json`,
+        JSON.stringify(traced.boundary),
+      );
+    } catch {
+      // debug-only
+    }
+  }
+  const cleaned = cleanFootprint(traced.boundary, mpp, {
+    // Corner squaring may only annex ROOF: elevated in the DSM (2 m
+    // over grade) — driveway/walkway at grade stays outside even when
+    // squaring a chamfer would bridge to it. Falls back to unrestricted
+    // squaring when no ground estimate exists.
+    isRoofAt:
+      groundM != null
+        ? (x: number, y: number) => {
+            const xi = Math.round(x);
+            const yi = Math.round(y);
+            if (
+              xi < 0 ||
+              yi < 0 ||
+              xi >= layers.grid.width ||
+              yi >= layers.grid.height
+            ) {
+              return false;
+            }
+            const v = layers.dsm[yi * layers.grid.width + xi];
+            if (
+              !Number.isFinite(v) ||
+              Math.abs(v - layers.dsmNoData) <= 0.001 ||
+              v <= -450 ||
+              v >= 9000
+            ) {
+              // DSM holes shouldn't veto squaring — stay permissive.
+              return true;
+            }
+            return v - (groundM as number) > 2.0;
+          }
+        : undefined,
+  });
   if (!cleaned || cleaned.points.length < 4) {
     notes.push("Footprint cleanup degenerated — legacy tracer");
     return null;
@@ -872,10 +914,20 @@ export async function runSolarFirstEstimate(args: {
     a: Pt,
     b: Pt,
     nrm: { nx: number; ny: number },
-  ): { kind: "eave" | "rake"; via: string; src: "dsm" | "az" | "def" } => {
+  ): {
+    kind: "eave" | "rake";
+    via: string;
+    src: "dsm" | "az" | "def";
+    rakeSpanT?: [number, number];
+  } => {
     const dsmV = classifyEdgeByDsm(a, b, nrm, sample, mpp, insideMaskOpt);
     if (dsmV.kind !== "unknown") {
-      return { kind: dsmV.kind, via: `DSM: ${dsmV.reason}`, src: "dsm" };
+      return {
+        kind: dsmV.kind,
+        via: `DSM: ${dsmV.reason}`,
+        src: "dsm",
+        rakeSpanT: dsmV.rakeSpanT,
+      };
     }
     const azV = azimuthVerdict(a, b, nrm);
     if (azV.kind !== "unknown") {
@@ -890,6 +942,7 @@ export async function runSolarFirstEstimate(args: {
   let azimuthDecided = 0;
   let defaultedToEave = 0;
   let formSplits = 0;
+  let gableCarves = 0;
   const countSrc = (src: "dsm" | "az" | "def") => {
     if (src === "dsm") dsmDecided++;
     else if (src === "az") azimuthDecided++;
@@ -974,6 +1027,59 @@ export async function runSolarFirstEstimate(args: {
     }
     const v = classifyAt(a, b, nrm);
     countSrc(v.src);
+    // INTERIOR GABLE CARVE: the classifier found an eave-gable-eave wall
+    // (tent span with no drainage between two draining sections). Emit
+    // the three pieces; the gable becomes an unpriced dashed rake. The
+    // azimuth arbitration that guards the half-split applies here too —
+    // a Solar plane FACING this span means it drains and vetoes the
+    // carve.
+    if (v.kind === "eave" && v.rakeSpanT && lengthFt >= 18) {
+      const [tg0, tg1] = v.rakeSpanT;
+      const gableFt = lengthFt * (tg1 - tg0);
+      const azSpan = azimuthVerdict(lerp(tg0), lerp(tg1), nrm);
+      if (
+        gableFt >= 8 &&
+        lengthFt * tg0 >= 3 &&
+        lengthFt * (1 - tg1) >= 3 &&
+        azSpan.kind !== "eave"
+      ) {
+        classified.push({
+          a,
+          b: lerp(tg0),
+          idx: i,
+          t0: 0,
+          t1: tg0,
+          kind: "eave",
+          lengthFt: lengthFt * tg0,
+          via: `${v.via} (gable carved out mid-wall)`,
+          nrm,
+        });
+        classified.push({
+          a: lerp(tg0),
+          b: lerp(tg1),
+          idx: i,
+          t0: tg0,
+          t1: tg1,
+          kind: "rake",
+          lengthFt: gableFt,
+          via: "DSM: interior gable face (tents to a peak, no drainage)",
+          nrm,
+        });
+        classified.push({
+          a: lerp(tg1),
+          b,
+          idx: i,
+          t0: tg1,
+          t1: 1,
+          kind: "eave",
+          lengthFt: lengthFt * (1 - tg1),
+          via: `${v.via} (gable carved out mid-wall)`,
+          nrm,
+        });
+        gableCarves++;
+        continue;
+      }
+    }
     classified.push({ a, b, idx: i, kind: v.kind, lengthFt, via: v.via, nrm });
   }
   // NOTCH-STEP CONTINUITY: a SHORT perimeter edge (a staircase step in
@@ -1008,6 +1114,11 @@ export async function runSolarFirstEstimate(args: {
   if (formSplits > 0) {
     notes.push(
       `Split ${formSplits} wall${formSplits === 1 ? "" : "s"} where the roof form changes mid-run (gutter on the eave section only, none across the gable)`,
+    );
+  }
+  if (gableCarves > 0) {
+    notes.push(
+      `Carved ${gableCarves} gable face${gableCarves === 1 ? "" : "s"} out of a straight wall (the roof tents to a peak mid-run with no drainage there) — gutter stays on the flanking eave sections only`,
     );
   }
 
@@ -1179,8 +1290,19 @@ export async function runSolarFirstEstimate(args: {
   // surface as unpriced tap-to-add suggestions, never silently dropped.
   const eaveEdges: typeof allEaveEdges = [];
   const demotedEaves: typeof allEaveEdges = [];
-  for (const e of allEaveEdges) {
-    const ev = edgeEvidence(e);
+  // Cache key includes the sub-span — split edges share their ring idx.
+  const evidenceCache = new Map<string, ReturnType<typeof edgeEvidence>>();
+  const evOf = (e: (typeof classified)[number]) => {
+    const key = `${e.idx}:${e.t0 ?? 0}:${e.t1 ?? 1}`;
+    let ev = evidenceCache.get(key);
+    if (!ev) {
+      ev = edgeEvidence(e);
+      evidenceCache.set(key, ev);
+    }
+    return ev;
+  };
+  const failsAudit = (e: (typeof classified)[number]) => {
+    const ev = evOf(e);
     // Wrong tone AND non-planar inside → vegetation/shadow garbage.
     // Wrong tone but PLANAR → real roof under tree shadow (the owner's
     // covered patio measured plane-RMS 0.04–0.24 m; the bush 0.81, the
@@ -1190,14 +1312,63 @@ export async function runSolarFirstEstimate(args: {
     // ≥⅔ of stations is vegetation even when it's smooth. A real dark
     // roof section matches its plane (the covered patio measured
     // residN 0/3 with toneN 0).
-    if (
+    return (
       ev.n >= 3 &&
       ev.toneN / ev.n >= 0.67 &&
       (ev.planeRms == null || ev.planeRms > 0.28 || ev.residN / ev.n >= 0.67)
-    ) {
+    );
+  };
+  for (const e of allEaveEdges) {
+    if (failsAudit(e)) {
       demotedEaves.push(e);
     } else {
       eaveEdges.push(e);
+    }
+  }
+  // CHAIN DEMOTION: a short sliver whose tone is wrong at every station
+  // can still dodge the audit through the planarity exception — but when
+  // it sits BETWEEN demoted runs it's the same phantom object (the 6232
+  // entry: a 7 LF "eave" over the front-yard tree's crown, planar at the
+  // crown edge, flanked by a demoted 3 LF jag). Ring-adjacency comes
+  // from the classified order.
+  {
+    // Adjacency by ARRAY position (classified is in ring order; split
+    // edges are consecutive there), demotion tracked per edge object —
+    // ring idx alone collides for split edges.
+    const demoted = new Set<(typeof classified)[number]>(demotedEaves);
+    const neighborsOf = (e: (typeof classified)[number]) => {
+      const p = classified.indexOf(e);
+      if (p < 0) return [];
+      return [
+        classified[(p - 1 + classified.length) % classified.length],
+        classified[(p + 1) % classified.length],
+      ];
+    };
+    for (let pass = 0; pass < 2; pass++) {
+      for (let k = eaveEdges.length - 1; k >= 0; k--) {
+        const e = eaveEdges[k];
+        const ev = evOf(e);
+        if (e.lengthFt > 8 || ev.n < 3 || ev.toneN / ev.n < 0.67) continue;
+        if (neighborsOf(e).some((n) => demoted.has(n))) {
+          demoted.add(e);
+          demotedEaves.push(e);
+          eaveEdges.splice(k, 1);
+        }
+      }
+    }
+    // RAKE HYGIENE — rakes are unpriced dashed guides, so they get the
+    // same audit the eaves get plus guilt-by-association: a rake that
+    // fails tone+plane itself (the phantom wing's side drawn as a dashed
+    // line into the driveway), or a short rake leaning on a demoted
+    // neighbor (the dangling "gable 12'" at the demoted entry stub),
+    // draws a confident dashed edge over what the audit says is
+    // vegetation. Dropping one can never cost footage.
+    for (let k = rakeEdges.length - 1; k >= 0; k--) {
+      const r = rakeEdges[k];
+      const neighborDemoted = neighborsOf(r).some((n) => demoted.has(n));
+      if (failsAudit(r) || (r.lengthFt <= 16 && neighborDemoted)) {
+        rakeEdges.splice(k, 1);
+      }
     }
   }
   if (demotedEaves.length > 0) {

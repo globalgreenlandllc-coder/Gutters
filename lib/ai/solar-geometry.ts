@@ -497,6 +497,64 @@ export function recoverAttachedRoofs(args: {
     // tree line that survived the pixel tests reads long, thin and
     // sparse — low oriented-box fill, extreme aspect.
     if (bboxFill < 0.55 || aspect > 5) continue;
+    // SEAM HEIGHT BAND: a real attached roof TUCKS UNDER the house — at
+    // the attachment line its surface sits somewhat below the roof edge
+    // it meets (down to ~-4.5 m under a tall two-story wall) and never
+    // meaningfully ABOVE it. Both failure modes appeared on 6232's rear
+    // wall: a canopy top floating above the adjacent roof, and a dark
+    // GROUND-level yard patch 6.6 m below it (a low ground estimate let
+    // it pass the height band) — each became an 8 m² phantom wing with
+    // a rake into the driveway and a floating downspout. Median SIGNED
+    // Δh across the seam band decides; sub-1.5 m seams are point
+    // contacts, not attachments.
+    {
+      const rPx = Math.max(2, Math.round(1.2 / metersPerPixel));
+      const deltas: number[] = [];
+      for (const idx of px) {
+        if (nearMain[idx] === 0) continue;
+        const h = dsm[idx];
+        if (!validH(h)) continue;
+        const x = idx % width;
+        const y = (idx - x) / width;
+        let bestD = Infinity;
+        let bestH: number | null = null;
+        for (let dy = -rPx; dy <= rPx; dy++) {
+          for (let dx = -rPx; dx <= rPx; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            const j = ny * width + nx;
+            if (componentMask[j] !== 1) continue;
+            const hj = dsm[j];
+            if (!validH(hj)) continue;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+              bestD = d;
+              bestH = hj;
+            }
+          }
+        }
+        if (bestH != null) deltas.push(h - bestH);
+      }
+      deltas.sort((a, b) => a - b);
+      const seamMed = deltas.length
+        ? deltas[Math.floor(deltas.length / 2)]
+        : Infinity;
+      if (process.env.SOLAR_SHADOW_DEBUG) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[shadow-recover seam] ${Math.round(areaM2)}m² seamPx=${deltas.length} medΔh=${Number.isFinite(seamMed) ? seamMed.toFixed(2) : "∞"}`,
+        );
+      }
+      if (
+        deltas.length * metersPerPixel < 1.5 ||
+        !Number.isFinite(seamMed) ||
+        seamMed > 0.9 ||
+        seamMed < -4.5
+      ) {
+        continue;
+      }
+    }
     if (addedTotalPx + px.length > mainArea * 0.5) continue;
     addedTotalPx += px.length;
     addedAreasM2.push(Math.round(areaM2));
@@ -2136,6 +2194,10 @@ export function cleanFootprint(
   metersPerPixel: number,
   opts?: {
     simplifyEpsM?: number;
+    /** Passed to dechamferPolygon: corner squaring may not annex
+     *  territory that isn't roof-height (keeps real concave recesses —
+     *  set-back eaves between projecting gable bays). */
+    isRoofAt?: (x: number, y: number) => boolean;
   },
 ): CleanedFootprint | null {
   // 0.3 m (was 0.45): a two-step 0.5 m staircase jog deviates ~0.45 m
@@ -2166,7 +2228,9 @@ export function cleanFootprint(
   // Shadow/DSM-halo bulges (two off-grid edges straddling a grid
   // direction) collapse to their on-grid chord — the parked-car /
   // driveway-shadow corner fix. Outward-only, so it never adds roof.
-  const bulge = collapseOffGridBulges(rect.points, metersPerPixel);
+  const bulge = collapseOffGridBulges(rect.points, metersPerPixel, {
+    isRoofAt: opts?.isRoofAt,
+  });
   // TAPER WEDGES: a short outward step followed by a LONG barely-off-grid
   // edge that lands back on the wall line at the far corner. Real walls
   // don't taper at 3–5°; this is the dark-pavement bulge shape that
@@ -2180,7 +2244,9 @@ export function cleanFootprint(
         wedge.points.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" "),
     );
   }
-  const dech = dechamferPolygon(wedge.points, metersPerPixel);
+  const dech = dechamferPolygon(wedge.points, metersPerPixel, {
+    isRoofAt: opts?.isRoofAt,
+  });
   return {
     points: dech.points,
     squaredCorners: dech.squared,
@@ -2591,7 +2657,18 @@ export function rectifyShortEdgeChains(
 export function collapseOffGridBulges(
   points: Pt[],
   metersPerPixel: number,
-  opts?: { maxApexM?: number; offGridDeg?: number; chordSnapDeg?: number },
+  opts?: {
+    maxApexM?: number;
+    offGridDeg?: number;
+    chordSnapDeg?: number;
+    /** Ground-truth veto: the pass exists to cut mask bulges over
+     *  driveway shadow / parked cars — those sit at GRADE. A projecting
+     *  gable-bay corner matches the same geometric pattern (short
+     *  off-grid step, apex ≤2 m) but its triangle is ROOF-height; when
+     *  provided and the cut region reads as roof, the corner stays
+     *  (the 6232 garage bays were being clipped off here). */
+    isRoofAt?: (x: number, y: number) => boolean;
+  },
 ): { points: Pt[]; collapsed: number } {
   const maxApexPx = (opts?.maxApexM ?? 2.0) / metersPerPixel;
   const offGridDeg = opts?.offGridDeg ?? 8;
@@ -2660,6 +2737,21 @@ export function collapseOffGridBulges(
       const next = [...pts.slice(0, i), ...pts.slice(i + 1)];
       if (next.length < 4) continue;
       if (polygonSelfIntersects(next)) continue;
+      // Belt-and-suspenders outward proof: dropping an outward bulge can
+      // only SHRINK the ring. The sign heuristic above mis-reads some
+      // traversal orders and then FILLS a concave notch instead —
+      // fabricated roof the final shrink-only ratio guard never catches.
+      if (polygonArea(next) > polygonArea(pts)) continue;
+      // Roof-height veto: the triangle being cut must NOT be real roof.
+      if (opts?.isRoofAt) {
+        const samples = [
+          { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 },
+          { x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 },
+          { x: (B.x + C.x) / 2, y: (B.y + C.y) / 2 },
+        ];
+        const roofN = samples.filter((p) => opts.isRoofAt!(p.x, p.y)).length;
+        if (roofN >= 2) continue;
+      }
       pts = next;
       collapsed++;
       changed = true;
@@ -2704,10 +2796,50 @@ export function polygonArea(points: Pt[]): number {
 export function dechamferPolygon(
   points: Pt[],
   metersPerPixel: number,
-  opts?: { maxChamferM?: number; maxExtendM?: number },
+  opts?: {
+    maxChamferM?: number;
+    maxExtendM?: number;
+    /** Ground-truth veto: squaring may only ANNEX territory that reads
+     *  as roof. A mask-rounded corner's tip is real (square) roof in
+     *  the DSM, so it squares as before — but a genuine concave recess
+     *  (the 6232 garage's two cross-gable bays with a set-back eave
+     *  between them) sits over driveway; six dechamfer passes used to
+     *  chew through the recess vertices and bridge the bays with one
+     *  straight chord. When provided and the candidate squaring GROWS
+     *  the ring over non-roof samples, that squaring is skipped. */
+    isRoofAt?: (x: number, y: number) => boolean;
+  },
 ): { points: Pt[]; squared: number } {
   const maxChamferPx = (opts?.maxChamferM ?? 2.2) / metersPerPixel;
   const maxExtendPx = (opts?.maxExtendM ?? 2.6) / metersPerPixel;
+  const isRoofAt = opts?.isRoofAt;
+  /** True when replacing chain [a..b] by `inter` annexes non-roof
+   *  ground. Checks the annexed triangle's interior samples only when
+   *  the ring actually grows. */
+  const annexesNonRoof = (
+    before: Pt[],
+    after: Pt[],
+    a: Pt,
+    inter: Pt,
+    b: Pt,
+  ): boolean => {
+    if (!isRoofAt) return false;
+    const growM2 =
+      (Math.abs(polygonArea(after)) - Math.abs(polygonArea(before))) *
+      metersPerPixel *
+      metersPerPixel;
+    if (growM2 < 0.3) return false;
+    const samples: Pt[] = [
+      {
+        x: (a.x + b.x + inter.x) / 3,
+        y: (a.y + b.y + inter.y) / 3,
+      },
+      { x: (a.x + inter.x) / 2, y: (a.y + inter.y) / 2 },
+      { x: (b.x + inter.x) / 2, y: (b.y + inter.y) / 2 },
+    ];
+    const offRoof = samples.filter((p) => !isRoofAt(p.x, p.y)).length;
+    return offRoof >= 2;
+  };
   let pts = points;
   let squared = 0;
   let stale = 0;
@@ -2753,6 +2885,7 @@ export function dechamferPolygon(
       // Splice across the ring seam leaves <4 pts or broken order — guard.
       if (next.length < 4) continue;
       if (polygonSelfIntersects(next)) continue;
+      if (annexesNonRoof(pts, next, a, inter, b)) continue;
       pts = next;
       squared++;
       changed = true;
@@ -2788,6 +2921,7 @@ export function dechamferPolygon(
       const next = [...pts.slice(0, i), inter, ...pts.slice(i + 3)];
       if (next.length < 4) continue;
       if (polygonSelfIntersects(next)) continue;
+      if (annexesNonRoof(pts, next, a, inter, b)) continue;
       pts = next;
       squared++;
       changed = true;
@@ -2893,6 +3027,11 @@ export type DsmSampler = (x: number, y: number) => number | null;
 export type EdgeVerdict = {
   kind: "eave" | "rake" | "unknown";
   reason: string;
+  /** Set on an "eave" verdict for a MIXED wall: the [t0,t1] sub-span
+   *  where the roof tents to a peak with no drainage — an interior
+   *  gable face the caller should carve out as a rake (the wall reads
+   *  eave-gable-eave; one verdict would price the gable). */
+  rakeSpanT?: [number, number];
 };
 
 /**
@@ -2996,6 +3135,18 @@ export function classifyEdgeByDsm(
   const votes = profile.filter((s) => s.rise != null);
   const eaveVotes = votes.filter((s) => (s.rise as number) > 0.3).length;
   const eaveVoteFrac = votes.length > 0 ? eaveVotes / votes.length : 0;
+  if (process.env.SOLAR_EDGE_PROFILE && lenM > 6) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[edge-profile] a=(${a.x.toFixed(0)},${a.y.toFixed(0)}) b=(${b.x.toFixed(0)},${b.y.toFixed(0)}) len=${lenM.toFixed(1)}m ` +
+        profile
+          .map(
+            (s) =>
+              `t${s.t.toFixed(2)}:h${s.h.toFixed(1)}${s.rise != null ? `r${s.rise.toFixed(1)}` : "r?"}`,
+          )
+          .join(" "),
+    );
+  }
 
   // Along-edge climb: robust spread between the low and high thirds…
   const hs = profile.map((p) => p.h).sort((x, y) => x - y);
@@ -3060,9 +3211,53 @@ export function classifyEdgeByDsm(
   //        point then falls, nothing drains toward the wall) → RAKE
   if (alongDelta > alongSlopeMaxM) {
     if (votes.length >= 2 && eaveVoteFrac >= 0.4) {
+      // INTERIOR GABLE (tent) CARVE-OUT: a mixed wall can be
+      // eave-gable-eave — draining sections flank a contiguous span
+      // where the edge height CLIMBS to a peak and falls again with no
+      // drainage (6232's entry-court wall: garage hip drains t≤0.32,
+      // tent peaks +1.0 m at t=0.5, drains again t≥0.76 — visually an
+      // obvious gable triangle that was being priced as 13 LF of
+      // gutter). Report the span; the caller splits and re-audits.
+      // Guards: span strictly interior (draining stations on BOTH
+      // sides), ≥2 stations and ≥2.4 m wide (a real gable face), peak
+      // ≥0.5 m above both flanks (DSM noise can't tent that high).
+      let rakeSpanT: [number, number] | undefined;
+      {
+        const drains = (s: { rise: number | null }) =>
+          s.rise != null && s.rise > 0.3;
+        let bestS = -1;
+        let bestE = -1;
+        let curS = -1;
+        for (let i = 0; i <= profile.length; i++) {
+          const nd = i < profile.length && !drains(profile[i]);
+          if (nd && curS < 0) curS = i;
+          if (!nd && curS >= 0) {
+            if (bestS < 0 || i - curS > bestE - bestS) {
+              bestS = curS;
+              bestE = i;
+            }
+            curS = -1;
+          }
+        }
+        if (bestS > 0 && bestE < profile.length && bestE - bestS >= 2) {
+          const span = profile.slice(bestS, bestE);
+          const spanLenM = (span[span.length - 1].t - span[0].t) * lenM;
+          let peak = span[0];
+          for (const s of span) if (s.h > peak.h) peak = s;
+          const climbL = peak.h - profile[bestS - 1].h;
+          const climbR = peak.h - profile[bestE].h;
+          if (spanLenM >= 2.4 && climbL >= 0.5 && climbR >= 0.5) {
+            rakeSpanT = [
+              (profile[bestS - 1].t + profile[bestS].t) / 2,
+              (profile[bestE - 1].t + profile[bestE].t) / 2,
+            ];
+          }
+        }
+      }
       return {
         kind: "eave",
         reason: `stepped tiers, ${eaveVotes}/${votes.length} stations drain here`,
+        ...(rakeSpanT ? { rakeSpanT } : {}),
       };
     }
     if (votes.length >= 2 && eaveVoteFrac <= 0.15) {

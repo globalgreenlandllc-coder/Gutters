@@ -748,6 +748,11 @@ export function placeDownspoutsOnPolygon(
   let i = 0;
   for (const cand of scored) {
     if (placed.length >= targetCount) break;
+    // Score 0 = no kept gutter run ends at this corner — there's nothing
+    // to drain. These are corners of held-back / phantom perimeter
+    // sections (a downspout floated in the yard at a corner whose both
+    // runs were demoted to tap-to-add).
+    if (cand.score === 0) continue;
     const tooClose = placed.some(
       (p) => Math.hypot(p.x - cand.x, p.y - cand.y) < MIN_SPACING_PX,
     );
