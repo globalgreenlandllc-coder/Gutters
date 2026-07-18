@@ -88,7 +88,7 @@ export const PROMPT_META: Record<
     category: "proposal",
     model: "Claude Sonnet 5",
     description:
-      "Drives the 'AI recommended price' switch in the proposal builder: given the job's address, gutter spec, and measurements it suggests a realistic local install price with a low–high range and short reasoning. Contractor-facing only — never shown to the client.",
+      "Drives the 'AI recommended price' switch in the proposal builder: given the job's address, measurements, and EVERY package's gutter spec, one call prices all tiers (good/better/best) for the local market with a low–high range per tier and short reasoning. Contractor-facing only — never shown to the client. ⚠ An override saved here SHADOWS the code default — reset after engine updates.",
   },
 };
 

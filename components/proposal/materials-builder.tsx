@@ -24,7 +24,7 @@ import {
   type AiPriceQuote,
   type Package,
 } from "@/lib/proposal-mock";
-import { getAiPriceQuote } from "@/app/actions/ai-pricing";
+import { getAiPriceQuotes } from "@/app/actions/ai-pricing";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -111,18 +111,25 @@ function aiPriceInputKey(
 
 export function MaterialsBuilder({
   pkg,
+  allPackages,
   measurements,
   discountPct,
   address,
   onChange,
+  onChangeAll,
   onClose,
 }: {
   pkg: Package;
+  /** Every package on the proposal — the AI pricing switch works on all
+   *  of them at once, since the client sees every tier. */
+  allPackages: Package[];
   measurements: Measurements;
   discountPct: number;
   /** Property address — where the AI market price is read from. */
   address: string;
   onChange: (next: Package) => void;
+  /** Replace the whole package list (AI pricing applies/restores all tiers). */
+  onChangeAll: (next: Package[]) => void;
   onClose: () => void;
 }) {
   const reduce = useReducedMotion();
@@ -159,31 +166,52 @@ export function MaterialsBuilder({
     });
   };
 
-  /* ----- AI recommended price (the pricing switch) ----- */
+  /* ----- AI recommended price (the pricing switch) -----
+   * The switch is proposal-wide: every tier goes to the client, so one
+   * AI call prices ALL packages together (keeps the good/better/best
+   * ladder coherent) and applying/restoring walks the whole list. */
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState<string | null>(null);
   const pricingMode: "manual" | "ai" =
     pkg.pricingMode === "ai" ? "ai" : "manual";
-  const aiKey = aiPriceInputKey(address, pkg.config, measurements);
+  const keyFor = (p: Package) =>
+    aiPriceInputKey(address, p.config, measurements);
   const quote = pkg.aiQuote;
-  const quoteStale = !!quote && quote.inputKey !== aiKey;
+  const quoteStale =
+    allPackages.some((p) => p.aiQuote && p.aiQuote.inputKey !== keyFor(p));
 
-  /** Land the package total on the AI number by back-solving markup —
-   *  markup stays the single stored price knob, same as EditablePrice. */
-  const applyQuote = (q: AiPriceQuote, stashMarkup: boolean) =>
-    onChange({
-      ...pkg,
-      pricingMode: "ai",
-      myMarkupPct: stashMarkup ? pkg.markupPct : pkg.myMarkupPct,
-      aiQuote: q,
-      markupPct: markupPctForTarget(
-        q.recommendedTotal,
-        totals.subtotal,
-        discountPct,
-      ),
-    });
+  /** Land every quoted tier's total on its AI number by back-solving
+   *  that tier's own markup — markup stays the single stored price
+   *  knob, same as EditablePrice. Tiers the AI skipped are untouched. */
+  const applyQuotes = (
+    quotes: Record<string, AiPriceQuote>,
+    stashMarkup: boolean,
+  ) =>
+    onChangeAll(
+      allPackages.map((p) => {
+        const q = quotes[p.id];
+        if (!q) return p;
+        const { subtotal } = packageTotal(p, measurements, discountPct);
+        return {
+          ...p,
+          pricingMode: "ai" as const,
+          // Stash only when this tier is leaving manual mode — a refresh
+          // while already on AI must not overwrite the saved markup.
+          myMarkupPct:
+            stashMarkup && p.pricingMode !== "ai"
+              ? p.markupPct
+              : p.myMarkupPct,
+          aiQuote: q,
+          markupPct: markupPctForTarget(
+            q.recommendedTotal,
+            subtotal,
+            discountPct,
+          ),
+        };
+      }),
+    );
 
-  async function fetchQuote(stashMarkup: boolean) {
+  async function fetchQuotes(stashMarkup: boolean) {
     if (aiBusy) return;
     setAiErr(null);
     if (!address.trim()) {
@@ -191,37 +219,58 @@ export function MaterialsBuilder({
       return;
     }
     setAiBusy(true);
-    const r = await getAiPriceQuote({
+    const r = await getAiPriceQuotes({
       address,
-      config: pkg.config,
       measurements,
-      inputKey: aiKey,
+      packages: allPackages.map((p) => ({
+        id: p.id,
+        name: p.name,
+        config: p.config,
+        inputKey: keyFor(p),
+      })),
     });
     setAiBusy(false);
     if (!r.ok) {
       setAiErr(r.reason);
       return;
     }
-    applyQuote(r.quote, stashMarkup);
+    applyQuotes(r.quotes, stashMarkup);
   }
 
   function switchPricingMode(next: "manual" | "ai") {
     if (next === pricingMode) return;
     if (next === "manual") {
       setAiErr(null);
-      // Restore exactly the markup the contractor had before AI took over.
-      onChange({
-        ...pkg,
-        pricingMode: "manual",
-        markupPct: pkg.myMarkupPct ?? pkg.markupPct,
-      });
+      // Restore each tier's own pre-AI markup — the whole ladder goes
+      // back to exactly what the contractor had.
+      onChangeAll(
+        allPackages.map((p) =>
+          p.pricingMode === "ai"
+            ? {
+                ...p,
+                pricingMode: "manual" as const,
+                markupPct: p.myMarkupPct ?? p.markupPct,
+              }
+            : p,
+        ),
+      );
       return;
     }
-    if (quote && !quoteStale) {
-      applyQuote(quote, true);
+    // Every tier already holds a fresh quote → re-apply without a new
+    // AI call; otherwise fetch the full ladder again.
+    const allFresh = allPackages.every(
+      (p) => p.aiQuote && p.aiQuote.inputKey === keyFor(p),
+    );
+    if (allFresh) {
+      applyQuotes(
+        Object.fromEntries(
+          allPackages.map((p) => [p.id, p.aiQuote as AiPriceQuote]),
+        ),
+        true,
+      );
       return;
     }
-    void fetchQuote(true);
+    void fetchQuotes(true);
   }
 
   const suggestions = specChipsFromConfig(pkg.config).filter(
@@ -643,7 +692,7 @@ export function MaterialsBuilder({
 
           <Section
             title="Price"
-            sub="Price it yourself, or let AI suggest what this job sells for near the property — then compare and pick."
+            sub="Price it yourself, or let AI price every package for the local market — the client sees all tiers, so the switch re-prices all of them together."
           >
             <div className="space-y-3">
               {/* The pricing switch */}
@@ -703,6 +752,38 @@ export function MaterialsBuilder({
                       )}
                     </span>
                   </div>
+                  {/* The whole ladder — every tier got its own market price */}
+                  <div className="overflow-hidden rounded-lg border border-accent-200/70 bg-white">
+                    {allPackages.map(
+                      (p) =>
+                        p.aiQuote && (
+                          <div
+                            key={p.id}
+                            className={cn(
+                              "flex items-center justify-between border-b border-zinc-100 px-2.5 py-1.5 text-xs last:border-0",
+                              p.id === pkg.id && "bg-accent-50/60",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "text-zinc-600",
+                                p.id === pkg.id && "font-medium text-zinc-900",
+                              )}
+                            >
+                              {p.name}
+                              {p.id === pkg.id && (
+                                <span className="ml-1 text-[10px] text-accent-600">
+                                  editing
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-semibold tabular-nums text-zinc-900">
+                              {formatCurrency(p.aiQuote.recommendedTotal)}
+                            </span>
+                          </div>
+                        ),
+                    )}
+                  </div>
                   {quote.reasoning.length > 0 && (
                     <ul className="space-y-0.5 text-[11px] text-zinc-600">
                       {quote.reasoning.map((r, i) => (
@@ -716,17 +797,17 @@ export function MaterialsBuilder({
                   {quoteStale && (
                     <p className="text-[11px] font-medium text-amber-700">
                       Materials or footage changed since this quote — refresh
-                      to re-price.
+                      to re-price every tier.
                     </p>
                   )}
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-zinc-400">
                       Suggested {new Date(quote.fetchedAt).toLocaleDateString()}
-                      {" "}· never shown to the client
+                      {" "}· all tiers · never shown to the client
                     </span>
                     <button
                       type="button"
-                      onClick={() => void fetchQuote(false)}
+                      onClick={() => void fetchQuotes(false)}
                       disabled={aiBusy}
                       className="ring-focus inline-flex items-center gap-1 rounded-md text-[11px] font-medium text-accent-700 transition-smooth hover:text-accent-900"
                     >

@@ -852,6 +852,7 @@ export function ManualMeasureForm() {
       {materialsPkg && (
         <MaterialsBuilder
           pkg={materialsPkg}
+          allPackages={pkgs}
           measurements={measurements}
           discountPct={0}
           address={address}
@@ -860,6 +861,7 @@ export function ManualMeasureForm() {
               prev.map((p) => (p.id === next.id ? next : p)),
             )
           }
+          onChangeAll={(next) => setPkgs(next)}
           onClose={() => setMaterialsEditId(null)}
         />
       )}

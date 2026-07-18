@@ -353,6 +353,7 @@ function Inner() {
       {materialsPkg && (
         <MaterialsBuilder
           pkg={materialsPkg}
+          allPackages={proposal.packages}
           measurements={proposal.measurements}
           discountPct={proposal.discountPct ?? 0}
           address={proposal.address}
@@ -363,6 +364,9 @@ function Inner() {
                 p.id === next.id ? next : p,
               ),
             }))
+          }
+          onChangeAll={(next) =>
+            setProposal((prev) => ({ ...prev, packages: next }))
           }
           onClose={() => setMaterialsEditId(null)}
         />

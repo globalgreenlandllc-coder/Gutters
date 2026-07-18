@@ -1,7 +1,7 @@
 "use server";
 
 import { getMe } from "./me";
-import { suggestMarketPrice } from "@/lib/ai/price-suggestion";
+import { suggestMarketPrices } from "@/lib/ai/price-suggestion";
 import type { AiPriceQuote } from "@/lib/proposal-mock";
 import type { EstimateConfig, Measurements } from "@/lib/types";
 
@@ -9,24 +9,31 @@ import type { EstimateConfig, Measurements } from "@/lib/types";
  * ai-pricing.ts — the proposal builder's "AI recommended price" fetch.
  *
  * Thin authenticated wrapper around lib/ai/price-suggestion: the client
- * sends the job's address + spec + footage and its own `inputKey`
- * fingerprint; the action stamps the quote so the builder can cache it
- * on the package and detect staleness later. Signed-in users only —
- * the AI key never leaves the server.
+ * sends the job's address + footage and EVERY package's spec (all tiers
+ * go to the client, so all tiers get priced in one AI call), each with
+ * its own `inputKey` fingerprint; the action stamps the quotes so the
+ * builder can cache them per package and detect staleness later.
+ * Signed-in users only — the AI key never leaves the server.
  */
 
-export type AiPriceQuoteResult =
-  | { ok: true; quote: AiPriceQuote }
-  | { ok: false; reason: string };
-
-export async function getAiPriceQuote(input: {
-  address: string;
+export type AiPricePackageInput = {
+  id: string;
+  name: string;
   config: EstimateConfig;
-  measurements: Measurements;
   /** Client-computed fingerprint of (address, spec, footage) — echoed
    *  back on the quote so the builder can tell when it goes stale. */
   inputKey: string;
-}): Promise<AiPriceQuoteResult> {
+};
+
+export type AiPriceQuotesResult =
+  | { ok: true; quotes: Record<string, AiPriceQuote> }
+  | { ok: false; reason: string };
+
+export async function getAiPriceQuotes(input: {
+  address: string;
+  measurements: Measurements;
+  packages: AiPricePackageInput[];
+}): Promise<AiPriceQuotesResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
   const address = (input.address ?? "").trim();
@@ -40,25 +47,35 @@ export async function getAiPriceQuote(input: {
   ) {
     return { ok: false, reason: "Measurements are missing — add footage first" };
   }
+  if (!Array.isArray(input.packages) || input.packages.length === 0) {
+    return { ok: false, reason: "No packages to price" };
+  }
 
-  const res = await suggestMarketPrice({
+  const res = await suggestMarketPrices({
     address,
-    config: input.config,
     measurements: input.measurements,
+    packages: input.packages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      config: p.config,
+    })),
   });
   if (!res.ok) return res;
 
-  return {
-    ok: true,
-    quote: {
-      recommendedTotal: res.suggestion.recommendedTotal,
-      lowTotal: res.suggestion.lowTotal,
-      highTotal: res.suggestion.highTotal,
-      perLfInstalled: res.suggestion.perLfInstalled,
+  const fetchedAt = new Date().toISOString();
+  const keyById = new Map(input.packages.map((p) => [p.id, p.inputKey]));
+  const quotes: Record<string, AiPriceQuote> = {};
+  for (const s of res.suggestion.packages) {
+    quotes[s.packageId] = {
+      recommendedTotal: s.recommendedTotal,
+      lowTotal: s.lowTotal,
+      highTotal: s.highTotal,
+      perLfInstalled: s.perLfInstalled,
       reasoning: res.suggestion.reasoning,
       location: res.suggestion.location,
-      fetchedAt: new Date().toISOString(),
-      inputKey: input.inputKey,
-    },
-  };
+      fetchedAt,
+      inputKey: keyById.get(s.packageId) ?? "",
+    };
+  }
+  return { ok: true, quotes };
 }
