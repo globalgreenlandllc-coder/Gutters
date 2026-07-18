@@ -613,4 +613,10 @@ test("roofPlanViewerSteps: converts to the viewer frame, preserves [], nulls dir
   assert.equal(out.rear![0].position_frac, 0.75, "rear flips (viewer left = house right)");
   assert.deepEqual(out.right, [], "explicit straight side preserved");
   assert.equal("left" in out, false, "side without the field omitted");
+  // plan_offset (the carve's recess-side signal) rides through, flipped to
+  // the viewer scan on the flipped sides: front keeps "outward"; the rear's
+  // plan "inward" reads as "outward" walking the side viewer-left→right.
+  assert.equal(out.front![0].plan_offset, "outward", "front is identity");
+  assert.equal(out.front![1].plan_offset, null, "unknown direction → null");
+  assert.equal(out.rear![0].plan_offset, "outward", "rear swaps inward↔outward with the scan flip");
 });

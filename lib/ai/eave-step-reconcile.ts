@@ -10,8 +10,15 @@
  * read-roof-layout's roofPlanViewerSteps (`roofPlanSteps` arg). Concretely:
  *   - a traced roof jog the elevation CONFIRMS (an eave-line break at the same
  *     position) → tagged "roof-verified", nothing changes;
- *   - an eave-line break the trace MISSED → suggest, don't carve: ONE unpriced
- *     tap-to-add return at that position (estimated — verify);
+ *   - an eave-line break the trace MISSED → CARVED into the outline (owner
+ *     escalation round 3 — "if the roof source shows a jog, there IS a jog"):
+ *     a pair of steps becomes a recessed inset (notch) between them, a single
+ *     step an L-step to the nearer face corner, always recessed INWARD so the
+ *     envelope never grows. Runs riding the recessed span move (and split)
+ *     with it, Σ length_ft preserved exactly; the new return walls price or
+ *     suggest through the downstream closure pass like any other uncovered
+ *     span. A step the carve gates decline falls back to the old
+ *     suggest-don't-carve tap-to-add return (estimated — verify);
  *   - a traced wall jog under an elevation that read a STRAIGHT eave → the
  *     roof wins: loud flag, but the run is never deleted or unpriced;
  *   - under a HIP tier step the gutter also returns INSIDE — the inner leg is
@@ -65,9 +72,28 @@ export function eaveStepStraightenEnabled(override?: boolean): boolean {
   return process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN !== "0";
 }
 
+/** Owner escalation round 3 — the missing half of the straighten passes:
+ *  where a ruling roof source (roof-plan page first, elevation eave line
+ *  second) locates a fascia step the trace MISSED, the jog is CARVED into
+ *  the outline instead of only suggested — "everything jogs on the diagram
+ *  exactly where it jogs on the roof." Default ON;
+ *  BLUEPRINT_EAVE_STEP_CARVE=0 restores suggest-don't-carve. */
+export function eaveStepCarveEnabled(override?: boolean): boolean {
+  if (typeof override === "boolean") return override;
+  return process.env.BLUEPRINT_EAVE_STEP_CARVE !== "0";
+}
+
+/** A carved recess never goes deeper than this — anything deeper is a real
+ *  building mass a schematic carve must not invent (same ceiling as the
+ *  phantom-flatten shift cap). */
+const MAX_CARVE_DEPTH_FT = 8;
+
 export type EaveStepReconcileResult = {
-  /** The caller's analysis object. PRICED LF (length_ft, totals) is
-   *  byte-untouched in every branch. Geometry is touched only by the two
+  /** The caller's analysis object. Σ PRICED LF (total length_ft, totals) is
+   *  preserved in every branch — byte-untouched except where a carve splits a
+   *  run into proportional pieces (sum exact). Geometry is touched only by
+   *  the carve escalation (eaveStepCarveEnabled — recessed jogs pressed INTO
+   *  the outline where the ruling roof source locates them) and the two
    *  straightening escalations (see eaveStepStraightenEnabled): the
    *  flush-face splice (building_footprint loses the jog's interior
    *  vertices; stale excluded_edges on them dropped; runs untouched) and
@@ -84,6 +110,10 @@ export type EaveStepReconcileResult = {
   suggestedEaves: EaveStepSuggestion[];
   /** Traced jogs an elevation eave-line break confirmed ("face@frac"). */
   verifiedJogIds: string[];
+  /** Ruling-source steps the trace missed that were CARVED into the outline
+   *  ("face@frac") — see eaveStepCarveEnabled. Σ length_ft is preserved
+   *  exactly (runs shift/split proportionally, never resized in total). */
+  carvedJogIds: string[];
   /** Traced jogs the same face's elevation CONTRADICTS (straight eave read
    *  where the trace steps) — flag-only, nothing deleted or unpriced. */
   wallJogFlags: string[];
@@ -377,6 +407,270 @@ function distToSeg(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
+// ————————————————————————————————————————————————————————————————————————
+// ROOF-JOG CARVE (owner escalation round 3, eaveStepCarveEnabled) — the
+// geometry ops that press a ruling-source step INTO the outline. Both shapes
+// are strictly local and strictly INWARD (the envelope never grows):
+//   notch — two steps bracketing a recessed middle: the covering sub-edge
+//           gains 4 vertices (outer → inner → inner → outer);
+//   lstep — one step whose recessed span reaches the face corner: the corner
+//           vertex slides inward and the step's two vertices are inserted,
+//           which also shortens the perpendicular face's edge (that IS the
+//           real geometry of a corner recess).
+// ————————————————————————————————————————————————————————————————————————
+
+type CarveOp =
+  | { kind: "notch"; u1: number; u2: number }
+  | { kind: "lstep"; u: number; side: "after" | "before" };
+
+/** Locate a face sub-edge in the ring as a consecutive index pair (either
+ *  winding). faceEdges keeps ring object references, so identity works. */
+function ringEdgeIndex(
+  ring: readonly Pt[],
+  E: FaceEdge,
+): { i: number; forward: boolean } | null {
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    if (a === E.L && b === E.R) return { i, forward: true };
+    if (a === E.R && b === E.L) return { i, forward: false };
+  }
+  return null;
+}
+
+/**
+ * Carve one op into the ring. Returns the new ring plus the OLD outer span
+ * the recess replaced (the follower-carry anchor) and its u-extent; null on
+ * any gate miss (the caller falls back to suggest-don't-carve):
+ *  - the step position(s) must sit on ONE straight covering sub-edge with
+ *    `marginU` of room (a step already at a corner has nothing to carve);
+ *  - an lstep's covering sub-edge must actually REACH the face corner on the
+ *    recessed side (its far endpoint is the face extreme — otherwise the
+ *    "span to the corner" would cross other structure).
+ */
+function carveIntoRing(args: {
+  ring: readonly Pt[];
+  edges: readonly FaceEdge[];
+  n: Pt;
+  op: CarveOp;
+  depthU: number;
+  marginU: number;
+  uMin: number;
+  uMax: number;
+}): { ring: Pt[]; span: { a: Pt; b: Pt }; uSpan: [number, number] } | null {
+  const { edges, n, op, depthU, marginU, uMin, uMax } = args;
+  const v = { x: -n.x * depthU, y: -n.y * depthU };
+  const at = (E: FaceEdge, u: number): Pt => {
+    const denom = E.uR - E.uL;
+    const s = denom !== 0 ? (u - E.uL) / denom : 0;
+    return { x: E.L.x + (E.R.x - E.L.x) * s, y: E.L.y + (E.R.y - E.L.y) * s };
+  };
+  const add = (p: Pt): Pt => ({ x: p.x + v.x, y: p.y + v.y });
+
+  if (op.kind === "notch") {
+    const E = edges.find((e) => op.u1 >= e.uL + marginU && op.u2 <= e.uR - marginU);
+    if (!E) return null;
+    const idx = ringEdgeIndex(args.ring, E);
+    if (!idx) return null;
+    const P1 = at(E, op.u1);
+    const P2 = at(E, op.u2);
+    const ins = idx.forward
+      ? [P1, add(P1), add(P2), P2]
+      : [P2, add(P2), add(P1), P1];
+    const ring = [...args.ring.slice(0, idx.i + 1), ...ins, ...args.ring.slice(idx.i + 1)];
+    return { ring, span: { a: { ...P1 }, b: { ...P2 } }, uSpan: [op.u1, op.u2] };
+  }
+
+  // lstep — the recessed span runs from the step to the face corner.
+  const cornerEnd = op.side === "after" ? uMax : uMin;
+  const E = edges.find(
+    (e) =>
+      op.u >= e.uL + marginU &&
+      op.u <= e.uR - marginU &&
+      (op.side === "after" ? e.uR >= cornerEnd - marginU : e.uL <= cornerEnd + marginU),
+  );
+  if (!E) return null;
+  const idx = ringEdgeIndex(args.ring, E);
+  if (!idx) return null;
+  const cornerPt = op.side === "after" ? E.R : E.L;
+  const Pu = at(E, op.u);
+  const cornerNew = add(cornerPt);
+  const base = args.ring.map((p) => (p === cornerPt ? cornerNew : p));
+  // Insert the step pair between the kept-outer half and the recessed corner,
+  // ordered by the ring's own winding.
+  // Winding decides which of the pair comes first; the pair always sits
+  // between ring[i] and ring[i+1] (verified for all four side×winding cases).
+  const stepPair =
+    (op.side === "after") === idx.forward ? [Pu, add(Pu)] : [add(Pu), Pu];
+  const ring = [...base.slice(0, idx.i + 1), ...stepPair, ...base.slice(idx.i + 1)];
+  return {
+    ring,
+    span: { a: { ...Pu }, b: { x: cornerPt.x, y: cornerPt.y } },
+    uSpan: op.side === "after" ? [op.u, E.uR] : [E.uL, op.u],
+  };
+}
+
+/**
+ * Carry the followers through one carve: runs lying ALONG the old outer span
+ * shift into the recess — split at the recess boundary when they cross it
+ * (pieces share the parent's Σ length_ft EXACTLY: proportional by px,
+ * rounded to 0.1, remainder on the last piece; the LONGEST piece keeps the
+ * parent id so downspout from_gutter refs stay live). A perpendicular run or
+ * downspout TOUCHING the moved span carries its endpoint the same way the
+ * phantom-flatten carries its followers. Priced length_ft is never resized
+ * in total.
+ */
+function carryCarveFollowers<
+  D extends { at?: Pt },
+  X extends { start: Pt; end: Pt },
+>(args: {
+  runs: BlueprintRun[];
+  dss: D[];
+  excluded: X[];
+  span: { a: Pt; b: Pt };
+  n: Pt;
+  rd: Pt;
+  depthU: number;
+  uSpan: [number, number];
+  snapTol: number;
+  minOverlapU: number;
+}): {
+  runs: BlueprintRun[];
+  dss: D[];
+  excluded: X[];
+  touched: boolean;
+} {
+  const { span, n, rd, depthU, uSpan, snapTol, minOverlapU } = args;
+  const v = { x: -n.x * depthU, y: -n.y * depthU };
+  const [uA, uB] = uSpan;
+  const lineDist = (p: Pt): number =>
+    Math.abs((p.x - span.a.x) * n.x + (p.y - span.a.y) * n.y);
+  const shift = (p: Pt): Pt => ({ x: p.x + v.x, y: p.y + v.y });
+  let touched = false;
+
+  const round1 = (x: number): number => Math.round(x * 10) / 10;
+  const runsOut: BlueprintRun[] = [];
+  for (const r of args.runs) {
+    if (!isFinitePt(r.start as Pt) || !isFinitePt(r.end as Pt)) {
+      runsOut.push(r);
+      continue;
+    }
+    const dx = r.end.x - r.start.x;
+    const dy = r.end.y - r.start.y;
+    const len = Math.hypot(dx, dy);
+    const parallel =
+      len > 0 && Math.abs((dx / len) * rd.x + (dy / len) * rd.y) > 0.9;
+    const onLine =
+      lineDist(r.start) <= snapTol && lineDist(r.end) <= snapTol;
+    if (parallel && onLine) {
+      const u0 = faceU(r.start, rd);
+      const u1 = faceU(r.end, rd);
+      const lo = Math.min(u0, u1);
+      const hi = Math.max(u0, u1);
+      const ovLo = Math.max(lo, uA);
+      const ovHi = Math.min(hi, uB);
+      if (ovHi - ovLo <= minOverlapU) {
+        runsOut.push(r); // touches at most a sliver — leave it
+        continue;
+      }
+      if (lo >= uA - minOverlapU && hi <= uB + minOverlapU) {
+        // fully inside the recess — the whole run rides inward
+        touched = true;
+        runsOut.push({ ...r, start: shift(r.start), end: shift(r.end) });
+        continue;
+      }
+      // crosses a recess boundary — split at the boundary t's
+      const ts = [0, 1];
+      const denomU = u1 - u0;
+      for (const ub of [ovLo, ovHi]) {
+        const t = denomU !== 0 ? (ub - u0) / denomU : 0;
+        if (t > 1e-6 && t < 1 - 1e-6) ts.push(t);
+      }
+      ts.sort((a, b) => a - b);
+      const pieces: { start: Pt; end: Pt; px: number; inside: boolean }[] = [];
+      for (let i = 0; i + 1 < ts.length; i++) {
+        const pA = {
+          x: r.start.x + dx * ts[i],
+          y: r.start.y + dy * ts[i],
+        };
+        const pB = {
+          x: r.start.x + dx * ts[i + 1],
+          y: r.start.y + dy * ts[i + 1],
+        };
+        const midU = faceU({ x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 }, rd);
+        pieces.push({
+          start: pA,
+          end: pB,
+          px: Math.hypot(pB.x - pA.x, pB.y - pA.y),
+          inside: midU > ovLo && midU < ovHi,
+        });
+      }
+      const real = pieces.filter((p) => p.px > 1e-6);
+      if (real.length < 2) {
+        runsOut.push(r);
+        continue;
+      }
+      touched = true;
+      const totalPx = real.reduce((s, p) => s + p.px, 0);
+      const totalFt = typeof r.length_ft === "number" ? r.length_ft : null;
+      const longest = real.reduce((m, p) => (p.px > m.px ? p : m), real[0]);
+      let ftLeft = totalFt ?? 0;
+      real.forEach((p, i) => {
+        const last = i === real.length - 1;
+        const ft =
+          totalFt == null
+            ? undefined
+            : last
+              ? round1(ftLeft)
+              : round1((totalFt * p.px) / totalPx);
+        if (ft != null) ftLeft = round1(ftLeft - ft);
+        const start = p.inside ? shift(p.start) : p.start;
+        const end = p.inside ? shift(p.end) : p.end;
+        runsOut.push({
+          ...r,
+          id: p === longest ? r.id : `${r.id}_c${i + 1}`,
+          start,
+          end,
+          length_px: Math.hypot(end.x - start.x, end.y - start.y),
+          ...(ft != null ? { length_ft: ft } : {}),
+        });
+      });
+      continue;
+    }
+    // Not a same-line run — carry an endpoint that TOUCHES the moved span
+    // (the perpendicular neighbor at a recessed corner).
+    const s2 = distToSeg(r.start, span.a, span.b) <= snapTol ? shift(r.start) : r.start;
+    const e2 = distToSeg(r.end, span.a, span.b) <= snapTol ? shift(r.end) : r.end;
+    if (s2 === r.start && e2 === r.end) {
+      runsOut.push(r);
+      continue;
+    }
+    touched = true;
+    runsOut.push({
+      ...r,
+      start: s2,
+      end: e2,
+      length_px: Math.hypot(e2.x - s2.x, e2.y - s2.y),
+    });
+  }
+
+  const dssOut = args.dss.map((d) => {
+    if (!d || !isFinitePt(d.at as Pt)) return d;
+    if (distToSeg(d.at as Pt, span.a, span.b) > snapTol) return d;
+    touched = true;
+    return { ...d, at: shift(d.at as Pt) };
+  });
+  const exclOut = args.excluded.map((ee) => {
+    if (!isFinitePt(ee.start as Pt) || !isFinitePt(ee.end as Pt)) return ee;
+    const s2 = distToSeg(ee.start, span.a, span.b) <= snapTol ? shift(ee.start) : ee.start;
+    const e2 = distToSeg(ee.end, span.a, span.b) <= snapTol ? shift(ee.end) : ee.end;
+    return s2 === ee.start && e2 === ee.end ? ee : { ...ee, start: s2, end: e2 };
+  });
+
+  return { runs: runsOut, dss: dssOut, excluded: exclOut, touched };
+}
+
 /** A TRACED roof step on one face: two same-face sub-edges meeting (in u) at
  *  different depths — the perpendicular connector between them is the jog the
  *  footprint already carries. */
@@ -509,8 +803,9 @@ export function detectStepMirror(
  * Cross-check every readable face's eave-line breaks (`eave_steps`) — and,
  * when the roof-plan page located its fascia steps, THOSE (they outrank the
  * elevation where both report a side) — against the traced footprint's
- * same-face jogs. Notes/suggestions only — the returned analysis is the
- * input object, geometry and priced LF untouched.
+ * same-face jogs. The returned analysis is always the caller's own object;
+ * Σ priced LF is preserved in every branch (see EaveStepReconcileResult), and
+ * geometry moves only under the carve/straighten escalations.
  */
 export function reconcileEaveSteps(args: {
   analysis: BlueprintAnalysis;
@@ -531,6 +826,7 @@ export function reconcileEaveSteps(args: {
     notes: [],
     suggestedEaves: [],
     verifiedJogIds: [],
+    carvedJogIds: [],
     wallJogFlags: [],
   };
   try {
@@ -592,6 +888,7 @@ export function reconcileEaveSteps(args: {
     const notes: string[] = [];
     const suggestedEaves: EaveStepSuggestion[] = [];
     const verifiedJogIds: string[] = [];
+    const carvedJogIds: string[] = [];
     const wallJogFlags: string[] = [];
     /** front/rear step patterns for the mirror check (roof-page-ruled only —
      *  the elevations ARE viewer-frame by definition, only the plan-frame
@@ -782,6 +1079,36 @@ export function reconcileEaveSteps(args: {
       const hipped = r?.roof_form === "hipped";
       const matchedTraced = new Set<number>();
 
+      // (7) HIP INNER RETURN — under a hip tier step the gutter also returns
+      // INSIDE. Emitted for matched, carved AND suggested steps alike, unless
+      // an existing run already covers that segment.
+      const emitHipLeg = (
+        s: FaceEaveStep,
+        frac: number,
+        anchor: { innerPt: Pt; depthU: number },
+      ): void => {
+        const lowerDir: Pt | null =
+          s.direction === "down"
+            ? { x: rd.x, y: rd.y }
+            : s.direction === "up"
+              ? { x: -rd.x, y: -rd.y }
+              : null;
+        if (!hipped || !lowerDir) return;
+        const legLen = anchor.depthU;
+        if (!(legLen > 0)) return;
+        const a = anchor.innerPt;
+        const b: Pt = { x: a.x + lowerDir.x * legLen, y: a.y + lowerDir.y * legLen };
+        const covTol = Math.max(ringSpan * 0.02, ftToU(1));
+        if (segCoveredFraction(a, b, runsW, covTol) > 0.5) return;
+        suggestedEaves.push({ points: [a, b], tier: "lower" });
+        notes.push(
+          `HIP TIER STEP — gutter returns inside under the hip tier step on the ${face} face (~${Math.round(frac * 100)}% across); an unpriced inner return leg is available to tap-add — verify.`,
+        );
+      };
+
+      // Phase A — MATCH each ruling-source step against the traced jogs.
+      type PendingStep = { s: FaceEaveStep; frac: number; u: number; carved: boolean };
+      const pending: PendingStep[] = [];
       for (const s of elevSteps) {
         const frac = s.position_frac as number;
         const u = uMin + frac * width;
@@ -794,18 +1121,6 @@ export function reconcileEaveSteps(args: {
             hitDist = d;
           }
         });
-
-        // Direction → which side of the step is the LOWER tier (viewer frame:
-        // "down" = drops scanning left→right → lower to the RIGHT = +rd).
-        const lowerDir: Pt | null =
-          s.direction === "down"
-            ? { x: rd.x, y: rd.y }
-            : s.direction === "up"
-              ? { x: -rd.x, y: -rd.y }
-              : null;
-
-        let hipAnchor: { innerPt: Pt; depthU: number } | null = null;
-
         if (hit >= 0) {
           // (3) MATCHED — the trace already carries this roof jog. Tag it.
           matchedTraced.add(hit);
@@ -817,52 +1132,156 @@ export function reconcileEaveSteps(args: {
                   s.kind === "tier_drop" ? " (tier change)" : ""
                 }. Geometry and priced LF unchanged.`,
           );
-          hipAnchor = { innerPt: traced[hit].innerPt, depthU: traced[hit].depthU };
+          emitHipLeg(s, frac, { innerPt: traced[hit].innerPt, depthU: traced[hit].depthU });
         } else {
-          // (4) UNMATCHED — the elevation shows a roof step the trace missed.
-          // Suggest, don't carve: ONE unpriced perpendicular return at u,
-          // sized from a perpendicular face's measured profile depth (never
-          // offset_ft — that's vertical), else a 4 ft schematic.
-          const perpFt = perpendicularDepthFt(face, perFace);
-          const depthFt = perpFt ?? SCHEMATIC_DEPTH_FT;
-          const depthU = Math.min(ftToU(depthFt), ringSpan * 0.45); // sanity cap
-          if (!(depthU > 0)) continue;
-          const base = pointAtU(edges, u);
-          const inner: Pt = { x: base.x - n.x * depthU, y: base.y - n.y * depthU };
-          suggestedEaves.push({
-            points: [base, inner],
-            ...(s.kind === "tier_drop" || hipped ? { tier: "lower" as const } : {}),
-          });
-          notes.push(
-            fromRoofPlan
-              ? `ROOF STEPS HERE (roof-plan page) — the roof-plan page's fascia line breaks at ~${Math.round(frac * 100)}% across the ${face} side, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
-                  perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
-                }, estimated — verify) is available to tap-add.`
-              : `ROOF STEPS HERE (elevations-first) — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
-                  perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
-                }, estimated — verify) is available to tap-add.`,
-          );
-          hipAnchor = { innerPt: inner, depthU };
+          pending.push({ s, frac, u, carved: false });
+        }
+      }
+
+      // Phase B — CARVE the missed steps into the outline (owner escalation
+      // round 3, eaveStepCarveEnabled): adjacent pairs that read as a
+      // recessed middle become an inset notch; a lone step becomes an L-step
+      // to the nearer corner. Always inward. The roof page's plan_offset
+      // picks the recessed side; unknown → the SHORTER side recedes. A
+      // mirror-suspect face never carves (its step positions may be flipped).
+      const carveOn = eaveStepCarveEnabled();
+      if (carveOn && pending.length > 0 && !mirrorSuspect) {
+        const perpFt = perpendicularDepthFt(face, perFace);
+        const carveDepthFt = Math.min(perpFt ?? SCHEMATIC_DEPTH_FT, MAX_CARVE_DEPTH_FT);
+        const carveDepthU = Math.min(ftToU(carveDepthFt), ringSpan * 0.45);
+        const marginU = Math.max(gapTolU, ftToU(1));
+        const minOverlapU = Math.max(gapTolU, ftToU(1));
+        const snapTol = Math.max(vTol, ftToU(0.5));
+        const minSpanU = ftToU(2);
+        const maxSpanU = width * 0.6;
+
+        // Plan the ops: greedy left-to-right pairing, leftovers as L-steps.
+        const ordered = pending.slice().sort((p, q) => p.u - q.u);
+        const ops: { steps: PendingStep[]; op: CarveOp }[] = [];
+        let pi = 0;
+        while (pi < ordered.length) {
+          const a = ordered[pi];
+          const b = ordered[pi + 1];
+          const offA = a.s.plan_offset ?? null;
+          const offB = b?.s.plan_offset ?? null;
+          // A recessed middle needs "in" on the left step and "out" on the
+          // right one (unknowns pass); an outward-first pair would be a
+          // PROJECTING middle — growing the envelope is never carved.
+          const pairOk =
+            !!b &&
+            b.u - a.u >= minSpanU &&
+            b.u - a.u <= maxSpanU &&
+            offA !== "outward" &&
+            offB !== "inward";
+          if (pairOk) {
+            ops.push({ steps: [a, b], op: { kind: "notch", u1: a.u, u2: b.u } });
+            pi += 2;
+            continue;
+          }
+          let side: "after" | "before" | null =
+            offA === "inward" ? "after" : offA === "outward" ? "before" : null;
+          if (side === null) side = a.u - uMin <= uMax - a.u ? "before" : "after";
+          const spanU = side === "before" ? a.u - uMin : uMax - a.u;
+          if (spanU >= minSpanU && spanU <= maxSpanU) {
+            ops.push({ steps: [a], op: { kind: "lstep", u: a.u, side } });
+          }
+          pi += 1;
         }
 
-        // (7) HIP INNER RETURN — under a hip tier step the gutter also returns
-        // INSIDE. Emit the inner leg as a second unpriced suggestion, unless an
-        // existing run already covers that segment.
-        if (hipped && hipAnchor && lowerDir) {
-          const legLen = hipAnchor.depthU;
-          if (legLen > 0) {
-            const a = hipAnchor.innerPt;
-            const b: Pt = { x: a.x + lowerDir.x * legLen, y: a.y + lowerDir.y * legLen };
-            const covTol = Math.max(ringSpan * 0.02, ftToU(1));
-            const covered = segCoveredFraction(a, b, runsW, covTol);
-            if (covered <= 0.5) {
-              suggestedEaves.push({ points: [a, b], tier: "lower" });
-              notes.push(
-                `HIP TIER STEP — gutter returns inside under the hip tier step on the ${face} face (~${Math.round(frac * 100)}% across); an unpriced inner return leg is available to tap-add — verify.`,
-              );
+        if (carveDepthU > 0) {
+          for (const o of ops.slice(0, 3)) {
+            const freshEdges = faceEdges(ring, n, rd);
+            const res = carveIntoRing({
+              ring,
+              edges: freshEdges,
+              n,
+              op: o.op,
+              depthU: carveDepthU,
+              marginU,
+              uMin,
+              uMax,
+            });
+            if (!res) continue; // gates declined — falls back to suggest below
+            ring = res.ring;
+            footprintTouched = true;
+            const carry = carryCarveFollowers({
+              runs: runsW,
+              dss: dssW,
+              excluded: excludedEdges,
+              span: res.span,
+              n,
+              rd,
+              depthU: carveDepthU,
+              uSpan: res.uSpan,
+              snapTol,
+              minOverlapU,
+            });
+            runsW = carry.runs;
+            dssW = carry.dss;
+            excludedEdges = carry.excluded;
+            if (carry.touched) followersTouched = true;
+            const fracs = o.steps.map((st) => `${Math.round(st.frac * 100)}%`);
+            for (const st of o.steps) {
+              st.carved = true;
+              carvedJogIds.push(`${face}@${st.frac.toFixed(2)}`);
+              // Hip inner leg anchors at the carved inner corner under the step.
+              const uA2 = faceU(res.span.a, rd);
+              const uB2 = faceU(res.span.b, rd);
+              const t =
+                uB2 !== uA2 ? Math.max(0, Math.min(1, (st.u - uA2) / (uB2 - uA2))) : 0;
+              const outer: Pt = {
+                x: res.span.a.x + (res.span.b.x - res.span.a.x) * t,
+                y: res.span.a.y + (res.span.b.y - res.span.a.y) * t,
+              };
+              emitHipLeg(st.s, st.frac, {
+                innerPt: { x: outer.x - n.x * carveDepthU, y: outer.y - n.y * carveDepthU },
+                depthU: carveDepthU,
+              });
             }
+            notes.push(
+              `🔧 ROOF JOG CARVED (${fromRoofPlan ? "roof-plan page" : "elevations"}) — the ${face} side's fascia ${
+                o.op.kind === "notch"
+                  ? `steps in at ~${fracs[0]} and back out at ~${fracs[1]}`
+                  : `steps at ~${fracs[0]}`
+              }, but the traced roof edge ran straight there; a ~${Math.round(carveDepthFt)} ft ${
+                o.op.kind === "notch" ? "inset" : "corner recess"
+              } was carved into the outline (${
+                perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic depth"
+              } — verify on the canvas). Gutters follow the new edge with Σ priced LF preserved; the recess's return walls price or suggest through the closure pass like any other uncovered span.`,
+            );
           }
         }
+      }
+
+      // Phase C — anything the carve declined keeps the legacy behavior:
+      // (4) suggest-don't-carve, ONE unpriced perpendicular return at u,
+      // sized from a perpendicular face's measured profile depth (never
+      // offset_ft — that's vertical), else a 4 ft schematic.
+      for (const p of pending) {
+        if (p.carved) continue;
+        const { s, frac, u } = p;
+        const perpFt = perpendicularDepthFt(face, perFace);
+        const depthFt = perpFt ?? SCHEMATIC_DEPTH_FT;
+        const depthU = Math.min(ftToU(depthFt), ringSpan * 0.45); // sanity cap
+        if (!(depthU > 0)) continue;
+        const curEdges = footprintTouched ? faceEdges(ring, n, rd) : edges;
+        if (curEdges.length === 0) continue;
+        const base = pointAtU(curEdges, u);
+        const inner: Pt = { x: base.x - n.x * depthU, y: base.y - n.y * depthU };
+        suggestedEaves.push({
+          points: [base, inner],
+          ...(s.kind === "tier_drop" || hipped ? { tier: "lower" as const } : {}),
+        });
+        notes.push(
+          fromRoofPlan
+            ? `ROOF STEPS HERE (roof-plan page) — the roof-plan page's fascia line breaks at ~${Math.round(frac * 100)}% across the ${face} side, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
+                perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
+              }, estimated — verify) is available to tap-add.`
+            : `ROOF STEPS HERE (elevations-first) — the ${face} elevation's eave line breaks at ~${Math.round(frac * 100)}% across, but the traced roof edge runs straight there. Step NOT carved into the priced outline; an unpriced ~${Math.round(depthFt)} ft return (${
+                perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic"
+              }, estimated — verify) is available to tap-add.`,
+        );
+        emitHipLeg(s, frac, { innerPt: inner, depthU });
       }
 
       // (5) TRACED jog with NO step from the ruling source, on a side that
@@ -901,7 +1320,14 @@ export function reconcileEaveSteps(args: {
       }
     }
 
-    return { analysis: args.analysis, notes, suggestedEaves, verifiedJogIds, wallJogFlags };
+    return {
+      analysis: args.analysis,
+      notes,
+      suggestedEaves,
+      verifiedJogIds,
+      carvedJogIds,
+      wallJogFlags,
+    };
   } catch {
     return unchanged;
   }

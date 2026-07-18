@@ -1192,15 +1192,19 @@ export async function runEstimateFromPlan(
   // cross-checks each readable face's eave_steps against the traced
   // footprint's same-face jogs:
   //  - a matched jog gets a "roof-verified" note;
-  //  - an eave-line break the trace MISSED becomes an UNPRICED tap-to-add
-  //    suggestion (suggest-don't-carve), + the hip inner-return leg under a
-  //    hip tier step;
+  //  - an eave-line break the trace MISSED is CARVED into the outline (owner
+  //    escalation round 3: a pair of steps → recessed inset with return
+  //    walls, a lone step → corner recess; always inward, runs ride/split
+  //    with Σ length_ft preserved; the new return walls price or suggest via
+  //    the closure passes below). A step the carve gates decline falls back
+  //    to the old UNPRICED tap-to-add suggestion, + the hip inner-return leg
+  //    under a hip tier step;
   //  - a traced wall jog under a straight-eave read is flagged loudly (roof
   //    wins) — the run is never deleted or unpriced.
   // Outline-agnostic, so it runs on BOTH trace kinds, AFTER the tier-corner
-  // veto and BEFORE the perimeter closure. Notes/suggestions only: geometry
-  // and priced LF are byte-untouched, and old stored reads (no eave_steps
-  // key anywhere) pass through byte-identical.
+  // veto and BEFORE the perimeter closure (which is what prices any span the
+  // carve exposes). Σ priced LF byte-identical in every branch, and old
+  // stored reads (no eave_steps key anywhere) pass through byte-identical.
   try {
     const stepRec = reconcileEaveSteps({
       analysis,
@@ -1225,9 +1229,14 @@ export async function runEstimateFromPlan(
     for (const s of stepRec.suggestedEaves) {
       suggestedEavesFromPlan.push({ points: [s.points[0], s.points[1]], tier: s.tier });
     }
-    if (stepNotes.length > 0 || stepRec.suggestedEaves.length > 0) {
+    if (
+      stepNotes.length > 0 ||
+      stepRec.suggestedEaves.length > 0 ||
+      stepRec.carvedJogIds.length > 0
+    ) {
       console.log(
         `[eave-step-reconcile] ${stepRec.verifiedJogIds.length} jog(s) roof-verified, ` +
+          `${stepRec.carvedJogIds.length} jog(s) carved into the outline, ` +
           `${stepRec.suggestedEaves.length} unpriced suggestion(s), ` +
           `${stepRec.wallJogFlags.length} wall-jog flag(s)`,
       );

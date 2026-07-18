@@ -317,6 +317,9 @@ break as an eave_steps entry:
     eyeball it);
   - kind: "tier_drop" (a full roof-tier change), "fascia_jog" (same tier, the
     fascia plane jogs), or "unknown".
+Read the ROOF, not the wall: a wall corner, siding break, chimney, or bump-out
+whose roofline runs straight over it is NOT a step (the roof bridges wall
+jogs constantly) — only a break in the roof's own eave/fascia line counts.
 A GABLE TRIANGLE interrupting the eave line is NOT a step — report the gable
 in gables and keep scanning the eave line past it. ALWAYS report eave_steps
 explicitly: [] means one unbroken eave plane across the whole face, and that

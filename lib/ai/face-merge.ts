@@ -81,6 +81,12 @@ export type FaceEaveStep = {
   offset_ft: number | null;
   /** What the break is: a full tier change, a same-tier fascia jog, or unknown. */
   kind?: "tier_drop" | "fascia_jog" | "unknown";
+  /** PLAN-depth recess side, roof-page steps only (read-roof-layout converts
+   *  the page's inward/outward into the VIEWER scan before it gets here):
+   *  "inward" = the fascia BEYOND the step (viewer-right) sits recessed
+   *  toward the house core; "outward" = the near side does. Absent/null on
+   *  elevation reads — an elevation sees height, not plan depth. */
+  plan_offset?: "inward" | "outward" | null;
   notes?: string;
 };
 

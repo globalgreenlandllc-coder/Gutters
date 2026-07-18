@@ -2,8 +2,11 @@
  * Pure node tests for the ELEVATIONS-FIRST eave-step reconcile. Run:
  *   npx tsx --test lib/ai/eave-step-reconcile.test.mts
  *
- * Doctrine under test: suggest-don't-carve (geometry + priced LF byte-
- * untouched in EVERY branch), loud flags, old stored reads → byte-identical.
+ * Doctrine under test (owner escalation round 3): a ruling-source roof jog
+ * the trace missed is CARVED into the outline (inset notch / corner recess,
+ * always inward, Σ priced LF preserved exactly — runs ride and split
+ * proportionally); loud flags; old stored reads → byte-identical;
+ * BLUEPRINT_EAVE_STEP_CARVE=0 restores the legacy suggest-don't-carve.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -202,26 +205,79 @@ test("(4) matched step → roof-verified note, NO suggestion, LF sum identical",
   assert.deepEqual(out.wallJogFlags, [], "a verified jog is not a wall-jog conflict");
 });
 
-test("(5) unmatched step (straight traced front, step at 0.25) → exactly ONE unpriced suggestion, footprint unmutated", () => {
+test("(5) unmatched step (straight traced front, step at 0.25) → CARVED corner recess: shorter side recedes inward, runs split with Σ LF preserved", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
     analysis: a,
     perFace: { front: face({ face: "front", eave_steps: [step(0.25, "down")] }) },
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 1, "exactly one suggestion");
-  const [p0, p1] = out.suggestedEaves[0].points;
-  // Front face (y=60), frac 0.25 → x=25; 4 ft schematic = 8 units inward (−y).
-  assert.ok(Math.abs(p0.x - 25) < 1e-6 && Math.abs(p0.y - 60) < 1e-6, `base on the front eave at x=25, got ${JSON.stringify(p0)}`);
-  assert.ok(Math.abs(p1.x - 25) < 1e-6 && Math.abs(p1.y - 52) < 1e-6, `return heads inward 8 units, got ${JSON.stringify(p1)}`);
-  const stepNotes = out.notes.filter((n) => /ROOF STEPS HERE/.test(n));
-  assert.equal(stepNotes.length, 1);
-  assert.match(stepNotes[0], /NOT carved/);
-  assert.match(stepNotes[0], /verify/i);
+  assert.equal(out.analysis, a, "returns the caller's analysis object");
+  // Front face (y=60), frac 0.25 → x=25; unknown recess side → the SHORTER
+  // side (x<25) recedes by the 4 ft schematic (8 units, −y): the (0,60)
+  // corner slides to (0,52) and the step pair (25,60)/(25,52) is inserted.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 25, y: 60 },
+      { x: 25, y: 52 },
+      { x: 0, y: 52 },
+    ],
+    "corner recess carved into the outline",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.25"]);
+  assert.deepEqual(out.suggestedEaves, [], "carved — no tap-to-add fallback left");
+  const carveNotes = out.notes.filter((n) => /ROOF JOG CARVED/.test(n));
+  assert.equal(carveNotes.length, 1);
+  assert.match(carveNotes[0], /front/);
+  assert.match(carveNotes[0], /verify/i);
+  // The front run split at the step: recessed piece rides to y=52, the
+  // outer piece keeps the parent id (it's longer); Σ length_ft exact.
+  const frontRuns = out.analysis.gutter_runs.filter((r) => r.side === "front");
+  assert.equal(frontRuns.length, 2, "front run split into two pieces");
+  const recessed = frontRuns.find((r) => r.start.y === 52 && r.end.y === 52);
+  const outer = frontRuns.find((r) => r.start.y === 60 && r.end.y === 60);
+  assert.ok(recessed && outer, `expected one recessed + one outer piece, got ${JSON.stringify(frontRuns)}`);
+  assert.equal(recessed!.length_ft, 12.5);
+  assert.equal(outer!.length_ft, 37.5);
+  assert.equal(outer!.id, snap.gutter_runs[0].id, "longest piece keeps the parent id");
+  // The left run's corner endpoint rides into the recess; its priced LF doesn't.
+  const left = out.analysis.gutter_runs.find((r) => r.side === "left")!;
+  assert.deepEqual(left.end, { x: 0, y: 52 }, "perpendicular neighbor endpoint carried");
+  assert.equal(left.length_ft, snap.gutter_runs[2].length_ft, "perpendicular run's priced LF untouched");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+  assert.deepEqual(out.analysis.totals, snap.totals, "totals untouched");
 });
 
-test("(4b) suggestion depth comes from a perpendicular face's profile, NEVER offset_ft", () => {
+test("(5b) kill switch BLUEPRINT_EAVE_STEP_CARVE=0 → legacy suggest-don't-carve, byte-identical geometry", () => {
+  const prev = process.env.BLUEPRINT_EAVE_STEP_CARVE;
+  try {
+    process.env.BLUEPRINT_EAVE_STEP_CARVE = "0";
+    const a = analysisOf(RECT, rectRuns());
+    const snap = structuredClone(a);
+    const out = reconcileEaveSteps({
+      analysis: a,
+      perFace: { front: face({ face: "front", eave_steps: [step(0.25, "down")] }) },
+    });
+    assertUntouched(a, snap, out);
+    assert.equal(out.suggestedEaves.length, 1, "exactly one suggestion");
+    const [p0, p1] = out.suggestedEaves[0].points;
+    assert.ok(Math.abs(p0.x - 25) < 1e-6 && Math.abs(p0.y - 60) < 1e-6, `base on the front eave at x=25, got ${JSON.stringify(p0)}`);
+    assert.ok(Math.abs(p1.x - 25) < 1e-6 && Math.abs(p1.y - 52) < 1e-6, `return heads inward 8 units, got ${JSON.stringify(p1)}`);
+    const stepNotes = out.notes.filter((n) => /ROOF STEPS HERE/.test(n));
+    assert.equal(stepNotes.length, 1);
+    assert.match(stepNotes[0], /NOT carved/);
+    assert.deepEqual(out.carvedJogIds, []);
+  } finally {
+    if (prev === undefined) delete process.env.BLUEPRINT_EAVE_STEP_CARVE;
+    else process.env.BLUEPRINT_EAVE_STEP_CARVE = prev;
+  }
+});
+
+test("(4b) carve depth comes from a perpendicular face's profile (capped at 8 ft), NEVER offset_ft", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
@@ -232,12 +288,25 @@ test("(4b) suggestion depth comes from a perpendicular face's profile, NEVER off
       left: face({ face: "left", eave_steps: [], projections: [{ kind: "porch", depth_ft: 10, notes: "" }] }),
     },
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 1);
-  const [, p1] = out.suggestedEaves[0].points;
-  // 10 ft = 20 units (NOT the 30 ft vertical offset_ft = 60 units).
-  assert.ok(Math.abs(p1.y - 40) < 1e-6, `sized from perpendicular profile (10 ft → y=40), got ${JSON.stringify(p1)}`);
-  assert.match(out.notes.find((n) => /ROOF STEPS HERE/.test(n)) ?? "", /perpendicular/);
+  // 10 ft profile is clamped to the 8 ft carve ceiling = 16 units (NOT the
+  // 30 ft vertical offset_ft = 60 units, and NOT beyond the cap).
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 25, y: 60 },
+      { x: 25, y: 44 },
+      { x: 0, y: 44 },
+    ],
+    "recess sized from the perpendicular profile, capped at 8 ft",
+  );
+  const carve = out.notes.find((n) => /ROOF JOG CARVED/.test(n));
+  assert.ok(carve);
+  assert.match(carve!, /perpendicular/);
+  assert.match(carve!, /~8 ft/);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
 test("(6) traced jog + straight readable read → wall-jog flag, run NOT deleted", () => {
@@ -283,39 +352,51 @@ test("(7) ADVERSARIAL — wall-jog flag must NOT fire when the face is unreadabl
   assert.deepEqual(out2.wallJogFlags, []);
 });
 
-test("(8) viewer-frame mapping — a rear-face frac lands on the correct plan half", () => {
+test("(8) viewer-frame mapping — a rear-face frac carves on the correct plan half", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
     analysis: a,
     perFace: { rear: face({ face: "rear", eave_steps: [step(0.25, "down")] }) },
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 1);
-  const [p0, p1] = out.suggestedEaves[0].points;
-  // REAR viewer's left = house-RIGHT: frac 0.25 → x = 100 − 25 = 75 (right half).
-  assert.ok(p0.x > 50, `rear frac 0.25 must land on the plan's right half, got ${JSON.stringify(p0)}`);
-  assert.ok(Math.abs(p0.x - 75) < 1e-6 && Math.abs(p0.y - 0) < 1e-6, `base at (75,0), got ${JSON.stringify(p0)}`);
-  assert.ok(Math.abs(p1.y - 8) < 1e-6, `return heads inward (+y), got ${JSON.stringify(p1)}`);
+  // REAR viewer's left = house-RIGHT: frac 0.25 → x = 100 − 25 = 75, and the
+  // shorter (viewer-left) side x∈[75,100] recedes inward (+y) by 8 units.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 75, y: 0 },
+      { x: 75, y: 8 },
+      { x: 100, y: 8 },
+      { x: 100, y: 60 },
+      { x: 0, y: 60 },
+    ],
+    "rear frac 0.25 carves the plan's right half inward",
+  );
+  assert.deepEqual(out.carvedJogIds, ["rear@0.25"]);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
-test("(9) hip inner return emitted on a hipped face; suppressed when a lower run covers it", () => {
+test("(9) hip inner return emitted on a hipped face after the carve; suppressed when a lower run covers it", () => {
   // Unsuppressed: rear hipped, step at frac 0.25, direction 'down' (lower to
-  // the viewer's right = house-left = −x).
+  // the viewer's right = house-left = −x). The step itself is CARVED (same
+  // geometry as test 8); the hip inner leg stays an unpriced suggestion
+  // anchored at the carved inner corner.
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
     analysis: a,
     perFace: { rear: face({ face: "rear", roof_form: "hipped", eave_steps: [step(0.25, "down")] }) },
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 2, "perpendicular return + inner hip leg");
-  const leg = out.suggestedEaves[1];
+  assert.deepEqual(out.carvedJogIds, ["rear@0.25"], "the step carves");
+  assert.equal(out.suggestedEaves.length, 1, "inner hip leg only — the return itself is carved geometry now");
+  const leg = out.suggestedEaves[0];
   assert.equal(leg.tier, "lower");
   const [l0, l1] = leg.points;
-  assert.ok(Math.abs(l0.x - 75) < 1e-6 && Math.abs(l0.y - 8) < 1e-6, `leg starts at the inner corner, got ${JSON.stringify(l0)}`);
+  assert.ok(Math.abs(l0.x - 75) < 1e-6 && Math.abs(l0.y - 8) < 1e-6, `leg starts at the carved inner corner, got ${JSON.stringify(l0)}`);
   assert.ok(Math.abs(l1.x - 67) < 1e-6 && Math.abs(l1.y - 8) < 1e-6, `leg heads toward the lower side (−x), got ${JSON.stringify(l1)}`);
   assert.ok(out.notes.some((n) => /returns inside under the hip tier step/.test(n)));
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 
   // Suppressed: an existing lower-tier run already covers the inner leg.
   const runsCovered = [...rectRuns(), run({ x: 60, y: 8 }, { x: 80, y: 8 }, { tier: "lower" })];
@@ -325,25 +406,31 @@ test("(9) hip inner return emitted on a hipped face; suppressed when a lower run
     analysis: b,
     perFace: { rear: face({ face: "rear", roof_form: "hipped", eave_steps: [step(0.25, "down")] }) },
   });
-  assertUntouched(b, snapB, out2);
-  assert.equal(out2.suggestedEaves.length, 1, "inner leg suppressed — a run already covers it");
+  assert.deepEqual(out2.suggestedEaves, [], "inner leg suppressed — a run already covers it");
   assert.ok(!out2.notes.some((n) => /returns inside/.test(n)));
+  assert.equal(lfSum(out2.analysis), lfSum(snapB), "Σ priced LF identical");
 });
 
-test("(12) invariant — Σ length_ft and totals identical pre/post in EVERY branch", () => {
+test("(12) invariant — Σ length_ft and totals identical pre/post in EVERY branch (carving included)", () => {
   const scenarios: { fp: Pt[]; runs: () => BlueprintRun[]; perFace: Partial<Record<string, FaceReadingRaw>> }[] = [
     { fp: STEPPED, runs: steppedRuns, perFace: { front: face({ face: "front" }) } },
     { fp: STEPPED, runs: steppedRuns, perFace: { front: face({ face: "front", eave_steps: [step(0.6)] }) } },
-    { fp: RECT, runs: rectRuns, perFace: { front: face({ face: "front", eave_steps: [step(0.25)] }) } },
+    { fp: RECT, runs: rectRuns, perFace: { front: face({ face: "front", eave_steps: [step(0.25)] }) } }, // carves
     { fp: STEPPED, runs: steppedRuns, perFace: { front: face({ face: "front", eave_steps: [] }) } },
-    { fp: RECT, runs: rectRuns, perFace: { rear: face({ face: "rear", roof_form: "hipped", eave_steps: [step(0.25, "down")] }) } },
+    { fp: RECT, runs: rectRuns, perFace: { rear: face({ face: "rear", roof_form: "hipped", eave_steps: [step(0.25, "down")] }) } }, // carves
     { fp: RECT, runs: rectRuns, perFace: { front: face({ face: "front", eave_steps: [step(3.7)] }) } },
   ];
   for (const s of scenarios) {
     const a = analysisOf(s.fp, s.runs());
     const snap = structuredClone(a);
     const out = reconcileEaveSteps({ analysis: a, perFace: s.perFace });
-    assertUntouched(a, snap, out);
+    assert.equal(out.analysis, a, "returns the caller's analysis object");
+    assert.equal(lfSum(out.analysis), lfSum(snap), "Σ length_ft identical");
+    assert.deepEqual(out.analysis.totals, snap.totals, "totals identical");
+    // Geometry may only change when something was carved.
+    if (out.carvedJogIds.length === 0) {
+      assert.deepEqual(a, snap, "no carve → analysis byte-untouched");
+    }
   }
 });
 
@@ -409,7 +496,7 @@ test("(R2) roof-page steps OUTRANK the elevation's — matched at the page's fra
   assert.deepEqual(out.wallJogFlags, []);
 });
 
-test("(R3) roof-page step on a side with NO elevation read at all → suggestion still emitted (page alone is a source)", () => {
+test("(R3) roof-page step on a side with NO elevation read at all → still CARVED (page alone is a source)", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
@@ -417,13 +504,23 @@ test("(R3) roof-page step on a side with NO elevation read at all → suggestion
     perFace: null,
     roofPlanSteps: { front: [roofStep(0.25)] },
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 1);
-  const [p0] = out.suggestedEaves[0].points;
-  assert.ok(Math.abs(p0.x - 25) < 1e-6 && Math.abs(p0.y - 60) < 1e-6, `base at (25,60), got ${JSON.stringify(p0)}`);
-  const note = out.notes.find((n) => /ROOF STEPS HERE/.test(n));
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 25, y: 60 },
+      { x: 25, y: 52 },
+      { x: 0, y: 52 },
+    ],
+    "page-located step carved without any elevation read",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.25"]);
+  const note = out.notes.find((n) => /ROOF JOG CARVED/.test(n));
   assert.ok(note);
   assert.match(note!, /roof-plan page/);
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
 test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → the phantom jog is FLATTENED (owner round 2), runs carried, priced LF untouched", () => {
@@ -680,9 +777,109 @@ test("(R5) roof-page steps never emit the hip inner-return leg (direction is nul
     perFace: { rear: face({ face: "rear", roof_form: "hipped" }) },
     roofPlanSteps: { rear: [roofStep(0.75)] },
   });
+  // The step itself carves (rear viewer frac 0.75 → x=25, shorter side
+  // x∈[0,25] recedes), but WITHOUT a height direction no inner leg is
+  // guessed — that would aim gutter at an unknown side.
+  assert.deepEqual(out.carvedJogIds, ["rear@0.75"]);
+  assert.deepEqual(out.suggestedEaves, [], "no inner leg without a height direction");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+// ————————————————— roof-jog carve (owner escalation round 3) —————————————————
+
+/** A viewer-frame roof-page step WITH the recess-side signal. */
+function roofStepDir(frac: number, plan_offset: "inward" | "outward" | null): FaceEaveStep {
+  return { position_frac: frac, direction: null, offset_ft: null, kind: "unknown", plan_offset, notes: "roof-plan page fascia step" };
+}
+
+test("(C1) 1168G shape — a page step PAIR reading in-then-out carves a recessed INSET (notch) with the run split around it", () => {
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStepDir(0.25, "inward"), roofStepDir(0.75, "outward")] },
+  });
+  // The middle [25,75] recedes 8 units: outer → inner → inner → outer.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 60 },
+      { x: 75, y: 60 },
+      { x: 75, y: 52 },
+      { x: 25, y: 52 },
+      { x: 25, y: 60 },
+      { x: 0, y: 60 },
+    ],
+    "inset carved between the paired steps",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.25", "front@0.75"]);
+  assert.deepEqual(out.suggestedEaves, []);
+  const carveNotes = out.notes.filter((n) => /ROOF JOG CARVED/.test(n));
+  assert.equal(carveNotes.length, 1, "one note for the pair");
+  assert.match(carveNotes[0], /steps in at ~25% and back out at ~75%/);
+  assert.match(carveNotes[0], /inset/);
+  // The front run split into three; the recessed middle rides to y=52 and
+  // Σ length_ft is exactly the original 50.
+  const frontRuns = out.analysis.gutter_runs.filter((r) => r.side === "front");
+  assert.equal(frontRuns.length, 3, "run split into outer + recessed + outer");
+  const mid = frontRuns.find((r) => r.start.y === 52 && r.end.y === 52);
+  assert.ok(mid, `expected a recessed middle piece, got ${JSON.stringify(frontRuns)}`);
+  assert.equal(mid!.length_ft, 25, "middle keeps its proportional 25 ft");
+  assert.equal(mid!.id, snap.gutter_runs[0].id, "longest piece keeps the parent id");
+  assert.equal(
+    frontRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0),
+    snap.gutter_runs[0].length_ft,
+    "split preserves the parent's priced LF exactly",
+  );
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+  assert.deepEqual(out.analysis.totals, snap.totals, "totals untouched");
+});
+
+test("(C2) out-then-in pair (projecting middle) never grows the envelope — both flanks carve inward as corner recesses instead", () => {
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStepDir(0.25, "outward"), roofStepDir(0.75, "inward")] },
+  });
+  // A projecting middle = both FLANKS recessed relative to the traced
+  // envelope: two L-steps, corners (0,60) and (100,60) slide to y=52.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 52 },
+      { x: 75, y: 52 },
+      { x: 75, y: 60 },
+      { x: 25, y: 60 },
+      { x: 25, y: 52 },
+      { x: 0, y: 52 },
+    ],
+    "both flanks recede; the middle keeps the outer line (envelope never grows)",
+  );
+  assert.deepEqual(out.carvedJogIds, ["front@0.25", "front@0.75"]);
+  assert.equal(out.notes.filter((n) => /ROOF JOG CARVED/.test(n)).length, 2, "two corner recesses");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(C3) carve gates decline near a corner / on a jogged span → falls back to suggest-don't-carve", () => {
+  // A step at frac 0.01 sits INSIDE the 1-ft corner margin — nothing to
+  // carve there (the face corner IS the step); legacy suggestion survives.
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front", eave_steps: [step(0.01, "down")] }) },
+  });
   assertUntouched(a, snap, out);
-  assert.equal(out.suggestedEaves.length, 1, "perpendicular return only — no inner leg without a height direction");
-  assert.equal(out.suggestedEaves[0].tier, "lower", "hipped face still tags the return lower");
+  assert.deepEqual(out.carvedJogIds, []);
+  assert.equal(out.suggestedEaves.length, 1, "fallback tap-to-add suggestion");
+  assert.ok(out.notes.some((n) => /ROOF STEPS HERE/.test(n)));
 });
 
 // ————————————————— mirror check —————————————————

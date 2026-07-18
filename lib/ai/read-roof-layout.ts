@@ -332,7 +332,12 @@ export function roofPlanFracToViewerFrac(
  * flag). `direction` is deliberately null on every converted step: the plan
  * view reads outward/inward (a PLAN offset), not up/down (a HEIGHT change),
  * and guessing the height direction could aim a hip inner-return leg at the
- * wrong side — so converted steps never emit that leg.
+ * wrong side — so converted steps never emit that leg. The page's PLAN
+ * offset instead travels as `plan_offset`, flipped to the viewer scan on the
+ * sides whose viewer left→right runs opposite the plan-frame scan (rear /
+ * right — the same sides roofPlanFracToViewerFrac flips): if the plan scan
+ * says the fascia beyond the step recesses ("inward") and the viewer walks
+ * the side backwards, the viewer instead sees the NEAR side recessed.
  */
 export function roofPlanViewerSteps(
   reading: RoofPlanReading | null | undefined,
@@ -344,16 +349,29 @@ export function roofPlanViewerSteps(
     const detail = reading.sides[face]?.steps_detail;
     if (!Array.isArray(detail)) continue;
     saw = true;
-    out[face] = detail.map((s) => ({
-      position_frac:
-        typeof s.position_frac === "number" && Number.isFinite(s.position_frac)
-          ? roofPlanFracToViewerFrac(face, Math.max(0, Math.min(1, s.position_frac)))
-          : null,
-      direction: null,
-      offset_ft: null,
-      kind: "unknown" as const,
-      notes: "roof-plan page fascia step",
-    }));
+    out[face] = detail.map((s) => {
+      const planDir =
+        s.direction === "inward" || s.direction === "outward" ? s.direction : null;
+      const plan_offset =
+        planDir === null
+          ? null
+          : face === "front" || face === "left"
+            ? planDir
+            : planDir === "inward"
+              ? "outward"
+              : "inward";
+      return {
+        position_frac:
+          typeof s.position_frac === "number" && Number.isFinite(s.position_frac)
+            ? roofPlanFracToViewerFrac(face, Math.max(0, Math.min(1, s.position_frac)))
+            : null,
+        direction: null,
+        offset_ft: null,
+        kind: "unknown" as const,
+        plan_offset,
+        notes: "roof-plan page fascia step",
+      };
+    });
   }
   return saw ? out : null;
 }
