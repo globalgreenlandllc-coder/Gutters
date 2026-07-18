@@ -342,7 +342,7 @@ function findSmartSlots(
 /*  Main component                                                    */
 /* ------------------------------------------------------------------ */
 
-type ViewMode = "week" | "month";
+type ViewMode = "day" | "week" | "month";
 
 type DropPreview = {
   dayIndex: number;
@@ -370,10 +370,15 @@ export function CalendarBoard() {
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
   const [monthHoverDay, setMonthHoverDay] = useState<string | null>(null);
 
-  // Restore the last-used view (week vs month) across visits.
+  // Restore the last-used view across visits. First visit on a phone
+  // defaults to the day agenda — 7 grid columns are unreadable there.
   useEffect(() => {
     const saved = window.localStorage.getItem("calendar-view");
-    if (saved === "month" || saved === "week") setView(saved);
+    if (saved === "month" || saved === "week" || saved === "day") {
+      setView(saved);
+    } else if (window.innerWidth < 1024) {
+      setView("day");
+    }
   }, []);
   const switchView = useCallback((v: ViewMode) => {
     setView(v);
@@ -382,9 +387,11 @@ export function CalendarBoard() {
 
   const weekStart = useMemo(() => startOfWeek(anchor), [anchor]);
   const gridStart = useMemo(() => startOfMonthGrid(anchor), [anchor]);
-  const rangeStart = view === "week" ? weekStart : gridStart;
+  // Day view fetches the whole surrounding week so stepping through the
+  // days of one week never refetches.
+  const rangeStart = view === "month" ? gridStart : weekStart;
   const rangeEnd = useMemo(
-    () => addDays(rangeStart, view === "week" ? 7 : 42),
+    () => addDays(rangeStart, view === "month" ? 42 : 7),
     [rangeStart, view],
   );
 
@@ -631,7 +638,13 @@ export function CalendarBoard() {
   }
 
   function stepAnchor(dir: -1 | 1) {
-    setAnchor((a) => (view === "week" ? addDays(startOfWeek(a), dir * 7) : addMonths(a, dir)));
+    setAnchor((a) =>
+      view === "day"
+        ? addDays(a, dir)
+        : view === "week"
+          ? addDays(startOfWeek(a), dir * 7)
+          : addMonths(a, dir),
+    );
   }
 
   /* Range stats for the strip under the header. */
@@ -658,7 +671,15 @@ export function CalendarBoard() {
         view={view}
         onView={switchView}
         rangeLabel={
-          view === "week" ? fmtRange(weekStart, addDays(weekStart, 6)) : fmtMonth(anchor)
+          view === "day"
+            ? anchor.toLocaleDateString(undefined, {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+              })
+            : view === "week"
+              ? fmtRange(weekStart, addDays(weekStart, 6))
+              : fmtMonth(anchor)
         }
         onPrev={() => stepAnchor(-1)}
         onNext={() => stepAnchor(1)}
@@ -694,7 +715,25 @@ export function CalendarBoard() {
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        {view === "week" ? (
+        {view === "day" ? (
+          <DayAgenda
+            weekStart={weekStart}
+            anchor={anchor}
+            appointments={appointments}
+            jobEvents={visibleJobs}
+            loading={loading}
+            onPickDay={(d) => setAnchor(d)}
+            onApptClick={(a) => setEditing(a)}
+            onNew={(d) => {
+              const start = new Date(d);
+              start.setHours(9, 0, 0, 0);
+              setCreating({
+                startsAt: start.toISOString(),
+                endsAt: new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+              });
+            }}
+          />
+        ) : view === "week" ? (
           <WeekGrid
             weekStart={weekStart}
             appointments={appointments}
@@ -797,6 +836,237 @@ export function CalendarBoard() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Day agenda — phone-first single-day list                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The mobile answer to the 7-column grids: a tappable week strip on top
+ * and the selected day's events as full-width cards underneath. No
+ * drag-and-drop here (native DnD doesn't exist on touch) — scheduling
+ * happens through the sidebar's ⚡ smart slots or the New button.
+ */
+function DayAgenda({
+  weekStart,
+  anchor,
+  appointments,
+  jobEvents,
+  loading,
+  onPickDay,
+  onApptClick,
+  onNew,
+}: {
+  weekStart: Date;
+  anchor: Date;
+  appointments: AppointmentDTO[];
+  jobEvents: JobCalendarEventDTO[];
+  loading: boolean;
+  onPickDay: (d: Date) => void;
+  onApptClick: (a: AppointmentDTO) => void;
+  onNew: (d: Date) => void;
+}) {
+  const today = new Date();
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+
+  // Tiles overlapping the selected day — a multi-day crew job still shows
+  // on its middle days, matching how the week grid clips it per column.
+  const tilesForDay = useCallback(
+    (day: Date): DayTile[] => {
+      const dayStart = new Date(day);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = addDays(dayStart, 1);
+      const overlaps = (s: Date, e: Date) => s < dayEnd && e > dayStart;
+      const out: DayTile[] = [];
+      for (const a of appointments) {
+        const start = new Date(a.startsAt);
+        const end = new Date(a.endsAt);
+        if (overlaps(start, end))
+          out.push({ kind: "appt", key: `a-${a.id}`, start, end, appt: a });
+      }
+      for (const j of jobEvents) {
+        const start = new Date(j.startsAt);
+        const end = new Date(j.endsAt);
+        if (overlaps(start, end))
+          out.push({ kind: "job", key: `j-${j.id}`, start, end, job: j });
+      }
+      return out.sort((x, y) => x.start.getTime() - y.start.getTime());
+    },
+    [appointments, jobEvents],
+  );
+
+  const tiles = useMemo(() => tilesForDay(anchor), [tilesForDay, anchor]);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-card">
+      {/* Week strip — jump between the days of the fetched week. */}
+      <div className="grid grid-cols-7 gap-1 border-b border-zinc-200/70 p-2">
+        {days.map((d) => {
+          const active = sameDay(d, anchor);
+          const isToday = sameDay(d, today);
+          const busy = tilesForDay(d).length > 0;
+          const f = fmtDay(d);
+          return (
+            <button
+              key={d.toISOString()}
+              onClick={() => onPickDay(d)}
+              className={cn(
+                "transition-smooth ring-focus press-scale flex flex-col items-center gap-0.5 rounded-lg py-1.5",
+                active
+                  ? "bg-accent-600 text-white shadow-sm"
+                  : "text-zinc-600 hover:bg-zinc-50",
+              )}
+            >
+              <span
+                className={cn(
+                  "text-[10px] font-medium uppercase",
+                  active ? "text-white/80" : "text-zinc-400",
+                )}
+              >
+                {f.weekday}
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-semibold tabular-nums",
+                  !active && isToday && "text-accent-700",
+                )}
+              >
+                {f.date}
+              </span>
+              <span
+                className={cn(
+                  "h-1 w-1 rounded-full",
+                  busy
+                    ? active
+                      ? "bg-white/90"
+                      : "bg-accent-500"
+                    : "bg-transparent",
+                )}
+              />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Agenda list */}
+      {loading ? (
+        <div className="space-y-2 p-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded-xl bg-zinc-100" />
+          ))}
+        </div>
+      ) : tiles.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+          <CalendarDays className="h-6 w-6 text-zinc-300" />
+          <div className="text-sm font-medium text-zinc-600">
+            Nothing scheduled
+          </div>
+          <div className="text-xs text-zinc-400">
+            Free day — book a visit or an install.
+          </div>
+        </div>
+      ) : (
+        <div className="divide-y divide-zinc-100">
+          {tiles.map((tile) =>
+            tile.kind === "appt" ? (
+              <button
+                key={tile.key}
+                onClick={() => onApptClick(tile.appt)}
+                className={cn(
+                  "transition-smooth ring-focus flex w-full items-start gap-3 px-3 py-3 text-left hover:bg-zinc-50",
+                )}
+              >
+                <span
+                  className={cn(
+                    "mt-0.5 h-10 w-1 shrink-0 rounded-full",
+                    TYPE_META[tile.appt.type].chip,
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-zinc-900">
+                      {tile.appt.title}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-zinc-500">
+                      {fmtTime(tile.start)} – {fmtTime(tile.end)}
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "text-[11px] font-medium",
+                      TYPE_META[tile.appt.type].text,
+                    )}
+                  >
+                    {TYPE_META[tile.appt.type].label}
+                  </div>
+                  {(tile.appt.address || tile.appt.clientName) && (
+                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-500">
+                      {tile.appt.address && (
+                        <>
+                          <MapPin className="h-3 w-3 shrink-0 text-zinc-400" />
+                          <span className="truncate">{tile.appt.address}</span>
+                        </>
+                      )}
+                      {!tile.appt.address && tile.appt.clientName}
+                    </div>
+                  )}
+                </div>
+              </button>
+            ) : (
+              <div key={tile.key} className="flex items-start gap-3 px-3 py-3">
+                <span
+                  className={cn(
+                    "mt-0.5 h-10 w-1 shrink-0 rounded-full",
+                    workerTone(tile.job.workerId).chip,
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-zinc-900">
+                      {tile.job.title}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-zinc-500">
+                      {fmtTime(tile.start)} – {fmtTime(tile.end)}
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex items-center gap-1 text-[11px] font-medium",
+                      workerTone(tile.job.workerId).text,
+                    )}
+                  >
+                    <Hammer className="h-3 w-3" />
+                    {tile.job.workerName} · {tile.job.kindLabel} ·{" "}
+                    {JOB_STATUS_LABEL[tile.job.status]}
+                  </div>
+                  {tile.job.address && (
+                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-500">
+                      <MapPin className="h-3 w-3 shrink-0 text-zinc-400" />
+                      <span className="truncate">{tile.job.address}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ),
+          )}
+        </div>
+      )}
+
+      <div className="border-t border-zinc-200/70 p-3">
+        <button
+          onClick={() => onNew(anchor)}
+          className="transition-smooth ring-focus press-scale flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2 text-xs font-medium text-zinc-500 hover:border-accent-400 hover:text-accent-700"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add to {sameDay(anchor, today) ? "today" : fmtDay(anchor).weekday}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Header bar                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -836,8 +1106,20 @@ function Header({
         <div className="hidden text-sm font-medium text-zinc-700 sm:block">
           {rangeLabel}
         </div>
-        {/* Week / Month toggle */}
+        {/* Day / Week / Month toggle */}
         <div className="flex items-center rounded-lg border border-zinc-200 bg-white p-0.5 shadow-sm">
+          <button
+            onClick={() => onView("day")}
+            className={cn(
+              "transition-smooth ring-focus press-scale inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium",
+              view === "day"
+                ? "bg-accent-600 text-white shadow-sm"
+                : "text-zinc-600 hover:bg-zinc-50",
+            )}
+          >
+            <CalendarDays className="h-3.5 w-3.5" />
+            Day
+          </button>
           <button
             onClick={() => onView("week")}
             className={cn(
@@ -867,7 +1149,7 @@ function Header({
           <button
             onClick={onPrev}
             className="transition-smooth ring-focus press-scale flex h-9 w-9 items-center justify-center rounded-l-lg text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-            aria-label={view === "week" ? "Previous week" : "Previous month"}
+            aria-label={`Previous ${view}`}
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -880,7 +1162,7 @@ function Header({
           <button
             onClick={onNext}
             className="transition-smooth ring-focus press-scale flex h-9 w-9 items-center justify-center rounded-r-lg text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-            aria-label={view === "week" ? "Next week" : "Next month"}
+            aria-label={`Next ${view}`}
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -890,7 +1172,8 @@ function Header({
           className="transition-smooth ring-focus press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-accent-700"
         >
           <Plus className="h-4 w-4" />
-          New appointment
+          <span className="hidden sm:inline">New appointment</span>
+          <span className="sm:hidden">New</span>
         </button>
       </div>
     </div>
@@ -908,7 +1191,8 @@ function StatsStrip({
   stats: { visits: number; installs: number; crewJobs: number; toSchedule: number };
   view: ViewMode;
 }) {
-  const rangeWord = view === "week" ? "this week" : "this month";
+  // Day view still fetches (and counts) the surrounding week.
+  const rangeWord = view === "month" ? "this month" : "this week";
   const cells: { label: string; value: number; dot: string }[] = [
     { label: `Site visits ${rangeWord}`, value: stats.visits, dot: "bg-sky-500" },
     { label: `Installs ${rangeWord}`, value: stats.installs, dot: "bg-emerald-500" },

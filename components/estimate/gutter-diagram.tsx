@@ -502,7 +502,7 @@ export function GutterDiagram({
       </svg>
 
       {/* HTML overlays — crisp text that scales with the container */}
-      <div className="pointer-events-none absolute left-3 top-3 max-w-[60%]">
+      <div className="pointer-events-none absolute left-3 top-3 max-w-[45%] sm:max-w-[60%]">
         {address && (
           <div
             className="truncate rounded-md bg-white/85 px-2.5 py-1 font-mono text-[11px] font-medium text-[#10475e] ring-1 ring-[#14688c]/20"
@@ -512,7 +512,9 @@ export function GutterDiagram({
           </div>
         )}
       </div>
-      <div className="pointer-events-none absolute right-3 top-3 flex items-center gap-2">
+      {/* Wraps to a right-aligned stack on phones so it never runs into
+          the address chip pinned at the opposite corner. */}
+      <div className="pointer-events-none absolute right-3 top-3 flex max-w-[52%] flex-wrap items-center justify-end gap-1.5 sm:gap-2">
         {confPct != null && (
           <span
             className={
@@ -541,7 +543,7 @@ export function GutterDiagram({
       {/* Legend — explains the colors whenever the roof has more than
           the plain main run (upper loops / low porch roofs). */}
       {tiersPresent.length > 1 && (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-3 rounded-full bg-white/92 px-3 py-1.5 ring-1 ring-[#14688c]/15">
+        <div className="pointer-events-none absolute bottom-3 left-1/2 flex w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl bg-white/92 px-3 py-1.5 ring-1 ring-[#14688c]/15">
           {tiersPresent.map((t) => (
             <span key={t} className="inline-flex items-center gap-1.5 text-[10px] font-semibold" style={{ color: TIER_STYLE[t].ink }}>
               <span className="h-[3px] w-4 rounded-full" style={{ background: TIER_STYLE[t].stroke }} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   LogOut,
   MapPin,
+  Menu,
   PartyPopper,
   Plus,
   Ruler,
@@ -22,6 +23,7 @@ import {
   User,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { Logo } from "@/components/ui/logo";
@@ -72,8 +74,6 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     items: [{ href: "/dashboard/settings", label: "Settings", Icon: Settings }],
   },
 ];
-
-const NAV_FLAT: NavEntry[] = NAV_GROUPS.flatMap((g) => g.items);
 
 function isActive(pathname: string | null, href: string) {
   return href === "/dashboard"
@@ -193,6 +193,110 @@ function AccountMenu({ align = "up" }: { align?: "up" | "down" }) {
   );
 }
 
+/**
+ * Mobile slide-in nav drawer, opened by the topbar hamburger. Renders the
+ * same grouped nav as the desktop sidebar so the two never drift, closes on
+ * backdrop tap / Escape / route change, and locks body scroll while open.
+ */
+function MobileNavDrawer({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const pathname = usePathname();
+
+  // Route change closes the drawer; the <nav> click delegation below covers
+  // the same-page tap where pathname never changes.
+  useEffect(() => {
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open, onClose]);
+
+  return (
+    <div
+      className={cn("fixed inset-0 z-50 lg:hidden", !open && "pointer-events-none")}
+      aria-hidden={!open}
+    >
+      {/* Backdrop */}
+      <div
+        className={cn(
+          "absolute inset-0 bg-zinc-900/40 transition-opacity duration-200 motion-reduce:transition-none",
+          open ? "opacity-100" : "opacity-0",
+        )}
+        onClick={onClose}
+      />
+      {/* Panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+        className={cn(
+          "absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col bg-white shadow-elevated transition-transform duration-200 ease-out motion-reduce:transition-none",
+          open ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200/70 pl-5 pr-2">
+          <Link href="/dashboard" className="ring-focus rounded-md">
+            <Logo showSubtitle={false} />
+          </Link>
+          <button
+            onClick={onClose}
+            aria-label="Close menu"
+            className="ring-focus transition-smooth grid h-10 w-10 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <nav
+          className="flex-1 overflow-y-auto px-3 py-4"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) onClose();
+          }}
+        >
+          <Link
+            href="/dashboard/proposals/new"
+            className="ring-focus transition-smooth press-scale mb-4 flex h-10 items-center justify-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
+          >
+            <Plus className="h-4 w-4" />
+            New Proposal
+          </Link>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="mt-5 first:mt-0">
+              <div className="microlabel mb-1.5 px-2.5">{group.label}</div>
+              <div className="space-y-0.5">
+                {group.items.map((n) => (
+                  <NavItem
+                    key={n.href}
+                    {...n}
+                    active={isActive(pathname, n.href)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+        <div className="border-t border-zinc-200/70 p-3">
+          <AccountMenu align="up" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CompanyChip() {
   const { session } = useSession();
   const company = session?.profile.company;
@@ -240,6 +344,7 @@ export function DashboardShell({
   contentClassName?: string;
 }) {
   const pathname = usePathname();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-paper">
@@ -275,42 +380,26 @@ export function DashboardShell({
       <div className="flex min-h-screen flex-col lg:pl-[224px]">
         {/* Mobile top bar */}
         <div className="sticky top-0 z-30 border-b border-zinc-200/70 bg-white lg:hidden">
-          <div className="flex h-14 items-center justify-between px-4">
-            <Link href="/dashboard">
+          <div className="flex h-14 items-center gap-1 pl-1.5 pr-4">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open menu"
+              aria-expanded={drawerOpen}
+              className="ring-focus transition-smooth grid h-10 w-10 shrink-0 place-items-center rounded-lg text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <Link href="/dashboard" className="ring-focus min-w-0 rounded-md">
               <Logo showSubtitle={false} />
             </Link>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-1 items-center justify-end gap-2">
               <CreditsChip />
               <NotificationsBell />
               <AccountMenu align="down" />
             </div>
           </div>
-          <div className="flex gap-1 overflow-x-auto px-3 pb-2">
-            {NAV_FLAT.map((n) => {
-              const active = isActive(pathname, n.href);
-              return (
-                <Link
-                  key={n.href}
-                  href={n.href}
-                  className={cn(
-                    "transition-smooth ring-focus inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium",
-                    active
-                      ? "bg-accent-50 text-accent-800"
-                      : "text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900",
-                  )}
-                >
-                  <n.Icon
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      active ? "text-accent-700" : "text-zinc-400",
-                    )}
-                  />
-                  {n.label}
-                </Link>
-              );
-            })}
-          </div>
         </div>
+        <MobileNavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
         {/* Topbar (desktop) */}
         <header className="sticky top-0 z-30 hidden h-14 shrink-0 items-center gap-3 border-b border-zinc-200/70 bg-white px-4 sm:px-6 lg:flex">

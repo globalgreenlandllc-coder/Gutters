@@ -1122,10 +1122,10 @@ export function AerialCanvas({
           first time they use them: chained clicks, double-click /
           right-click to finish, rapid-fire downspout drops. */}
       {tool !== "select" && (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2">
           <div
             className={cn(
-              "flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[11px] font-medium shadow-elevated backdrop-blur",
+              "flex items-center gap-2 rounded-2xl border px-3.5 py-1.5 text-[11px] font-medium shadow-elevated backdrop-blur",
               theme === "tactical"
                 ? "border-cyan-400/30 bg-slate-950/85 text-cyan-100"
                 : "border-zinc-200 bg-white/95 text-zinc-700",
@@ -2247,14 +2247,14 @@ function DownspoutPopover({
       exit={{ opacity: 0, y: 8 }}
       className={
         position
-          ? "absolute z-20"
-          : "absolute bottom-4 left-1/2 -translate-x-1/2"
+          ? "absolute z-20 max-w-[calc(100%-1.5rem)]"
+          : "absolute bottom-4 left-1/2 w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2"
       }
       style={inlineStyle}
     >
       <div
         className={cn(
-          "flex items-center gap-2 rounded-2xl border px-3 py-2 text-xs shadow-elevated backdrop-blur",
+          "flex flex-wrap items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs shadow-elevated backdrop-blur",
           theme === "tactical"
             ? "border-fuchsia-500/40 bg-slate-950/85 text-fuchsia-100"
             : "border-zinc-200 bg-white/95 text-zinc-700",
@@ -2397,7 +2397,9 @@ function Toolbar({
   return (
     <div
       className={cn(
-        "absolute left-3 top-3 z-10 flex flex-col gap-1 rounded-2xl border p-1.5 shadow-elevated backdrop-blur-xl",
+        // max-h + scroll: the rail holds up to ~10 buttons, which is taller
+        // than a phone-height canvas minus the bottom-center bars.
+        "absolute left-3 top-3 z-10 flex max-h-[calc(100%-5rem)] flex-col gap-1 overflow-y-auto rounded-2xl border p-1.5 shadow-elevated backdrop-blur-xl",
         tactical
           ? "border-cyan-400/20 bg-slate-950/85"
           : "border-zinc-200/80 bg-white/95",
@@ -2631,8 +2633,8 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
     </span>
   );
   return (
-    <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
-      <div className="flex items-center gap-2.5 rounded-full border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
+    <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2">
+      <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 rounded-2xl border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
         <span className="font-semibold text-white/90">Roof plan</span>
         <span className="h-3 w-px bg-white/20" />
         <Key color="#cbd5e1" label="Ridge" />
@@ -2671,7 +2673,9 @@ function Legend({
   return (
     <div
       className={cn(
-        "absolute right-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-card backdrop-blur",
+        // max-w keeps the wrapping legend clear of the left tool rail on
+        // phone-width canvases.
+        "absolute right-4 top-4 z-10 flex max-w-[calc(100%-5.5rem)] flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-card backdrop-blur",
         tactical
           ? "border-cyan-500/30 bg-slate-950/80 text-cyan-100"
           : "border-zinc-200 bg-white/95 text-zinc-700",

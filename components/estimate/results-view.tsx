@@ -434,7 +434,10 @@ export function ResultsView({
             className="lg:sticky lg:top-[72px] lg:self-start"
           >
             <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
-              <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
+              {/* Desktop: viewport-tall sticky rail with its own inner scroll.
+                  Mobile (stacked): natural height so the page scrolls as one —
+                  a fixed 100vh box here trapped phone users in nested scroll. */}
+              <div className="lg:h-[calc(100vh-7rem)] lg:max-h-[calc(100vh-7rem)] lg:overflow-hidden">
                 <PricingPanel
                   measurements={measurements}
                   handoff={handoff}

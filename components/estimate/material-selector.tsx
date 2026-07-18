@@ -197,7 +197,9 @@ export function MaterialSelector({
       </Group>
 
       <Group label="Old gutter removal">
-        <div className="grid grid-cols-3 gap-1.5">
+        {/* Stacks on phones — three ~105px columns squeeze the subtitles
+            into 3-4 wrapped lines. */}
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
           {(
             [
               {
