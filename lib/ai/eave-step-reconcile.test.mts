@@ -426,7 +426,7 @@ test("(R3) roof-page step on a side with NO elevation read at all → suggestion
   assert.match(note!, /roof-plan page/);
 });
 
-test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → wall-jog flag naming the page", () => {
+test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → the phantom jog is FLATTENED (owner round 2), runs carried, priced LF untouched", () => {
   const a = analysisOf(STEPPED, steppedRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
@@ -434,13 +434,35 @@ test("(R4) traced jog vs a STRAIGHT roof-page side (steps_detail []) → wall-jo
     perFace: { front: face({ face: "front" }) }, // elevation never reported the field
     roofPlanSteps: { front: [] }, // the page: one flush fascia plane
   });
-  assertUntouched(a, snap, out);
-  assert.equal(out.wallJogFlags.length, 1);
-  assert.match(out.wallJogFlags[0], /WALL JOG, STRAIGHT ROOF/);
-  assert.match(out.wallJogFlags[0], /roof-plan page/);
-  assert.match(out.wallJogFlags[0], /one flush fascia plane/);
-  assert.match(out.wallJogFlags[0], /Nothing was removed or unpriced/);
+  // The 5 ft jog is pressed onto the dominant fascia line (the wider y=50
+  // sub-edge wins): the y=60 span drops to y=50, the connector collapses.
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 50 },
+      { x: 60, y: 50 },
+      { x: 0, y: 50 },
+    ],
+    "phantom jog flattened onto the dominant fascia line",
+  );
+  assert.deepEqual(out.wallJogFlags, [], "corrected, not just flagged");
+  const note = out.notes.find((n) => /JOG FLATTENED/.test(n));
+  assert.ok(note, `expected a JOG FLATTENED note, got: ${JSON.stringify(out.notes)}`);
+  assert.match(note!, /front/);
+  assert.match(note!, /priced LF unchanged/);
+  // Followers rode along: the front run on the moved sub-edge shifted to
+  // y=50; every run's PRICED length_ft is byte-identical.
+  const movedRun = out.analysis.gutter_runs.find((r) => r.start.x === 60 && r.end.x === 100);
+  assert.ok(movedRun && movedRun.start.y === 50 && movedRun.end.y === 50, "run carried onto the flattened edge");
+  assert.deepEqual(
+    out.analysis.gutter_runs.map((r) => r.length_ft),
+    snap.gutter_runs.map((r) => r.length_ft),
+    "no run's length_ft changed",
+  );
   assert.equal(out.analysis.gutter_runs.length, snap.gutter_runs.length, "no run deleted");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
 // ————————————————— flush-face straightening (owner escalation) —————————————————
@@ -529,12 +551,24 @@ test("(R6b) flush-face straightening is OFF when BLUEPRINT_EAVE_STEP_STRAIGHTEN=
   }
 });
 
-test("(R6c) an ASYMMETRIC step (STEPPED fixture) never straightens — ends sit at different depths", () => {
-  // Reuses the existing (R4) fixture: the roof-page rules the whole side
-  // flush, but the traced jog's two ends are at DIFFERENT depths (50 vs 60)
-  // — not a "flush plane + notch," so this must stay flag-only, unchanged
-  // from before this feature existed.
-  const a = analysisOf(STEPPED, steppedRuns());
+test("(R6c) a DEEP step (> ~8 ft) never flattens — that's a real mass, flag-only survives", () => {
+  // 10 ft step (20 ring units): even under a page-ruled flush side, a step
+  // deeper than the ~8 ft cap is a real building mass the page likely
+  // mis-read — the cap bails the whole group and flag-only remains.
+  const DEEP: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 60 },
+    { x: 60, y: 60 },
+    { x: 60, y: 40 },
+    { x: 0, y: 40 },
+  ];
+  const deepRuns = [
+    run({ x: 60, y: 60 }, { x: 100, y: 60 }),
+    run({ x: 0, y: 40 }, { x: 60, y: 40 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+  const a = analysisOf(DEEP, deepRuns);
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
     analysis: a,
@@ -542,7 +576,100 @@ test("(R6c) an ASYMMETRIC step (STEPPED fixture) never straightens — ends sit 
     roofPlanSteps: { front: [] },
   });
   assertUntouched(a, snap, out);
-  assert.equal(out.wallJogFlags.length, 1, "asymmetric step still only flags — straightening correctly declines");
+  assert.equal(out.wallJogFlags.length, 1, "deep step stays flag-only — the cap correctly declines");
+  assert.ok(!out.notes.some((n) => /JOG FLATTENED/.test(n)));
+});
+
+test("(R6d) 1168G staircase — a flush-ruled side with TWO phantom steps flattens onto the dominant fascia line", () => {
+  // The whole-face splice bails here (the two outermost sub-edges sit at
+  // DIFFERENT depths — 60 vs 56), which is exactly how the 1168G BIDSET's
+  // nine pop-outs survived as flag-only. The per-jog flatten presses every
+  // uncorroborated step onto the widest depth (y=52).
+  const STAIR: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 56 },
+    { x: 80, y: 56 },
+    { x: 80, y: 52 },
+    { x: 20, y: 52 },
+    { x: 20, y: 60 },
+    { x: 0, y: 60 },
+  ];
+  const stairRuns = [
+    run({ x: 0, y: 60 }, { x: 20, y: 60 }),
+    run({ x: 20, y: 52 }, { x: 80, y: 52 }),
+    run({ x: 80, y: 56 }, { x: 100, y: 56 }),
+    run({ x: 0, y: 0 }, { x: 100, y: 0 }, { side: "back" }),
+  ];
+  const a = analysisOf(STAIR, stairRuns);
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front" }) },
+    roofPlanSteps: { front: [] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 52 },
+      { x: 80, y: 52 },
+      { x: 20, y: 52 },
+      { x: 0, y: 52 },
+    ],
+    "both staircase pop-outs pressed onto the dominant y=52 line",
+  );
+  assert.deepEqual(out.wallJogFlags, []);
+  // All three front runs now sit on the flattened line; priced LF untouched.
+  for (const r of out.analysis.gutter_runs) {
+    if (r.side !== "back") {
+      assert.equal(r.start.y, 52, `run ${r.id} carried`);
+      assert.equal(r.end.y, 52, `run ${r.id} carried`);
+    }
+  }
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(R6e) mixed side — the page-located step is KEPT, the phantom one flattens, downspout rides along", () => {
+  const a = analysisOf(TWO_STEP, twoStepRuns());
+  a.downspouts = [
+    {
+      id: "d1",
+      at: { x: 90, y: 60 },
+      from_gutter: "r1",
+      drop_direction: "front",
+      reason: "outside_corner",
+    } as (typeof a.downspouts)[number],
+  ];
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.45)] }, // page corroborates ONLY the 0.45 step
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 52 },
+      { x: 80, y: 52 },
+      { x: 45, y: 52 },
+      { x: 45, y: 44 },
+      { x: 0, y: 44 },
+    ],
+    "the verified 45% step survives; the phantom 80% pop-out is flattened",
+  );
+  assert.equal(out.verifiedJogIds.length, 1);
+  assert.match(out.verifiedJogIds[0], /front@0\.45/);
+  assert.deepEqual(out.wallJogFlags, [], "the phantom was corrected, not flagged");
+  assert.ok(out.notes.some((n) => /JOG FLATTENED/.test(n)));
+  // Followers on the moved span rode along; priced LF untouched.
+  const movedRun = out.analysis.gutter_runs.find((r) => r.end.x === 100 && r.side === "front");
+  assert.ok(movedRun && movedRun.start.y === 52 && movedRun.end.y === 52, "run on the flattened span carried");
+  assert.equal(out.analysis.downspouts[0].at.y, 52, "downspout carried with its edge");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
 });
 
 test("(R5) roof-page steps never emit the hip inner-return leg (direction is null by design)", () => {

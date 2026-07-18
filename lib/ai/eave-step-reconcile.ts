@@ -52,29 +52,30 @@ export type EaveStepSuggestion = {
   tier?: EaveTier;
 };
 
-/** Owner escalation: when the roof-plan page rules a WHOLE side flush
- *  (stepsRaw.length === 0 — its strongest possible signal, "one flush
- *  fascia plane across the side") and the traced footprint still carries a
- *  jog there, straighten it into the diagram instead of only flagging it —
- *  "everything should be jogged on the diagram only if it's jogged on the
- *  roof layout." Default ON; BLUEPRINT_EAVE_STEP_STRAIGHTEN=0 restores the
- *  old flag-only behavior. */
+/** Owner escalation: when the roof-plan page rules a side's layout and the
+ *  traced footprint carries jogs the page contradicts, straighten them into
+ *  the diagram instead of only flagging — "everything should be jogged on
+ *  the diagram only if it's jogged on the roof layout." Two passes share
+ *  this switch: the whole-side flush splice (page ruled `[]`) and the
+ *  per-jog phantom flatten (flattenPhantomJogs — page-matched steps kept,
+ *  uncorroborated ones ≤ ~8 ft pressed flat, followers carried). Default
+ *  ON; BLUEPRINT_EAVE_STEP_STRAIGHTEN=0 restores flag-only behavior. */
 export function eaveStepStraightenEnabled(override?: boolean): boolean {
   if (typeof override === "boolean") return override;
   return process.env.BLUEPRINT_EAVE_STEP_STRAIGHTEN !== "0";
 }
 
 export type EaveStepReconcileResult = {
-  /** The caller's analysis object. Geometry and priced LF are byte-untouched
-   *  EXCEPT for the narrow flush-face straightening escalation (see
-   *  eaveStepStraightenEnabled): there, building_footprint loses the jog's
-   *  interior vertices and excluded_edges loses any rake entry that sat on
-   *  them — gutter_runs are NEVER rewritten here (their coordinates already
-   *  sit correctly on the new straight edge; any newly-exposed gap is priced
-   *  or suggested by the normal downstream perimeter-closure pass, same as
-   *  any other mid-wall gap). Straightening notes name the LF as unchanged
-   *  BY THIS PASS; closure may still add real footage for the newly-exposed
-   *  span, exactly like any other uncovered wall gap. */
+  /** The caller's analysis object. PRICED LF (length_ft, totals) is
+   *  byte-untouched in every branch. Geometry is touched only by the two
+   *  straightening escalations (see eaveStepStraightenEnabled): the
+   *  flush-face splice (building_footprint loses the jog's interior
+   *  vertices; stale excluded_edges on them dropped; runs untouched) and
+   *  the per-jog phantom flatten (sub-edges pressed onto the dominant
+   *  fascia line, with run/downspout/excluded-edge COORDINATES riding the
+   *  shifted sub-edges — length_ft never rewritten, length_px recomputed).
+   *  Any newly-exposed gap is priced or suggested by the normal downstream
+   *  perimeter-closure pass, same as any other mid-wall gap. */
   analysis: BlueprintAnalysis;
   /** Roof-verified confirmations + suggest-don't-carve notes (loud). */
   notes: string[];
@@ -245,6 +246,135 @@ function spliceStraightFace(
     };
   }
   return null;
+}
+
+/**
+ * PER-JOG PHANTOM FLATTENING (owner escalation round 2 — the 1168G BIDSET
+ * canvas: nine "WALL JOG, STRAIGHT ROOF" flags drew nine random pop-outs the
+ * roof plan contradicts, and flag-only left the diagram "totally wrong").
+ * Doctrine: the diagram jogs ONLY where the roof layout jogs. On a
+ * roof-page-ruled side, every traced step the page does NOT corroborate is
+ * flattened INDIVIDUALLY: the face's sub-edges are grouped between REAL
+ * (page-matched) steps / physical gaps, and each group containing a phantom
+ * step is pressed onto its dominant fascia line (the depth carrying the most
+ * width in the group). Page-matched steps sit on group boundaries, so they
+ * survive untouched.
+ *
+ * Safety gates, all bail-to-flag-only:
+ *  - only roof-page-ruled sides (the elevations alone never flatten);
+ *  - per-edge shift capped at `maxShiftU` (~8 ft) — a deep step is a real
+ *    mass, not a trace pop-out, even if the page missed it;
+ *  - a group whose ANY edge exceeds the cap is left whole.
+ *
+ * Followers ride along (the rectifyPlanFootprint pattern): run endpoints,
+ * downspout marks and excluded-edge endpoints sitting ON a shifted sub-edge
+ * move by the same perpendicular delta — length_ft (the priced value) is
+ * never touched, only the drawn coordinates.
+ */
+function flattenPhantomJogs(args: {
+  ring: readonly Pt[];
+  edges: readonly FaceEdge[];
+  n: Pt;
+  /** Sanitized roof-page step positions on this face's u axis. */
+  roofUs: readonly number[];
+  tolU: number;
+  minDepthU: number;
+  gapTolU: number;
+  maxShiftU: number;
+}): {
+  ring: Pt[];
+  /** Old sub-edge span + the normal delta it moved by (follower carry). */
+  moved: { a: Pt; b: Pt; delta: number }[];
+  /** Along-face fractions (0..1) of the flattened phantom steps. */
+  flattenedU: number[];
+} | null {
+  const { edges, n, roofUs, tolU, minDepthU, gapTolU, maxShiftU } = args;
+  if (edges.length < 2) return null;
+
+  // Group boundaries: a physical gap or a page-corroborated (REAL) step ends
+  // the group; a phantom step (or a flush continuation) keeps it open.
+  type Group = { idx: number[]; phantomUs: number[] };
+  const groups: Group[] = [];
+  let cur: Group = { idx: [0], phantomUs: [] };
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const e1 = edges[i];
+    const e2 = edges[i + 1];
+    const contiguous = Math.abs(e2.uL - e1.uR) <= gapTolU;
+    const depthU = Math.abs(e2.out - e1.out);
+    const isStep = contiguous && depthU >= minDepthU;
+    const stepU = (e1.uR + e2.uL) / 2;
+    const isReal = isStep && roofUs.some((u) => Math.abs(u - stepU) <= tolU);
+    if (!contiguous || isReal) {
+      groups.push(cur);
+      cur = { idx: [i + 1], phantomUs: [] };
+    } else {
+      if (isStep) cur.phantomUs.push(stepU);
+      cur.idx.push(i + 1);
+    }
+  }
+  groups.push(cur);
+
+  const deltaByPt = new Map<Pt, number>();
+  const moved: { a: Pt; b: Pt; delta: number }[] = [];
+  const flattenedU: number[] = [];
+  for (const g of groups) {
+    if (g.phantomUs.length === 0 || g.idx.length < 2) continue;
+    // Dominant fascia line: cluster the group's depths, weight by u-width.
+    const clusterTol = Math.max(minDepthU / 2, 1e-9);
+    const members = g.idx.map((i) => edges[i]);
+    const clusters: { out: number; weight: number; edges: FaceEdge[] }[] = [];
+    for (const e of members) {
+      const w = Math.abs(e.uR - e.uL);
+      const c = clusters.find((cl) => Math.abs(cl.out - e.out) <= clusterTol);
+      if (c) {
+        c.out = (c.out * c.weight + e.out * w) / (c.weight + w || 1);
+        c.weight += w;
+        c.edges.push(e);
+      } else {
+        clusters.push({ out: e.out, weight: w, edges: [e] });
+      }
+    }
+    clusters.sort((a, b) => b.weight - a.weight);
+    const target = clusters[0].out;
+    // Cap: any member needing a deeper shift than maxShiftU = real mass, bail
+    // on the WHOLE group (it stays flag-only downstream).
+    if (members.some((e) => Math.abs(target - e.out) > maxShiftU)) continue;
+    for (const e of members) {
+      const d = target - e.out;
+      if (Math.abs(d) < 1e-9) continue;
+      deltaByPt.set(e.L, d);
+      deltaByPt.set(e.R, d);
+      moved.push({ a: { ...e.L }, b: { ...e.R }, delta: d });
+    }
+    flattenedU.push(...g.phantomUs);
+  }
+  if (moved.length === 0) return null;
+
+  // Apply the shifts, then collapse the connectors that became zero-length.
+  const shifted = args.ring.map((p) => {
+    const d = deltaByPt.get(p);
+    return d !== undefined ? { x: p.x + n.x * d, y: p.y + n.y * d } : { x: p.x, y: p.y };
+  });
+  const dedupeTol = Math.max(1e-9, minDepthU * 0.05);
+  const out: Pt[] = [];
+  for (const p of shifted) {
+    const prev = out[out.length - 1];
+    if (prev && near(prev, p, dedupeTol)) continue;
+    out.push(p);
+  }
+  while (out.length > 1 && near(out[0], out[out.length - 1], dedupeTol)) out.pop();
+  if (out.length < 4) return null;
+  return { ring: out, moved, flattenedU };
+}
+
+/** Point-to-segment distance — the follower "sits on this sub-edge" test. */
+function distToSeg(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (l2 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
 /** A TRACED roof step on one face: two same-face sub-edges meeting (in u) at
@@ -434,6 +564,12 @@ export function reconcileEaveSteps(args: {
     // guard in this file.
     let excludedEdges = (args.analysis.excluded_edges ?? []).slice();
     let footprintTouched = false;
+    // Follower working copies for the per-jog flatten (runs/downspouts ride a
+    // shifted sub-edge like rectifyPlanFootprint's followers). Written back
+    // only when a flatten actually fired.
+    let runsW = (args.analysis.gutter_runs ?? []).slice();
+    let dssW = (args.analysis.downspouts ?? []).slice();
+    let followersTouched = false;
     const straightenOn = eaveStepStraightenEnabled();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of ring) {
@@ -494,7 +630,7 @@ export function reconcileEaveSteps(args: {
       const rd = viewerPositionToPlanDir(face, "right_end", args.faceNormals);
       if (!rd) continue; // unknown face word — can't map, skip silently
       const n = { x: -rd.y + 0, y: rd.x + 0 }; // inverse of rd = (n.y, −n.x)
-      const edges = faceEdges(ring, n, rd);
+      let edges = faceEdges(ring, n, rd);
       if (edges.length === 0) continue;
       const uMin = Math.min(...edges.map((e) => Math.min(e.uL, e.uR)));
       const uMax = Math.max(...edges.map((e) => Math.max(e.uL, e.uR)));
@@ -537,7 +673,7 @@ export function reconcileEaveSteps(args: {
         }
       }
 
-      const traced = tracedStepsOf(edges, minDepthU, Math.max(width * 0.03, 1e-6));
+      const gapTolU = Math.max(width * 0.03, 1e-6);
       const tolU = Math.max(ftToU(4), width * 0.06);
 
       // Sanitized elevation steps: a position_frac outside [0,1] (adversarial
@@ -552,17 +688,99 @@ export function reconcileEaveSteps(args: {
           s.position_frac <= 1,
       );
 
-      const hipped = r?.roof_form === "hipped";
-      const matchedTraced = new Set<number>();
-
-      // Mirror-check inputs (front/rear, roof-page-ruled sides only).
+      // Mirror-check inputs (front/rear, roof-page-ruled sides only) — the
+      // PRE-flatten traced pattern, so a flipped canvas is still detectable
+      // after its mirrored jogs get flattened below.
+      const tracedPre = tracedStepsOf(edges, minDepthU, gapTolU);
       if (fromRoofPlan && (face === "front" || face === "rear")) {
         mirrorEntries.push({
           face,
           roofFracs: elevSteps.map((s) => s.position_frac as number),
-          tracedFracs: traced.map((t) => (t.u - uMin) / width),
+          tracedFracs: tracedPre.map((t) => (t.u - uMin) / width),
         });
       }
+
+      // PER-JOG PHANTOM FLATTENING (owner escalation round 2, same
+      // eaveStepStraightenEnabled switch): on a roof-page-ruled side, every
+      // traced step the page does NOT corroborate is pressed flat — the
+      // diagram jogs only where the roof layout jogs. Page-matched steps and
+      // anything deeper than the ~8 ft cap survive untouched (flag-only).
+      // A face whose step pattern fits the page better MIRRORED is never
+      // flattened — those "phantoms" are likely real steps on a flipped
+      // canvas; the mirror note asks the owner to verify instead.
+      const mirrorSuspect =
+        (face === "front" || face === "rear") &&
+        detectStepMirror([
+          {
+            face,
+            roofFracs: elevSteps.map((s) => s.position_frac as number),
+            tracedFracs: tracedPre.map((t) => (t.u - uMin) / width),
+          },
+        ]) !== null;
+      if (straightenOn && fromRoofPlan && !mirrorSuspect && edges.length > 1) {
+        const roofUs = elevSteps.map((s) => uMin + (s.position_frac as number) * width);
+        const flat = flattenPhantomJogs({
+          ring,
+          edges,
+          n,
+          roofUs,
+          tolU,
+          minDepthU,
+          gapTolU,
+          maxShiftU: ftToU(8),
+        });
+        if (flat) {
+          // Carry followers sitting ON a shifted sub-edge by the same delta.
+          const snapTol = Math.max(vTol, ftToU(0.5));
+          const shiftPt = (p: Pt): Pt => {
+            for (const m of flat.moved) {
+              if (distToSeg(p, m.a, m.b) <= snapTol) {
+                return { x: p.x + n.x * m.delta, y: p.y + n.y * m.delta };
+              }
+            }
+            return p;
+          };
+          runsW = runsW.map((rr) => {
+            if (!isFinitePt(rr.start as Pt) || !isFinitePt(rr.end as Pt)) return rr;
+            const s = shiftPt(rr.start);
+            const e2 = shiftPt(rr.end);
+            if (s === rr.start && e2 === rr.end) return rr;
+            followersTouched = true;
+            // length_ft (the priced value) is deliberately untouched.
+            return { ...rr, start: s, end: e2, length_px: Math.hypot(e2.x - s.x, e2.y - s.y) };
+          });
+          dssW = dssW.map((d) => {
+            if (!d || !isFinitePt(d.at as Pt)) return d;
+            const at = shiftPt(d.at);
+            if (at === d.at) return d;
+            followersTouched = true;
+            return { ...d, at };
+          });
+          excludedEdges = excludedEdges.map((ee) => {
+            if (!isFinitePt(ee.start as Pt) || !isFinitePt(ee.end as Pt)) return ee;
+            const s = shiftPt(ee.start);
+            const e2 = shiftPt(ee.end);
+            return s === ee.start && e2 === ee.end ? ee : { ...ee, start: s, end: e2 };
+          });
+          ring = flat.ring;
+          footprintTouched = true;
+          const fracList = flat.flattenedU
+            .map((u) => `${Math.round(((u - uMin) / width) * 100)}%`)
+            .join(", ");
+          notes.push(
+            `📄 JOG FLATTENED (roof-plan page) — the traced outline stepped at ~${fracList} across the ${face} side where the page shows no fascia step; ${
+              flat.flattenedU.length === 1 ? "that phantom jog was" : "those phantom jogs were"
+            } pressed flat onto the side's main fascia line (gutters carried along; priced LF unchanged). Steps the page located are kept.`,
+          );
+          edges = faceEdges(ring, n, rd);
+          if (edges.length === 0) continue;
+        }
+      }
+
+      const traced = tracedStepsOf(edges, minDepthU, gapTolU);
+
+      const hipped = r?.roof_form === "hipped";
+      const matchedTraced = new Set<number>();
 
       for (const s of elevSteps) {
         const frac = s.position_frac as number;
@@ -636,7 +854,7 @@ export function reconcileEaveSteps(args: {
             const a = hipAnchor.innerPt;
             const b: Pt = { x: a.x + lowerDir.x * legLen, y: a.y + lowerDir.y * legLen };
             const covTol = Math.max(ringSpan * 0.02, ftToU(1));
-            const covered = segCoveredFraction(a, b, args.analysis.gutter_runs ?? [], covTol);
+            const covered = segCoveredFraction(a, b, runsW, covTol);
             if (covered <= 0.5) {
               suggestedEaves.push({ points: [a, b], tier: "lower" });
               notes.push(
@@ -677,6 +895,10 @@ export function reconcileEaveSteps(args: {
     if (footprintTouched) {
       args.analysis.building_footprint = ring;
       args.analysis.excluded_edges = excludedEdges;
+      if (followersTouched) {
+        args.analysis.gutter_runs = runsW;
+        args.analysis.downspouts = dssW;
+      }
     }
 
     return { analysis: args.analysis, notes, suggestedEaves, verifiedJogIds, wallJogFlags };
