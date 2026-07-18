@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Check,
   ChevronDown,
   CircleCheckBig,
-  Eye,
-  EyeOff,
   HardHat,
   Loader2,
   PencilLine,
-  PieChart,
   Plus,
   Receipt,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Undo2,
@@ -21,22 +20,24 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatTile } from "@/components/dashboard/stat-tile";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { profitPlan } from "@/lib/job-costing";
 import {
   addJobExpense,
-  addOverheadItem,
   decideJobExpense,
   deleteJobExpense,
-  deleteOverheadItem,
   getFinancialsOverview,
-  saveFinancialSettings,
   setJobManualCost,
   type FinancialJobRow,
   type FinancialsOverview,
 } from "@/app/actions/financials";
-
-const usd = (cents: number) => formatCurrency(Math.round(cents) / 100);
+import {
+  FinancialsTabs,
+  HIDE_MONEY_CLASS,
+  HideMoneyToggle,
+  useHideMoney,
+  usd,
+} from "./financials-shared";
 
 function marginTone(marginPct: number, profitCents: number) {
   if (profitCents < 0) return "rose" as const;
@@ -44,13 +45,10 @@ function marginTone(marginPct: number, profitCents: number) {
   return "emerald" as const;
 }
 
-/** localStorage key for the hide-numbers eye switch. */
-const HIDE_MONEY_KEY = "financials.hideMoney";
-
 export function FinancialsClient() {
   const [ov, setOv] = useState<FinancialsOverview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [hideMoney, setHideMoney] = useState(false);
+  const [hideMoney, toggleHideMoney] = useHideMoney();
 
   const refresh = useCallback(async () => {
     const next = await getFinancialsOverview();
@@ -59,7 +57,6 @@ export function FinancialsClient() {
   }, []);
 
   useEffect(() => {
-    setHideMoney(localStorage.getItem(HIDE_MONEY_KEY) === "1");
     let cancelled = false;
     getFinancialsOverview().then((next) => {
       if (cancelled) return;
@@ -71,46 +68,13 @@ export function FinancialsClient() {
     };
   }, []);
 
-  const toggleHideMoney = () =>
-    setHideMoney((v) => {
-      localStorage.setItem(HIDE_MONEY_KEY, v ? "0" : "1");
-      return !v;
-    });
-
   const netMtd = ov ? ov.profitMtdCents - ov.monthlyOverheadCents : 0;
 
   return (
-    <div
-      className={cn(
-        "space-y-6",
-        // The eye switch: every money figure on this page renders with
-        // .tabular-nums, so one selector blurs them all (screen-share /
-        // over-the-shoulder mode) without touching the live calculations.
-        hideMoney &&
-          "[&_.tabular-nums]:blur-[7px] [&_.tabular-nums]:select-none",
-      )}
-    >
-      <div className="-mb-2 flex items-center justify-end">
-        <button
-          type="button"
-          onClick={toggleHideMoney}
-          className="ring-focus inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition-smooth hover:bg-zinc-100 hover:text-zinc-700"
-          title={
-            hideMoney
-              ? "Show the dollar amounts"
-              : "Blur the dollar amounts (for screen sharing)"
-          }
-        >
-          {hideMoney ? (
-            <>
-              <Eye className="h-3.5 w-3.5" /> Show numbers
-            </>
-          ) : (
-            <>
-              <EyeOff className="h-3.5 w-3.5" /> Hide numbers
-            </>
-          )}
-        </button>
+    <div className={cn("space-y-6", hideMoney && HIDE_MONEY_CLASS)}>
+      <div className="flex items-center justify-between gap-2">
+        <FinancialsTabs active="overview" />
+        <HideMoneyToggle hidden={hideMoney} onToggle={toggleHideMoney} />
       </div>
 
       {/* KPI row */}
@@ -156,8 +120,8 @@ export function FinancialsClient() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
         <div className="space-y-4">
-          <OverheadCard ov={ov} loading={loading} onChanged={refresh} />
-          <ProfitPlannerCard ov={ov} loading={loading} />
+          <CoverageCard ov={ov} />
+          <SetupSummaryCard ov={ov} loading={loading} />
         </div>
         <JobsCard ov={ov} loading={loading} onChanged={refresh} />
       </div>
@@ -247,530 +211,157 @@ function PendingExpenses({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Overhead editor + coverage meter                                   */
+/*  Coverage meter + link to the setup page                            */
 /* ------------------------------------------------------------------ */
 
-/** One-tap starters for the usual business bills — tap fills the label,
- *  the contractor types the amount. Already-added labels drop out. */
-const OVERHEAD_PRESETS = [
-  "Office / shop rent",
-  "Insurance",
-  "Software & billing",
-  "Truck & fuel",
-  "Marketing / ads",
-  "Savings fund",
-  "Phone & internet",
-];
-
-function OverheadCard({
-  ov,
-  loading,
-  onChanged,
-}: {
-  ov: FinancialsOverview | null;
-  loading: boolean;
-  onChanged: () => Promise<void>;
-}) {
-  const [label, setLabel] = useState("");
-  const [amount, setAmount] = useState("");
-  const [cadence, setCadence] = useState<"MONTHLY" | "YEARLY">("MONTHLY");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function add() {
-    const dollars = parseFloat(amount);
-    setErr(null);
-    setBusy(true);
-    const r = await addOverheadItem(label, Math.round(dollars * 100), cadence);
-    if (!r.ok) {
-      setErr(r.reason);
-      setBusy(false);
-      return;
-    }
-    setLabel("");
-    setAmount("");
-    await onChanged();
-    setBusy(false);
-  }
-
+function CoverageCard({ ov }: { ov: FinancialsOverview | null }) {
   const cov = ov?.coverage;
-
   return (
-    <div className="space-y-4">
-      {/* Coverage meter */}
-      <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
-        <div className="flex items-center justify-between">
-          <div className="microlabel">Overhead coverage · this month</div>
-          {cov &&
-            (cov.overheadCents === 0 ? (
-              <Badge tone="neutral">No overhead set</Badge>
-            ) : cov.covered ? (
-              <Badge tone="emerald">
-                <CircleCheckBig className="h-3.5 w-3.5" /> Overhead covered
-              </Badge>
-            ) : (
-              <Badge tone="amber">{usd(cov.gapCents)} to go</Badge>
-            ))}
-        </div>
-        <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-zinc-100">
-          <div
-            className={cn(
-              "anim-grow-x h-full rounded-full transition-smooth",
-              cov?.covered ? "bg-emerald-500" : "bg-accent-600",
-            )}
-            style={{ width: `${Math.round((cov?.pct ?? 0) * 100)}%` }}
-          />
-        </div>
-        <div className="mt-2 flex items-baseline justify-between text-xs text-zinc-500">
-          <span>
-            <span className="font-semibold tabular-nums text-zinc-900">
-              {ov ? usd(ov.profitMtdCents) : "—"}
-            </span>{" "}
-            earned of{" "}
-            <span className="tabular-nums">
-              {ov ? usd(ov.monthlyOverheadCents) : "—"}
-            </span>{" "}
-            bills
-          </span>
-          {cov?.covered && cov.overheadCents > 0 && (
-            <span className="font-medium text-emerald-700">
-              +{usd(cov.surplusCents)} pure profit
-            </span>
+    <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <div className="microlabel">Overhead coverage · this month</div>
+        {cov &&
+          (cov.overheadCents === 0 ? (
+            <Badge tone="neutral">No overhead set</Badge>
+          ) : cov.covered ? (
+            <Badge tone="emerald">
+              <CircleCheckBig className="h-3.5 w-3.5" /> Overhead covered
+            </Badge>
+          ) : (
+            <Badge tone="amber">{usd(cov.gapCents)} to go</Badge>
+          ))}
+      </div>
+      <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-zinc-100">
+        <div
+          className={cn(
+            "anim-grow-x h-full rounded-full transition-smooth",
+            cov?.covered ? "bg-emerald-500" : "bg-accent-600",
           )}
-        </div>
-        {ov && ov.pipelineProfitCents > 0 && (
-          <p className="mt-2 text-xs text-zinc-400">
-            {usd(ov.pipelineProfitCents)} more projected in jobs still running.
-          </p>
+          style={{ width: `${Math.round((cov?.pct ?? 0) * 100)}%` }}
+        />
+      </div>
+      <div className="mt-2 flex items-baseline justify-between text-xs text-zinc-500">
+        <span>
+          <span className="font-semibold tabular-nums text-zinc-900">
+            {ov ? usd(ov.profitMtdCents) : "—"}
+          </span>{" "}
+          earned of{" "}
+          <span className="tabular-nums">
+            {ov ? usd(ov.monthlyOverheadCents) : "—"}
+          </span>{" "}
+          bills
+        </span>
+        {cov?.covered && cov.overheadCents > 0 && (
+          <span className="font-medium text-emerald-700">
+            +{usd(cov.surplusCents)} pure profit
+          </span>
         )}
       </div>
-
-      {/* Overhead items */}
-      <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
-        <div className="microlabel">Monthly overhead</div>
-        <p className="mt-1 text-xs text-zinc-500">
-          Truck, insurance, software, shop rent — the bills your jobs have to
-          pay before anything is profit.
+      {ov && ov.pipelineProfitCents > 0 && (
+        <p className="mt-2 text-xs text-zinc-400">
+          {usd(ov.pipelineProfitCents)} more projected in jobs still running.
         </p>
-        <div className="mt-3 space-y-2">
-          {loading && (
-            <>
-              <div className="skeleton h-9 w-full rounded-lg" />
-              <div className="skeleton h-9 w-full rounded-lg" />
-            </>
-          )}
-          {ov?.overhead.map((o) => (
-            <OverheadRow key={o.id} item={o} onChanged={onChanged} />
-          ))}
-          {ov && ov.overhead.length === 0 && (
-            <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-400">
-              No overhead yet — add your first recurring cost below.
-            </p>
-          )}
-        </div>
-
-        {/* Add row */}
-        <div className="mt-3 space-y-2 rounded-xl border border-zinc-200 bg-zinc-50/40 p-3">
-          <div className="flex flex-wrap gap-1.5">
-            {OVERHEAD_PRESETS.filter(
-              (p) => !ov?.overhead.some((o) => o.label === p),
-            ).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setLabel(p)}
-                className="ring-focus active:scale-[0.98] rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] text-zinc-600 transition-smooth hover:border-accent-400 hover:text-accent-700"
-              >
-                + {p}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="e.g. Truck lease"
-              className="input h-9 min-w-0 flex-1 text-sm"
-            />
-            <div className="relative">
-              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
-                $
-              </span>
-              <input
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                inputMode="decimal"
-                placeholder="0"
-                className="input h-9 w-24 pl-6 text-right text-sm tabular-nums"
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-1.5">
-              {(["MONTHLY", "YEARLY"] as const).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCadence(c)}
-                  className={cn(
-                    "ring-focus rounded-full px-2.5 py-1 text-[11px] font-medium transition-smooth",
-                    cadence === c
-                      ? "bg-accent-600 text-white shadow-sm"
-                      : "bg-white text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50",
-                  )}
-                >
-                  {c === "MONTHLY" ? "Monthly" : "Yearly"}
-                </button>
-              ))}
-            </div>
-            <Button size="sm" onClick={add} disabled={busy}>
-              {busy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Plus className="h-3.5 w-3.5" />
-              )}
-              Add
-            </Button>
-          </div>
-          {err && <p className="text-xs text-rose-600">{err}</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OverheadRow({
-  item,
-  onChanged,
-}: {
-  item: { id: string; label: string; amountCents: number; cadence: "MONTHLY" | "YEARLY" };
-  onChanged: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  async function remove() {
-    setBusy(true);
-    await deleteOverheadItem(item.id);
-    await onChanged();
-  }
-  return (
-    <div
-      className={cn(
-        "group flex items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm transition-smooth",
-        busy && "opacity-50",
       )}
-    >
-      <span className="min-w-0 truncate text-zinc-800">{item.label}</span>
-      <span className="flex shrink-0 items-center gap-2">
-        <span className="font-medium tabular-nums text-zinc-900">
-          {usd(item.amountCents)}
-        </span>
-        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-          /{item.cadence === "MONTHLY" ? "mo" : "yr"}
-        </span>
-        <button
-          type="button"
-          onClick={remove}
-          disabled={busy}
-          title="Remove"
-          className="ring-focus rounded-md p-1 text-zinc-300 transition-smooth hover:bg-rose-50 hover:text-rose-600"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </span>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Profit planner — crew % + sales % + overhead → what's left is you  */
-/* ------------------------------------------------------------------ */
-
-function ProfitPlannerCard({
+/**
+ * Compact read-only recap of what's configured on the setup page —
+ * overhead total, crew/sales cut, break-even — with the link over. The
+ * editing itself lives on /dashboard/financials/setup so the overview
+ * stays about this month's numbers.
+ */
+function SetupSummaryCard({
   ov,
   loading,
 }: {
   ov: FinancialsOverview | null;
   loading: boolean;
 }) {
-  const [crewPct, setCrewPct] = useState(0);
-  const [salesPct, setSalesPct] = useState(0);
-  /** What-if monthly revenue, in dollars (string so the field can be
-   *  cleared while typing). Prefilled from this month's finished jobs. */
-  const [revenue, setRevenue] = useState("");
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
-    "idle",
-  );
-  const hydrated = useRef(false);
-  const lastSaved = useRef<{ crew: number; sales: number } | null>(null);
-
-  useEffect(() => {
-    if (!ov || hydrated.current) return;
-    hydrated.current = true;
-    setCrewPct(ov.settings.crewPct);
-    setSalesPct(ov.settings.salesPct);
-    lastSaved.current = {
-      crew: ov.settings.crewPct,
-      sales: ov.settings.salesPct,
-    };
-    if (ov.revenueMtdCents > 0)
-      setRevenue(String(Math.round(ov.revenueMtdCents / 100)));
-  }, [ov]);
-
-  // Debounced autosave — the sliders feel live, the DB writes settle.
-  useEffect(() => {
-    if (!hydrated.current || !lastSaved.current) return;
-    if (
-      lastSaved.current.crew === crewPct &&
-      lastSaved.current.sales === salesPct
-    )
-      return;
-    const t = setTimeout(async () => {
-      setSaveState("saving");
-      const r = await saveFinancialSettings({ crewPct, salesPct });
-      if (r.ok) {
-        lastSaved.current = { crew: crewPct, sales: salesPct };
-        setSaveState("saved");
-      } else {
-        setSaveState("idle");
-      }
-    }, 600);
-    return () => clearTimeout(t);
-  }, [crewPct, salesPct]);
-
   if (loading || !ov) {
     return (
       <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
-        <div className="skeleton h-3 w-24" />
-        <div className="skeleton mt-3 h-32 w-full rounded-xl" />
+        <div className="skeleton h-3 w-28" />
+        <div className="skeleton mt-3 h-16 w-full rounded-xl" />
       </div>
     );
   }
 
-  const revenueCents = Math.max(
-    0,
-    Math.round((parseFloat(revenue) || 0) * 100),
-  );
+  const configured =
+    ov.overhead.length > 0 ||
+    ov.settings.crewPct > 0 ||
+    ov.settings.salesPct > 0;
   const plan = profitPlan({
-    revenueCents,
+    revenueCents: ov.revenueMtdCents,
     monthlyOverheadCents: ov.monthlyOverheadCents,
-    crewPct,
-    salesPct,
+    crewPct: ov.settings.crewPct,
+    salesPct: ov.settings.salesPct,
   });
-
-  // Bar segments as fractions of revenue. When costs outrun revenue the
-  // segments are normalized so the bar stays full instead of overflowing.
-  const costs = plan.crewCents + plan.salesCents + plan.overheadCents;
-  const scale =
-    revenueCents > 0 && costs > revenueCents ? revenueCents / costs : 1;
-  const frac = (cents: number) =>
-    revenueCents > 0 ? (cents * scale) / revenueCents : 0;
-  const segments = [
-    { key: "crew", cents: plan.crewCents, className: "bg-accent-600" },
-    { key: "sales", cents: plan.salesCents, className: "bg-violet-500" },
-    { key: "overhead", cents: plan.overheadCents, className: "bg-amber-500" },
-    {
-      key: "profit",
-      cents: Math.max(0, plan.profitCents),
-      className: "bg-emerald-500",
-    },
-  ];
 
   return (
     <div className="rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card">
-      <div className="flex items-center justify-between">
-        <div className="microlabel flex items-center gap-1.5">
-          <PieChart className="h-3.5 w-3.5 text-accent-600" />
-          Profit planner
-        </div>
-        <span className="text-[11px] text-zinc-400">
-          {saveState === "saving" ? (
-            <span className="inline-flex items-center gap-1">
-              <Loader2 className="h-3 w-3 animate-spin" /> Saving…
-            </span>
-          ) : saveState === "saved" ? (
-            <span className="inline-flex items-center gap-1 text-emerald-600">
-              <Check className="h-3 w-3" /> Saved
-            </span>
-          ) : null}
-        </span>
+      <div className="microlabel flex items-center gap-1.5">
+        <SlidersHorizontal className="h-3.5 w-3.5 text-accent-600" />
+        Overhead & profit setup
       </div>
-      <p className="mt-1 text-xs text-zinc-500">
-        Split every revenue dollar — the crew and your salesperson get their
-        cut, the bills get paid, the rest is yours. Slide to adjust; it all
-        recalculates live.
-      </p>
 
-      {/* What-if monthly revenue */}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-zinc-700">
-          Monthly revenue
-        </span>
-        <div className="relative">
-          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
-            $
-          </span>
-          <input
-            value={revenue}
-            onChange={(e) => setRevenue(e.target.value)}
-            inputMode="decimal"
-            placeholder="20000"
-            className="input h-9 w-28 pl-6 text-right text-sm tabular-nums"
-          />
-        </div>
-      </div>
-      {ov.revenueMtdCents > 0 && (
-        <p className="mt-1 text-right text-[11px] text-zinc-400">
-          Prefilled from jobs finished this month — type any number to plan.
-        </p>
+      {configured ? (
+        <>
+          <div className="mt-3 space-y-2 text-xs">
+            <div className="flex items-baseline justify-between">
+              <span className="text-zinc-500">
+                Overhead · {ov.overhead.length}{" "}
+                {ov.overhead.length === 1 ? "cost" : "costs"}
+              </span>
+              <span className="font-medium tabular-nums text-zinc-900">
+                {usd(ov.monthlyOverheadCents)}/mo
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-zinc-500">Crew pay</span>
+              <span className="font-medium tabular-nums text-zinc-900">
+                {Math.round(ov.settings.crewPct)}% of revenue
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-zinc-500">Sales commission</span>
+              <span className="font-medium tabular-nums text-zinc-900">
+                {Math.round(ov.settings.salesPct)}% of revenue
+              </span>
+            </div>
+            {plan.breakEvenRevenueCents !== null &&
+              plan.breakEvenRevenueCents > 0 && (
+                <div className="flex items-baseline justify-between border-t border-zinc-100 pt-2">
+                  <span className="text-zinc-500">Break-even revenue</span>
+                  <span className="font-semibold tabular-nums text-zinc-900">
+                    {usd(plan.breakEvenRevenueCents)}/mo
+                  </span>
+                </div>
+              )}
+          </div>
+          <Link
+            href="/dashboard/financials/setup"
+            className="ring-focus mt-3 inline-flex items-center gap-1 rounded-md text-xs font-medium text-accent-700 transition-smooth hover:text-accent-900"
+          >
+            Adjust overhead & percentages →
+          </Link>
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-xs text-zinc-500">
+            Add your recurring bills and set the crew / sales cut so the
+            coverage meter and profit planner reflect your real business.
+          </p>
+          <Link
+            href="/dashboard/financials/setup"
+            className="ring-focus active:scale-[0.98] mt-3 inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-3 py-2 text-xs font-semibold text-white shadow-card transition-smooth hover:bg-accent-500"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Set it up
+          </Link>
+        </>
       )}
-
-      {/* Split bar */}
-      <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-zinc-100">
-        {revenueCents > 0 &&
-          segments.map(
-            (s) =>
-              s.cents > 0 && (
-                <div
-                  key={s.key}
-                  className={cn("h-full transition-smooth", s.className)}
-                  style={{ width: `${frac(s.cents) * 100}%` }}
-                />
-              ),
-          )}
-      </div>
-
-      {/* Sliders + legend */}
-      <div className="mt-4 space-y-4">
-        <PctSliderRow
-          label="Crew pay"
-          dotClass="bg-accent-600"
-          pct={crewPct}
-          onPct={setCrewPct}
-          amountCents={plan.crewCents}
-          hint="Typical install crews run 25–35% of the job."
-        />
-        <PctSliderRow
-          label="Sales commission"
-          dotClass="bg-violet-500"
-          pct={salesPct}
-          onPct={setSalesPct}
-          amountCents={plan.salesCents}
-          hint="Selling it yourself? Leave this at 0."
-        />
-        <div className="flex items-center justify-between text-xs">
-          <span className="inline-flex items-center gap-1.5 font-medium text-zinc-700">
-            <span className="h-2 w-2 rounded-full bg-amber-500" />
-            Overhead (from your list above)
-          </span>
-          <span className="font-medium tabular-nums text-zinc-900">
-            {usd(plan.overheadCents)}
-          </span>
-        </div>
-      </div>
-
-      {/* The bottom line */}
-      <div
-        className={cn(
-          "mt-4 flex items-baseline justify-between rounded-xl border px-3 py-2.5",
-          plan.profitCents >= 0
-            ? "border-emerald-200 bg-emerald-50/60"
-            : "border-rose-200 bg-rose-50/60",
-        )}
-      >
-        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-700">
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full",
-              plan.profitCents >= 0 ? "bg-emerald-500" : "bg-rose-500",
-            )}
-          />
-          Your profit
-        </span>
-        <span
-          className={cn(
-            "text-sm font-semibold tabular-nums",
-            plan.profitCents >= 0 ? "text-emerald-700" : "text-rose-600",
-          )}
-        >
-          {usd(plan.profitCents)}
-          {revenueCents > 0 && (
-            <span className="ml-1.5 text-[11px] font-medium text-zinc-400">
-              {Math.round(plan.profitPct * 100)}% of revenue
-            </span>
-          )}
-        </span>
-      </div>
-
-      {plan.breakEvenRevenueCents === null ? (
-        <p className="mt-2 text-[11px] font-medium text-rose-600">
-          Crew + sales take every dollar — nothing is left for overhead or
-          profit at these percentages.
-        </p>
-      ) : plan.breakEvenRevenueCents > 0 ? (
-        <p className="mt-2 text-[11px] text-zinc-400">
-          Break-even:{" "}
-          <span className="font-medium tabular-nums text-zinc-600">
-            {usd(plan.breakEvenRevenueCents)}
-          </span>{" "}
-          of revenue a month covers crew, sales, and every bill.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function PctSliderRow({
-  label,
-  dotClass,
-  pct,
-  onPct,
-  amountCents,
-  hint,
-}: {
-  label: string;
-  dotClass: string;
-  pct: number;
-  onPct: (next: number) => void;
-  amountCents: number;
-  hint?: string;
-}) {
-  const clamp = (v: number) =>
-    Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
-  return (
-    <div>
-      <div className="flex items-center justify-between text-xs">
-        <span className="inline-flex items-center gap-1.5 font-medium text-zinc-700">
-          <span className={cn("h-2 w-2 rounded-full", dotClass)} />
-          {label}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(pct * 10) / 10}
-            onChange={(e) => onPct(clamp(parseFloat(e.target.value)))}
-            aria-label={`${label} percentage`}
-            className="input h-7 w-14 text-right text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-          />
-          <span className="text-zinc-400">%</span>
-          <span className="w-16 text-right font-medium tabular-nums text-zinc-900">
-            {usd(amountCents)}
-          </span>
-        </span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={pct}
-        onChange={(e) => onPct(clamp(parseFloat(e.target.value)))}
-        aria-label={`${label} percentage slider`}
-        className="mt-1.5 w-full accent-accent-600"
-      />
-      {hint && <p className="text-[11px] text-zinc-400">{hint}</p>}
     </div>
   );
 }
