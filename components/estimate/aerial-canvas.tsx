@@ -1381,33 +1381,11 @@ export function AerialCanvas({
           />
         )}
 
-        {/* Magnetic roof-edge guide — visible while drawing so the
-            contractor sees the line their clicks will snap to and the
-            path a two-click trace will follow. */}
-        {magnetPath && magnetPath.length > 8 && (tool === "add-eave" || tool === "add-gable") && (() => {
-          const ringN = Math.min(magnetRingCount ?? magnetPath.length, magnetPath.length);
-          const ring = magnetPath.slice(0, ringN);
-          const interior = magnetPath.slice(ringN);
-          const guideC = theme === "tactical" ? "rgba(103,232,249,0.5)" : "rgba(14,116,144,0.45)";
-          return (
-            <g pointerEvents="none">
-              <path
-                d={`M ${ring[0].x} ${ring[0].y} ` +
-                  ring.slice(1).map((p) => `L ${p.x} ${p.y}`).join(" ") +
-                  " Z"}
-                fill="none"
-                stroke={guideC}
-                strokeWidth={1.4 * renderScale}
-                strokeDasharray={`${3 * renderScale} ${4 * renderScale}`}
-              />
-              {/* Interior tier snap targets — dots, not a connected path
-                  (multiple rings are concatenated without separators). */}
-              {interior.filter((_, i) => i % 3 === 0).map((p, i) => (
-                <circle key={`mg-${i}`} cx={p.x} cy={p.y} r={1.1 * renderScale} fill={guideC} />
-              ))}
-            </g>
-          );
-        })()}
+        {/* The magnetic roof-edge guide (dashed snap ring + interior tier
+            snap dots) used to render here while drawing. Owner call: the
+            dashes/dots read as random clutter on the photo, so the guide
+            is invisible — clicks still snap to magnetPath exactly as
+            before, the snap line just isn't drawn. */}
 
         {roofStructure && showRoofStructure && (
           <RoofStructureOverlay
