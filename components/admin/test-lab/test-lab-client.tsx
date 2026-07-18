@@ -522,6 +522,10 @@ export function TestLabClient({
     headline: string;
     items: { title: string; detail: string }[];
   } | null>(null);
+  // Address of the run just finalized — drives the post-finalize banner
+  // shown above the library once the editor closes.
+  const [finalizedAddress, setFinalizedAddress] = useState<string | null>(null);
+  const libraryRef = useRef<HTMLDivElement>(null);
 
   const [busyRun, setBusyRun] = useState<string | null>(null);
   const [retesting, setRetesting] = useState(false);
@@ -570,6 +574,7 @@ export function TestLabClient({
     setRunning(true);
     setError(null);
     setFeedback(null);
+    setFinalizedAddress(null);
     try {
       const res = await runLabEstimate(address.trim());
       if (!res.ok) {
@@ -601,9 +606,17 @@ export function TestLabClient({
         tags: tagList,
       });
       if (res.ok) {
+        // Done teaching this roof — drop back to the library instead of
+        // leaving the admin stranded in the zoomed-in editor. The finalize
+        // feedback survives as a dismissible banner above the run list.
         setFeedback(res.feedback as typeof feedback);
-        setActive({ ...active, status: res.status, corrected: { eaves, rakes, downspouts } });
+        setFinalizedAddress(active.address);
+        setActive(null);
         await refreshList();
+        // Let React commit the editor-closed layout before scrolling.
+        setTimeout(() => {
+          libraryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
       } else {
         setError(res.error);
       }
@@ -618,6 +631,7 @@ export function TestLabClient({
       const res = await getLabRun(id);
       if (res.ok) {
         setFeedback(null);
+        setFinalizedAddress(null);
         openEditor(res.run);
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
@@ -987,6 +1001,33 @@ export function TestLabClient({
               </div>
             )
           )}
+        </div>
+      )}
+
+      {/* Post-finalize confirmation — the editor is closed by now; this
+          keeps the coaching feedback readable without re-opening it. */}
+      {!active && finalizedAddress && (
+        <div ref={libraryRef} className="surface anim-enter scroll-mt-4 space-y-3 p-4">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <div className="text-sm font-semibold text-zinc-900">
+                Ground truth saved — {finalizedAddress}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setFinalizedAddress(null);
+                setFeedback(null);
+              }}
+              className="transition-smooth ring-focus press-scale rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:text-zinc-900"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {feedback && <FeedbackPanel feedback={feedback} />}
         </div>
       )}
 
