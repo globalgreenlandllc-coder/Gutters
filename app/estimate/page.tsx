@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, ArrowLeft, ArrowRight, RotateCw, Ruler } from "lucide-react";
 import { AuthGate } from "@/components/auth/auth-gate";
@@ -9,10 +9,7 @@ import { LoadingState } from "@/components/estimate/loading-state";
 import { ResultsView } from "@/components/estimate/results-view";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
-import { runEstimate, runEstimateFromPlan } from "@/app/actions/estimate";
-import type { EstimateResult } from "@/lib/ai";
-
-const MIN_LOADING_MS = 2400;
+import { takeoffJobKey, useEstimateJob } from "@/components/estimate/estimate-job";
 
 function EstimateContent() {
   const router = useRouter();
@@ -34,11 +31,12 @@ function EstimateContent() {
   const jobTypeParam = params.get("jobType");
   const jobType: "new" | "replacement" =
     jobTypeParam === "new" ? "new" : "replacement";
-  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
-  const [result, setResult] = useState<EstimateResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reused, setReused] = useState(false);
-  const [tick, setTick] = useState(0);
+
+  // The run/poll/watchdog machinery lives in EstimateJobProvider (root
+  // layout) so the analysis survives navigation — the contractor can
+  // minimize this screen and keep working while the floating
+  // mini-window tracks progress, then gets bounced back here on ready.
+  const { job, startJob } = useEstimateJob();
 
   // Bare /estimate (sidebar "Gutter estimator", old bookmarks): hand
   // off to the start page, which collects an address before anything
@@ -49,86 +47,26 @@ function EstimateContent() {
 
   useEffect(() => {
     // Nothing to run without a plan or an address — the redirect effect
-    // above takes over. Bail before arming the watchdog or calling the
-    // (credit-consuming) pipeline.
+    // above takes over. startJob is idempotent, so returning to a page
+    // whose job is already running (or done) just re-attaches.
     if (missingParams) return;
+    startJob({ planId, address, jobType });
+  }, [planId, address, jobType, missingParams, startJob]);
 
-    setPhase("loading");
-    setError(null);
-    setResult(null);
-
-    let cancelled = false;
-    const startedAt = Date.now();
-
-    // Client-side watchdog. Address mode finishes in 25-50s typically
-    // — 95s is the bail-out. Plan mode runs Claude vision on a 12 MB
-    // PDF which can take 60-120s; bump the watchdog to 240s (just
-    // under the 300s maxDuration on the route). Polling re-runs reset
-    // the timer because the effect re-mounts on every tick.
-    const WATCHDOG_MS = planId ? 240_000 : 95_000;
-    const watchdog = setTimeout(() => {
-      if (cancelled) return;
-      cancelled = true;
-      setError(
-        "The estimate is taking longer than usual to come back. An upstream service " +
-          "(Solar API, satellite imagery, or AI vision) may be slow right now. Try again.",
-      );
-      setPhase("error");
-    }, WATCHDOG_MS);
-
-    // address is guaranteed non-null when planId is absent — the
-    // missingParams guard above already returned otherwise.
-    const run = planId
-      ? runEstimateFromPlan(planId)
-      : runEstimate(address!);
-
-    run
-      .then(async (r) => {
-        if (cancelled) return;
-        clearTimeout(watchdog);
-        const elapsed = Date.now() - startedAt;
-        if (elapsed < MIN_LOADING_MS) {
-          await new Promise((res) => setTimeout(res, MIN_LOADING_MS - elapsed));
-        }
-        if (cancelled) return;
-        if (r.ok) {
-          setResult(r.result);
-          setReused(r.reused);
-          setPhase("ready");
-        } else if ("pending" in r && r.pending) {
-          // QUEUED — analysis still running in the after() callback.
-          // Stay in loading phase, bump tick after 3s so the effect
-          // re-runs and re-polls. Watchdog (95s above) is the upper
-          // bound — if it's still pending past that the user sees a
-          // real timeout error.
-          setTimeout(() => {
-            if (!cancelled) setTick((t) => t + 1);
-          }, 3000);
-        } else {
-          setError(r.reason);
-          setPhase("error");
-        }
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        clearTimeout(watchdog);
-        // Server action threw rather than returning {ok:false}. Without
-        // this catch the rejection bubbles to the route's error.tsx as
-        // a generic "Server Components render" 500 with no useful UI.
-        console.error("[/estimate] server action threw", e);
-        const msg =
-          e instanceof Error && e.message
-            ? e.message
-            : "The estimate service is temporarily unavailable. Try again in a few seconds.";
-        setError(msg);
-        setPhase("error");
-      });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(watchdog);
-    };
-  }, [planId, address, missingParams, tick]);
+  // Only trust the provider's job if it's OURS — a stale job for a
+  // different plan/address (e.g. mid-swap render) must not leak its
+  // result into this page.
+  const key = takeoffJobKey({ planId, address, jobType });
+  const active = job && key && job.key === key ? job : null;
+  const phase: "loading" | "ready" | "error" =
+    active?.phase === "ready"
+      ? "ready"
+      : active?.phase === "error"
+        ? "error"
+        : "loading";
+  const result = active?.result ?? null;
+  const error = active?.error ?? null;
+  const reused = active?.reused ?? false;
 
   // In plan mode the "address" label is the filename — surfaced by the
   // server action's geocoded.formatted. Until the result lands we show
@@ -152,7 +90,12 @@ function EstimateContent() {
 
   if (phase === "loading") {
     return (
-      <LoadingState address={headerLabel} mode={planId ? "plan" : "aerial"} />
+      <LoadingState
+        address={headerLabel}
+        mode={planId ? "plan" : "aerial"}
+        startedAt={active?.startedAt}
+        onMinimize={() => router.push("/dashboard")}
+      />
     );
   }
   if (phase === "error") {
@@ -160,7 +103,7 @@ function EstimateContent() {
       <ErrorScreen
         address={headerLabel}
         reason={error ?? "Unknown error"}
-        onRetry={() => setTick((t) => t + 1)}
+        onRetry={() => startJob({ planId, address, jobType }, { force: true })}
       />
     );
   }

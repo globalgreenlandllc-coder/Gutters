@@ -1,89 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Check, Loader2, MapPin } from "lucide-react";
+import { Check, Loader2, MapPin, PictureInPicture2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { DUR, EASE } from "@/lib/motion";
-
-const AERIAL_STEPS = [
-  { id: "geocode", label: "Geocoding property" },
-  { id: "aerial", label: "Fetching aerial imagery" },
-  { id: "segment", label: "Analyzing roof edges" },
-  { id: "measure", label: "Calculating linear feet" },
-  { id: "downspouts", label: "Placing downspouts" },
-  { id: "price", label: "Building takeoff" },
-];
-
-// Plan-mode runs a different pipeline: classifier (Haiku) catalogs
-// every sheet, picks the roof plan + harvests elevation eave counts,
-// then geometry (Sonnet) traces the identified page constrained by
-// those counts. Steps mirror that order so the contractor doesn't see
-// "Fetching aerial imagery" while staring at their uploaded PDF.
-const PLAN_STEPS = [
-  { id: "read", label: "Reading plan PDF" },
-  { id: "classify", label: "Cataloging sheets" },
-  { id: "elevations", label: "Counting eaves on elevations" },
-  { id: "roof", label: "Tracing the roof plan" },
-  { id: "downspouts", label: "Placing downspouts" },
-  { id: "price", label: "Building takeoff" },
-];
+import { useTakeoffProgress } from "@/components/estimate/takeoff-progress";
 
 export function LoadingState({
   address,
   mode = "aerial",
+  startedAt,
+  onMinimize,
 }: {
   address: string;
   mode?: "aerial" | "plan";
+  /** Wall-clock start of the underlying job. Passing it keeps the
+   *  percentage continuous when this screen unmounts/remounts (e.g.
+   *  minimize → mini-window → back). Defaults to first render. */
+  startedAt?: number;
+  /** When provided, shows the "keep working" affordance that shrinks
+   *  this screen into the floating mini-window. */
+  onMinimize?: () => void;
 }) {
-  const steps = mode === "plan" ? PLAN_STEPS : AERIAL_STEPS;
   const reduce = useReducedMotion();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [elapsedSec, setElapsedSec] = useState(0);
-
-  // Plan-mode work takes 30-90s in practice. Pace the cascade so the
-  // first 5 steps finish in ~25s, then the final "Building takeoff"
-  // sits with the elapsed counter doing the talking until the
-  // Sonnet geometry call returns.
-  const dwellMs = mode === "plan" ? 5000 : 420;
-
-  useEffect(() => {
-    if (stepIndex >= steps.length - 1) return;
-    const t = setTimeout(() => setStepIndex((i) => i + 1), dwellMs);
-    return () => clearTimeout(t);
-  }, [stepIndex, steps.length, dwellMs]);
-
-  // Wall-clock counter — replaces the user's "is it stuck?" question
-  // with a concrete signal. Only ticks while we're loading.
-  useEffect(() => {
-    const t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  const onLastStep = stepIndex >= steps.length - 1;
-
-  // Record the wall-clock second the final step began, so the percentage
-  // can creep against real elapsed time (not the fake step cascade).
-  const [finalStartSec, setFinalStartSec] = useState<number | null>(null);
-  useEffect(() => {
-    if (onLastStep && finalStartSec === null) setFinalStartSec(elapsedSec);
-  }, [onLastStep, elapsedSec, finalStartSec]);
-
-  // ONE monotonic percent that never freezes. The step cascade fills to
-  // 88%; the long final step then creeps 88 → ~99 asymptotically (quick
-  // at first, always advancing, never quite 100 until the real result
-  // swaps this screen out). The old bar hit a full 100% on the final
-  // step and sat there — exactly the "is it frozen?" read this removes.
-  const CASCADE_CAP = 88;
-  const nonFinal = Math.max(1, steps.length - 1);
-  const finalElapsed =
-    finalStartSec === null ? 0 : Math.max(0, elapsedSec - finalStartSec);
-  const tau = mode === "plan" ? 28 : 8;
-  const pct = onLastStep
-    ? Math.min(99, CASCADE_CAP + (99 - CASCADE_CAP) * (1 - Math.exp(-finalElapsed / tau)))
-    : Math.min(CASCADE_CAP, ((stepIndex + 1) / nonFinal) * CASCADE_CAP);
-  const pctInt = Math.round(pct);
-  const progress = pct / 100;
+  const [fallbackStart] = useState(() => Date.now());
+  // Progress is a pure function of wall-clock — shared with the
+  // mini-window so both surfaces show the same number.
+  const { steps, stepIndex, onLastStep, pctInt, progress, elapsedSec } =
+    useTakeoffProgress(mode, startedAt ?? fallbackStart);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
@@ -201,6 +146,21 @@ export function LoadingState({
               );
             })}
           </ul>
+
+          {/* Escape hatch: the analysis runs above routing (estimate-job
+              provider), so the contractor doesn't have to babysit this
+              screen — shrink it to the floating mini-window and keep
+              working. It pops back to full screen when the takeoff lands. */}
+          {onMinimize && (
+            <button
+              onClick={onMinimize}
+              className="transition-smooth ring-focus press-scale mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-[13px] font-medium text-zinc-700 hover:border-accent-300 hover:text-accent-800"
+            >
+              <PictureInPicture2 className="h-4 w-4 text-accent-600" />
+              Minimize &amp; keep working — we&rsquo;ll bring you back when
+              it&rsquo;s ready
+            </button>
+          )}
         </div>
 
         <p className="mt-4 text-center text-xs text-zinc-500">

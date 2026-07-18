@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Archivo_Black, Space_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { SessionProvider } from "@/components/auth/session-provider";
+import { EstimateJobProvider } from "@/components/estimate/estimate-job";
 import { Tracker } from "@/components/analytics/tracker";
 import "./globals.css";
 
@@ -55,7 +56,12 @@ export default function RootLayout({
         className={`${inter.variable} ${display.variable} ${mono.variable}`}
       >
         <body className="font-sans antialiased text-zinc-900">
-          <SessionProvider>{children}</SessionProvider>
+          {/* EstimateJobProvider lives above routing so a running
+              takeoff analysis (and its floating mini-window) survives
+              navigation anywhere in the app. */}
+          <SessionProvider>
+            <EstimateJobProvider>{children}</EstimateJobProvider>
+          </SessionProvider>
           <Tracker />
         </body>
       </html>

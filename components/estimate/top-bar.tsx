@@ -21,6 +21,7 @@ import {
   type EstimateHandoff,
 } from "@/lib/estimate-handoff";
 import { saveDraftFromEstimate } from "@/app/actions/proposals";
+import { useEstimateJob } from "@/components/estimate/estimate-job";
 
 type SaveState =
   | { kind: "idle" }
@@ -55,6 +56,7 @@ export function TopBar({
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const [, startTransition] = useTransition();
   const [reanalyzing, setReanalyzing] = useState(false);
+  const { startJob } = useEstimateJob();
 
   const onReanalyze = async () => {
     if (!planId || reanalyzing) return;
@@ -75,8 +77,13 @@ export function TopBar({
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      // Bounce back through the estimate route so the page polls the
-      // QUEUED row and the contractor sees the loading screen.
+      // Force-restart the global job — the provider caches a "ready"
+      // result per planId, and without the force it would short-circuit
+      // straight back to the stale takeoff instead of polling the
+      // QUEUED re-analysis.
+      startJob({ planId, jobType }, { force: true });
+      // Bounce back through the estimate route so the contractor sees
+      // the loading screen while the provider polls the QUEUED row.
       router.push(`/estimate?planId=${planId}&jobType=${jobType}`);
       router.refresh();
     } catch (e) {
@@ -227,7 +234,10 @@ export function TopBar({
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+              {/* Icon-only below sm — three text buttons don't fit a phone. */}
+              <span className="hidden sm:inline">
+                {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+              </span>
             </Button>
           )}
           <Button
@@ -248,15 +258,17 @@ export function TopBar({
             ) : (
               <Save className="h-4 w-4" />
             )}
-            {save.kind === "saving"
-              ? "Saving…"
-              : save.kind === "saved"
-                ? "Saved"
-                : "Save draft"}
+            <span className="hidden sm:inline">
+              {save.kind === "saving"
+                ? "Saving…"
+                : save.kind === "saved"
+                  ? "Saved"
+                  : "Save draft"}
+            </span>
           </Button>
           <Button size="sm" onClick={handoffAndGo}>
             <Send className="h-4 w-4" />
-            Send proposal
+            <span className="hidden sm:inline">Send proposal</span>
           </Button>
         </div>
       </div>
