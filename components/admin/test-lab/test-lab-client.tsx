@@ -29,14 +29,17 @@ import { LAB_TAGS, type LabTag, type LabTagId } from "@/lib/test-lab/feedback";
 import {
   deleteLabRun,
   finalizeLabRun,
+  getLabInsights,
   getLabRun,
   listLabRuns,
   retestLabRun,
   runLabEstimate,
   type LabAggregate,
+  type LabInsights,
   type LabRunDetail,
   type LabRunSummary,
 } from "@/app/actions/test-lab";
+import type { CategoryTrendRow, DailyTrendPoint } from "@/lib/test-lab/trends";
 
 /* ------------------------------------------------------------------ */
 /* Small UI atoms                                                      */
@@ -270,6 +273,214 @@ function FeedbackPanel({
 }
 
 /* ------------------------------------------------------------------ */
+/* Accuracy trend — single-series line, honest 0–100 axis, hover tips  */
+/* ------------------------------------------------------------------ */
+
+function TrendCard({ trend }: { trend: DailyTrendPoint[] }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const W = 600;
+  const H = 170;
+  const PAD = { l: 34, r: 14, t: 14, b: 24 };
+  const iw = W - PAD.l - PAD.r;
+  const ih = H - PAD.t - PAD.b;
+  const x = (i: number) =>
+    PAD.l + (trend.length <= 1 ? iw / 2 : (i / (trend.length - 1)) * iw);
+  const y = (pct: number) => PAD.t + (1 - pct / 100) * ih;
+  const path = trend.map((p, i) => `${i ? "L" : "M"} ${x(i)} ${y(p.avgScorePct)}`).join(" ");
+  const hovered = hover != null ? trend[hover] : null;
+
+  return (
+    <div className="surface p-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-zinc-900">Engine accuracy over time</h2>
+        <span className="text-xs text-zinc-400">avg re-test score per day</span>
+      </div>
+      {trend.length === 0 ? (
+        <div className="flex h-[150px] items-center justify-center text-sm text-zinc-400">
+          No re-tests yet — finalize runs, then hit Re-test all. Each batch adds a point here.
+        </div>
+      ) : (
+        <div className="relative mt-2">
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-accent-700" role="img"
+            aria-label="Line chart of average engine accuracy percentage per re-test day">
+            {[0, 25, 50, 75, 100].map((tick) => (
+              <g key={tick}>
+                <line x1={PAD.l} x2={W - PAD.r} y1={y(tick)} y2={y(tick)}
+                  stroke="#e4e4e7" strokeWidth={tick === 0 ? 1.2 : 0.7} />
+                <text x={PAD.l - 6} y={y(tick) + 3.5} textAnchor="end" fontSize={10} fill="#a1a1aa">
+                  {tick}
+                </text>
+              </g>
+            ))}
+            <path d={path} fill="none" stroke="currentColor" strokeWidth={2}
+              strokeLinecap="round" strokeLinejoin="round" />
+            {trend.map((p, i) => (
+              <g key={p.day}>
+                <circle cx={x(i)} cy={y(p.avgScorePct)} r={hover === i ? 5 : 3.5}
+                  fill="#fff" stroke="currentColor" strokeWidth={2} />
+                {/* invisible ≥16px hit target per point */}
+                <rect x={x(i) - 12} y={PAD.t} width={24} height={ih + PAD.b}
+                  fill="transparent"
+                  onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
+                {(i === trend.length - 1 || trend.length <= 6) && (
+                  <text x={x(i)} y={y(p.avgScorePct) - 9} textAnchor="middle"
+                    fontSize={11} fontWeight={600} fill="#3f3f46">
+                    {p.avgScorePct}%
+                  </text>
+                )}
+                {(trend.length <= 8 || i === 0 || i === trend.length - 1) && (
+                  <text x={x(i)} y={H - 8} textAnchor="middle" fontSize={9.5} fill="#a1a1aa">
+                    {p.day.slice(5)}
+                  </text>
+                )}
+              </g>
+            ))}
+          </svg>
+          {hovered && hover != null && (
+            <div
+              className="pointer-events-none absolute z-10 -translate-x-1/2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs shadow-elevated"
+              style={{ left: `${(x(hover) / W) * 100}%`, top: 0 }}
+            >
+              <div className="font-semibold text-zinc-800">{hovered.day}</div>
+              <div className="text-zinc-600">
+                {hovered.avgScorePct}% avg · {hovered.n} roof{hovered.n === 1 ? "" : "s"} ·{" "}
+                {Math.round(hovered.cleanRate * 100)}% clean
+              </div>
+              {hovered.versions.length > 0 && (
+                <div className="text-zinc-400">engine {hovered.versions.join(", ")}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Failure-category trend table                                        */
+/* ------------------------------------------------------------------ */
+
+const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(
+  LAB_TAGS.map((t) => [t.id, t.label]),
+);
+CATEGORY_LABELS.reclassified = "Eave⇄gable calls";
+CATEGORY_LABELS.downspouts = "Downspouts";
+CATEGORY_LABELS.untagged = "Untagged removals";
+
+function CategoryCard({ categories }: { categories: CategoryTrendRow[] }) {
+  if (categories.length === 0) return null;
+  return (
+    <div className="surface p-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-zinc-900">Failure categories</h2>
+        <span className="text-xs text-zinc-400">
+          corrections per run — recent {categories[0]?.recentRuns ?? 0} runs vs the{" "}
+          {categories[0]?.priorRuns ?? 0} before
+        </span>
+      </div>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs font-medium uppercase tracking-wide text-zinc-400">
+              <th className="py-1.5 pr-3">Cause</th>
+              <th className="py-1.5 pr-3">Before</th>
+              <th className="py-1.5 pr-3">Recent</th>
+              <th className="py-1.5">Trend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {categories.map((c) => (
+              <tr key={c.category} className="border-t border-zinc-100">
+                <td className="py-1.5 pr-3 font-medium text-zinc-800">
+                  {CATEGORY_LABELS[c.category] ?? c.category}
+                </td>
+                <td className="py-1.5 pr-3 tabular-nums text-zinc-600">
+                  {c.priorRuns > 0 ? `${c.priorCount} in ${c.priorRuns}` : "—"}
+                </td>
+                <td className="py-1.5 pr-3 tabular-nums text-zinc-600">
+                  {c.recentCount} in {c.recentRuns}
+                </td>
+                <td className="py-1.5">
+                  {c.trend === "improving" && (
+                    <span className="text-xs font-semibold text-emerald-600">▼ improving</span>
+                  )}
+                  {c.trend === "worsening" && (
+                    <span className="text-xs font-semibold text-rose-600">▲ worsening</span>
+                  )}
+                  {c.trend === "flat" && <span className="text-xs text-zinc-400">— flat</span>}
+                  {c.trend === "new" && <span className="text-xs text-zinc-400">new</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Length-bias radar — signal that directs engine fixes, never a knob  */
+/* ------------------------------------------------------------------ */
+
+function CalibrationCard({ calibration }: { calibration: LabInsights["calibration"] }) {
+  const c = calibration.computed;
+  return (
+    <div className="surface flex flex-col p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-zinc-900">Length-bias radar</h2>
+        {c?.actionable && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+            bias detected
+          </span>
+        )}
+      </div>
+      {!c || c.sampleCount === 0 ? (
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500">
+          Computed automatically from your corrections: the median difference between what the
+          engine drew and what you finalized. Finalize runs and it shows up here.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-1.5 text-sm text-zinc-700">
+          <div>
+            Median length bias:{" "}
+            <strong className="tabular-nums">
+              {c.medianLfDeltaFt > 0 ? "+" : ""}
+              {c.medianLfDeltaFt} LF
+            </strong>{" "}
+            <span className="text-zinc-400">across {c.sampleCount} finalized runs</span>
+          </div>
+          {c.actionable ? (
+            <div className="text-amber-700">
+              A consistent {c.medianLfDeltaFt > 0 ? "under" : "over"}-draw this size deserves a
+              targeted engine fix — the corrected runs above are its test set.
+            </div>
+          ) : (
+            <div className="text-zinc-500">
+              {c.sampleCount < 5
+                ? `Needs ${5 - c.sampleCount} more finalized run${5 - c.sampleCount === 1 ? "" : "s"} for a reliable read.`
+                : "No consistent bias — the engine's lengths look unbiased."}
+            </div>
+          )}
+          {c.excludedCount > 0 && (
+            <div className="text-xs text-zinc-400">
+              {c.excludedCount} structural outlier{c.excludedCount === 1 ? "" : "s"} excluded
+              (phantom-structure scale, not length bias).
+            </div>
+          )}
+        </div>
+      )}
+      <p className="mt-auto pt-3 text-xs leading-relaxed text-zinc-400">
+        Deliberately never auto-applied: probing showed gutter-line offsets can flip edge
+        classifications (+13% LF cliffs), so bias corrections ship as verified engine fixes
+        instead of a silent knob.
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* The lab                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -286,12 +497,15 @@ type RetestRow = {
 export function TestLabClient({
   initialRuns,
   initialAggregate,
+  initialInsights,
 }: {
   initialRuns: LabRunSummary[];
   initialAggregate: LabAggregate;
+  initialInsights: LabInsights;
 }) {
   const [runs, setRuns] = useState(initialRuns);
   const [aggregate, setAggregate] = useState(initialAggregate);
+  const [insights, setInsights] = useState(initialInsights);
 
   const [address, setAddress] = useState("");
   const [running, setRunning] = useState(false);
@@ -331,10 +545,12 @@ export function TestLabClient({
   };
 
   const refreshList = async () => {
-    const data = await listLabRuns();
+    const [data, ins] = await Promise.all([listLabRuns(), getLabInsights()]);
     setRuns(data.runs);
     setAggregate(data.aggregate);
+    setInsights(ins);
   };
+
 
   const liveDiff = useMemo<LabDiff | null>(() => {
     if (!active) return null;
@@ -526,6 +742,13 @@ export function TestLabClient({
           </div>
         ))}
       </div>
+
+      {/* Insights: trend + calibration side by side, categories below */}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)]">
+        <TrendCard trend={insights.trend} />
+        <CalibrationCard calibration={insights.calibration} />
+      </div>
+      <CategoryCard categories={insights.categories} />
 
       {/* New run */}
       <div className="surface p-4">

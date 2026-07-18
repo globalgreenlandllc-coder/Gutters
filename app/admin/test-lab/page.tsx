@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
-import { listLabRuns } from "@/app/actions/test-lab";
+import { getLabInsights, listLabRuns } from "@/app/actions/test-lab";
 import { TestLabClient } from "@/components/admin/test-lab/test-lab-client";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,10 @@ export default async function TestLabPage({
 }) {
   const { view } = await searchParams;
   const standalone = view === "standalone";
-  const { runs, aggregate } = await listLabRuns();
+  const [{ runs, aggregate }, insights] = await Promise.all([
+    listLabRuns(),
+    getLabInsights(),
+  ]);
 
   if (standalone) {
     // Pop-out for a big screen: covers the admin shell entirely.
@@ -36,7 +39,11 @@ export default async function TestLabPage({
               <ArrowLeft className="h-4 w-4" /> Back to admin
             </Link>
           </header>
-          <TestLabClient initialRuns={runs} initialAggregate={aggregate} />
+          <TestLabClient
+            initialRuns={runs}
+            initialAggregate={aggregate}
+            initialInsights={insights}
+          />
         </div>
       </div>
     );
@@ -63,7 +70,11 @@ export default async function TestLabPage({
           <ExternalLink className="h-4 w-4" /> Pop out
         </Link>
       </header>
-      <TestLabClient initialRuns={runs} initialAggregate={aggregate} />
+      <TestLabClient
+        initialRuns={runs}
+        initialAggregate={aggregate}
+        initialInsights={insights}
+      />
     </div>
   );
 }

@@ -1206,9 +1206,33 @@ model TestLabRun {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scores TestLabScore[]
 
   @@index([userId, createdAt])
   @@index([status])
   @@map("test_lab_runs")
+}
+
+// Score history — one row per re-test of a lab run, so engine accuracy
+// can be graphed over time / per engine version instead of only keeping
+// the latest number (TestLabRun.lastScoreJson stays the quick-read copy).
+model TestLabScore {
+  id                 String   @id @default(cuid())
+  runId              String
+  scorePct           Int
+  eaveF1             Float
+  eavePrecision      Float
+  eaveRecall         Float
+  lfErrorPct         Float
+  clean              Boolean  @default(false)
+  engineReturnedNull Boolean  @default(false)
+  engineVersion      String?
+  createdAt          DateTime @default(now())
+
+  run TestLabRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@index([createdAt])
+  @@map("test_lab_scores")
 }

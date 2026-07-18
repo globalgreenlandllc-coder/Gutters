@@ -32,6 +32,17 @@ import {
 import { computeLabDiff, type LabGeometry } from "@/lib/test-lab/diff";
 import { buildFeedback, type LabTag } from "@/lib/test-lab/feedback";
 import { scoreAgainstTruth, type LabScore } from "@/lib/test-lab/score";
+import {
+  categoryTrends,
+  dailyScoreTrend,
+  type CategoryTrendRow,
+  type DailyTrendPoint,
+} from "@/lib/test-lab/trends";
+import {
+  readLabCalibrationSetting,
+  recomputeLabCalibration,
+  type LabCalibrationSetting,
+} from "@/lib/test-lab/calibration-store";
 import type { Downspout, EditableLine, Measurements, RoofStructure } from "@/lib/types";
 
 async function requireAdmin() {
@@ -258,6 +269,11 @@ export async function finalizeLabRun(args: {
     },
   });
 
+  // Every finalize refreshes the learned-calibration prior (stored value
+  // only — it never touches scans until the admin enables it). Never
+  // lets a recompute problem fail the finalize.
+  await recomputeLabCalibration();
+
   revalidatePath("/admin/test-lab");
   return { ok: true, status, diff, feedback };
 }
@@ -339,6 +355,22 @@ export async function retestLabRun(
         scoredAt: new Date().toISOString(),
       } as unknown as Prisma.InputJsonValue,
       lastScoredAt: new Date(),
+    },
+  });
+
+  // Score HISTORY row — the trend chart's raw data. lastScoreJson above
+  // stays the quick-read copy for the runs table.
+  await db.testLabScore.create({
+    data: {
+      runId: row.id,
+      scorePct: score.scorePct,
+      eaveF1: score.eaveF1,
+      eavePrecision: score.eavePrecision,
+      eaveRecall: score.eaveRecall,
+      lfErrorPct: score.lfErrorPct,
+      clean: score.clean,
+      engineReturnedNull: score.engineReturnedNull ?? false,
+      engineVersion: engineVersion(),
     },
   });
 
@@ -448,4 +480,60 @@ export async function deleteLabRun(
   await db.testLabRun.deleteMany({ where: { id } });
   revalidatePath("/admin/test-lab");
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* Insights: score trend, failure-category trend, calibration          */
+/* ------------------------------------------------------------------ */
+
+export type LabInsights = {
+  trend: DailyTrendPoint[];
+  categories: CategoryTrendRow[];
+  calibration: LabCalibrationSetting;
+};
+
+export async function getLabInsights(): Promise<LabInsights> {
+  await requireAdmin();
+
+  const [scores, finalized, calibration] = await Promise.all([
+    db.testLabScore.findMany({
+      orderBy: { createdAt: "asc" },
+      take: 1000,
+      select: {
+        scorePct: true,
+        clean: true,
+        engineVersion: true,
+        createdAt: true,
+      },
+    }),
+    db.testLabRun.findMany({
+      where: { status: { in: ["APPROVED", "CORRECTED"] } },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+      select: { createdAt: true, tagsJson: true, diffJson: true },
+    }),
+    readLabCalibrationSetting(),
+  ]);
+
+  const trend = dailyScoreTrend(
+    scores.map((s) => ({
+      scorePct: s.scorePct,
+      clean: s.clean,
+      engineVersion: s.engineVersion,
+      createdAt: s.createdAt.toISOString(),
+    })),
+  );
+
+  const categories = categoryTrends(
+    finalized.map((r) => ({
+      createdAt: r.createdAt.toISOString(),
+      tags: (r.tagsJson as LabTag[] | null) ?? [],
+      diff: (r.diffJson as {
+        changes?: { key: string; action: string; lengthFt?: number }[];
+        downspoutChanges?: { key: string; action: string }[];
+      } | null) ?? null,
+    })),
+  );
+
+  return { trend, categories, calibration };
 }

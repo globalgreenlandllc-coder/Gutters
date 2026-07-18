@@ -142,3 +142,8 @@ if (score.scorePct < 100 || !diff.isClean) {
   process.exit(1);
 }
 console.log("PASS — capture → serialize → replay is bit-faithful");
+
+// NOTE: an auto-applied calibration lever (overhangAdjustM in production)
+// was probed here and REMOVED: on this very roof, +0.02 m changed nothing
+// while +0.04 m flipped two rakes to eaves (+36 LF). The arg survives for
+// research probes only; the lab's length-bias radar is signal-only.

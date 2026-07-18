@@ -129,6 +129,12 @@ export async function runSolarFirstEstimate(args: {
    *  the ORIGINAL run time so imagery that was fresh then doesn't start
    *  failing the 6-year age check as calendar time passes. */
   nowMs?: number;
+  /** RESEARCH-ONLY overhang offset (meters) for accuracy scripts probing
+   *  gutter-line sensitivity. No production caller passes this — probing
+   *  showed LF responds to it as a cliff (edge reclassification), not a
+   *  dial, so it must never be auto-applied to user scans. Clamped hard
+   *  here regardless; 0/absent = shipped geometry, bit-for-bit. */
+  overhangAdjustM?: number;
 }): Promise<SolarFirstResult | null> {
   const { insights, notes } = args;
 
@@ -682,7 +688,20 @@ export async function runSolarFirstEstimate(args: {
   // Overhang: the raw mask traces the WALL line, so gutters hang past
   // it; after drip-edge growth the boundary already IS the gutter line
   // and only a small safety margin remains.
-  const overhangM = dripEdgeGrown ? 0.15 : OVERHANG_M;
+  // Research scripts may nudge the line via overhangAdjustM (see the arg
+  // doc — never set in production). Bounded regardless of caller, floored
+  // so the line can't land inside the wall, and note-logged so any run
+  // that used it says so.
+  const calAdjustM = Math.max(-0.12, Math.min(0.12, args.overhangAdjustM ?? 0));
+  const overhangM = Math.max(
+    0.05,
+    (dripEdgeGrown ? 0.15 : OVERHANG_M) + calAdjustM,
+  );
+  if (calAdjustM !== 0) {
+    notes.push(
+      `Research overhang offset active: gutter line ${calAdjustM > 0 ? "+" : ""}${(calAdjustM * 3.2808).toFixed(2)} ft`,
+    );
+  }
   const ringFull = offsetPolygonOutward(cleaned.points, overhangM / mpp);
 
   notes.push(
@@ -829,6 +848,23 @@ export async function runSolarFirstEstimate(args: {
     x: Math.max(0, Math.min(W, p.x)),
     y: Math.max(0, Math.min(H, p.y)),
   }));
+  if (process.env.SOLAR_DEBUG_DIR) {
+    try {
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(
+        `${process.env.SOLAR_DEBUG_DIR}/rings-debug.json`,
+        JSON.stringify({
+          win: { x: win.x, y: win.y, offX: padded.offX, offY: padded.offY },
+          renderShift,
+          cleaned: cleaned.points,
+          ringCrop: ring,
+          renderRing,
+        }),
+      );
+    } catch {
+      // debug-only
+    }
+  }
   if (refineOut.refined > 0) {
     notes.push(
       `Snapped ${refineOut.refined} wall${refineOut.refined === 1 ? "" : "s"} onto the photo's roof edges and re-squared their corners`,
