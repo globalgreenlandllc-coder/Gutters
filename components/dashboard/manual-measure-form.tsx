@@ -854,6 +854,7 @@ export function ManualMeasureForm() {
           pkg={materialsPkg}
           measurements={measurements}
           discountPct={0}
+          address={address}
           onChange={(next) =>
             setPkgs((prev) =>
               prev.map((p) => (p.id === next.id ? next : p)),

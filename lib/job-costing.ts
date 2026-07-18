@@ -131,6 +131,60 @@ export type OverheadCoverage = {
   surplusCents: number;
 };
 
+export type ProfitPlanInputs = {
+  /** Monthly revenue (ex-tax) the plan runs against, in cents. */
+  revenueCents: number;
+  monthlyOverheadCents: number;
+  /** Share of revenue paid to the crew, 0–100. */
+  crewPct: number;
+  /** Share of revenue paid to the salesperson, 0–100. */
+  salesPct: number;
+};
+
+export type ProfitPlan = {
+  revenueCents: number;
+  crewCents: number;
+  salesCents: number;
+  overheadCents: number;
+  /** What's left for the owner. Can go negative below break-even. */
+  profitCents: number;
+  /** profit / revenue (0 when revenue is 0). */
+  profitPct: number;
+  /** Revenue at which profit hits zero at these percentages; null when
+   *  crew + sales already take 100%+ of every dollar. */
+  breakEvenRevenueCents: number | null;
+};
+
+const clampPct = (pct: number) =>
+  Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
+
+/**
+ * The business-wide split of a month's revenue: crew and sales are paid
+ * as a percentage of every dollar, overhead is fixed, and the remainder
+ * is the owner's profit. Purely a planning view — actual per-job profit
+ * stays on `jobProfit` (real crew pay + real expenses).
+ */
+export function profitPlan(i: ProfitPlanInputs): ProfitPlan {
+  const revenue = Math.max(0, Math.round(i.revenueCents));
+  const overhead = Math.max(0, Math.round(i.monthlyOverheadCents));
+  const crewShare = clampPct(i.crewPct) / 100;
+  const salesShare = clampPct(i.salesPct) / 100;
+  const crewCents = Math.round(revenue * crewShare);
+  const salesCents = Math.round(revenue * salesShare);
+  const profitCents = revenue - crewCents - salesCents - overhead;
+  const variableShare = crewShare + salesShare;
+  return {
+    revenueCents: revenue,
+    crewCents,
+    salesCents,
+    overheadCents: overhead,
+    profitCents,
+    profitPct: revenue > 0 ? profitCents / revenue : 0,
+    breakEvenRevenueCents:
+      variableShare >= 1 ? null : Math.ceil(overhead / (1 - variableShare)),
+  };
+}
+
 export function overheadCoverage(
   overheadCents: number,
   profitCents: number,

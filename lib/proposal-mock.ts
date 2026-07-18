@@ -19,6 +19,30 @@ export type AddOn = {
   included: boolean;
 };
 
+/**
+ * Location-aware market price the AI suggested for one package — what a
+ * job with this spec + footage typically sells for around the property's
+ * address. Contractor-facing only (never rendered in the client portal).
+ * Cached on the package so the builder doesn't re-ask the AI on every
+ * open; `inputKey` fingerprints the inputs so a changed spec or address
+ * surfaces a "refresh" nudge instead of a silently stale number.
+ */
+export type AiPriceQuote = {
+  /** Suggested sticker price (tax-in, dollars) — what gets applied. */
+  recommendedTotal: number;
+  /** Realistic local low / high for the same job. */
+  lowTotal: number;
+  highTotal: number;
+  /** Installed $/LF market rate the suggestion leans on (null if n/a). */
+  perLfInstalled: number | null;
+  /** 2–4 short contractor-facing bullets on how it priced the job. */
+  reasoning: string[];
+  /** The location the AI actually priced against (e.g. "Austin, TX"). */
+  location: string;
+  fetchedAt: string;
+  inputKey: string;
+};
+
 export type Package = {
   id: PackageId;
   name: string;
@@ -28,6 +52,15 @@ export type Package = {
   addOns: AddOn[];
   markupPct: number;
   recommended?: boolean;
+  /** "ai" = the AI market price is applied (markupPct was back-solved to
+   *  land the total on `aiQuote.recommendedTotal`); "manual"/absent = the
+   *  contractor's own pricing. Editing markup or the typed total while in
+   *  "ai" flips back to "manual" — the switch never traps the price. */
+  pricingMode?: "manual" | "ai";
+  /** markupPct stashed when switching to AI so flipping back to "Your
+   *  price" restores exactly what the contractor had. */
+  myMarkupPct?: number;
+  aiQuote?: AiPriceQuote;
   /** Per-line BOM tweaks keyed by the auto line id from `buildLineItems`
    *  (e.g. "gutter", "labor"). Lets the contractor override a quantity or
    *  unit price WITHOUT detaching the bill of materials from the live

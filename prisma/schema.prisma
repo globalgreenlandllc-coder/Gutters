@@ -105,6 +105,7 @@ model User {
   overheadItems     OverheadItem[]
   jobExpenses       JobExpense[]           @relation("ExpenseOwner")
   clientNotes       ClientNote[]
+  financialSettings FinancialSettings?
 
   // Referral program: shareable code (lazily minted on first visit to
   // Settings) + who referred this account (set once at creation from
@@ -1181,6 +1182,23 @@ model OverheadItem {
 
   @@index([userId])
   @@map("overhead_items")
+}
+
+// Business-wide profit plan: what share of a month's revenue goes to the
+// crew and to the salesperson, with overhead fixed and the remainder =
+// the owner's profit. One row per contractor; the financials page profit
+// planner reads/writes it. Percentages are 0–100.
+model FinancialSettings {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  crewPct   Float    @default(0)
+  salesPct  Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("financial_settings")
 }
 
 enum JobExpenseSource {

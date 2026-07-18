@@ -22,7 +22,8 @@ export type PromptKey =
   | "blueprint.classify.system"
   | "blueprint.elevation.system"
   | "blueprint.roofplan.system"
-  | "blueprint.takeoff.system";
+  | "blueprint.takeoff.system"
+  | "proposal.pricing.system";
 
 export const PROMPT_KEYS: PromptKey[] = [
   "address.vision.system",
@@ -31,9 +32,10 @@ export const PROMPT_KEYS: PromptKey[] = [
   "blueprint.elevation.system",
   "blueprint.roofplan.system",
   "blueprint.takeoff.system",
+  "proposal.pricing.system",
 ];
 
-export type PromptCategory = "address" | "blueprint";
+export type PromptCategory = "address" | "blueprint" | "proposal";
 
 export const PROMPT_META: Record<
   PromptKey,
@@ -80,6 +82,13 @@ export const PROMPT_META: Record<
     model: "Claude Sonnet 4.6",
     description:
       "The main blueprint-scan prompt: traces the roof plan and produces the gutter runs, downspouts, and linear footage. The big one — tune this to change how blueprints are measured.",
+  },
+  "proposal.pricing.system": {
+    label: "AI market price (by location)",
+    category: "proposal",
+    model: "Claude Sonnet 5",
+    description:
+      "Drives the 'AI recommended price' switch in the proposal builder: given the job's address, gutter spec, and measurements it suggests a realistic local install price with a low–high range and short reasoning. Contractor-facing only — never shown to the client.",
   },
 };
 

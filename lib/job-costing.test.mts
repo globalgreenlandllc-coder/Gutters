@@ -5,6 +5,7 @@ import {
   jobProfit,
   monthlyOverheadCents,
   overheadCoverage,
+  profitPlan,
 } from "./job-costing";
 import {
   EFFECTIVE_TAX_RATE,
@@ -110,6 +111,55 @@ test("overheadCoverage: gap before break-even, surplus after", () => {
   const none = overheadCoverage(0, 0);
   assert.equal(none.covered, true);
   assert.equal(none.pct, 1);
+});
+
+test("profitPlan splits revenue into crew / sales / overhead / profit", () => {
+  const plan = profitPlan({
+    revenueCents: 2_000_000, // $20k month
+    monthlyOverheadCents: 300_000, // $3k bills
+    crewPct: 30,
+    salesPct: 10,
+  });
+  assert.equal(plan.crewCents, 600_000);
+  assert.equal(plan.salesCents, 200_000);
+  assert.equal(plan.overheadCents, 300_000);
+  assert.equal(plan.profitCents, 900_000);
+  assert.ok(Math.abs(plan.profitPct - 0.45) < 1e-9);
+  // Break-even: overhead / (1 − 0.4) = $5,000.
+  assert.equal(plan.breakEvenRevenueCents, 500_000);
+});
+
+test("profitPlan guards the edges: zero revenue, 100% shares, junk pcts", () => {
+  const zero = profitPlan({
+    revenueCents: 0,
+    monthlyOverheadCents: 100_000,
+    crewPct: 30,
+    salesPct: 10,
+  });
+  assert.equal(zero.profitCents, -100_000);
+  assert.equal(zero.profitPct, 0);
+
+  // Crew + sales eat every dollar → no revenue can break even.
+  const eaten = profitPlan({
+    revenueCents: 1_000_000,
+    monthlyOverheadCents: 100_000,
+    crewPct: 60,
+    salesPct: 40,
+  });
+  assert.equal(eaten.breakEvenRevenueCents, null);
+  assert.equal(eaten.profitCents, -100_000);
+
+  // NaN / negative percentages clamp to 0 instead of poisoning the math.
+  const junk = profitPlan({
+    revenueCents: 1_000_000,
+    monthlyOverheadCents: 0,
+    crewPct: Number.NaN,
+    salesPct: -5,
+  });
+  assert.equal(junk.crewCents, 0);
+  assert.equal(junk.salesCents, 0);
+  assert.equal(junk.profitCents, 1_000_000);
+  assert.equal(junk.breakEvenRevenueCents, 0);
 });
 
 test("suggestNextAction ladder hits the key rungs", () => {

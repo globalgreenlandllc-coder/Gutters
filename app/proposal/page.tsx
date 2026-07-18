@@ -355,6 +355,7 @@ function Inner() {
           pkg={materialsPkg}
           measurements={proposal.measurements}
           discountPct={proposal.discountPct ?? 0}
+          address={proposal.address}
           onChange={(next) =>
             setProposal((prev) => ({
               ...prev,

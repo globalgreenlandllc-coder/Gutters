@@ -31,6 +31,12 @@ const GROUPS: { category: PromptRow["category"]; title: string; blurb: string }[
       blurb:
         "Drives the PDF-plan estimate (upload construction plans → AI measures the gutters).",
     },
+    {
+      category: "proposal",
+      title: "Proposal builder",
+      blurb:
+        "Drives the AI helpers inside the proposal editor (the location-based recommended price).",
+    },
   ];
 
 export function PromptsEditor({ rows }: { rows: PromptRow[] }) {

@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Layers,
+  Loader2,
+  MapPin,
   Plus,
   Receipt,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Tag,
@@ -18,8 +21,10 @@ import {
   markupPctForTarget,
   packageTotal,
   type AddOn,
+  type AiPriceQuote,
   type Package,
 } from "@/lib/proposal-mock";
+import { getAiPriceQuote } from "@/app/actions/ai-pricing";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -83,16 +88,40 @@ function specChipsFromConfig(config: EstimateConfig): string[] {
  * preview's edit drawer; the parent owns the package and patches it
  * through `onChange`.
  */
+/** Fingerprint of everything the AI price depends on — a changed spec,
+ *  footage, or address makes the cached quote read as stale. */
+function aiPriceInputKey(
+  address: string,
+  config: EstimateConfig,
+  m: Measurements,
+): string {
+  return JSON.stringify([
+    address.trim().toLowerCase(),
+    config.size,
+    config.style,
+    config.material,
+    config.downspoutSize,
+    config.oldGutterRemoval ?? "none",
+    config.accessories ?? null,
+    Math.round(m.eaveLF),
+    m.downspoutCount,
+    m.stories,
+  ]);
+}
+
 export function MaterialsBuilder({
   pkg,
   measurements,
   discountPct,
+  address,
   onChange,
   onClose,
 }: {
   pkg: Package;
   measurements: Measurements;
   discountPct: number;
+  /** Property address — where the AI market price is read from. */
+  address: string;
   onChange: (next: Package) => void;
   onClose: () => void;
 }) {
@@ -129,6 +158,71 @@ export function MaterialsBuilder({
       lineItemOverrides: Object.keys(next).length > 0 ? next : undefined,
     });
   };
+
+  /* ----- AI recommended price (the pricing switch) ----- */
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState<string | null>(null);
+  const pricingMode: "manual" | "ai" =
+    pkg.pricingMode === "ai" ? "ai" : "manual";
+  const aiKey = aiPriceInputKey(address, pkg.config, measurements);
+  const quote = pkg.aiQuote;
+  const quoteStale = !!quote && quote.inputKey !== aiKey;
+
+  /** Land the package total on the AI number by back-solving markup —
+   *  markup stays the single stored price knob, same as EditablePrice. */
+  const applyQuote = (q: AiPriceQuote, stashMarkup: boolean) =>
+    onChange({
+      ...pkg,
+      pricingMode: "ai",
+      myMarkupPct: stashMarkup ? pkg.markupPct : pkg.myMarkupPct,
+      aiQuote: q,
+      markupPct: markupPctForTarget(
+        q.recommendedTotal,
+        totals.subtotal,
+        discountPct,
+      ),
+    });
+
+  async function fetchQuote(stashMarkup: boolean) {
+    if (aiBusy) return;
+    setAiErr(null);
+    if (!address.trim()) {
+      setAiErr("Add the property address first — the AI prices by location.");
+      return;
+    }
+    setAiBusy(true);
+    const r = await getAiPriceQuote({
+      address,
+      config: pkg.config,
+      measurements,
+      inputKey: aiKey,
+    });
+    setAiBusy(false);
+    if (!r.ok) {
+      setAiErr(r.reason);
+      return;
+    }
+    applyQuote(r.quote, stashMarkup);
+  }
+
+  function switchPricingMode(next: "manual" | "ai") {
+    if (next === pricingMode) return;
+    if (next === "manual") {
+      setAiErr(null);
+      // Restore exactly the markup the contractor had before AI took over.
+      onChange({
+        ...pkg,
+        pricingMode: "manual",
+        markupPct: pkg.myMarkupPct ?? pkg.markupPct,
+      });
+      return;
+    }
+    if (quote && !quoteStale) {
+      applyQuote(quote, true);
+      return;
+    }
+    void fetchQuote(true);
+  }
 
   const suggestions = specChipsFromConfig(pkg.config).filter(
     (s) => !pkg.highlights.includes(s),
@@ -174,7 +268,13 @@ export function MaterialsBuilder({
               {formatCurrency(totals.total)}
             </motion.div>
             <div className="text-[11px] text-zinc-500">
-              {pkg.markupPct.toFixed(1)}% markup
+              {pricingMode === "ai" ? (
+                <span className="inline-flex items-center gap-1 font-medium text-accent-700">
+                  <Sparkles className="h-3 w-3" /> AI market price
+                </span>
+              ) : (
+                `${pkg.markupPct.toFixed(1)}% markup`
+              )}
             </div>
           </div>
           <button
@@ -541,36 +641,180 @@ export function MaterialsBuilder({
             </button>
           </Section>
 
-          <Section title="Price">
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 text-sm">
-              <label className="flex items-center gap-1.5 text-zinc-600">
-                Markup
-                <input
-                  type="number"
-                  step={0.5}
-                  value={Math.round(pkg.markupPct * 10) / 10}
-                  onChange={(e) =>
-                    set({ markupPct: parseFloat(e.target.value) || 0 })
-                  }
-                  className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none transition-smooth focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                %
-              </label>
-              <div className="ml-auto flex items-baseline gap-1.5 text-zinc-600">
-                <span>Total</span>
-                <EditablePrice
-                  total={totals.total}
-                  onCommit={(target) =>
-                    set({
-                      markupPct: markupPctForTarget(
-                        target,
-                        totals.subtotal,
-                        discountPct,
-                      ),
-                    })
-                  }
-                  className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900"
-                />
+          <Section
+            title="Price"
+            sub="Price it yourself, or let AI suggest what this job sells for near the property — then compare and pick."
+          >
+            <div className="space-y-3">
+              {/* The pricing switch */}
+              <div className="grid grid-cols-2 gap-1 rounded-xl border border-zinc-200 bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => switchPricingMode("manual")}
+                  className={cn(
+                    "ring-focus rounded-lg px-3 py-1.5 text-xs font-semibold transition-smooth",
+                    pricingMode === "manual"
+                      ? "bg-accent-600 text-white shadow-sm"
+                      : "text-zinc-600 hover:bg-zinc-50",
+                  )}
+                >
+                  Your price
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchPricingMode("ai")}
+                  disabled={aiBusy}
+                  className={cn(
+                    "ring-focus inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-smooth",
+                    pricingMode === "ai"
+                      ? "bg-accent-600 text-white shadow-sm"
+                      : "text-zinc-600 hover:bg-zinc-50",
+                  )}
+                >
+                  {aiBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  AI market price
+                </button>
+              </div>
+              {aiErr && <p className="text-xs text-rose-600">{aiErr}</p>}
+
+              {/* AI panel — the quote that's applied right now */}
+              {pricingMode === "ai" && quote && (
+                <div className="space-y-2 rounded-xl border border-accent-200 bg-accent-50/50 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-accent-800">
+                      <MapPin className="h-3.5 w-3.5" />
+                      {quote.location}
+                    </span>
+                    <span className="text-xs text-zinc-500">
+                      Local range{" "}
+                      <span className="font-medium tabular-nums text-zinc-800">
+                        {formatCurrency(quote.lowTotal)}–
+                        {formatCurrency(quote.highTotal)}
+                      </span>
+                      {quote.perLfInstalled != null && (
+                        <>
+                          {" "}
+                          · ~{formatCurrency(quote.perLfInstalled)}/LF installed
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  {quote.reasoning.length > 0 && (
+                    <ul className="space-y-0.5 text-[11px] text-zinc-600">
+                      {quote.reasoning.map((r, i) => (
+                        <li key={i} className="flex gap-1.5">
+                          <span className="text-accent-500">•</span>
+                          {r}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {quoteStale && (
+                    <p className="text-[11px] font-medium text-amber-700">
+                      Materials or footage changed since this quote — refresh
+                      to re-price.
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-400">
+                      Suggested {new Date(quote.fetchedAt).toLocaleDateString()}
+                      {" "}· never shown to the client
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void fetchQuote(false)}
+                      disabled={aiBusy}
+                      className="ring-focus inline-flex items-center gap-1 rounded-md text-[11px] font-medium text-accent-700 transition-smooth hover:text-accent-900"
+                    >
+                      {aiBusy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Comparison nudge while on your own price */}
+              {pricingMode === "manual" && quote && !quoteStale && (
+                <button
+                  type="button"
+                  onClick={() => switchPricingMode("ai")}
+                  className="ring-focus flex w-full items-center justify-between rounded-xl border border-dashed border-accent-300 bg-accent-50/40 px-3 py-2 text-left text-xs transition-smooth hover:border-accent-400"
+                >
+                  <span className="inline-flex items-center gap-1.5 text-zinc-600">
+                    <Sparkles className="h-3.5 w-3.5 text-accent-600" />
+                    AI market price for {quote.location}
+                  </span>
+                  <span className="font-semibold tabular-nums text-zinc-900">
+                    {formatCurrency(quote.recommendedTotal)}
+                    {totals.total > 0 && (
+                      <span
+                        className={cn(
+                          "ml-1.5 text-[11px] font-medium",
+                          quote.recommendedTotal >= totals.total
+                            ? "text-emerald-700"
+                            : "text-amber-700",
+                        )}
+                      >
+                        {quote.recommendedTotal >= totals.total ? "+" : ""}
+                        {Math.round(
+                          ((quote.recommendedTotal - totals.total) /
+                            totals.total) *
+                            100,
+                        )}
+                        % vs yours
+                      </span>
+                    )}
+                  </span>
+                </button>
+              )}
+
+              {/* Markup + typed total — editing either takes back control */}
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 text-sm">
+                <label className="flex items-center gap-1.5 text-zinc-600">
+                  Markup
+                  <input
+                    type="number"
+                    step={0.5}
+                    value={Math.round(pkg.markupPct * 10) / 10}
+                    onChange={(e) =>
+                      set({
+                        markupPct: parseFloat(e.target.value) || 0,
+                        ...(pricingMode === "ai"
+                          ? { pricingMode: "manual" as const }
+                          : {}),
+                      })
+                    }
+                    className="w-16 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-right text-sm tabular-nums outline-none transition-smooth focus:border-accent-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  %
+                </label>
+                <div className="ml-auto flex items-baseline gap-1.5 text-zinc-600">
+                  <span>Total</span>
+                  <EditablePrice
+                    total={totals.total}
+                    onCommit={(target) =>
+                      set({
+                        markupPct: markupPctForTarget(
+                          target,
+                          totals.subtotal,
+                          discountPct,
+                        ),
+                        ...(pricingMode === "ai"
+                          ? { pricingMode: "manual" as const }
+                          : {}),
+                      })
+                    }
+                    className="text-lg font-semibold tracking-tight tabular-nums text-zinc-900"
+                  />
+                </div>
               </div>
             </div>
           </Section>

@@ -66,6 +66,14 @@ export type FinancialJobRow = {
   /** Net profit + margin under the current (manual ?? AI) basis. */
   profitCents: number;
   marginPct: number;
+  /** Contract total with tax stripped — the revenue side of the profit. */
+  revenueExTaxCents: number;
+};
+
+/** Business-wide revenue split the profit planner runs on (0–100 each). */
+export type FinancialSettingsDto = {
+  crewPct: number;
+  salesPct: number;
 };
 
 export type FinancialsOverview = {
@@ -77,6 +85,10 @@ export type FinancialsOverview = {
   /** Projected profit still sitting in in-progress jobs. */
   pipelineProfitCents: number;
   collectedMtdCents: number;
+  /** Ex-tax revenue from jobs COMPLETED this calendar month — the
+   *  default "monthly revenue" the profit planner starts from. */
+  revenueMtdCents: number;
+  settings: FinancialSettingsDto;
   coverage: OverheadCoverage;
   /** Worker-submitted expenses awaiting a decision, newest first. */
   pendingExpenses: (JobExpenseDto & { jobLabel: string })[];
@@ -122,7 +134,8 @@ export async function getFinancialsOverview(): Promise<FinancialsOverview | null
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [overheadRows, proposals, collected, pendingRows] = await Promise.all([
+  const [overheadRows, proposals, collected, pendingRows, settingsRow] =
+    await Promise.all([
     db.overheadItem.findMany({
       where: { userId },
       orderBy: { createdAt: "asc" },
@@ -168,6 +181,10 @@ export async function getFinancialsOverview(): Promise<FinancialsOverview | null
         assignment: { select: { title: true } },
       },
     }),
+    db.financialSettings.findUnique({
+      where: { userId },
+      select: { crewPct: true, salesPct: true },
+    }),
   ]);
 
   const jobs: FinancialJobRow[] = proposals.map((p) => {
@@ -212,12 +229,21 @@ export async function getFinancialsOverview(): Promise<FinancialsOverview | null
       expenses: p.expenses.map(toExpenseDto),
       profitCents: profit.profitCents,
       marginPct: profit.marginPct,
+      revenueExTaxCents: profit.revenueExTaxCents,
     };
   });
 
-  const profitMtdCents = jobs
-    .filter((j) => j.completedAt && new Date(j.completedAt) >= monthStart)
-    .reduce((acc, j) => acc + j.profitCents, 0);
+  const doneThisMonth = jobs.filter(
+    (j) => j.completedAt && new Date(j.completedAt) >= monthStart,
+  );
+  const profitMtdCents = doneThisMonth.reduce(
+    (acc, j) => acc + j.profitCents,
+    0,
+  );
+  const revenueMtdCents = doneThisMonth.reduce(
+    (acc, j) => acc + j.revenueExTaxCents,
+    0,
+  );
   const pipelineProfitCents = jobs
     .filter((j) => j.stage === "in_progress")
     .reduce((acc, j) => acc + j.profitCents, 0);
@@ -237,6 +263,11 @@ export async function getFinancialsOverview(): Promise<FinancialsOverview | null
     profitMtdCents,
     pipelineProfitCents,
     collectedMtdCents: collected._sum.amountCents ?? 0,
+    revenueMtdCents,
+    settings: {
+      crewPct: settingsRow?.crewPct ?? 0,
+      salesPct: settingsRow?.salesPct ?? 0,
+    },
     coverage: overheadCoverage(overheadTotal, profitMtdCents),
     pendingExpenses: pendingRows.map((e) => ({
       ...toExpenseDto(e),
@@ -247,6 +278,42 @@ export async function getFinancialsOverview(): Promise<FinancialsOverview | null
         "Job",
     })),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Profit-plan settings (crew % / sales % of revenue)                 */
+/* ------------------------------------------------------------------ */
+
+export async function saveFinancialSettings(patch: {
+  crewPct?: number;
+  salesPct?: number;
+}): Promise<VoidResult> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in" };
+  const clean = (pct: number | undefined) => {
+    if (pct === undefined) return undefined;
+    if (!Number.isFinite(pct)) return null;
+    return Math.max(0, Math.min(100, pct));
+  };
+  const crewPct = clean(patch.crewPct);
+  const salesPct = clean(patch.salesPct);
+  if (crewPct === null || salesPct === null)
+    return { ok: false, reason: "Enter a percentage between 0 and 100" };
+  if (crewPct === undefined && salesPct === undefined) return { ok: true };
+  await db.financialSettings.upsert({
+    where: { userId: me.user.id },
+    create: {
+      userId: me.user.id,
+      crewPct: crewPct ?? 0,
+      salesPct: salesPct ?? 0,
+    },
+    update: {
+      ...(crewPct !== undefined ? { crewPct } : {}),
+      ...(salesPct !== undefined ? { salesPct } : {}),
+    },
+  });
+  revalidatePath("/dashboard/financials");
+  return { ok: true };
 }
 
 /* ------------------------------------------------------------------ */
