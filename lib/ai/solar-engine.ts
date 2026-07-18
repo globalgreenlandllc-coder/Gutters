@@ -122,6 +122,13 @@ export async function runSolarFirstEstimate(args: {
   notes: string[];
   /** Injected layers for verification scripts / tests. */
   layersOverride?: SolarLayers;
+  /** Admin test-lab capture: receives the layer stack this run used, so
+   *  the run can be replayed offline later via layersOverride. */
+  onLayers?: (layers: SolarLayers) => void;
+  /** Clock for the imagery-staleness gate. Replays of a stored run pass
+   *  the ORIGINAL run time so imagery that was fresh then doesn't start
+   *  failing the 6-year age check as calendar time passes. */
+  nowMs?: number;
 }): Promise<SolarFirstResult | null> {
   const { insights, notes } = args;
 
@@ -156,6 +163,7 @@ export async function runSolarFirstEstimate(args: {
     }
     layers = outcome.layers;
   }
+  args.onLayers?.(layers);
 
   const mpp = layers.grid.metersPerPixel;
   notes.push(
@@ -181,7 +189,8 @@ export async function runSolarFirstEstimate(args: {
   // legacy tracer + drawing tools work on a photo of the real house.
   if (layers.imageryDate) {
     const captured = new Date(layers.imageryDate).getTime();
-    const ageYears = (Date.now() - captured) / (365.25 * 24 * 3600 * 1000);
+    const ageYears =
+      ((args.nowMs ?? Date.now()) - captured) / (365.25 * 24 * 3600 * 1000);
     if (Number.isFinite(ageYears) && ageYears > 6) {
       notes.push(
         `Google's roof data here is ${ageYears.toFixed(0)} years old (captured ${layers.imageryDate}) — the property may have been built or re-roofed since. Switching to current satellite imagery; verify or draw the gutters on the photo.`,

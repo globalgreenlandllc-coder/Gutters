@@ -87,24 +87,26 @@ model User {
   proposals         Proposal[]
   estimateRuns      EstimateRun[]
   transactions      Transaction[]
-  auditLogs         AuditLog[]            @relation("ActorAudits")
+  auditLogs         AuditLog[]             @relation("ActorAudits")
   impersonations    ImpersonationSession[] @relation("AdminImpersonator")
   impersonated      ImpersonationSession[] @relation("ImpersonatedUser")
   leadInteractions  UserLeadInteraction[]
   planAnalyses      PlanAnalysis[]
   appointments      Appointment[]
   // Workers this user (as an OWNER/contractor) has invited to run jobs.
-  workersOwned      Worker[]              @relation("WorkerOwner")
+  workersOwned      Worker[]               @relation("WorkerOwner")
   // Worker relationships where THIS user is the crew member (one per owner).
-  workerLinks       Worker[]              @relation("WorkerAccount")
+  workerLinks       Worker[]               @relation("WorkerAccount")
   // Jobs this user (as owner) has assigned out to workers.
-  jobsOwned         JobAssignment[]       @relation("JobOwner")
+  jobsOwned         JobAssignment[]        @relation("JobOwner")
+  // Admin accuracy-lab runs (SUPER_ADMIN only in practice).
+  testLabRuns       TestLabRun[]
 
   // Referral program: shareable code (lazily minted on first visit to
   // Settings) + who referred this account (set once at creation from
   // the ?ref cookie; doubles as the "referrer was credited" marker).
-  referralCode  String? @unique
-  referredById  String?
+  referralCode String? @unique
+  referredById String?
 
   @@index([role])
   @@index([status])
@@ -155,24 +157,24 @@ model VerificationToken {
 // -----------------------------------------------------------------------
 
 model ContractorProfile {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  company         String
-  contractorName  String
-  email           String
-  phone           String
-  license         String
-  tagline         String?
-  logoInitials    String   @default("GU")
-  logoTone        String   @default("emerald")
-  logoUrl         String?  @db.Text
-  stripeAccountId String?  @unique
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  company          String
+  contractorName   String
+  email            String
+  phone            String
+  license          String
+  tagline          String?
+  logoInitials     String   @default("GU")
+  logoTone         String   @default("emerald")
+  logoUrl          String?  @db.Text
+  stripeAccountId  String?  @unique
   // Public payment URLs the contractor pastes in (Stripe Payment Link,
   // Square checkout link, etc). Surfaced as "Pay now" on accepted proposals.
   stripePaymentUrl String?
   squarePaymentUrl String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -273,29 +275,29 @@ enum PlanAnalysisStatus {
 }
 
 model PlanAnalysis {
-  id              String              @id @default(cuid())
-  userId          String
-  status          PlanAnalysisStatus  @default(QUEUED)
+  id           String             @id @default(cuid())
+  userId       String
+  status       PlanAnalysisStatus @default(QUEUED)
   // Source file: filename, mime, raw bytes (base64). PDFs are stored as the
   // original PDF; we also store the rasterized page images in `pageImages`.
-  filename        String
-  mimeType        String
-  originalData    String?             @db.Text
-  pageImages      Json?               // Array of { dataUrl, width, height, pageIndex }
-  pageCount       Int?
+  filename     String
+  mimeType     String
+  originalData String?            @db.Text
+  pageImages   Json? // Array of { dataUrl, width, height, pageIndex }
+  pageCount    Int?
   // AI output
-  analysisJson    Json?               // Raw Claude response (BlueprintResult)
-  editedJson      Json?               // Contractor-edited version (null until edited)
-  confidence      String?             // "high" | "medium" | "low"
+  analysisJson Json? // Raw Claude response (BlueprintResult)
+  editedJson   Json? // Contractor-edited version (null until edited)
+  confidence   String? // "high" | "medium" | "low"
   // Telemetry
-  modelUsed       String?             // e.g. "claude-sonnet-4-6"
-  inputTokens     Int?
-  outputTokens   Int?
-  cacheHit        Boolean             @default(false)
-  durationMs      Int?
-  errorMessage    String?             @db.Text
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  modelUsed    String? // e.g. "claude-sonnet-4-6"
+  inputTokens  Int?
+  outputTokens Int?
+  cacheHit     Boolean            @default(false)
+  durationMs   Int?
+  errorMessage String?            @db.Text
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -347,13 +349,13 @@ model Proposal {
   audioUrl          String?
   audioScriptHash   String?
 
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  events         ProposalEvent[]
-  transactions   Transaction[]
-  appointments   Appointment[]
-  jobAssignments JobAssignment[]
-  installments   PaymentInstallment[]
-  changeOrders   ChangeOrder[]
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events           ProposalEvent[]
+  transactions     Transaction[]
+  appointments     Appointment[]
+  jobAssignments   JobAssignment[]
+  installments     PaymentInstallment[]
+  changeOrders     ChangeOrder[]
   discountRequests DiscountRequest[]
 
   @@index([userId, status])
@@ -509,18 +511,18 @@ model ChangeOrder {
 // -----------------------------------------------------------------------
 
 enum DiscountRequestStatus {
-  OPEN        // client asked (or countered back) → contractor's move
-  COUNTERED   // contractor countered → client's move
-  AGREED      // deal struck → discount applied to the proposal
-  DECLINED    // contractor declined; list price stands
-  WITHDRAWN   // client walked away; list price stands
+  OPEN // client asked (or countered back) → contractor's move
+  COUNTERED // contractor countered → client's move
+  AGREED // deal struck → discount applied to the proposal
+  DECLINED // contractor declined; list price stands
+  WITHDRAWN // client walked away; list price stands
   EXPIRED
 }
 
 enum DiscountTurn {
   CONTRACTOR // waiting on the contractor to respond
-  CLIENT     // waiting on the client to respond
-  NONE       // resolved (agreed / declined / withdrawn / expired)
+  CLIENT // waiting on the client to respond
+  NONE // resolved (agreed / declined / withdrawn / expired)
 }
 
 enum DiscountOfferParty {
@@ -529,36 +531,36 @@ enum DiscountOfferParty {
 }
 
 model DiscountRequest {
-  id          String                @id @default(cuid())
-  proposalId  String
+  id            String                @id @default(cuid())
+  proposalId    String
   // Reference package the negotiation is anchored to.
-  packageId   String
-  packageName String
+  packageId     String
+  packageName   String
   // Snapshot of the reference package's listed total (post-discount, at
   // request time) in cents — the "before" number the thread shows.
-  listedCents Int
+  listedCents   Int
   // Contractor cost basis (pre-markup subtotal) for the reference
   // package, snapshotted so the margin coach is stable even if the
   // proposal is edited mid-negotiation. cents.
-  costCents   Int
+  costCents     Int
   // Lowest price the discount lever can represent = 50% off the
   // UNDISCOUNTED base (packageTotal clamps discountPct to [0,50]).
   // Snapshotted so a promo-discounted proposal can't let a client agree
   // to a price the lever would silently clamp up. cents.
-  floorCents  Int                   @default(0)
+  floorCents    Int                   @default(0)
   // Current amount on the table (whoever moved last). cents.
-  currentCents Int
-  status      DiscountRequestStatus @default(OPEN)
-  turn        DiscountTurn          @default(CONTRACTOR)
+  currentCents  Int
+  status        DiscountRequestStatus @default(OPEN)
+  turn          DiscountTurn          @default(CONTRACTOR)
   // Set when AGREED — the resolved price + the proposal-wide discountPct
   // it was converted into.
   resolvedCents Int?
   resolvedPct   Float?
-  declineReason String?             @db.Text
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  decidedAt   DateTime?
-  expiresAt   DateTime?
+  declineReason String?               @db.Text
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  decidedAt     DateTime?
+  expiresAt     DateTime?
 
   proposal Proposal        @relation(fields: [proposalId], references: [id], onDelete: Cascade)
   offers   DiscountOffer[]
@@ -668,12 +670,12 @@ model AuditLog {
 }
 
 model ImpersonationSession {
-  id              String    @id @default(cuid())
-  adminId         String
-  userId          String
-  startedAt       DateTime  @default(now())
-  endedAt         DateTime?
-  reason          String?
+  id        String    @id @default(cuid())
+  adminId   String
+  userId    String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  reason    String?
 
   admin User @relation("AdminImpersonator", fields: [adminId], references: [id], onDelete: Cascade)
   user  User @relation("ImpersonatedUser", fields: [userId], references: [id], onDelete: Cascade)
@@ -733,36 +735,36 @@ enum PricingPlanInterval {
 }
 
 model PricingPlan {
-  id                  String              @id @default(cuid())
-  slug                String              @unique
-  name                String
-  tagline             String?
-  priceCents          Int
-  interval            PricingPlanInterval @default(MONTHLY)
-  includedCredits     Int                 @default(0)
-  extraCreditPriceCents Int               @default(500)
-  features            Json
-  active              Boolean             @default(true)
-  stripePriceId       String?             @unique
-  stripeProductId     String?
-  sortOrder           Int                 @default(0)
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  id                    String              @id @default(cuid())
+  slug                  String              @unique
+  name                  String
+  tagline               String?
+  priceCents            Int
+  interval              PricingPlanInterval @default(MONTHLY)
+  includedCredits       Int                 @default(0)
+  extraCreditPriceCents Int                 @default(500)
+  features              Json
+  active                Boolean             @default(true)
+  stripePriceId         String?             @unique
+  stripeProductId       String?
+  sortOrder             Int                 @default(0)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   @@map("pricing_plans")
 }
 
 model MaterialDefault {
-  id           String   @id @default(cuid())
-  key          String   @unique
-  label        String
-  category     String
-  unit         String
-  priceCents   Int
-  description  String?
-  sortOrder    Int      @default(0)
-  updatedAt    DateTime @updatedAt
-  updatedBy    String?
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  category    String
+  unit        String
+  priceCents  Int
+  description String?
+  sortOrder   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
 
   @@map("material_defaults")
 }
@@ -805,32 +807,32 @@ enum LeadStatus {
 }
 
 model Lead {
-  id                  String       @id @default(cuid())
-  sourceId            String       // The ID from the city API
-  sourceCity          String       // e.g. "Seattle", "Kirkland"
+  id                  String     @id @default(cuid())
+  sourceId            String // The ID from the city API
+  sourceCity          String // e.g. "Seattle", "Kirkland"
   address             String
-  originalDescription String       @db.Text
-  categorizedTrade    String?      // e.g. "Roofing", "Gutters", "Framing"
-  buildingType        String?      // "Residential", "Commercial", "Multi-family", …
-  projectKind         String?      // "New Construction" | "Remodel/Addition" | "Tenant Improvement" | "Demolition" | "Other"
-  contractorName     String?      // Company doing the permitted work, if disclosed
-  ownerName           String?      // Property owner, when the feed publishes it
-  fixtures            String?      // Comma-separated work items / fixtures
-  workClass           String?      // Raw work-class from source (e.g. "New Structure")
-  aiSummary           String?      @db.Text  // Plain-English one-liner from the AI
-  aiRelevance         String?      // "high" | "medium" | "low" — gutter-business relevance
-  status              LeadStatus   @default(UNKNOWN)
+  originalDescription String     @db.Text
+  categorizedTrade    String? // e.g. "Roofing", "Gutters", "Framing"
+  buildingType        String? // "Residential", "Commercial", "Multi-family", …
+  projectKind         String? // "New Construction" | "Remodel/Addition" | "Tenant Improvement" | "Demolition" | "Other"
+  contractorName      String? // Company doing the permitted work, if disclosed
+  ownerName           String? // Property owner, when the feed publishes it
+  fixtures            String? // Comma-separated work items / fixtures
+  workClass           String? // Raw work-class from source (e.g. "New Structure")
+  aiSummary           String?    @db.Text // Plain-English one-liner from the AI
+  aiRelevance         String? // "high" | "medium" | "low" — gutter-business relevance
+  status              LeadStatus @default(UNKNOWN)
   latitude            Float
   longitude           Float
-  projectValue        Int?         // raw dollars, as reported by the source permit feed
-  issuedDate          DateTime?    // When the municipality issued the permit (from source feed)
-  housingUnits        Int?         // # of dwelling units the permit creates / affects
-  developmentType     String?      // "Single Family" | "Duplex" | "Townhouse" | "Condo" | "Multifamily" | "Plat" | "Short Plat" | "ADU" | …
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  projectValue        Int? // raw dollars, as reported by the source permit feed
+  issuedDate          DateTime? // When the municipality issued the permit (from source feed)
+  housingUnits        Int? // # of dwelling units the permit creates / affects
+  developmentType     String? // "Single Family" | "Duplex" | "Townhouse" | "Condo" | "Multifamily" | "Plat" | "Short Plat" | "ADU" | …
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
 
-  interactions        UserLeadInteraction[]
-  appointments        Appointment[]
+  interactions UserLeadInteraction[]
+  appointments Appointment[]
 
   @@unique([sourceCity, sourceId]) // Prevents duplicate imports from the same city
   @@index([latitude, longitude])
@@ -1011,32 +1013,32 @@ model AbuseEvent {
 // -----------------------------------------------------------------------
 
 model VisitorSession {
-  id          String   @id // client-generated, validated ^[A-Za-z0-9_-]{8,64}$
-  visitorId   String // persistent anonymous id (localStorage), same charset
-  userId      String? // DB user id once signed in — no FK by design
+  id           String   @id // client-generated, validated ^[A-Za-z0-9_-]{8,64}$
+  visitorId    String // persistent anonymous id (localStorage), same charset
+  userId       String? // DB user id once signed in — no FK by design
   // Segment of the ENTRY page: marketing | app | portal | admin.
   // The live view derives the CURRENT segment from lastPath instead.
-  segment     String   @default("marketing")
-  entryPath   String
-  lastPath    String
-  referrer    String? // full document.referrer of the entry view
+  segment      String   @default("marketing")
+  entryPath    String
+  lastPath     String
+  referrer     String? // full document.referrer of the entry view
   referrerHost String?
   // direct | organic | paid | social | email | referral (lib/analytics.ts)
-  channel     String   @default("direct")
-  utmSource   String?
-  utmMedium   String?
-  utmCampaign String?
-  utmTerm     String?
-  utmContent  String?
-  device      String? // desktop | mobile | tablet
-  browser     String?
-  os          String?
-  country     String? // ISO-3166 alpha-2 from x-vercel-ip-country
-  region      String?
-  city        String?
-  pageviews   Int      @default(1)
-  startedAt   DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
+  channel      String   @default("direct")
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  utmTerm      String?
+  utmContent   String?
+  device       String? // desktop | mobile | tablet
+  browser      String?
+  os           String?
+  country      String? // ISO-3166 alpha-2 from x-vercel-ip-country
+  region       String?
+  city         String?
+  pageviews    Int      @default(1)
+  startedAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
 
   @@index([lastSeenAt])
   @@index([startedAt])
@@ -1145,4 +1147,68 @@ model JobAssignment {
   @@index([workerId, startsAt])
   @@index([proposalId])
   @@map("job_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Admin accuracy lab. One row per test run of the address→gutters engine:
+// the engine's raw output, the admin-corrected ground truth, click-tagged
+// failure causes, the computed diff, and (when the solar path ran) the
+// serialized raster layers so the run can be REPLAYED offline against a
+// newer engine and scored against the ground truth. Admin-only surface;
+// never visible to contractors and never charged.
+enum TestLabRunStatus {
+  PENDING // engine ran; admin hasn't finalized yet
+  APPROVED // admin confirmed the engine output as-is (clean pass)
+  CORRECTED // admin edited; correctedJson is the ground truth
+}
+
+model TestLabRun {
+  id      String           @id @default(cuid())
+  userId  String
+  address String
+  lat     Float?
+  lng     Float?
+  status  TestLabRunStatus @default(PENDING)
+
+  // Engine output at run time: { measurements, eaves, rakes, downspouts,
+  // suggestedEaves, roofStructure, magnetPath, magnetRingCount,
+  // canvasPxPerFt, traceQuality, source }
+  engineJson    Json?
+  // Admin ground truth: { eaves, rakes, downspouts, measurements }
+  correctedJson Json?
+  // [{ key, action, tag, note?, lengthFt?, at:{x,y} }] — click-tagged causes
+  tagsJson      Json?
+  // Diff computed at finalize: summary + per-change classification + feedback
+  diffJson      Json?
+  // Engine stage notes (admin runs keep them)
+  notesJson     Json?
+
+  // Cropped orthophoto the canvas draws over (data URL; same capture as mask/DSM)
+  aerialData    String? @db.Text
+  aerialW       Int?
+  aerialH       Int?
+  canvasPxPerFt Float?
+
+  // gzip+base64 SolarLayers snapshot (mask+DSM+RGB+grid) for pure replay.
+  // Null when the run came from the legacy fallback path (not replayable).
+  layersData   String? @db.Text
+  // BuildingInsights JSON captured at run time (replay input)
+  insightsJson Json?
+
+  engineVersion String? // git sha of the engine that produced engineJson
+  runDurationMs Int?
+
+  // Latest re-test result: { scorePct, eavePrecision, eaveRecall, lfErrorPct,
+  // downspouts:{engine,truth,matched}, clean, engineVersion, scoredAt }
+  lastScoreJson Json?
+  lastScoredAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@map("test_lab_runs")
 }

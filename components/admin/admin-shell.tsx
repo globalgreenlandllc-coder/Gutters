@@ -10,6 +10,7 @@ import {
   CreditCard,
   Database,
   DollarSign,
+  FlaskConical,
   Key,
   LayoutDashboard,
   LogOut,
@@ -36,6 +37,7 @@ const NAV: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: "/admin/pricing", label: "Pricing", icon: Tag },
   { href: "/admin/material-defaults", label: "Material defaults", icon: Palette },
   { href: "/admin/prompts", label: "AI prompts", icon: Sparkles },
+  { href: "/admin/test-lab", label: "Accuracy lab", icon: FlaskConical },
   { href: "/admin/abuse", label: "Abuse guard", icon: ShieldAlert },
 ];
 

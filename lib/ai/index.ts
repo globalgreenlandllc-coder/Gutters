@@ -8,6 +8,7 @@ import {
   type RoofSegment,
 } from "./solar";
 import { runSolarFirstEstimate } from "./solar-engine";
+import type { SolarLayers } from "./solar-layers";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
@@ -284,8 +285,21 @@ function detectedToCanvasRoofStructure(
   };
 }
 
+/** Optional capture hooks — used ONLY by the admin accuracy lab, which
+ *  snapshots the run's raw solar inputs so it can be replayed offline.
+ *  Absent for every user-facing call; behavior is identical either way. */
+export type PipelineCapture = {
+  onSolarCapture?: (cap: {
+    layers: SolarLayers;
+    insights: BuildingInsights | null;
+    lat: number;
+    lng: number;
+  }) => void;
+};
+
 export async function runAIEstimatePipeline(
   address: string,
+  capture?: PipelineCapture,
 ): Promise<EstimateResult> {
   const t0 = Date.now();
   const notes: string[] = [];
@@ -317,11 +331,21 @@ export async function runAIEstimatePipeline(
       notes.push("Solar API: no coverage / unavailable for this location");
     }
     try {
+      const capturedInsights = insights;
       const solar = await runSolarFirstEstimate({
         lat: geocoded.lat,
         lng: geocoded.lng,
         insights,
         notes,
+        onLayers: capture?.onSolarCapture
+          ? (layers) =>
+              capture.onSolarCapture?.({
+                layers,
+                insights: capturedInsights,
+                lat: geocoded.lat,
+                lng: geocoded.lng,
+              })
+          : undefined,
       });
       if (solar) {
         return {
