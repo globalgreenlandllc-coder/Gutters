@@ -66,6 +66,39 @@ test("a legitimately gable-dominant trace (~58% of perimeter) is NOT penalized",
   assert.equal(geometryQualityPenalty(a), 0);
 });
 
+// ── round-5: run-scale dispersion — runs disagreeing with each other on ft/px ─
+
+test("a trace whose runs disagree on ft/px is demoted; the single-scale sibling wins", () => {
+  // Two runs at 0.1 ft/px + one 400 px run priced 56 ft (0.14 ft/px — 40%
+  // hot, the 1168G "g14 prices 30% hotter per pixel" class). Coverage and
+  // shape are healthy, so ONLY dispersion separates the siblings.
+  const hot = analysis(RECT, [
+    run(0, 0, 1000, 0, 100),
+    run(0, 400, 1000, 400, 100),
+    run(0, 0, 0, 400, 56), // 400 px → 56 ft: internally inconsistent
+  ]);
+  const consistent = analysis(RECT, [
+    run(0, 0, 1000, 0, 100),
+    run(0, 400, 1000, 400, 100),
+    run(0, 0, 0, 400, 40), // 400 px → 40 ft: same 0.1 ft/px as the rest
+  ]);
+  const pHot = geometryQualityPenalty(hot);
+  const pConsistent = geometryQualityPenalty(consistent);
+  assert.equal(pConsistent, 0, "single-scale trace pays nothing");
+  assert.ok(pHot >= 10, `dispersion penalty should bite, got ${pHot}`);
+});
+
+test("dispersion is scale-LABEL-agnostic — a uniformly mislabeled scale pays nothing", () => {
+  // Every run at a (wrong but uniform) 0.2 ft/px: absolute scale errors are
+  // the area gate's job; dispersion must stay silent.
+  const uniform = analysis(RECT, [
+    run(0, 0, 1000, 0, 200),
+    run(0, 400, 1000, 400, 200),
+    run(0, 0, 0, 400, 80),
+  ]);
+  assert.equal(geometryQualityPenalty(uniform), 0);
+});
+
 test("a self-intersecting (bow-tie) footprint is fatally demoted", () => {
   const bowtie = [
     { x: 0, y: 0 },

@@ -102,6 +102,11 @@ export function eaveLfFt(a: BlueprintAnalysis): number {
  *      downstream squaring repair. A clean read pays nothing (≤10% off-axis is
  *      free); the 22%-off-axis roll that once shipped diagonal walls on a
  *      fully-orthogonal rambler pays ~12 — enough to lose to a clean sibling.
+ *   5. RUN-SCALE DISPERSION — every run's own ft-per-pixel should agree with
+ *      the trace's median (one drawing, one scale). LF sitting on runs that
+ *      price >30% hotter/colder per pixel than the median is internally
+ *      inconsistent (the 1168G gemini roll: one 17 LF run 30% hot, priced
+ *      total 44% over its own drawn geometry) — a consistent sibling wins.
  */
 export function geometryQualityPenalty(
   a: BlueprintAnalysis,
@@ -135,5 +140,40 @@ export function geometryQualityPenalty(
   const offAxis = 1 - footprintAxisAlignedFraction(ring);
   pen += Math.min(25, Math.max(0, offAxis - 0.1) * 100);
 
+  // 5. run-scale dispersion (runs disagreeing with EACH OTHER on ft/px).
+  pen += runScaleDispersionPenalty(a);
+
   return pen;
+}
+
+/**
+ * Penalty (>= 0) for internally-inconsistent run scales. Computes each priced
+ * run's own ft-per-pixel against the trace's median: the LF-weighted share
+ * sitting on runs deviating >30% earns up to 20, and a high LF-weighted mean
+ * absolute deviation (drift across the whole read, not one outlier) earns up
+ * to 10 more. A single-scale trace pays 0 regardless of its absolute scale —
+ * this is dispersion-only, deliberately scale-label-agnostic.
+ */
+export function runScaleDispersionPenalty(a: BlueprintAnalysis): number {
+  const med = medianFtPerPx(a);
+  if (!med || med <= 0) return 0;
+  let totalLf = 0;
+  let outlierLf = 0;
+  let weightedDev = 0;
+  for (const r of a.gutter_runs ?? []) {
+    if (!isFinitePt(r.start as Pt) || !isFinitePt(r.end as Pt)) continue;
+    if (r.length_ft == null || !(r.length_ft > 0)) continue;
+    const px = Math.hypot(r.end.x - r.start.x, r.end.y - r.start.y);
+    if (!(px > 0)) continue;
+    const dev = Math.abs((r.length_ft / px) / med - 1);
+    totalLf += r.length_ft;
+    weightedDev += dev * r.length_ft;
+    if (dev > 0.3) outlierLf += r.length_ft;
+  }
+  if (!(totalLf > 0)) return 0;
+  const outlierShare = outlierLf / totalLf;
+  const mad = weightedDev / totalLf;
+  return (
+    Math.min(20, outlierShare * 70) + Math.min(10, Math.max(0, mad - 0.08) * 60)
+  );
 }

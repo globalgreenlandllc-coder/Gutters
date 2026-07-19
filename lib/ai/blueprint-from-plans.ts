@@ -1422,6 +1422,14 @@ export function scoreBlueprintAnalysis(
   if (totalLF <= 0) s -= 20; // no priced geometry at all
   if (c?.max_total_eave_lf && totalLF > c.max_total_eave_lf)
     s -= (totalLF - c.max_total_eave_lf) * 0.1 + 8;
+  // Downspout floor: the elevations counted a hard LOWER bound. A trace that
+  // places fewer dropped real drainage (the 1168G gemini roll: 9 placed vs 13
+  // visible) — penalize the shortfall so a complete sibling wins; never
+  // reward exceeding the floor.
+  if (c?.min_downspouts && c.min_downspouts > 0) {
+    const placed = (a.downspouts ?? []).filter((d) => fin(d?.at)).length;
+    if (placed < c.min_downspouts) s -= (c.min_downspouts - placed) * 2;
+  }
   s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
 
   // Geometry-quality gate (pure, unit-tested in blueprint-trace-quality.ts):
