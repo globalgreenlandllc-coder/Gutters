@@ -647,10 +647,13 @@ export function scaleAndGate(
     if (dims.length >= 2) {
       const minorFt = minor * ftPerPx;
       // ASYMMETRIC band: the printed dims are WALL overalls, but the roof
-      // ink includes the eave OVERHANGS — the ring legitimately runs ~4-10%
-      // LARGER than the wall dim (2 × ~2-2.5 ft on a 50 ft depth). Undersize
-      // is trace-error territory and stays tight. A symmetric ±10% refused
-      // the real 1168G sheet (48 ft wall + overhangs ≈ 53 ft of roof).
+      // ink includes the eave OVERHANGS — the ring legitimately runs LARGER
+      // than the wall dim (2 × 2-2.5 ft typical overhang, PLUS covered
+      // porch / outdoor-living roof sections that extend well past the wall
+      // line: the real 1168G sheet runs 60.6 ft of roof over a 51 ft wall
+      // depth = +19%, and the old +18% ceiling threw the exact ink away by
+      // ONE percent, shipping a worse vision trace instead). Undersize is
+      // still trace-error territory and stays tight.
       let bestRatio = Infinity;
       let bestDim = dims[1];
       for (const d of dims.slice(1)) {
@@ -660,9 +663,9 @@ export function scaleAndGate(
           bestDim = d;
         }
       }
-      if (bestRatio < 0.94 || bestRatio > 1.18) {
+      if (bestRatio < 0.94 || bestRatio > 1.28) {
         reasons.push(
-          `scaled depth ${Math.round(minorFt * 10) / 10} ft is ${Math.round(Math.abs(bestRatio - 1) * 100)}% ${bestRatio > 1 ? "over" : "under"} the printed ${bestDim}' (roof overhang allows -6%…+18%)`,
+          `scaled depth ${Math.round(minorFt * 10) / 10} ft is ${Math.round(Math.abs(bestRatio - 1) * 100)}% ${bestRatio > 1 ? "over" : "under"} the printed ${bestDim}' (roof overhang + covered-patio extension allows -6%…+28%)`,
         );
       }
     }

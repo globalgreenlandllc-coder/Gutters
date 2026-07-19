@@ -251,6 +251,13 @@ test("scale gates fail loudly: depth mismatch, area mismatch, no dims, too-simpl
   // (LEGAL); −10% under is trace-error territory (refused).
   const over10 = scaleAndGate(CLEAN_RING, [70, 45 * (70 / 280) * 0 + 41], null); // minor 45ft vs printed 41' → +9.8% over
   assert.equal(over10.reasons.some((r) => /over the printed/.test(r)), false, "overhang-sized overage passes");
+  // The real 1168G case: roof depth 19% over the printed wall depth (2'-6"
+  // overhangs + the covered-patio roof extension). Must PASS — the old +18%
+  // ceiling threw the exact ink outline away by one percent.
+  const over19 = scaleAndGate(CLEAN_RING, [70, 37.8], null); // minor 45ft vs printed 37.8' → +19% over
+  assert.equal(over19.reasons.some((r) => /over the printed/.test(r)), false, "overhang + patio-extension overage passes");
+  const over35 = scaleAndGate(CLEAN_RING, [70, 33], null); // minor 45ft vs printed 33' → +36% over
+  assert.ok(over35.reasons.some((r) => /over the printed 33'/.test(r)), "wild oversize still refused");
   const under10 = scaleAndGate(CLEAN_RING, [70, 50], null); // minor 45ft vs printed 50' → 10% under
   assert.ok(under10.reasons.some((r) => /under the printed 50'/.test(r)), "undersize stays refused");
 

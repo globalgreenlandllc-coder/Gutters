@@ -730,6 +730,7 @@ export function RoofStructureOverlay({
   tone = "onDark",
   scale = 1,
   derive = false,
+  perimeterOnly = false,
   eaves = [],
   rakes = [],
 }: {
@@ -744,6 +745,13 @@ export function RoofStructureOverlay({
    *  instead of using the (sparse, unreliable) AI-traced lines. On for
    *  plan takeoffs; off for satellite (which has real ridge detection). */
   derive?: boolean;
+  /** OWNER DOCTRINE (plan takeoffs): the takeoff canvas is a GUTTER
+   *  PERIMETER diagram, not a reconstructed roof. When true, the overlay
+   *  draws ONLY the roof outline + orientation chips — no ridges, hips,
+   *  valleys, tier-step lines, plane shading or gable wings. The solid
+   *  (gutter) and dashed (gable, no gutter) perimeter edges drawn by the
+   *  canvas on top complete the diagram. */
+  perimeterOnly?: boolean;
   /** Eaves carry building side (front/back/left/right) — used to place the
    *  orientation chips. Optional; chips are skipped when absent. */
   eaves?: { points: { x: number; y: number }[]; side?: EaveSide }[];
@@ -759,6 +767,18 @@ export function RoofStructureOverlay({
   // re-renders during eave drag don't recompute the grid decomposition.
   // Hook must run before any early return.
   const skel = useMemo(() => {
+    if (perimeterOnly) {
+      // Gutter-perimeter mode: no interior geometry at all (see prop doc).
+      return {
+        ridges: [] as { points: { x: number; y: number }[] }[],
+        hips: [] as { points: { x: number; y: number }[] }[],
+        valleys: [] as { points: { x: number; y: number }[] }[],
+        gables: [] as { points: { x: number; y: number }[] }[],
+        dormers: [] as Dormer[],
+        faces: [] as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        steps: [] as { points: { x: number; y: number }[] }[],
+      };
+    }
     if (!derive) {
       return {
         ridges: structure.ridges.map((l) => ({ points: l.points })),
@@ -891,6 +911,7 @@ export function RoofStructureOverlay({
     };
   }, [
     derive,
+    perimeterOnly,
     eaves,
     rakes,
     structure.perimeter,

@@ -49,8 +49,6 @@ import {
   type LabelBox,
   type PlacedLabel,
 } from "@/lib/diagram-labels";
-import { gableWingFaces } from "@/lib/roof-skeleton";
-import { isNearPerimeter } from "@/lib/roof-structure-view";
 import { simplify } from "@/lib/ai/geometry";
 
 type Tool = "select" | "add-eave" | "add-gable" | "add-downspout";
@@ -1115,7 +1113,10 @@ export function AerialCanvas({
         showRoofStructure &&
         !selectedDownspout &&
         tool === "select" && (
-          <RoofStructureBanner confidence={roofStructure.confidence} />
+          <RoofStructureBanner
+            confidence={roofStructure.confidence}
+            perimeterOnly={!!planSource}
+          />
         )}
 
       {/* Armed-tool hint — tells the contractor the fast gestures the
@@ -1392,12 +1393,13 @@ export function AerialCanvas({
             structure={roofStructure}
             tone={theme === "tactical" ? "onDark" : "onLight"}
             scale={renderScale}
-            // PERIMETER-ONLY: never DERIVE the interior grid skeleton — it's the
-            // fan/tangle garbage on a complex footprint. The overlay draws only
-            // the perimeter outline; the eave (teal) and rake (dashed GABLE)
-            // edges are drawn color-coded below. A gutter takeoff is the
-            // perimeter + eave/rake classification, not the interior geometry.
             derive={false}
+            // OWNER DOCTRINE — the plan-takeoff canvas is a GUTTER PERIMETER
+            // diagram, not a reconstructed roof: outline + solid gutter
+            // (colored, LF-labeled) + dashed gable (no gutter) + downspouts.
+            // No ridges/hips/valleys/tier lines/plane shading — the client
+            // must read it as "that's exactly my roof's gutters."
+            perimeterOnly={!!planSource}
             eaves={eaves}
             rakes={rakes}
           />
@@ -1458,79 +1460,11 @@ export function AerialCanvas({
             const my = (a.y + b.y) / 2;
             const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
             const tac = theme === "tactical";
-            // Draw the gable as a real WING seen from above — two sloped roof
-            // planes meeting at a ridge that runs inward from the gable end —
-            // instead of a faint tent glyph, so a front/garage/entry gable
-            // reads as an actual gable roof. The inward direction points at the
-            // footprint interior (perimeter centroid); depth ≈ half the span
-            // (a ~45° roof), capped so it never shoots across the roof.
-            const wing = (() => {
-              const perim = roofStructure?.perimeter;
-              // Satellite photo view: the dashed line alone — a translucent
-              // wing quad painted over real imagery reads as a phantom
-              // structure. The wing glyph is a plan-mode (drafting paper)
-              // visualization.
-              if (!planSource) return null;
-              // Engine faces tile the whole footprint — the approximate
-              // 46-px wing would double-shade on top of the real plane.
-              if (roofStructure?.faces?.length) return null;
-              if (!perim || perim.length < 3 || lenPx < 12) return null;
-              // WING GUARD: a rake whose midpoint is off the perimeter is an
-              // interior artifact (a clerestory/tier boundary the AI called a
-              // rake) — a translucent wing quad there is an unlabeled box
-              // floating mid-roof. Skip the wing; the dashed rake line still
-              // draws. Real perimeter gable-end wings are untouched.
-              if (!isNearPerimeter({ x: mx, y: my }, perim)) return null;
-              let cx = 0, cy = 0;
-              for (const p of perim) { cx += p.x; cy += p.y; }
-              cx /= perim.length;
-              cy /= perim.length;
-              let nx = -(b.y - a.y) / lenPx;
-              let ny = (b.x - a.x) / lenPx;
-              if ((cx - mx) * nx + (cy - my) * ny < 0) { nx = -nx; ny = -ny; }
-              const toC = Math.hypot(cx - mx, cy - my);
-              const depth = Math.min(lenPx * 0.5, toC * 0.7, 46 * renderScale);
-              if (!(depth > 3)) return null;
-              return gableWingFaces(a, b, { x: nx, y: ny }, depth);
-            })();
-            const ridgeStroke = tac ? "#cbd5e1" : "#94a3b8";
+            // OWNER DOCTRINE (perimeter-only diagram): no translucent wing
+            // quads or ridge glyphs — a gable is the dashed perimeter edge +
+            // its gray span label, nothing more.
             return (
               <g key={line.id} pointerEvents="none">
-                {wing &&
-                  wing.faces.map((f, j) =>
-                    f.polygon.length >= 3 ? (
-                      <polygon
-                        key={`wf-${j}`}
-                        points={f.polygon.map((p) => `${p.x},${p.y}`).join(" ")}
-                        // Two planes at slightly different opacity read as a
-                        // pitched roof (one face catches more light).
-                        fill={
-                          tac
-                            ? j === 0
-                              ? "rgba(148,163,184,0.28)"
-                              : "rgba(148,163,184,0.15)"
-                            : j === 0
-                              ? "rgba(100,116,139,0.24)"
-                              : "rgba(100,116,139,0.13)"
-                        }
-                        stroke={tac ? "rgba(148,163,184,0.6)" : "rgba(100,116,139,0.5)"}
-                        strokeWidth={0.8 * renderScale}
-                        strokeLinejoin="round"
-                      />
-                    ) : null,
-                  )}
-                {wing && wing.ridge.points.length >= 2 && (
-                  <line
-                    x1={wing.ridge.points[0].x}
-                    y1={wing.ridge.points[0].y}
-                    x2={wing.ridge.points[1].x}
-                    y2={wing.ridge.points[1].y}
-                    stroke={ridgeStroke}
-                    strokeWidth={1.4 * renderScale}
-                    strokeLinecap="round"
-                    opacity={0.85}
-                  />
-                )}
                 {/* The gable END (base on the wall) — dashed to read "no gutter here". */}
                 <path
                   d={pathFor(line)}
@@ -2614,7 +2548,15 @@ function Toolbar({
   );
 }
 
-function RoofStructureBanner({ confidence }: { confidence: number }) {
+function RoofStructureBanner({
+  confidence,
+  perimeterOnly = false,
+}: {
+  confidence: number;
+  /** Gutter-perimeter diagram (plan takeoffs): no ridge/hip/valley lines are
+   *  drawn, so the key shows only what's on screen — gutters and gables. */
+  perimeterOnly?: boolean;
+}) {
   const lowConfidence = confidence < 0.7;
   // Compact key for the derived roof plan: ridge (peak), hip (corner
   // diagonal), valley (inside-corner drain). Helps the contractor read the
@@ -2635,11 +2577,18 @@ function RoofStructureBanner({ confidence }: { confidence: number }) {
   return (
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 w-max max-w-[calc(100%-1.5rem)] -translate-x-1/2">
       <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 rounded-2xl border border-white/20 bg-slate-950/75 px-3 py-1.5 text-[11px] font-medium text-white/90 shadow-elevated backdrop-blur">
-        <span className="font-semibold text-white/90">Roof plan</span>
+        <span className="font-semibold text-white/90">
+          {perimeterOnly ? "Gutter perimeter" : "Roof plan"}
+        </span>
         <span className="h-3 w-px bg-white/20" />
-        <Key color="#cbd5e1" label="Ridge" />
-        <Key color="#7dd3fc" label="Hip" />
-        <Key color="#c4b5fd" dashed label="Valley" />
+        {!perimeterOnly && (
+          <>
+            <Key color="#cbd5e1" label="Ridge" />
+            <Key color="#7dd3fc" label="Hip" />
+            <Key color="#c4b5fd" dashed label="Valley" />
+          </>
+        )}
+        {perimeterOnly && <Key color="#2dd4bf" label="Gutter (eave)" />}
         <Key color="#94a3b8" dashed label="Gable (no gutter)" />
         <span className="h-3 w-px bg-white/20" />
         <span className={cn(lowConfidence ? "text-amber-300" : "text-white/60")}>
