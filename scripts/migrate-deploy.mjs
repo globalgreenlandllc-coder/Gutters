@@ -18,8 +18,13 @@
  */
 import { spawnSync } from "node:child_process";
 
-const MAX_ATTEMPTS = Math.max(1, Number(process.env.MIGRATE_MAX_ATTEMPTS) || 5);
-const BACKOFF_MS = Math.max(0, Number(process.env.MIGRATE_BACKOFF_MS) || 4000);
+// 8 linear-backoff attempts ≈ 3.7 min of patience: the 5-attempt/~1-min
+// window still lost a real build to a Neon cold/unreachable spell that the
+// very next push sailed through — a cold compute (or a brief Neon incident)
+// can take minutes, and a couple extra build minutes is far cheaper than a
+// dead deploy.
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.MIGRATE_MAX_ATTEMPTS) || 8);
+const BACKOFF_MS = Math.max(0, Number(process.env.MIGRATE_BACKOFF_MS) || 6000);
 
 // Substrings that mark a transient CONNECTIVITY failure (retry), as opposed
 // to a real migration failure (fail fast). Prisma surfaces P1001/P1002 for
