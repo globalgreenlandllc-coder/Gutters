@@ -1061,6 +1061,44 @@ test("(C3) carve gates decline near a corner / on a jogged span → falls back t
   assert.ok(out.notes.some((n) => /ROOF STEPS HERE/.test(n)));
 });
 
+// ————————————————— plan-ink footprint (ink wins) —————————————————
+
+test("(I1) footprintIsPlanInk — a page-straight summary NEVER flattens/flags the ink's own jog (byte-identical)", () => {
+  // The footprint IS the roof-plan page's printed outline (raster swap
+  // applied). The per-side summary says "flush" — but the ink shows a step.
+  // The ink outranks the summary: no flatten, no splice, no wall-jog flag.
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: { front: face({ face: "front" }) },
+    roofPlanSteps: { front: [] },
+    footprintIsPlanInk: true,
+  });
+  assertUntouched(a, snap, out);
+  assert.deepEqual(out.wallJogFlags, [], "ink jogs are roof jogs — never flagged against the summary");
+  assert.ok(!out.notes.some((n) => /JOG FLATTENED|JOG STRAIGHTENED/.test(n)));
+  assert.deepEqual(out.carvedJogIds, []);
+});
+
+test("(I2) footprintIsPlanInk — a summary step the ink lacks suggests (unpriced) but NEVER carves; matches still verify", () => {
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    // 0.6 matches the ink's real step (verified); 0.2 is a summary step the
+    // ink doesn't show — with ink it stays an unpriced tap-to-add.
+    roofPlanSteps: { front: [roofStep(0.6), roofStep(0.2)] },
+    footprintIsPlanInk: true,
+  });
+  assertUntouched(a, snap, out);
+  assert.equal(out.verifiedJogIds.length, 1, "ink jog matching the summary still verifies");
+  assert.deepEqual(out.carvedJogIds, [], "never carved into plan ink");
+  assert.equal(out.suggestedEaves.length, 1, "missed summary step degrades to the unpriced suggestion");
+  assert.ok(out.notes.some((n) => /ROOF STEPS HERE/.test(n)));
+});
+
 // ————————————————— mirror check —————————————————
 
 /** Footprint with TWO real front-face steps at u=45 and u=80 (fracs 0.45, 0.8). */

@@ -925,6 +925,18 @@ export function reconcileEaveSteps(args: {
    *  straight side (arms the wall-jog flag); null/absent = no roof-page
    *  positions → byte-identical legacy behavior. */
   roofPlanSteps?: Partial<Record<string, FaceEaveStep[] | undefined>> | null;
+  /** TRUE when the footprint IS the roof-plan page's own printed outline
+   *  (the raster/vector ink swap applied). The ink is the HIGHEST-fidelity
+   *  source — pixel-exact perimeter with every jog — while eave_steps /
+   *  steps_detail are rough per-side summaries that undercount and misplace
+   *  steps. With this set, EVERY geometry escalation is disabled (no
+   *  flush-splice, no phantom-flatten, no carve) and the wall-jog flags are
+   *  suppressed: a jog in the ink IS a roof jog by definition, and pressing
+   *  it flat because a summary "shows no step there" destroys the exact
+   *  layout (the 1168G entry recess / garage projection / porch inset were
+   *  all flattened this way). Match notes and unpriced missed-step
+   *  suggestions still run. */
+  footprintIsPlanInk?: boolean;
 }): EaveStepReconcileResult {
   const unchanged: EaveStepReconcileResult = {
     analysis: args.analysis,
@@ -971,7 +983,10 @@ export function reconcileEaveSteps(args: {
     let runsW = (args.analysis.gutter_runs ?? []).slice();
     let dssW = (args.analysis.downspouts ?? []).slice();
     let followersTouched = false;
-    const straightenOn = eaveStepStraightenEnabled();
+    // Plan-ink footprint: the outline is the page's own printed perimeter —
+    // geometry escalations are OFF wholesale (see footprintIsPlanInk doc).
+    const ink = args.footprintIsPlanInk === true;
+    const straightenOn = eaveStepStraightenEnabled() && !ink;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of ring) {
       if (p.x < minX) minX = p.x;
@@ -1094,7 +1109,7 @@ export function reconcileEaveSteps(args: {
       // PRE-flatten traced pattern, so a flipped canvas is still detectable
       // after its mirrored jogs get flattened below.
       const tracedPre = tracedStepsOf(edges, minDepthU, gapTolU);
-      if (fromRoofPlan && (face === "front" || face === "rear")) {
+      if (fromRoofPlan && !ink && (face === "front" || face === "rear")) {
         mirrorEntries.push({
           face,
           roofFracs: elevSteps.map((s) => s.position_frac as number),
@@ -1251,7 +1266,7 @@ export function reconcileEaveSteps(args: {
       // The roof page's plan_offset picks the recessed side; unknown → the
       // SHORTER side recedes. A mirror-suspect face never carves (its step
       // positions may be flipped).
-      const carveOn = eaveStepCarveEnabled();
+      const carveOn = eaveStepCarveEnabled() && !ink;
       if (carveOn && pending.length > 0 && !mirrorSuspect) {
         const perpFt = perpendicularDepthFt(face, perFace);
         const carveDepthFt = Math.min(perpFt ?? SCHEMATIC_DEPTH_FT, MAX_CARVE_DEPTH_FT);
@@ -1424,8 +1439,10 @@ export function reconcileEaveSteps(args: {
       // (5) TRACED jog with NO step from the ruling source, on a side that
       // actually reported the field (even []) → the roof wins: loud flag,
       // run kept. A roof-page `[]` is the strongest form — the page shows
-      // one flush fascia plane across the whole side.
-      const unmatched = traced.filter((_, ti) => !matchedTraced.has(ti));
+      // one flush fascia plane across the whole side. NEVER against plan
+      // ink: a jog printed on the roof plan IS a roof jog — the per-side
+      // summary undercounting it is the summary's error, not the outline's.
+      const unmatched = ink ? [] : traced.filter((_, ti) => !matchedTraced.has(ti));
       for (const t of unmatched.slice(0, 3)) {
         const frac = Math.round(((t.u - uMin) / width) * 100);
         wallJogFlags.push(

@@ -1221,6 +1221,12 @@ export async function runEstimateFromPlan(
       // wall-jog flag + the left-right mirror check. Old stashes have no
       // steps_detail → null → byte-identical legacy behavior.
       roofPlanSteps: roofPlanViewerSteps(roofPlanRead),
+      // INK WINS: when the footprint is the roof-plan page's own printed
+      // outline (raster swap applied), every geometry escalation inside the
+      // reconcile is disabled — the pixel-exact ink outranks the rough
+      // per-side step summary that once flattened the 1168G entry recess /
+      // garage projection / porch inset out of the sheet-true shape.
+      footprintIsPlanInk: rasterApplied,
     });
     const stepNotes = [...stepRec.notes, ...stepRec.wallJogFlags];
     if (stepNotes.length > 0) {
