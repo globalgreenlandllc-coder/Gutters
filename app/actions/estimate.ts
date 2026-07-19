@@ -11,6 +11,7 @@ import { rectifyPlanFootprint, auditNotches } from "@/lib/ai/rectify-plan-takeof
 import { applyRasterOutline, type RasterOutlineStash } from "@/lib/ai/raster-outline";
 import { tierCornerVeto } from "@/lib/ai/tier-corner-veto";
 import { reconcileEaveSteps } from "@/lib/ai/eave-step-reconcile";
+import { inkTakeoff } from "@/lib/ai/ink-takeoff";
 import { humanizeAiError } from "@/lib/ai/humanize-error";
 import { readRoofFromVectors } from "@/lib/ai/roof-from-vectors";
 import { deriveOrientationFromFaceTitles } from "@/lib/ai/plan-orientation";
@@ -826,6 +827,7 @@ export async function runEstimateFromPlan(
   // footprintSource is no longer the AI trace and the ring is already
   // rectilinear). ANY bail is byte-identical + a loud reason trail.
   let rasterApplied = false;
+  let rasterFtPerUnit: number | null = null;
   if (!edgeApplied && !roofApplied && footprintSource === "AI trace (best-of read)") {
     try {
       const rasterStash = (
@@ -846,6 +848,7 @@ export async function runEstimateFromPlan(
           analysis.excluded_edges = res.excludedEdges;
           analysis.downspouts = res.downspouts;
           rasterApplied = true;
+          rasterFtPerUnit = res.ftPerUnit;
           footprintSource = `roof-plan raster outline (${res.footprint.length} corners)`;
           const sizeVerdict =
             res.traceAreaDeltaPct <= -8
@@ -1075,6 +1078,64 @@ export async function runEstimateFromPlan(
     analysis.notes = [...(analysis.notes ?? []), ...layoutMerge.notes];
   }
 
+  // 📐 INK TAKEOFF — the owner-doctrine REBUILD ("read the blueprint eaves
+  // for gutters"): when the footprint is the sheet's own verified ink
+  // outline, the AI's separately-measured runs are the weakest data left
+  // (scale-inconsistent, drawn off-perimeter — the 1168G diagonals). Replace
+  // them wholesale with deterministic geometry: every perimeter edge is a
+  // gutter run at the plan's own scale; gable-end faces dash as rakes;
+  // downspouts by corner/spacing rule topped up to the elevations' floor;
+  // miters from the outline's corners. All legacy run-repair passes
+  // (tier-corner veto, notch audit, feature-quadrant, eave-step reconcile,
+  // perimeter closure) are SKIPPED — there is nothing of theirs left to
+  // repair. Kill switch: BLUEPRINT_INK_TAKEOFF=0.
+  let inkApplied = false;
+  if (rasterApplied && rasterFtPerUnit != null && process.env.BLUEPRINT_INK_TAKEOFF !== "0") {
+    try {
+      // Gable sides: the roof page's explicit gable_end verdict first, else a
+      // face the elevations read as gabled with a broken eave. rear→back maps
+      // the reader's word onto the run vocabulary.
+      const gableSides: ("front" | "back" | "left" | "right")[] = [];
+      const faceWord = (k: string): "front" | "back" | "left" | "right" | null =>
+        k === "front" ? "front" : k === "rear" || k === "back" ? "back" : k === "left" ? "left" : k === "right" ? "right" : null;
+      for (const [k, v] of Object.entries(
+        (perFaceEff ?? {}) as Record<string, { roof_form?: string | null; gable_count?: number | null; continuous_eave?: boolean | null; readable?: boolean } | undefined>,
+      )) {
+        const w = faceWord(k);
+        if (!w || !v || v.readable === false) continue;
+        const gabled =
+          (v.roof_form === "gabled" && (v.gable_count ?? 0) > 0 && v.continuous_eave === false) ||
+          ((v.gable_count ?? 0) > 0 && v.continuous_eave === false);
+        if (gabled && !gableSides.includes(w)) gableSides.push(w);
+      }
+      const ink = inkTakeoff({
+        ring: analysis.building_footprint ?? [],
+        ftPerUnit: rasterFtPerUnit,
+        gableSides,
+        // Placement floor: the roof page's own printed D.S. marks (the
+        // classifier's elevation count isn't stashed at estimate time).
+        minDownspouts: roofPlanRead?.total_ds_marks ?? null,
+      });
+      if (ink) {
+        analysis.gutter_runs = ink.runs;
+        analysis.downspouts = ink.downspouts;
+        analysis.excluded_edges = ink.excluded;
+        analysis.totals = ink.totals;
+        analysis.notes = [...(analysis.notes ?? []), ink.summary];
+        inkApplied = true;
+        console.log(
+          `[ink-takeoff] ${ink.runs.length} runs / ${ink.gutterLf} LF from the verified outline; ` +
+            `${ink.downspouts.length} downspouts; ${ink.gableLf} LF gable dashed`,
+        );
+      }
+    } catch (e) {
+      console.warn(
+        `[ink-takeoff] threw (AI takeoff kept):`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
   // CROSS-VIEW TIER-CORNER VETO + DEEP-NOTCH AUDIT — scanned/raster path only
   // (the AI-trace fallback; vector-derived outlines don't carve phantom
   // pockets and carry classifier-audited tiers). Runs AFTER the squaring
@@ -1093,7 +1154,10 @@ export async function runEstimateFromPlan(
   // their lengths are still the vision read — every scanned-path guard
   // (tier-corner veto, notch audit, trace-hip closure + its perimeter cap)
   // must keep treating it as a trace, NOT as a CAD vector outline.
-  const isAiTrace = rasterApplied || footprintSource === "AI trace (best-of read)";
+  // EXCEPT under the ink takeoff: its runs ARE the outline's geometry, so
+  // every run-repair pass is moot and skipped (see the ink block above).
+  const isAiTrace =
+    !inkApplied && (rasterApplied || footprintSource === "AI trace (best-of read)");
   const notchExcludes: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
   const suggestedEavesFromPlan: {
     points: { x: number; y: number }[];
@@ -1167,7 +1231,8 @@ export async function runEstimateFromPlan(
   // AFTER the tier-corner veto (so it sees the veto's retiered runs) and
   // BEFORE the eave-step reconcile + closure. No feature_quadrants on the
   // stored reading (old stashes / unlabeled pages) → byte-identical no-op.
-  try {
+  // Skipped under the ink takeoff (its runs carry no feature labels).
+  if (!inkApplied) try {
     const fqRes = featureQuadrantSanity({
       analysis,
       featureQuadrants: roofPlanRead?.feature_quadrants ?? null,
@@ -1205,7 +1270,8 @@ export async function runEstimateFromPlan(
   // veto and BEFORE the perimeter closure (which is what prices any span the
   // carve exposes). Σ priced LF byte-identical in every branch, and old
   // stored reads (no eave_steps key anywhere) pass through byte-identical.
-  try {
+  // Skipped under the ink takeoff — the outline IS the roof layout.
+  if (!inkApplied) try {
     const stepRec = reconcileEaveSteps({
       analysis,
       // Merged layout evidence (roof page > elevations). Synthesized roof-page
@@ -1317,7 +1383,7 @@ export async function runEstimateFromPlan(
       `⏸ Hip closure not applied — ${hipVerdict.reason}. The unpriced walls above stay review-flagged; if this roof is actually fully hipped, Re-analyze so fresh elevation reads can prove it.`,
     ];
   }
-  if (!edgeApplied && (!isAiTrace || hipClosureOk)) {
+  if (!inkApplied && !edgeApplied && (!isAiTrace || hipClosureOk)) {
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
       // Merged layout evidence: a roof-page face reading a continuous eave
