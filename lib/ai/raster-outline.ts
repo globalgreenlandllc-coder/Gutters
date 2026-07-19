@@ -291,6 +291,128 @@ function removeHairpinSpikes(pts: RPt[], cosThresh = -0.9, widthFrac = 0.2): RPt
 
 /** Douglas-Peucker on a CLOSED ring: anchor at vertex 0 and the vertex
  *  farthest from it, simplify the two chains, rejoin. */
+/**
+ * HIP-INK REPAIR — roof framing plans print a 45° hip diagonal springing
+ * from EVERY outline corner and re-entrant corner. When the perimeter line
+ * is broken (trusses, dimension ticks crossing it), the ink tracer follows
+ * the bold hip diagonal instead of turning the corner, shipping an outline
+ * with diagonal edges on a roof whose fascia is 100% horizontal/vertical
+ * (the 1168G right side and front-left drew as long 45° cuts). Fascia
+ * perimeters on these plans are rectilinear, so a near-45° segment IS hip
+ * ink, never fascia: drop every non-axis edge and recover the true corner
+ * by intersecting the neighboring H/V edge lines. Two parallel neighbors
+ * (a diagonal spanning a whole side) get a synthesized perpendicular
+ * connector at the midpoint of the removed span.
+ *
+ * Reject-implausible gates — any bail returns the input ring unchanged:
+ *  - diagonals must be a MINORITY (≤45% of perimeter length) — a genuinely
+ *    diagonal roof is left for the existing axis/scale gates to refuse;
+ *  - the repaired ring must keep ≥4 corners and stay within 15% of the
+ *    original area (a repair that reshapes the roof is no repair).
+ */
+export function orthogonalizeRing(ring: readonly RPt[]): {
+  ring: RPt[];
+  removedDiagonals: number;
+} {
+  const unchanged = { ring: ring.slice() as RPt[], removedDiagonals: 0 };
+  const n = ring.length;
+  if (n < 4) return unchanged;
+  const AXIS_COS = 0.94; // within ~20° of an axis = fascia ink
+  type Kept = { orient: "h" | "v"; coord: number; len: number; a: RPt; b: RPt };
+  const kept: Kept[] = [];
+  let diagLen = 0;
+  let totalLen = 0;
+  let diagCount = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (!(len > 0)) continue;
+    totalLen += len;
+    if (Math.abs(dx) / len >= AXIS_COS) {
+      kept.push({ orient: "h", coord: (a.y + b.y) / 2, len, a, b });
+    } else if (Math.abs(dy) / len >= AXIS_COS) {
+      kept.push({ orient: "v", coord: (a.x + b.x) / 2, len, a, b });
+    } else {
+      diagLen += len;
+      diagCount++;
+    }
+  }
+  if (diagCount === 0) return unchanged;
+  if (kept.length < 3 || !(totalLen > 0) || diagLen / totalLen > 0.45) return unchanged;
+
+  // Merge consecutive kept edges that are really one fascia line split by a
+  // removed diagonal nick (same orientation, nearly the same coordinate).
+  const bb = ringBBox(ring as RPt[]);
+  const span = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0);
+  const mergeTol = Math.max(1e-9, span * 0.015);
+  const merged: Kept[] = [];
+  for (const k of kept) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.orient === k.orient && Math.abs(prev.coord - k.coord) <= mergeTol) {
+      prev.coord = (prev.coord * prev.len + k.coord * k.len) / (prev.len + k.len);
+      prev.len += k.len;
+      prev.b = k.b;
+    } else {
+      merged.push({ ...k });
+    }
+  }
+  // The ring is cyclic — the first and last kept edges may be the same line.
+  if (
+    merged.length >= 2 &&
+    merged[0].orient === merged[merged.length - 1].orient &&
+    Math.abs(merged[0].coord - merged[merged.length - 1].coord) <= mergeTol
+  ) {
+    const last = merged.pop()!;
+    merged[0].coord =
+      (merged[0].coord * merged[0].len + last.coord * last.len) /
+      (merged[0].len + last.len);
+    merged[0].len += last.len;
+    merged[0].a = last.a;
+  }
+  // 3 fascia lines is legal — a parallel pair gets its synthesized
+  // connector below, so the OUTPUT corner count (gated after build) is
+  // what matters, not the line count.
+  if (merged.length < 3) return unchanged;
+
+  // Corners: consecutive perpendicular lines intersect; consecutive parallel
+  // lines (a removed whole-side diagonal) get a mid-span connector.
+  const pts: RPt[] = [];
+  for (let i = 0; i < merged.length; i++) {
+    const A = merged[i];
+    const B = merged[(i + 1) % merged.length];
+    if (A.orient !== B.orient) {
+      pts.push(A.orient === "h" ? { x: B.coord, y: A.coord } : { x: A.coord, y: B.coord });
+    } else if (A.orient === "h") {
+      const xc = (A.b.x + B.a.x) / 2;
+      pts.push({ x: xc, y: A.coord }, { x: xc, y: B.coord });
+    } else {
+      const yc = (A.b.y + B.a.y) / 2;
+      pts.push({ x: A.coord, y: yc }, { x: B.coord, y: yc });
+    }
+  }
+  const dedupTol = Math.max(1e-9, span * 0.004);
+  const out: RPt[] = [];
+  for (const p of pts) {
+    const prev = out[out.length - 1];
+    if (prev && Math.hypot(prev.x - p.x, prev.y - p.y) <= dedupTol) continue;
+    out.push(p);
+  }
+  while (
+    out.length > 1 &&
+    Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) <= dedupTol
+  ) {
+    out.pop();
+  }
+  if (out.length < 4) return unchanged;
+  const a0 = Math.abs(ringArea(ring as RPt[]));
+  const a1 = Math.abs(ringArea(out));
+  if (!(a0 > 0) || !(a1 > 0) || Math.abs(a1 - a0) / a0 > 0.15) return unchanged;
+  return { ring: out, removedDiagonals: diagCount };
+}
+
 function simplifyRing(pts: RPt[], tol: number): RPt[] {
   if (pts.length <= 4) return pts.slice();
   let far = 1;
@@ -553,6 +675,11 @@ export function traceRasterOutline(
     if (ring.length < 4) return null;
     ring = simplifyRing(ring, Math.max(1, span * simplifyTolFrac));
     if (ring.length < 4) return null;
+    // Hip-ink repair BEFORE squaring: 45° hip diagonals the tracer followed
+    // at broken corners are dropped and the true H/V corners recovered
+    // (orthogonalizeRing's own gates bail on genuinely diagonal shapes).
+    ring = orthogonalizeRing(ring).ring;
+    if (ring.length < 4) return null;
     // Final squaring: reuse rectifyPlanFootprint verbatim — its own hard gates
     // (axis fraction, area drift, corner shove) decide; a bail keeps the raw
     // simplified ring, whose low axisFrac the scale gate will then reject.
@@ -814,10 +941,15 @@ export function applyRasterOutline<
     if (!raster.ok) {
       return fail(...(raster.reasons?.length ? raster.reasons : ["raster gates failed at analysis time"]));
     }
-    const ringPx = (raster.ring ?? []).filter(isFinitePt);
+    let ringPx = (raster.ring ?? []).filter(isFinitePt);
     if (ringPx.length < 6 || ringPx.length !== (raster.ring ?? []).length) {
       return fail("stored raster ring is missing or malformed");
     }
+    // Hip-ink repair at CONSUME time too — rings stashed before the repair
+    // existed (or whose squaring bailed) may still carry 45° hip-diagonal
+    // edges; the fascia perimeter is rectilinear, so recover the true
+    // corners here. A bail leaves the stashed ring untouched.
+    ringPx = orthogonalizeRing(ringPx).ring;
     const ftPerPx = raster.ftPerPx;
     if (typeof ftPerPx !== "number" || !Number.isFinite(ftPerPx) || ftPerPx <= 0) {
       return fail("stored raster ring has no usable ft/px scale");

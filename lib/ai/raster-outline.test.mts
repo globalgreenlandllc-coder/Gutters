@@ -15,6 +15,7 @@ import {
   scaleAndGate,
   applyRasterOutline,
   nearestOnRing,
+  orthogonalizeRing,
   type RasterBitmap,
   type RasterOutlineStash,
 } from "./raster-outline.ts";
@@ -498,4 +499,127 @@ test("full pipeline on a synthetic scan lands the sheet shape in analysis space"
   const bb = bboxOf(res.footprint);
   assert.ok(Math.abs(bb.x1 - bb.x0 - 140) < 4, `width ${bb.x1 - bb.x0}`);
   assert.ok(res.footprint.length >= 8, "jogs preserved end-to-end");
+});
+
+// ── hip-ink repair: orthogonalizeRing ──────────────────────────────────────
+
+test("orthogonalizeRing: a 45° corner chamfer (hip ink) is replaced by the true corner", () => {
+  // 200×120 rectangle whose top-right corner is cut by a 20-px hip diagonal.
+  const ring = [
+    { x: 0, y: 0 },
+    { x: 180, y: 0 },
+    { x: 200, y: 20 }, // chamfer — hip ink
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const res = orthogonalizeRing(ring);
+  assert.equal(res.removedDiagonals, 1);
+  assert.deepEqual(res.ring, [
+    { x: 200, y: 0 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+    { x: 0, y: 0 },
+  ]);
+});
+
+test("orthogonalizeRing: an inward hip V-detour (in-and-out at a corner) collapses to the true corner", () => {
+  // The tracer left the top edge early, dove inward along one hip line and
+  // came back out along another, then resumed down the right side.
+  const ring = [
+    { x: 0, y: 0 },
+    { x: 170, y: 0 },
+    { x: 185, y: 15 }, // hip in
+    { x: 200, y: 2 },  // hip back out (near the missed corner)
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const res = orthogonalizeRing(ring);
+  assert.equal(res.removedDiagonals, 2);
+  assert.deepEqual(res.ring, [
+    { x: 200, y: 0 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+    { x: 0, y: 0 },
+  ]);
+});
+
+test("orthogonalizeRing: a diagonal spanning a whole side between parallel edges gets a mid-span connector", () => {
+  // Top edge at y=0, bottom edge at y=120, right side traced as one long
+  // slightly-tilted... no — a genuine diagonal connecting the two H edges.
+  const ring = [
+    { x: 0, y: 0 },
+    { x: 195, y: 0 },
+    { x: 205, y: 120 }, // whole right side is off-axis ink
+    { x: 0, y: 120 },
+  ];
+  const res = orthogonalizeRing(ring);
+  assert.equal(res.removedDiagonals, 0, "an 85°-steep side is ALREADY axis ink (within 20°) — untouched");
+
+  const ring2 = [
+    { x: 0, y: 0 },
+    { x: 160, y: 0 },
+    { x: 240, y: 120 }, // 34° off vertical — hip ink bridging two H edges
+    { x: 0, y: 120 },
+  ];
+  const res2 = orthogonalizeRing(ring2);
+  assert.equal(res2.removedDiagonals, 1);
+  // Connector at the midpoint x of the removed span (160+240)/2 = 200.
+  assert.deepEqual(res2.ring, [
+    { x: 200, y: 0 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+    { x: 0, y: 0 },
+  ]);
+});
+
+test("orthogonalizeRing: jogs survive the repair (only the diagonal goes)", () => {
+  // Rectangle with a real 30×20 inset notch on the top edge AND a chamfered
+  // top-right corner: the notch must survive verbatim, the chamfer goes.
+  const ring = [
+    { x: 0, y: 0 },
+    { x: 60, y: 0 },
+    { x: 60, y: 20 },
+    { x: 90, y: 20 },
+    { x: 90, y: 0 },
+    { x: 180, y: 0 },
+    { x: 200, y: 20 }, // chamfer
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const res = orthogonalizeRing(ring);
+  assert.equal(res.removedDiagonals, 1);
+  assert.deepEqual(res.ring, [
+    { x: 60, y: 0 },
+    { x: 60, y: 20 },
+    { x: 90, y: 20 },
+    { x: 90, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+    { x: 0, y: 0 },
+  ]);
+});
+
+test("orthogonalizeRing: bails unchanged on a genuinely diagonal shape and on clean rings", () => {
+  // Diamond — 100% diagonal perimeter → untouched (existing gates decide).
+  const diamond = [
+    { x: 100, y: 0 },
+    { x: 200, y: 100 },
+    { x: 100, y: 200 },
+    { x: 0, y: 100 },
+  ];
+  const d = orthogonalizeRing(diamond);
+  assert.equal(d.removedDiagonals, 0);
+  assert.deepEqual(d.ring, diamond);
+
+  // Clean rectilinear ring → byte-equal passthrough.
+  const clean = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const c = orthogonalizeRing(clean);
+  assert.equal(c.removedDiagonals, 0);
+  assert.deepEqual(c.ring, clean);
 });
