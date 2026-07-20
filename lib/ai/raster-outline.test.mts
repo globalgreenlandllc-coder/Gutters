@@ -393,9 +393,12 @@ test("apply replaces the footprint at TRUE scale, snaps followers, and never tou
   assert.deepEqual(input.runs, TRACE_RUNS);
 });
 
-test("apply picks the mirrored orientation when the bitmap frame is flipped", () => {
-  // Mirror the sheet ring in x — the placement must detect flip 'x' and land
-  // the jogs back on the trace's side of the house.
+test("SHEET ORIENTATION WINS — a misoriented trace can never flip the ink outline (flip stays 'none' whenever it passes the gate)", () => {
+  // The stash ring is the sheet truth. Feed a mirrored stash: under the old
+  // best-flip-vs-trace rule the placement would mirror it back to match the
+  // trace — exactly how the upside-down 1168G gemini trace flipped a CORRECT
+  // outline. Now "none" wins because it still passes the disagreement gate;
+  // the sheet's own front-at-bottom convention is the truth, the trace is not.
   const mirrored = SHEET_RING_PX.map((p) => ({ x: 3000 - p.x, y: p.y }));
   const res = applyRasterOutline({
     ...cloneInput(),
@@ -403,14 +406,23 @@ test("apply picks the mirrored orientation when the bitmap frame is flipped", ()
   });
   assert.ok(res.applied, !res.applied ? res.reasons.join("; ") : "");
   if (!res.applied) return;
-  assert.equal(res.flip, "x");
-  const straight = applyRasterOutline({ ...cloneInput(), raster: OK_STASH });
-  assert.ok(straight.applied);
-  if (!straight.applied) return;
-  // Same final geometry as the unflipped stash (set-wise).
-  for (const p of res.footprint) {
-    assert.ok(straight.footprint.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-6));
-  }
+  assert.equal(res.flip, "none", "sheet orientation is authoritative");
+});
+
+test("no flip search — a mirror 'none' can't align is REFUSED, never silently re-flipped", () => {
+  // A ring the no-flip placement genuinely can't match (tight gate) is
+  // refused outright — the swap is skipped and the vision trace kept. The
+  // old code would have flipped it to fit; that flip is exactly the bug (a
+  // misoriented trace flipping the correct outline), so it's gone.
+  const mirrored = SHEET_RING_PX.map((p) => ({ x: 3000 - p.x, y: p.y }));
+  const res = applyRasterOutline({
+    ...cloneInput(),
+    raster: { ...OK_STASH, ring: mirrored },
+    maxDisagreementFrac: 0.02, // 'none' on the mirrored ring exceeds this
+  });
+  assert.equal(res.applied, false, "refused rather than re-flipped");
+  if (res.applied) return;
+  assert.ok(res.reasons.some((r) => /sheet's own orientation/.test(r)), res.reasons.join("; "));
 });
 
 test("apply refuses a ring that resembles the trace in no orientation", () => {
@@ -622,4 +634,55 @@ test("orthogonalizeRing: bails unchanged on a genuinely diagonal shape and on cl
   const c = orthogonalizeRing(clean);
   assert.equal(c.removedDiagonals, 0);
   assert.deepEqual(c.ring, clean);
+});
+
+test("orthogonalizeRing: an out-and-back NEEDLE is scrubbed; real small jogs survive", () => {
+  // Clean rectilinear rectangle with a sub-foot needle poking off the right
+  // edge (out to x=203 and straight back to ~the same point) — stray tick
+  // ink, never fascia. Span 200 → spurTol = 200×0.006 = 1.2 units.
+  const ring = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 60 },
+    { x: 203, y: 60 },   // needle out…
+    { x: 200, y: 60.5 }, // …and straight back (A ≈ C, ~0.5 apart)
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  const res = orthogonalizeRing(ring);
+  assert.deepEqual(res.ring, [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 60 },
+    { x: 200, y: 120 },
+    { x: 0, y: 120 },
+  ], "the needle collapsed to the clean right edge; every real corner survives");
+
+  // A REAL small jog (a ~3-unit-wide inset with two distinct base corners)
+  // must NOT be mistaken for a needle — its bases are 3 units apart, wider
+  // than spurTol, so it passes through untouched.
+  const smallJog = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 60 },
+    { x: 103, y: 60 },
+    { x: 103, y: 66 },
+    { x: 100, y: 66 },
+    { x: 100, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  assert.deepEqual(orthogonalizeRing(smallJog).ring, smallJog, "a real small jog is preserved");
+
+  // The NOTCHED fixture (30×20 inset) is untouched.
+  const notched = [
+    { x: 0, y: 0 },
+    { x: 60, y: 0 },
+    { x: 60, y: 20 },
+    { x: 90, y: 20 },
+    { x: 90, y: 0 },
+    { x: 180, y: 0 },
+    { x: 180, y: 120 },
+    { x: 0, y: 120 },
+  ];
+  assert.deepEqual(orthogonalizeRing(notched).ring, notched, "real jogs pass through untouched");
 });

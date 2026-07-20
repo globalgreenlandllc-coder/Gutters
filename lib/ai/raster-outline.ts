@@ -310,6 +310,33 @@ function removeHairpinSpikes(pts: RPt[], cosThresh = -0.9, widthFrac = 0.2): RPt
  *  - the repaired ring must keep ≥4 corners and stay within 15% of the
  *    original area (a repair that reshapes the roof is no repair).
  */
+/** BLIND-SPUR cleanup (in place): an out-and-back NEEDLE — A → B → C where C
+ *  returns to within `spurTol` of A — is a stray tick/leader the tracer
+ *  followed out and straight back, never fascia (it drew as a stub poking out
+ *  of the 1168G right edge). Collapses the needle's tip + returned base and
+ *  rescans until stable. DELIBERATELY needle-only (no wider "tab" collapse):
+ *  a genuine small jog has two DISTINCT base corners and must survive — an
+ *  earlier tab variant ate a real ~2.3 ft entry notch. `spurTol` is kept
+ *  sub-foot so nothing real qualifies. */
+function collapseBlindSpurs(out: RPt[], spurTol: number): void {
+  for (let pass = 0; pass < 6; pass++) {
+    let collapsed = false;
+    for (let i = 0; i < out.length; i++) {
+      if (out.length < 5) break;
+      const a = out[i];
+      const c = out[(i + 2) % out.length];
+      if (Math.hypot(a.x - c.x, a.y - c.y) <= spurTol) {
+        const bi = (i + 1) % out.length;
+        const ci = (i + 2) % out.length;
+        for (const idx of [Math.max(bi, ci), Math.min(bi, ci)]) out.splice(idx, 1);
+        collapsed = true;
+        i = -1; // restart scan — indices shifted
+      }
+    }
+    if (!collapsed) break;
+  }
+}
+
 export function orthogonalizeRing(ring: readonly RPt[]): {
   ring: RPt[];
   removedDiagonals: number;
@@ -317,15 +344,26 @@ export function orthogonalizeRing(ring: readonly RPt[]): {
   const unchanged = { ring: ring.slice() as RPt[], removedDiagonals: 0 };
   const n = ring.length;
   if (n < 4) return unchanged;
+  // Spur cleanup applies to EVERY ring, diagonals or not — compute the span
+  // up front so a clean-but-spurred ring still gets scrubbed before the
+  // early diagonal-free return below.
+  const bb0 = ringBBox(ring as RPt[]);
+  const span0 = Math.max(bb0.x1 - bb0.x0, bb0.y1 - bb0.y0);
+  const preCleaned = ring.slice() as RPt[];
+  if (span0 > 0) {
+    collapseBlindSpurs(preCleaned, Math.max(1e-9, span0 * 0.006));
+    if (preCleaned.length < 4) return unchanged;
+  }
   const AXIS_COS = 0.94; // within ~20° of an axis = fascia ink
   type Kept = { orient: "h" | "v"; coord: number; len: number; a: RPt; b: RPt };
   const kept: Kept[] = [];
   let diagLen = 0;
   let totalLen = 0;
   let diagCount = 0;
-  for (let i = 0; i < n; i++) {
-    const a = ring[i];
-    const b = ring[(i + 1) % n];
+  const m = preCleaned.length;
+  for (let i = 0; i < m; i++) {
+    const a = preCleaned[i];
+    const b = preCleaned[(i + 1) % m];
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const len = Math.hypot(dx, dy);
@@ -340,7 +378,8 @@ export function orthogonalizeRing(ring: readonly RPt[]): {
       diagCount++;
     }
   }
-  if (diagCount === 0) return unchanged;
+  // Diagonal-free ring: the spur scrub is the only change worth making.
+  if (diagCount === 0) return { ring: preCleaned, removedDiagonals: 0 };
   if (kept.length < 3 || !(totalLen > 0) || diagLen / totalLen > 0.45) return unchanged;
 
   // Merge consecutive kept edges that are really one fascia line split by a
@@ -406,6 +445,7 @@ export function orthogonalizeRing(ring: readonly RPt[]): {
   ) {
     out.pop();
   }
+  collapseBlindSpurs(out, Math.max(dedupTol, span * 0.006));
   if (out.length < 4) return unchanged;
   const a0 = Math.abs(ringArea(ring as RPt[]));
   const a1 = Math.abs(ringArea(out));
@@ -905,10 +945,11 @@ function ringDisagreement(a: readonly RPt[], b: readonly RPt[]): number {
  * ring is scaled bitmap-px → analysis-units through TRUE FEET (raster ftPerPx
  * ÷ the runs' own median ft-per-unit) and anchored at the traced footprint's
  * bbox CENTER, so the runs stay nearby without adopting the trace's size.
- * The bitmap frame can be mirrored relative to the analysis frame (PDF image
- * transforms), so all four axis flips are scored against the traced footprint
- * and the closest wins; a ring that resembles the trace in NO orientation is
- * refused (wrong component / rotated sheet).
+ * ORIENTATION: flip NONE, always — the ring and the trace come from the same
+ * page image, so the sheet's own front-at-bottom convention IS the truth. A
+ * misoriented TRACE must never flip the correct outline (the 1168G
+ * upside-down canvas), so there is no flip search; if the no-flip placement
+ * doesn't resemble the trace, the swap is refused and the vision trace kept.
  *
  * PURE + non-mutating: on ANY bail the caller's analysis stays byte-identical.
  * Runs keep their `length_ft` verbatim (priced LF unchanged); only start/end
@@ -994,27 +1035,27 @@ export function applyRasterOutline<
     const diag = Math.hypot(fb.x1 - fb.x0, fb.y1 - fb.y0);
     if (!(diag > 0)) return fail("degenerate traced footprint bbox");
 
-    const flips: { name: "none" | "x" | "y" | "xy"; sx: number; sy: number }[] = [
-      { name: "none", sx: 1, sy: 1 },
-      { name: "x", sx: -1, sy: 1 },
-      { name: "y", sx: 1, sy: -1 },
-      { name: "xy", sx: -1, sy: -1 },
-    ];
-    let best: { name: "none" | "x" | "y" | "xy"; ring: RPt[]; score: number } | null = null;
-    for (const f of flips) {
-      const placed = ringPx.map((p) => ({
-        x: cx + f.sx * (p.x - rcx) * s,
-        y: cy + f.sy * (p.y - rcy) * s,
-      }));
-      const score = ringDisagreement(placed, fp) / diag;
-      if (!best || score < best.score) best = { name: f.name, ring: placed, score };
-    }
+    // SHEET ORIENTATION IS THE TRUTH — flip NONE, always. The raster ring and
+    // the vision trace come from the SAME page image, so the sheet's own
+    // front-at-bottom drafting convention carries straight into the analysis
+    // frame with no flip. The previous code scored all four axis flips and
+    // kept whichever best matched the TRACE — which let a misoriented trace
+    // (the 1168G gemini roll read the page upside-down) flip the CORRECT
+    // outline to agree with the wrong trace: every jog landed on the opposite
+    // side and FRONT/BACK swapped. There is no flip search anymore; if the
+    // no-flip placement doesn't resemble the trace, we REFUSE and keep the
+    // vision trace rather than risk a misorientation.
+    const placedNone = ringPx.map((p) => ({
+      x: cx + (p.x - rcx) * s,
+      y: cy + (p.y - rcy) * s,
+    }));
+    const best = { name: "none" as const, ring: placedNone, score: ringDisagreement(placedNone, fp) / diag };
     const maxDisagree = input.maxDisagreementFrac ?? 0.3;
-    if (!best || best.score > maxDisagree) {
+    if (best.score > maxDisagree) {
       return fail(
-        `sheet outline doesn't resemble the traced footprint in any orientation (best ${Math.round(
-          (best?.score ?? 1) * 100,
-        )}% of the bbox diagonal apart — likely a rotated sheet or the wrong ink component)`,
+        `sheet outline doesn't resemble the traced footprint at the sheet's own orientation (${Math.round(
+          best.score * 100,
+        )}% of the bbox diagonal apart — likely a rotated/mirrored sheet or the wrong ink component; kept the vision trace)`,
       );
     }
 
