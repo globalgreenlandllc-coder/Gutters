@@ -10,6 +10,7 @@ import {
   type Package,
   type Proposal,
 } from "@/lib/proposal-mock";
+import { AiPriceSwitch } from "./ai-price-switch";
 import { EditablePrice } from "./editable-price";
 
 export function PackagesSection({
@@ -45,6 +46,21 @@ export function PackagesSection({
         title="Choose your package"
         sub="Each tier is sized to your roof. The middle option is most popular."
         readOnly={readOnly}
+        action={
+          // Contractor editor only — the homeowner never sees the switch.
+          !readOnly ? (
+            <AiPriceSwitch
+              packages={proposal.packages}
+              measurements={proposal.measurements}
+              discountPct={proposal.discountPct ?? 0}
+              address={proposal.address}
+              onChangePackages={(packages) =>
+                onChange({ ...proposal, packages })
+              }
+              className="w-64 shrink-0 max-sm:hidden"
+            />
+          ) : undefined
+        }
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -131,6 +147,12 @@ export function PackagesSection({
                   />
                 )}
                 <span className="text-xs text-zinc-500">total</span>
+                {!readOnly && p.pricingMode === "ai" && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-accent-200 bg-accent-50 px-1.5 py-0.5 text-[10px] font-medium text-accent-700">
+                    <Sparkles className="h-2.5 w-2.5" />
+                    AI price
+                  </span>
+                )}
               </div>
               {!readOnly && !interactive && (
                 <div className="mt-1 text-xs text-zinc-400">

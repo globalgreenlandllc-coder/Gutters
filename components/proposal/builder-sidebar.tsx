@@ -11,6 +11,7 @@ import {
   packageTotal,
   type Proposal,
 } from "@/lib/proposal-mock";
+import { AiPriceSwitch } from "./ai-price-switch";
 import { EditablePrice } from "./editable-price";
 import { ProfitPanel } from "./profit-panel";
 
@@ -127,6 +128,18 @@ export function BuilderSidebar({
             </div>
           ))}
         </div>
+
+        {/* The pricing switch — same proposal-wide toggle as the
+            materials builder, surfaced here so comparing AI pricing
+            against your own is one tap from the summary. */}
+        <AiPriceSwitch
+          packages={proposal.packages}
+          measurements={proposal.measurements}
+          discountPct={discountPct}
+          address={proposal.address}
+          onChangePackages={(packages) => onChange({ ...proposal, packages })}
+          className="mt-3"
+        />
 
         {onEditMaterials && recommended && (
           <button

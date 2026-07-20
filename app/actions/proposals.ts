@@ -11,6 +11,7 @@ import {
   blankProposal,
   deriveTotalCentsFromData,
   packageTotal,
+  sanitizeProposalForClient,
   type Proposal,
 } from "@/lib/proposal-mock";
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
@@ -219,7 +220,11 @@ export async function getProposalByToken(
     // ignore
   }
 
-  return row.data as unknown as Proposal;
+  // Public boundary: the portal page serializes this object wholesale,
+  // so contractor-private pricing internals (AI quote, stashed manual
+  // markup, pricing mode) are stripped here — the client sees one
+  // price, with no trace of how it was set.
+  return sanitizeProposalForClient(row.data as unknown as Proposal);
 }
 
 function isPlausibleEmail(s: string): boolean {

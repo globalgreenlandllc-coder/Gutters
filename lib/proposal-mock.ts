@@ -376,6 +376,32 @@ export function blankProposal(): Proposal {
   };
 }
 
+/**
+ * Strips contractor-private pricing internals from a proposal before it
+ * crosses the public portal boundary (/p/[token] serializes the whole
+ * object into the page payload, so "not rendered" is not "not visible" —
+ * dev tools would show it). The homeowner gets exactly ONE price per
+ * tier: whatever pricing mode was active when the proposal was saved.
+ * They must never see the AI quote (market low/high anchors their
+ * negotiation), the stashed manual markup (reveals the other price), or
+ * even that AI pricing was used at all.
+ *
+ * `markupPct` stays — the portal needs it to compute the very totals
+ * being quoted, and it's the same single knob both modes write to.
+ */
+export function sanitizeProposalForClient(p: Proposal): Proposal {
+  return {
+    ...p,
+    packages: p.packages.map((pkg) => {
+      const { aiQuote, myMarkupPct, pricingMode, ...pub } = pkg;
+      void aiQuote;
+      void myMarkupPct;
+      void pricingMode;
+      return pub;
+    }),
+  };
+}
+
 /** Effective sales-tax factor applied to the post-discount total. The
  *  0.85 fudge reflects the share of the job that's taxable material vs
  *  non-taxable labor. Exported so the inverse (`markupPctForTarget`)

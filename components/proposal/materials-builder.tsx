@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Layers,
@@ -21,10 +21,9 @@ import {
   markupPctForTarget,
   packageTotal,
   type AddOn,
-  type AiPriceQuote,
   type Package,
 } from "@/lib/proposal-mock";
-import { getAiPriceQuotes } from "@/app/actions/ai-pricing";
+import { useAiPricing } from "./ai-price-switch";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -88,27 +87,6 @@ function specChipsFromConfig(config: EstimateConfig): string[] {
  * preview's edit drawer; the parent owns the package and patches it
  * through `onChange`.
  */
-/** Fingerprint of everything the AI price depends on — a changed spec,
- *  footage, or address makes the cached quote read as stale. */
-function aiPriceInputKey(
-  address: string,
-  config: EstimateConfig,
-  m: Measurements,
-): string {
-  return JSON.stringify([
-    address.trim().toLowerCase(),
-    config.size,
-    config.style,
-    config.material,
-    config.downspoutSize,
-    config.oldGutterRemoval ?? "none",
-    config.accessories ?? null,
-    Math.round(m.eaveLF),
-    m.downspoutCount,
-    m.stories,
-  ]);
-}
-
 export function MaterialsBuilder({
   pkg,
   allPackages,
@@ -144,6 +122,12 @@ export function MaterialsBuilder({
   const overrides = pkg.lineItemOverrides ?? {};
   const custom = pkg.customLineItems ?? [];
 
+  // Sell-side multiplier: line totals display at CLIENT price (unit cost
+  // × markup), so flipping Your price ⇄ AI market price visibly
+  // re-prices every line, not just the package total — the markup the
+  // switch back-solves is what moves each line.
+  const markupFactor = 1 + pkg.markupPct / 100;
+
   const set = (patch: Partial<Package>) => onChange({ ...pkg, ...patch });
   const setHighlights = (highlights: string[]) => set({ highlights });
   const setAddOns = (addOns: AddOn[]) => set({ addOns });
@@ -167,110 +151,28 @@ export function MaterialsBuilder({
   };
 
   /* ----- AI recommended price (the pricing switch) -----
-   * The switch is proposal-wide: every tier goes to the client, so one
-   * AI call prices ALL packages together (keeps the good/better/best
-   * ladder coherent) and applying/restoring walks the whole list. */
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiErr, setAiErr] = useState<string | null>(null);
+   * Shared proposal-wide logic (useAiPricing): every tier goes to the
+   * client, so one AI call prices ALL packages together and
+   * applying/restoring walks the whole list. */
+  const ai = useAiPricing({
+    packages: allPackages,
+    measurements,
+    discountPct,
+    address,
+    onChangePackages: onChangeAll,
+  });
+  const aiBusy = ai.busy;
+  const aiErr = ai.error;
+  // The switch reflects the tier being edited (proposal-wide actions
+  // still pull the whole ladder onto one mode).
   const pricingMode: "manual" | "ai" =
     pkg.pricingMode === "ai" ? "ai" : "manual";
-  const keyFor = (p: Package) =>
-    aiPriceInputKey(address, p.config, measurements);
   const quote = pkg.aiQuote;
-  const quoteStale =
-    allPackages.some((p) => p.aiQuote && p.aiQuote.inputKey !== keyFor(p));
-
-  /** Land every quoted tier's total on its AI number by back-solving
-   *  that tier's own markup — markup stays the single stored price
-   *  knob, same as EditablePrice. Tiers the AI skipped are untouched. */
-  const applyQuotes = (
-    quotes: Record<string, AiPriceQuote>,
-    stashMarkup: boolean,
-  ) =>
-    onChangeAll(
-      allPackages.map((p) => {
-        const q = quotes[p.id];
-        if (!q) return p;
-        const { subtotal } = packageTotal(p, measurements, discountPct);
-        return {
-          ...p,
-          pricingMode: "ai" as const,
-          // Stash only when this tier is leaving manual mode — a refresh
-          // while already on AI must not overwrite the saved markup.
-          myMarkupPct:
-            stashMarkup && p.pricingMode !== "ai"
-              ? p.markupPct
-              : p.myMarkupPct,
-          aiQuote: q,
-          markupPct: markupPctForTarget(
-            q.recommendedTotal,
-            subtotal,
-            discountPct,
-          ),
-        };
-      }),
-    );
-
-  async function fetchQuotes(stashMarkup: boolean) {
-    if (aiBusy) return;
-    setAiErr(null);
-    if (!address.trim()) {
-      setAiErr("Add the property address first — the AI prices by location.");
-      return;
-    }
-    setAiBusy(true);
-    const r = await getAiPriceQuotes({
-      address,
-      measurements,
-      packages: allPackages.map((p) => ({
-        id: p.id,
-        name: p.name,
-        config: p.config,
-        inputKey: keyFor(p),
-      })),
-    });
-    setAiBusy(false);
-    if (!r.ok) {
-      setAiErr(r.reason);
-      return;
-    }
-    applyQuotes(r.quotes, stashMarkup);
-  }
+  const quoteStale = ai.isStale;
 
   function switchPricingMode(next: "manual" | "ai") {
     if (next === pricingMode) return;
-    if (next === "manual") {
-      setAiErr(null);
-      // Restore each tier's own pre-AI markup — the whole ladder goes
-      // back to exactly what the contractor had.
-      onChangeAll(
-        allPackages.map((p) =>
-          p.pricingMode === "ai"
-            ? {
-                ...p,
-                pricingMode: "manual" as const,
-                markupPct: p.myMarkupPct ?? p.markupPct,
-              }
-            : p,
-        ),
-      );
-      return;
-    }
-    // Every tier already holds a fresh quote → re-apply without a new
-    // AI call; otherwise fetch the full ladder again.
-    const allFresh = allPackages.every(
-      (p) => p.aiQuote && p.aiQuote.inputKey === keyFor(p),
-    );
-    if (allFresh) {
-      applyQuotes(
-        Object.fromEntries(
-          allPackages.map((p) => [p.id, p.aiQuote as AiPriceQuote]),
-        ),
-        true,
-      );
-      return;
-    }
-    void fetchQuotes(true);
+    ai.switchMode(next);
   }
 
   const suggestions = specChipsFromConfig(pkg.config).filter(
@@ -492,9 +394,19 @@ export function MaterialsBuilder({
           <Section
             icon={Receipt}
             title="Bill of materials"
-            sub="Auto-generated from the spec — override a quantity or price, or add your own line."
+            sub="Auto-generated from the spec — override a quantity or unit cost, or add your own line. The right column is the client price at the current markup."
           >
             <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+              <div className="flex items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+                <span className="min-w-0 flex-1">Item</span>
+                <span className="w-14 shrink-0 text-right">Qty</span>
+                <span className="w-6 shrink-0" />
+                <span className="w-[4.5rem] shrink-0 text-right">Unit cost</span>
+                <span className="w-16 shrink-0 text-right">
+                  {pricingMode === "ai" ? "AI price" : "Client price"}
+                </span>
+                <span className="w-6 shrink-0" />
+              </div>
               {autoBase.map((it) => {
                 const ov = overrides[it.id];
                 const qty = ov?.quantity ?? it.quantity;
@@ -551,9 +463,20 @@ export function MaterialsBuilder({
                       }
                       className={NUM_INPUT}
                     />
-                    <span className="w-16 shrink-0 text-right font-semibold tabular-nums text-zinc-900">
-                      {formatCurrency(qty * price)}
-                    </span>
+                    <motion.span
+                      key={Math.round(qty * price * markupFactor)}
+                      initial={reduce ? false : { opacity: 0.4 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: DUR.base, ease: EASE }}
+                      className={cn(
+                        "w-16 shrink-0 text-right font-semibold tabular-nums",
+                        pricingMode === "ai"
+                          ? "text-accent-700"
+                          : "text-zinc-900",
+                      )}
+                    >
+                      {formatCurrency(qty * price * markupFactor)}
+                    </motion.span>
                     <button
                       type="button"
                       aria-label="Reset to auto"
@@ -646,9 +569,18 @@ export function MaterialsBuilder({
                     }
                     className={NUM_INPUT}
                   />
-                  <span className="w-16 shrink-0 text-right font-semibold tabular-nums text-zinc-900">
-                    {formatCurrency(it.quantity * it.unitPrice)}
-                  </span>
+                  <motion.span
+                    key={Math.round(it.quantity * it.unitPrice * markupFactor)}
+                    initial={reduce ? false : { opacity: 0.4 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: DUR.base, ease: EASE }}
+                    className={cn(
+                      "w-16 shrink-0 text-right font-semibold tabular-nums",
+                      pricingMode === "ai" ? "text-accent-700" : "text-zinc-900",
+                    )}
+                  >
+                    {formatCurrency(it.quantity * it.unitPrice * markupFactor)}
+                  </motion.span>
                   <button
                     type="button"
                     aria-label="Remove custom line"
@@ -660,11 +592,33 @@ export function MaterialsBuilder({
                 </div>
               ))}
 
-              <div className="flex items-center justify-between bg-zinc-50/60 px-3 py-2 text-xs font-semibold">
-                <span className="text-zinc-700">Materials + labor subtotal</span>
-                <span className="tabular-nums text-zinc-900">
+              <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/60 px-3 py-2 text-xs">
+                <span className="text-zinc-500">
+                  Your cost (materials + labor + add-ons)
+                </span>
+                <span className="tabular-nums text-zinc-700">
                   {formatCurrency(totals.subtotal)}
                 </span>
+              </div>
+              <div className="flex items-center justify-between bg-zinc-50/60 px-3 py-2 text-xs font-semibold">
+                <span className="inline-flex items-center gap-1.5 text-zinc-700">
+                  {pricingMode === "ai" && (
+                    <Sparkles className="h-3 w-3 text-accent-600" />
+                  )}
+                  Client price before discount &amp; tax
+                </span>
+                <motion.span
+                  key={Math.round(totals.subtotal * markupFactor)}
+                  initial={reduce ? false : { opacity: 0.4 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: DUR.base, ease: EASE }}
+                  className={cn(
+                    "tabular-nums",
+                    pricingMode === "ai" ? "text-accent-700" : "text-zinc-900",
+                  )}
+                >
+                  {formatCurrency(totals.subtotal * markupFactor)}
+                </motion.span>
               </div>
             </div>
             <button
@@ -807,7 +761,7 @@ export function MaterialsBuilder({
                     </span>
                     <button
                       type="button"
-                      onClick={() => void fetchQuotes(false)}
+                      onClick={ai.refresh}
                       disabled={aiBusy}
                       className="ring-focus inline-flex items-center gap-1 rounded-md text-[11px] font-medium text-accent-700 transition-smooth hover:text-accent-900"
                     >

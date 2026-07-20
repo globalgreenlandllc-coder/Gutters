@@ -1550,6 +1550,43 @@ export function blueprintToEstimateResult(
           ...(s.tier ? { tier: s.tier } : {}),
         }));
 
+  // A downspout ALWAYS hangs on the gutter, so it must sit ON an eave line —
+  // never floating off the perimeter (the owner's "don't ever leave a
+  // downspout outside" note). Regardless of source (AI read, ink takeoff,
+  // stale stash), snap each drop onto the nearest point of the nearest eave
+  // polyline as the final step, after every projection/scale. A drop with no
+  // eave to snap to (degenerate) is dropped rather than left adrift.
+  if (eaves.length > 0 && downspouts.length > 0) {
+    const nearestOnPolys = (x: number, y: number): { x: number; y: number } | null => {
+      let best: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (const l of eaves) {
+        for (let i = 0; i + 1 < l.points.length; i++) {
+          const a = l.points[i];
+          const b = l.points[i + 1];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const l2 = dx * dx + dy * dy;
+          const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2)) : 0;
+          const qx = a.x + dx * t;
+          const qy = a.y + dy * t;
+          const d = Math.hypot(x - qx, y - qy);
+          if (d < bestD) {
+            bestD = d;
+            best = { x: qx, y: qy };
+          }
+        }
+      }
+      return best;
+    };
+    downspouts = downspouts
+      .map((d) => {
+        const q = nearestOnPolys(d.x, d.y);
+        return q ? { ...d, x: q.x, y: q.y } : null;
+      })
+      .filter((d): d is Downspout => d !== null);
+  }
+
   return {
     geocoded: {
       formatted: meta.filename,
