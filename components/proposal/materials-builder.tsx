@@ -23,7 +23,7 @@ import {
   type AddOn,
   type Package,
 } from "@/lib/proposal-mock";
-import { useAiPricing } from "./ai-price-switch";
+import { useAiPricing, AiPriceSwitch } from "./ai-price-switch";
 import type { EstimateConfig, LineItem, Measurements } from "@/lib/types";
 import { cn, formatCurrency } from "@/lib/utils";
 
@@ -236,6 +236,19 @@ export function MaterialsBuilder({
           >
             <X className="h-4 w-4" />
           </button>
+        </div>
+
+        {/* AI price switch at the TOP too (owner: visible the moment the
+            summary/pricing opens, not just at the bottom of the panel). The
+            same proposal-wide toggle also lives near the bottom BOM total. */}
+        <div className="border-b border-zinc-100 px-5 pb-3 pt-1">
+          <AiPriceSwitch
+            packages={allPackages}
+            measurements={measurements}
+            discountPct={discountPct}
+            address={address}
+            onChangePackages={onChangeAll}
+          />
         </div>
 
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
