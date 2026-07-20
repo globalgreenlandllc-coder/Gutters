@@ -219,6 +219,18 @@ export function MaterialsBuilder({
     return qty * unit * markupFactor;
   };
 
+  /** True when the AI set this line's own price (so the unit cell shows the
+   *  AI per-unit SELL price and is read-only — edit in Your price mode). */
+  const isAiPricedLine = (id: string): boolean =>
+    !!aiLineNorm && typeof aiLineNorm.map[id] === "number" && aiLineNorm.map[id] > 0;
+
+  /** The unit-column value: the AI per-unit SELL price (line total ÷ qty) in
+   *  AI mode, else the contractor's unit COST. */
+  const lineUnit = (id: string, qty: number, cost: number): number =>
+    isAiPricedLine(id) && qty > 0
+      ? Math.round((lineSell(id, qty, cost) / qty) * 100) / 100
+      : cost;
+
   function switchPricingMode(next: "manual" | "ai") {
     if (next === pricingMode) return;
     ai.switchMode(next);
@@ -464,7 +476,9 @@ export function MaterialsBuilder({
                 <span className="min-w-0 flex-1">Item</span>
                 <span className="w-14 shrink-0 text-right">Qty</span>
                 <span className="w-6 shrink-0" />
-                <span className="w-[4.5rem] shrink-0 text-right">Unit cost</span>
+                <span className="w-[4.5rem] shrink-0 text-right">
+                  {pricingMode === "ai" ? "AI unit" : "Unit cost"}
+                </span>
                 <span className="w-16 shrink-0 text-right">
                   {pricingMode === "ai" ? "AI price" : "Client price"}
                 </span>
@@ -515,7 +529,13 @@ export function MaterialsBuilder({
                       type="number"
                       step={0.25}
                       aria-label={`${it.name} unit price`}
-                      value={price}
+                      value={lineUnit(it.id, qty, price)}
+                      readOnly={isAiPricedLine(it.id)}
+                      title={
+                        isAiPricedLine(it.id)
+                          ? "AI market unit price — switch to Your price to edit"
+                          : undefined
+                      }
                       onChange={(e) =>
                         setOverride(it.id, {
                           unitPrice: Math.max(
@@ -524,7 +544,11 @@ export function MaterialsBuilder({
                           ),
                         })
                       }
-                      className={NUM_INPUT}
+                      className={cn(
+                        NUM_INPUT,
+                        isAiPricedLine(it.id) &&
+                          "cursor-default bg-accent-50/60 text-accent-700",
+                      )}
                     />
                     <motion.span
                       key={Math.round(lineSell(it.id, qty, price))}
@@ -614,7 +638,13 @@ export function MaterialsBuilder({
                     type="number"
                     step={0.25}
                     aria-label="Custom line unit price"
-                    value={it.unitPrice}
+                    value={lineUnit(it.id, it.quantity, it.unitPrice)}
+                    readOnly={isAiPricedLine(it.id)}
+                    title={
+                      isAiPricedLine(it.id)
+                        ? "AI market unit price — switch to Your price to edit"
+                        : undefined
+                    }
                     onChange={(e) =>
                       setCustom(
                         custom.map((x, j) =>
@@ -630,7 +660,11 @@ export function MaterialsBuilder({
                         ),
                       )
                     }
-                    className={NUM_INPUT}
+                    className={cn(
+                      NUM_INPUT,
+                      isAiPricedLine(it.id) &&
+                        "cursor-default bg-accent-50/60 text-accent-700",
+                    )}
                   />
                   <motion.span
                     key={Math.round(lineSell(it.id, it.quantity, it.unitPrice))}
