@@ -9,8 +9,12 @@ import { buildLineItems } from "@/lib/pricing";
 import {
   computeEstimateTotals,
   formatDelta,
+  markupForEstimateTarget,
   type Adjustments,
 } from "@/lib/estimate-totals";
+import { getAiPriceQuotes } from "@/app/actions/ai-pricing";
+import { aiPriceInputKey } from "@/components/proposal/ai-price-switch";
+import type { AiPriceQuote } from "@/lib/proposal-mock";
 import type { EstimateHandoff } from "@/lib/estimate-handoff";
 import { MaterialSelector } from "./material-selector";
 import { PricingTable } from "./pricing-table";
@@ -79,6 +83,107 @@ export function PricingPanel({
     () => computeEstimateTotals(items, adjustments),
     [items, adjustments],
   );
+
+  // ── AI market price switch (same proposal-wide feature, applied to the
+  //    single estimate): fetch a location quote and back-solve the markup so
+  //    the estimate total lands on the AI number; flipping back restores the
+  //    contractor's own markup. Per-line AI prices ride on the quote and
+  //    surface in the pricing table. Address comes from the takeoff handoff. ─
+  const aiAddress = (handoff?.address ?? "").trim();
+  const [ai, setAi] = useState<{
+    mode: "manual" | "ai";
+    quote: AiPriceQuote | null;
+    stashedMarkup: number | null;
+    busy: boolean;
+    error: string | null;
+  }>({ mode: "manual", quote: null, stashedMarkup: null, busy: false, error: null });
+
+  const aiKey = useMemo(
+    () => aiPriceInputKey(aiAddress, config, measurements),
+    [aiAddress, config, measurements],
+  );
+  const aiStale = ai.mode === "ai" && !!ai.quote && ai.quote.inputKey !== aiKey;
+
+  const applyAiQuote = useCallback(
+    (q: AiPriceQuote, leavingManual: boolean) => {
+      const m = markupForEstimateTarget(
+        q.recommendedTotal,
+        items,
+        adjustments.discountPct,
+        adjustments.taxPct,
+      );
+      setAdjustments((a) => ({ ...a, markupPct: Math.round(m * 10) / 10 }));
+      setAi((s) => ({
+        mode: "ai",
+        quote: q,
+        stashedMarkup: leavingManual ? adjustments.markupPct : s.stashedMarkup,
+        busy: false,
+        error: null,
+      }));
+    },
+    [items, adjustments.discountPct, adjustments.taxPct, adjustments.markupPct],
+  );
+
+  const switchAiMode = useCallback(
+    async (next: "manual" | "ai") => {
+      if (next === "manual") {
+        setAdjustments((a) => ({
+          ...a,
+          markupPct: ai.stashedMarkup ?? a.markupPct,
+        }));
+        setAi((s) => ({ ...s, mode: "manual", error: null }));
+        return;
+      }
+      if (ai.busy) return;
+      if (ai.quote && ai.quote.inputKey === aiKey) {
+        applyAiQuote(ai.quote, ai.mode !== "ai");
+        return;
+      }
+      if (!aiAddress) {
+        setAi((s) => ({
+          ...s,
+          error: "Add the property address first — the AI prices by location.",
+        }));
+        return;
+      }
+      setAi((s) => ({ ...s, busy: true, error: null }));
+      const r = await getAiPriceQuotes({
+        address: aiAddress,
+        measurements,
+        packages: [
+          { id: "estimate", name: "Estimate", config, inputKey: aiKey },
+        ],
+      });
+      if (!r.ok) {
+        setAi((s) => ({ ...s, busy: false, error: r.reason }));
+        return;
+      }
+      const q = r.quotes["estimate"];
+      if (!q) {
+        setAi((s) => ({ ...s, busy: false, error: "No quote returned" }));
+        return;
+      }
+      applyAiQuote(q, ai.mode !== "ai");
+    },
+    [ai, aiKey, aiAddress, measurements, config, applyAiQuote],
+  );
+
+  const refreshAi = useCallback(async () => {
+    if (!aiAddress || ai.busy) return;
+    setAi((s) => ({ ...s, busy: true, error: null }));
+    const r = await getAiPriceQuotes({
+      address: aiAddress,
+      measurements,
+      packages: [{ id: "estimate", name: "Estimate", config, inputKey: aiKey }],
+    });
+    if (!r.ok) {
+      setAi((s) => ({ ...s, busy: false, error: r.reason }));
+      return;
+    }
+    const q = r.quotes["estimate"];
+    if (q) applyAiQuote(q, false);
+    else setAi((s) => ({ ...s, busy: false }));
+  }, [aiAddress, ai.busy, measurements, config, aiKey, applyAiQuote]);
 
   /**
    * Client-total impact of a hypothetical config change — powers the
@@ -180,6 +285,15 @@ export function PricingPanel({
                 onAdjust={setAdjustments}
                 handoff={handoff}
                 measurements={measurements}
+                ai={{
+                  mode: ai.mode,
+                  busy: ai.busy,
+                  error: ai.error,
+                  stale: aiStale,
+                  quote: ai.quote,
+                  onSwitch: switchAiMode,
+                  onRefresh: refreshAi,
+                }}
               />
             )}
           </motion.div>

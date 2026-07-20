@@ -36,6 +36,31 @@ export function computeEstimateTotals(
   return { subtotal, markup, discount, tax, total };
 }
 
+/**
+ * Back-solve the markup % so computeEstimateTotals(items, {...}).total lands
+ * exactly on `target` — the AI market price applied through the estimate's
+ * OWN total formula (the "AI market price" switch). Inverse of
+ * computeEstimateTotals: total = (1+m)(1−d)(subtotal + taxableBase·t), so
+ * m = target / [(1−d)(subtotal + taxableBase·t)] − 1. Returns 0 when the
+ * base is non-positive (nothing to mark up).
+ */
+export function markupForEstimateTarget(
+  target: number,
+  items: LineItem[],
+  discountPct: number,
+  taxPct: number,
+): number {
+  const subtotal = items.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  const taxableBase = items
+    .filter((i) => i.taxable)
+    .reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+  const d = Math.max(0, Math.min(100, discountPct)) / 100;
+  const t = Math.max(0, taxPct) / 100;
+  const denom = (1 - d) * (subtotal + taxableBase * t);
+  if (!(denom > 0) || !(target > 0)) return 0;
+  return (target / denom - 1) * 100;
+}
+
 /** Compact signed currency for chip deltas: +$248, −$1.2k. Null when ~0. */
 export function formatDelta(n: number): string | null {
   const abs = Math.abs(n);
