@@ -167,6 +167,7 @@ export function PricingPanel({
                 config={config}
                 onChange={setConfig}
                 deltaFor={deltaFor}
+                measurements={measurements}
               />
             )}
             {tab === "pricing" && (

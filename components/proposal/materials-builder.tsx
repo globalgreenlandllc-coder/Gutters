@@ -247,6 +247,7 @@ export function MaterialsBuilder({
             <MaterialSelector
               config={pkg.config}
               onChange={(config) => set({ config })}
+              measurements={measurements}
             />
           </Section>
 

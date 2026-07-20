@@ -1,6 +1,18 @@
 "use client";
 
-import { Check, Droplet, Flame, Gift, Mountain, Shield, Waves } from "lucide-react";
+import { useState } from "react";
+import {
+  Box,
+  Check,
+  Droplet,
+  Eye,
+  Flame,
+  Gift,
+  Mountain,
+  Rotate3d,
+  Shield,
+  Waves,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   EstimateConfig,
@@ -9,10 +21,12 @@ import type {
   GutterSize,
   GutterStyle,
   DownspoutSize,
+  Measurements,
 } from "@/lib/types";
 import { COLOR_OPTIONS } from "@/lib/pricing";
 import { formatDelta } from "@/lib/estimate-totals";
 import { GutterPreview } from "./gutter-preview";
+import { SystemDiagram } from "./system-diagram";
 
 const DEFAULT_ACCESSORIES: GutterAccessories = {
   guard: "none",
@@ -61,6 +75,7 @@ export function MaterialSelector({
   config,
   onChange,
   deltaFor,
+  measurements,
 }: {
   config: EstimateConfig;
   onChange: (next: EstimateConfig) => void;
@@ -68,8 +83,13 @@ export function MaterialSelector({
    *  a price pill on each option so the cost of a choice is visible
    *  before it's made. */
   deltaFor?: (patch: Partial<EstimateConfig>) => number;
+  /** Live takeoff. When present, unlocks the client-facing "System"
+   *  view — the complete bill of materials the homeowner receives. */
+  measurements?: Measurements;
 }) {
   const accessories = config.accessories ?? DEFAULT_ACCESSORIES;
+  const [view, setView] = useState<"interactive" | "system">("interactive");
+  const showSystem = view === "system" && !!measurements;
   const setAcc = (patch: Partial<GutterAccessories>) =>
     onChange({ ...config, accessories: { ...accessories, ...patch } });
   const accDelta = (patch: Partial<GutterAccessories>) =>
@@ -81,7 +101,53 @@ export function MaterialSelector({
 
   return (
     <div className="space-y-5">
-      <GutterPreview config={config} />
+      {measurements ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 p-0.5">
+              <button
+                type="button"
+                onClick={() => setView("interactive")}
+                className={cn(
+                  "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium",
+                  view === "interactive"
+                    ? "bg-white text-accent-700 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-700",
+                )}
+              >
+                <Rotate3d className="h-3.5 w-3.5" />
+                Interactive
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("system")}
+                className={cn(
+                  "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium",
+                  view === "system"
+                    ? "bg-white text-accent-700 shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-700",
+                )}
+              >
+                <Box className="h-3.5 w-3.5" />
+                System
+              </button>
+            </div>
+            {showSystem && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                <Eye className="h-3 w-3" />
+                Client-facing view
+              </span>
+            )}
+          </div>
+          {showSystem ? (
+            <SystemDiagram config={config} measurements={measurements} />
+          ) : (
+            <GutterPreview config={config} />
+          )}
+        </div>
+      ) : (
+        <GutterPreview config={config} />
+      )}
 
       <Group label="Size">
         <Pills
