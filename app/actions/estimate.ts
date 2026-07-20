@@ -1440,8 +1440,15 @@ export async function runEstimateFromPlan(
       // geometry, and the layout skeleton is the drawn interior. The guess
       // engine (elevation-placed gables, per-mass skeletons, mass-edge eave
       // rebuild) would overwrite both — keep it off on this path.
-      useEngineTakeoff: engineTakeoffEnabled() && !edgeApplied,
-      useEngineDraw: engineDrawEnabled() && !edgeApplied,
+      // INK TAKEOFF likewise OWNS the eave/gable classification: its gutter
+      // runs and excluded_edges are the truth. The display-only engine would
+      // re-derive `rakes` from its own mass decomposition and re-dash edges
+      // the ink takeoff correctly guttered (the 1168G all-hip roof drew 2-3
+      // phantom "gable" dashes this way) + emit a misleading "engine LF vs
+      // priced LF" gap note. Stand the whole engine layer down on the ink
+      // path — perimeter-only wants no interior skeleton anyway.
+      useEngineTakeoff: engineTakeoffEnabled() && !edgeApplied && !inkApplied,
+      useEngineDraw: engineDrawEnabled() && !edgeApplied && !inkApplied,
       perimeterOnly: perimeterOnlyEnabled(),
       perFace: perFace as Record<string, import("@/lib/ai/face-merge").FaceReadingRaw> | null,
       // The MERGED layout verdict (roof page ∪ elevations): on a confirmed
