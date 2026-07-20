@@ -170,6 +170,55 @@ export function MaterialsBuilder({
   const quote = pkg.aiQuote;
   const quoteStale = ai.isStale;
 
+  // PER-ITEM AI PRICING: in AI mode the AI returns a market SELLING price per
+  // BOM line (quote.lineItems). Use those as WEIGHTS to re-slice the same
+  // marked-up subtotal, so every line shows the AI's own independent price
+  // (premium parts richer, commodity leaner) — NOT one flat markup — while
+  // the package total stays exactly what markupPct governs (the itemization
+  // still reconciles to the quote everywhere else in the app). Lines the AI
+  // didn't price (custom adds, or an old quote) keep the uniform markup, and
+  // the weighted lines absorb the remainder so the grand total is unchanged.
+  const aiLineNorm = useMemo(() => {
+    if (pricingMode !== "ai") return null;
+    const map = pkg.aiQuote?.lineItems;
+    if (!map || Object.keys(map).length === 0) return null;
+    const lines = [
+      ...autoBase.map((it) => {
+        const ov = overrides[it.id];
+        return {
+          id: it.id,
+          qty: ov?.quantity ?? it.quantity,
+          unit: ov?.unitPrice ?? it.unitPrice,
+        };
+      }),
+      ...custom.map((it) => ({ id: it.id, qty: it.quantity, unit: it.unitPrice })),
+    ];
+    let weightSum = 0;
+    let unweightedMarked = 0;
+    let subtotalMarked = 0;
+    for (const l of lines) {
+      const marked = l.qty * l.unit * markupFactor;
+      subtotalMarked += marked;
+      const w = map[l.id];
+      if (typeof w === "number" && w > 0) weightSum += w;
+      else unweightedMarked += marked;
+    }
+    if (weightSum <= 0) return null;
+    const perWeight = Math.max(0, subtotalMarked - unweightedMarked) / weightSum;
+    return { map, perWeight };
+  }, [pricingMode, pkg.aiQuote, autoBase, overrides, custom, markupFactor]);
+
+  /** A line's displayed CLIENT price: the AI's per-item price (weight ×
+   *  normalizer) in AI mode when the AI priced this line, else the uniform
+   *  marked-up cost. */
+  const lineSell = (id: string, qty: number, unit: number): number => {
+    if (aiLineNorm) {
+      const w = aiLineNorm.map[id];
+      if (typeof w === "number" && w > 0) return w * aiLineNorm.perWeight;
+    }
+    return qty * unit * markupFactor;
+  };
+
   function switchPricingMode(next: "manual" | "ai") {
     if (next === pricingMode) return;
     ai.switchMode(next);
@@ -478,7 +527,7 @@ export function MaterialsBuilder({
                       className={NUM_INPUT}
                     />
                     <motion.span
-                      key={Math.round(qty * price * markupFactor)}
+                      key={Math.round(lineSell(it.id, qty, price))}
                       initial={reduce ? false : { opacity: 0.4 }}
                       animate={{ opacity: 1 }}
                       transition={{ duration: DUR.base, ease: EASE }}
@@ -489,7 +538,7 @@ export function MaterialsBuilder({
                           : "text-zinc-900",
                       )}
                     >
-                      {formatCurrency(qty * price * markupFactor)}
+                      {formatCurrency(lineSell(it.id, qty, price))}
                     </motion.span>
                     <button
                       type="button"
@@ -584,7 +633,7 @@ export function MaterialsBuilder({
                     className={NUM_INPUT}
                   />
                   <motion.span
-                    key={Math.round(it.quantity * it.unitPrice * markupFactor)}
+                    key={Math.round(lineSell(it.id, it.quantity, it.unitPrice))}
                     initial={reduce ? false : { opacity: 0.4 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: DUR.base, ease: EASE }}
@@ -593,7 +642,7 @@ export function MaterialsBuilder({
                       pricingMode === "ai" ? "text-accent-700" : "text-zinc-900",
                     )}
                   >
-                    {formatCurrency(it.quantity * it.unitPrice * markupFactor)}
+                    {formatCurrency(lineSell(it.id, it.quantity, it.unitPrice))}
                   </motion.span>
                   <button
                     type="button"

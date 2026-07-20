@@ -35,6 +35,12 @@ export type AiPriceQuote = {
   highTotal: number;
   /** Installed $/LF market rate the suggestion leans on (null if n/a). */
   perLfInstalled: number | null;
+  /** Per-BOM-line AI SELLING price (line id → dollars), so the materials
+   *  builder shows each line individually re-priced by the AI in AI mode
+   *  (normalized to sum to recommendedTotal at display). Absent/empty on
+   *  older quotes or when the AI skipped the breakdown → fall back to the
+   *  uniform-markup line prices. */
+  lineItems?: Record<string, number>;
   /** 2–4 short contractor-facing bullets on how it priced the job. */
   reasoning: string[];
   /** The location the AI actually priced against (e.g. "Austin, TX"). */

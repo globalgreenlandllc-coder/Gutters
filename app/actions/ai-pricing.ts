@@ -71,6 +71,10 @@ export async function getAiPriceQuotes(input: {
       lowTotal: s.lowTotal,
       highTotal: s.highTotal,
       perLfInstalled: s.perLfInstalled,
+      lineItems:
+        s.lineItems.length > 0
+          ? Object.fromEntries(s.lineItems.map((li) => [li.id, li.price]))
+          : undefined,
       reasoning: res.suggestion.reasoning,
       location: res.suggestion.location,
       fetchedAt,
