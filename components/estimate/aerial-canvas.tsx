@@ -265,7 +265,7 @@ export function AerialCanvas({
   );
   const [drag, setDrag] = useState<
     | { kind: "vertex"; lineId: string; index: number }
-    | { kind: "downspout"; id: string }
+    | { kind: "downspout"; id: string; fresh?: boolean }
     | {
         kind: "line";
         lineId: string;
@@ -671,7 +671,7 @@ export function AerialCanvas({
     heightFt: number;
     snapped: boolean;
   } {
-    const tol = 14 * Math.max(renderScale, 0.5);
+    const tol = 22 * Math.max(renderScale, 0.5);
     let best: { x: number; y: number } | null = null;
     let bestD = tol;
     let bestTier: EditableLine["tier"];
@@ -790,11 +790,12 @@ export function AerialCanvas({
       return;
     }
     if (tool === "add-downspout") {
-      // Rapid-fire placement: every click drops a downspout (snapped
-      // onto the nearest gutter run, height read from its tier) and the
-      // tool STAYS armed — click, click, click around the roof. Esc or
-      // right-click when done. No popover interruption between drops;
-      // heights are already smart-defaulted and editable later.
+      // ONE-CLICK PLACE-AND-SLIDE: the click drops a downspout AND grabs
+      // it in the same gesture, so the contractor can keep the button
+      // down and slide it exactly where they want — a plain click-release
+      // just leaves it where it landed (snapped onto the nearest gutter
+      // run). No precise targeting required; the tool stays armed for the
+      // next drop. Esc or right-click when done.
       if (e.button === 2) {
         setTool("select");
         return;
@@ -805,6 +806,18 @@ export function AerialCanvas({
         ...downspouts,
         { id, x: snap.x, y: snap.y, heightFt: snap.heightFt },
       ]);
+      setDsGhost(null);
+      // Grab it immediately so the ongoing pointer motion drags the real
+      // drop (see the "downspout" branch of handlePointerMove). We do NOT
+      // select it — that would pop the height editor between every drop
+      // and break rapid-fire placement; heights stay smart-defaulted and
+      // are editable later in Select.
+      setDrag({ kind: "downspout", id, fresh: true });
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Some browsers throw on capture for non-mouse pointers.
+      }
       return;
     }
     setSelectedId(null);
@@ -832,9 +845,10 @@ export function AerialCanvas({
       setDrawing({ ...drawing, end, snapped: hardSnap });
       return;
     }
-    if (tool === "add-downspout") {
+    if (tool === "add-downspout" && !drag) {
       // Ghost preview follows the cursor, pre-snapped onto the nearest
       // gutter run — the contractor sees the landing spot before the click.
+      // Suppressed once a drop is grabbed (the real dot leads instead).
       const s = snapDownspoutPoint(p);
       if (
         dsGhost &&
@@ -891,8 +905,23 @@ export function AerialCanvas({
         ),
       );
     } else if (drag?.kind === "downspout") {
+      // Snap onto the nearest gutter run when the cursor is close, but let
+      // the drop go anywhere when it's pulled away — "on the line" without
+      // fighting the contractor. Height re-reads the tier only for a drop
+      // still being placed, so repositioning a downspout with a hand-set
+      // height in Select doesn't silently reset it.
+      const s = snapDownspoutPoint(p);
       onDownspoutsChange(
-        downspouts.map((d) => (d.id === drag.id ? { ...d, x: p.x, y: p.y } : d)),
+        downspouts.map((d) =>
+          d.id === drag.id
+            ? {
+                ...d,
+                x: s.x,
+                y: s.y,
+                ...(drag.fresh && s.snapped ? { heightFt: s.heightFt } : {}),
+              }
+            : d,
+        ),
       );
     }
   }
@@ -1160,7 +1189,7 @@ export function AerialCanvas({
             {tool === "add-gable" &&
               "Click both ends of the gable edge — tool stays on for the next one"}
             {tool === "add-downspout" &&
-              "Click along the gutter to drop downspouts — it snaps to the run · Esc when done"}
+              "Click to drop a downspout, then slide it where you want — it rides the gutter · Esc when done"}
           </div>
         </div>
       )}
