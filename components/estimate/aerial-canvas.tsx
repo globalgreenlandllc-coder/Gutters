@@ -226,8 +226,13 @@ export function AerialCanvas({
   // laid out at a fixed ft scale and a small house would otherwise sit
   // tiny in the frame). In satellite mode the trace is calibrated to the
   // image, so we reset to the full extent instead of cropping the photo.
+  // Extra frame padding on PLAN takeoffs so the LF pills have room to sit
+  // OUTSIDE the roof outline instead of crushing against the viewport edge
+  // (the owner's "give the labels room" note). Satellite keeps the tight
+  // default (its trace is already sized to the imagery).
+  const PLAN_FIT_PAD = 0.2;
   const resetView = () => {
-    const fit = planSource ? fitViewBox(contentPoints) : null;
+    const fit = planSource ? fitViewBox(contentPoints, { padPct: PLAN_FIT_PAD }) : null;
     setView(fit ?? { x: 0, y: 0, width: VIEWBOX_W, height: VIEWBOX_H });
   };
 
@@ -241,7 +246,7 @@ export function AerialCanvas({
     if (didAutoFitRef.current) return;
     if (!planSource) return;
     if (contentPoints.length < 2) return;
-    const fit = fitViewBox(contentPoints);
+    const fit = fitViewBox(contentPoints, { padPct: PLAN_FIT_PAD });
     if (fit) setView(fit);
     didAutoFitRef.current = true;
   }, [planSource, contentPoints]);
@@ -431,7 +436,7 @@ export function AerialCanvas({
         nx = -nx;
         ny = -ny;
       }
-      const off = 22 * renderScale;
+      const off = 26 * renderScale;
       items.push({ id: line.id, cx: mx + nx * off, cy: my + ny * off, w, h });
     }
     if (items.length === 0) return new Map<string, PlacedLabel>();
@@ -467,7 +472,11 @@ export function AerialCanvas({
           maxX: view.x + view.width - insetX,
           maxY: view.y + view.height - insetBottom,
         },
-        gap: 3.5 * renderScale,
+        // Wider gap + more relaxation passes so clustered short-run pills
+        // (the 1168G front entry/garage jogs) fully separate instead of
+        // stacking into an unreadable pile at the bottom edge.
+        gap: 5.5 * renderScale,
+        iterations: 60,
       },
     );
   }, [

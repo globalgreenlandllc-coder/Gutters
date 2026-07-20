@@ -797,10 +797,27 @@ export function blueprintToEstimateResult(
   // roof-structure overlay below (perimeter outline + interior roof
   // lines) so the contractor sees the whole roof shape, not a hip
   // mislabeled as a gable.
+  // A gable rake on a rectilinear plan takeoff is always an axis-aligned wall
+  // edge. A DIAGONAL excluded edge (both dx and dy significant) is an artifact
+  // — a stale suggestion/tier-drop or a bad reconcile output — and it draws as
+  // the stray dashed line cutting diagonally across a step that the owner
+  // flagged ("I don't need to see that"). Drop it on the perimeter-only plan
+  // path; satellite (angled walls, no perimeterOnly) is untouched.
+  const isDiagonalRake = (a: BlueprintPoint, b: BlueprintPoint): boolean => {
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+    const len = Math.hypot(dx, dy);
+    if (!(len > 0)) return false;
+    return dx / len > 0.26 && dy / len > 0.26; // >~15° off both axes
+  };
   let rakes: EditableLine[] = analysis.excluded_edges
     .filter((e) => e.kind === "rake" || e.kind === "dormer_rake")
     .map((e, i): EditableLine | null => {
       if (!isGoodPoint(e.start) || !isGoodPoint(e.end)) {
+        droppedRakes.push(i);
+        return null;
+      }
+      if (perimeterOnly && isDiagonalRake(e.start, e.end)) {
         droppedRakes.push(i);
         return null;
       }
