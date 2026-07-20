@@ -507,34 +507,53 @@ export function PresentationCanvas({
             small trace fills the frame while the drafting border stays at
             full size. `geomTransform` is undefined (identity) otherwise. */}
         <g transform={geomTransform}>
-        {/* Roof outline + ridge/hip/valley lines under the trace, so the
-            full roof shape reads and missing runs show as bare outline. */}
+        {/* GUTTER PERIMETER (owner doctrine): the client review diagram is a
+            gutter takeoff, not a reconstructed roof. Draw ONLY the roof
+            outline — no ridges, hips, valleys, tier lines, plane shading or
+            gable wings (those rendered the fanned tangle + dashed diagonals
+            the owner flagged). The solid gutters (teal / amber low-roof) and
+            dashed gables are drawn by this canvas on top; downspouts + LF
+            pills complete it. Matches the estimate canvas's perimeterOnly. */}
         {planMode && roofStructure && (
           <RoofStructureOverlay
             structure={roofStructure}
             tone="onLight"
             scale={vs}
-            derive
+            perimeterOnly
             eaves={eaves}
             rakes={rakes}
           />
         )}
-        {/* Rakes — gray-dashed, low-opacity, non-interactive. In PLAN mode
-            the overlay draws connected GABLE ends from these rakes, so skip
-            the separate floating stubs there. */}
-        {!planMode && rakes.map((line) => (
+        {/* Rakes — gray-dashed "GABLE (no gutter)" edges, non-interactive.
+            Drawn in BOTH modes now: the perimeter-only overlay no longer
+            derives connected gable wings, so this is the sole source of the
+            dashed gable edges on the plan diagram. A diagonal rake (>15° off
+            both axes on a rectilinear plan) is an artifact — skip it, same
+            guard as the estimate takeoff. */}
+        {rakes
+          .filter((line) => {
+            if (!planMode) return true;
+            const a = line.points[0];
+            const b = line.points[line.points.length - 1];
+            if (!a || !b) return false;
+            const dx = Math.abs(b.x - a.x);
+            const dy = Math.abs(b.y - a.y);
+            const len = Math.hypot(dx, dy);
+            return !(len > 0 && dx / len > 0.26 && dy / len > 0.26);
+          })
+          .map((line) => (
           <motion.path
             key={line.id}
             d={pathFor(line)}
-            stroke={planMode ? "#1e3a8a" : "#94a3b8"}
+            stroke={planMode ? "#64748b" : "#94a3b8"}
             strokeWidth={1.75 * vs}
             strokeDasharray={`${5 * vs} ${4 * vs}`}
             strokeLinecap="round"
             fill="none"
-            opacity={planMode ? 0.6 : 0.55}
+            opacity={planMode ? 0.7 : 0.55}
             pointerEvents="none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: planMode ? 0.6 : 0.55 }}
+            animate={{ opacity: planMode ? 0.7 : 0.55 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           />
         ))}
