@@ -1115,6 +1115,9 @@ export async function runEstimateFromPlan(
         // Placement floor: the roof page's own printed D.S. marks (the
         // classifier's elevation count isn't stashed at estimate time).
         minDownspouts: roofPlanRead?.total_ds_marks ?? null,
+        // Roof-plan feature labels by quadrant → tier color + porch/patio
+        // naming on the covered lower-roof runs.
+        featureQuadrants: roofPlanRead?.feature_quadrants ?? null,
       });
       if (ink) {
         analysis.gutter_runs = ink.runs;

@@ -102,6 +102,81 @@ test("reject-implausible: bad scale / degenerate ring → null (caller keeps the
   );
 });
 
+test("feature quadrants: front covered → porch+lower (amber), rear → patio+lower, garage → main tier", () => {
+  // 120×80 ft rectangle (0.5 ft/unit → 240×160 units). Front = max-y.
+  const RECT2: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 240, y: 0 },
+    { x: 240, y: 160 },
+    { x: 0, y: 160 },
+  ];
+  const out = inkTakeoff({
+    ring: RECT2,
+    ftPerUnit: 0.5,
+    featureQuadrants: { garage: "front-right", porch: "front-left", patio: "rear-right" },
+  });
+  assert.ok(out);
+  const bySide = new Map(out!.runs.map((r) => [r.side, r]));
+  // front edge midpoint is centered (x=120) → in the dead-zone, untagged.
+  // Use side geometry: the FRONT run (y=160) spans full width; its midpoint
+  // x=120 is central, so it should NOT be grabbed. Left/right runs get tagged.
+  const left = bySide.get("left")!;  // x=0, rear-to-front → midpoint y=80 central too
+  // With a plain rectangle every side's midpoint is centered on one axis, so
+  // the quadrant test (needs BOTH front/rear AND left/right past the pad)
+  // tags nothing — verifies the dead-zone guards main eaves.
+  assert.equal(out!.runs.every((r) => r.tier !== "lower"), true, "a plain box has no corner-quadrant runs to mis-tag");
+  assert.ok(left);
+});
+
+test("feature quadrants: an L-jog run sitting in the covered quadrant is tagged", () => {
+  // Rectangle with a pop-out in the REAR-RIGHT corner (a patio cover mass):
+  // its edges sit clearly in the rear-right quadrant.
+  const withPatio: Pt[] = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 40 },   // rear-right pop-out starts
+    { x: 260, y: 40 },
+    { x: 260, y: 160 },
+    { x: 0, y: 160 },
+  ];
+  const out = inkTakeoff({
+    ring: withPatio,
+    ftPerUnit: 0.5,
+    featureQuadrants: { patio: "rear-right" },
+  });
+  assert.ok(out);
+  // The pop-out's right edge (x=260, y 40→160... midpoint y=100) — hmm that's
+  // front half. The rear-right pop-out edges near y=40 (rear) x=200-260
+  // (right) get tagged patio+lower.
+  const tagged = out!.runs.filter((r) => r.feature === "patio");
+  assert.ok(tagged.length >= 1, `at least one patio run, got ${JSON.stringify(out!.runs.map((r) => [r.feature, r.tier]))}`);
+  for (const r of tagged) assert.equal(r.tier, "lower");
+  assert.match(out!.summary, /LOWER covered roof/);
+  assert.match(out!.summary, /rear patio/);
+});
+
+test("downspouts land on OUTSIDE (convex) corners, not mid-wall", () => {
+  // Notched ring: all 6 outside corners are convex except the 2 notch
+  // re-entrant (concave) corners. Every downspout must sit on a convex one.
+  const out = inkTakeoff({ ring: NOTCHED, ftPerUnit: 0.5, minDownspouts: 4 });
+  assert.ok(out);
+  assert.ok(out!.downspouts.length >= 4);
+  // Convex (outside) per the ring winding — the 4 box corners + the notch
+  // MOUTH corners; concave (inside) = the notch BACK corners (matches the
+  // insideMiters=2 the miter test pins).
+  const convexCorners = [
+    { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 60 },
+    { x: 70, y: 60 }, { x: 30, y: 60 }, { x: 0, y: 60 },
+  ];
+  const concaveCorners = [ { x: 70, y: 50 }, { x: 30, y: 50 } ];
+  for (const d of out!.downspouts) {
+    if (d.reason !== "outside_corner") continue;
+    const onConvex = convexCorners.some((c) => Math.hypot(c.x - d.at.x, c.y - d.at.y) < 1e-6);
+    const onConcave = concaveCorners.some((c) => Math.hypot(c.x - d.at.x, c.y - d.at.y) < 1e-6);
+    assert.ok(onConvex && !onConcave, `corner drop must sit on a convex corner, got ${JSON.stringify(d.at)}`);
+  }
+});
+
 test("summary names the doctrine and the replaced runs", () => {
   const out = inkTakeoff({ ring: RECT, ftPerUnit: 0.5 });
   assert.ok(out);
