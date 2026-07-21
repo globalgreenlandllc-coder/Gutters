@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AnnouncementBanner } from "@/components/announcements/announcement-banner";
 import { usePathname, useRouter } from "next/navigation";
 import {
   CalendarDays,
@@ -10,6 +11,7 @@ import {
   FileText,
   HardHat,
   LayoutGrid,
+  LifeBuoy,
   LogOut,
   MapPin,
   Menu,
@@ -71,7 +73,10 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
   },
   {
     label: "Account",
-    items: [{ href: "/dashboard/settings", label: "Settings", Icon: Settings }],
+    items: [
+      { href: "/dashboard/settings", label: "Settings", Icon: Settings },
+      { href: "/dashboard/support", label: "Help & support", Icon: LifeBuoy },
+    ],
   },
 ];
 
@@ -454,6 +459,7 @@ export function DashboardShell({
                 contentClassName,
               )}
             >
+              <AnnouncementBanner />
               {title ? (
                 <>
                   <div className="hidden lg:block">

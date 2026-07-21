@@ -13,7 +13,9 @@ import {
   FlaskConical,
   Key,
   LayoutDashboard,
+  LifeBuoy,
   LogOut,
+  Megaphone,
   Menu,
   Palette,
   ShieldAlert,
@@ -31,6 +33,8 @@ import type { MeData } from "@/app/actions/me";
 const NAV: { href: string; label: string; icon: typeof LayoutDashboard }[] = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/analytics", label: "Analytics", icon: Activity },
+  { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
+  { href: "/admin/support", label: "Support", icon: LifeBuoy },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/financials", label: "Financials", icon: DollarSign },
   { href: "/admin/api-keys", label: "API keys", icon: Key },
