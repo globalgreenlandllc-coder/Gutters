@@ -77,6 +77,19 @@ export function inkTakeoff(args: {
     outdoor_living?: Quadrant | null;
     patio?: Quadrant | null;
   } | null;
+  /** PARTIAL gables read off the elevations: a gable at `centerFrac` (VIEWER
+   *  frame, 0 = viewer's far left of that face) spanning `widthFt`. The
+   *  overlapped stretch of that face's eave is dashed as a rake — the rest
+   *  of the face keeps its gutter (a garage gable must not un-gutter the
+   *  whole front). A gable ≥70% of its face's width promotes to a full
+   *  gable end (whole side dashes, same as gableSides). Dormers/set-back/
+   *  frame-over gables must be filtered by the CALLER (their eave keeps
+   *  the gutter). */
+  gableReads?: readonly {
+    side: Side;
+    centerFrac: number;
+    widthFt: number;
+  }[] | null;
 }): InkTakeoffResult | null {
   try {
     const { ftPerUnit } = args;
@@ -87,6 +100,63 @@ export function inkTakeoff(args: {
     if (ring.length < 4) return null;
     const spacingFt = args.dsSpacingFt && args.dsSpacingFt > 8 ? args.dsSpacingFt : 40;
     const gableSides = new Set<Side>(args.gableSides ?? []);
+
+    // ── Partial gable spans, per side, on each face's own PLAN axis ──────
+    // Viewer-frame fractions (0 = viewer's far left looking AT the face)
+    // convert per the fixed front-at-bottom drafting convention:
+    //   front: identity      back: 1 − f
+    //   left:  identity (viewer L→R = rear→front = minY→maxY, y-down)
+    //   right: 1 − f    (viewer L→R = front→rear)
+    // Plan-axis frac = (x − minX)/w on front/back, (y − minY)/d on left/right.
+    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+    for (const p of ring) {
+      if (p.x < bMinX) bMinX = p.x;
+      if (p.x > bMaxX) bMaxX = p.x;
+      if (p.y < bMinY) bMinY = p.y;
+      if (p.y > bMaxY) bMaxY = p.y;
+    }
+    const bW = Math.max(bMaxX - bMinX, 1e-9);
+    const bD = Math.max(bMaxY - bMinY, 1e-9);
+    const faceWidthFt = (side: Side): number =>
+      (side === "front" || side === "back" ? bW : bD) * ftPerUnit;
+    const planFracOf = (p: Pt, side: Side): number =>
+      side === "front" || side === "back"
+        ? (p.x - bMinX) / bW
+        : (p.y - bMinY) / bD;
+    const viewerToPlanFrac = (side: Side, f: number): number =>
+      side === "front" || side === "left" ? f : 1 - f;
+
+    const gableSpans = new Map<Side, { lo: number; hi: number }[]>();
+    for (const g of args.gableReads ?? []) {
+      if (!g || !Number.isFinite(g.centerFrac) || !(g.widthFt > 0)) continue;
+      if (g.centerFrac < 0 || g.centerFrac > 1) continue;
+      const faceFt = faceWidthFt(g.side);
+      if (!(faceFt > 0)) continue;
+      // A gable spanning ~the whole face IS the gable end — whole side dashes.
+      if (g.widthFt >= faceFt * 0.7) {
+        gableSides.add(g.side);
+        continue;
+      }
+      const cPlan = viewerToPlanFrac(g.side, g.centerFrac);
+      const half = g.widthFt / faceFt / 2;
+      const lo = Math.max(0, cPlan - half);
+      const hi = Math.min(1, cPlan + half);
+      if (hi - lo < 1e-6) continue;
+      const list = gableSpans.get(g.side) ?? [];
+      list.push({ lo, hi });
+      gableSpans.set(g.side, list);
+    }
+    // Merge overlapping spans per side so the edge partition is clean.
+    for (const [side, list] of gableSpans) {
+      list.sort((a, b) => a.lo - b.lo);
+      const merged: { lo: number; hi: number }[] = [];
+      for (const s of list) {
+        const prev = merged[merged.length - 1];
+        if (prev && s.lo <= prev.hi) prev.hi = Math.max(prev.hi, s.hi);
+        else merged.push({ ...s });
+      }
+      gableSpans.set(side, merged);
+    }
 
     // Centroid + signed area (orientation) for outward normals and turns.
     let cx = 0;
@@ -128,23 +198,10 @@ export function inkTakeoff(args: {
     let gableLf = 0;
     type EdgeInfo = { run: BlueprintRun; side: Side; lenFt: number };
     const edgeInfos: EdgeInfo[] = [];
-    for (let i = 0; i < ring.length; i++) {
-      const a = ring[i];
-      const b = ring[(i + 1) % ring.length];
+    const emitRun = (side: Side, a: Pt, b: Pt): void => {
       const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
       const lenFt = lenPx * ftPerUnit;
-      if (!(lenFt >= 1)) continue; // sub-foot slivers add noise, not gutter
-      const side = sideOf(a, b);
-      if (gableSides.has(side)) {
-        gableLf += lenFt;
-        excluded.push({
-          kind: "rake",
-          start: { ...a },
-          end: { ...b },
-          reason: `gable end on the ${side} face (roof-plan/elevation read) — no gutter across a rake`,
-        });
-        continue;
-      }
+      if (!(lenFt >= 1)) return; // sub-foot slivers add noise, not gutter
       const run: BlueprintRun = {
         id: `ink-g${runs.length + 1}`,
         side,
@@ -158,6 +215,62 @@ export function inkTakeoff(args: {
       gutterLf += lenFt;
       runs.push(run);
       edgeInfos.push({ run, side, lenFt });
+    };
+    const emitRake = (side: Side, a: Pt, b: Pt, partial: boolean): void => {
+      const lenFt = Math.hypot(b.x - a.x, b.y - a.y) * ftPerUnit;
+      if (!(lenFt >= 1)) return;
+      gableLf += lenFt;
+      excluded.push({
+        kind: "rake",
+        start: { ...a },
+        end: { ...b },
+        reason: partial
+          ? `gable on the ${side} face (elevation read: ~${round1(lenFt)} ft wide) — no gutter across its end`
+          : `gable end on the ${side} face (roof-plan/elevation read) — no gutter across a rake`,
+      });
+    };
+
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      const lenPx = Math.hypot(b.x - a.x, b.y - a.y);
+      if (!(lenPx * ftPerUnit >= 1)) continue;
+      const side = sideOf(a, b);
+      if (gableSides.has(side)) {
+        emitRake(side, a, b, false);
+        continue;
+      }
+      const spans = gableSpans.get(side);
+      if (!spans || spans.length === 0) {
+        emitRun(side, a, b);
+        continue;
+      }
+      // Partition this edge at the gable-span boundaries: pieces inside a
+      // span dash as rakes, the rest keep their gutter. Work in the edge's
+      // own param t, mapping span fracs (plan axis) onto it.
+      const fA = planFracOf(a, side);
+      const fB = planFracOf(b, side);
+      const span01 = (f: number): number =>
+        fB !== fA ? (f - fA) / (fB - fA) : -1; // t along the edge for frac f
+      const cuts = new Set<number>([0, 1]);
+      for (const s of spans) {
+        for (const f of [s.lo, s.hi]) {
+          const t = span01(f);
+          if (t > 1e-6 && t < 1 - 1e-6) cuts.add(t);
+        }
+      }
+      const ts = [...cuts].sort((x, y) => x - y);
+      const inSpan = (f: number): boolean =>
+        spans.some((s) => f >= s.lo - 1e-9 && f <= s.hi + 1e-9);
+      for (let k = 0; k + 1 < ts.length; k++) {
+        const t0 = ts[k];
+        const t1 = ts[k + 1];
+        const p0: Pt = { x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 };
+        const p1: Pt = { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 };
+        const midF = fA + (fB - fA) * ((t0 + t1) / 2);
+        if (inSpan(midF)) emitRake(side, p0, p1, true);
+        else emitRun(side, p0, p1);
+      }
     }
     if (runs.length === 0) return null;
 

@@ -1092,26 +1092,77 @@ export async function runEstimateFromPlan(
   let inkApplied = false;
   if (rasterApplied && rasterFtPerUnit != null && process.env.BLUEPRINT_INK_TAKEOFF !== "0") {
     try {
-      // Gable sides: the roof page's explicit gable_end verdict first, else a
-      // face the elevations read as gabled with a broken eave. rear→back maps
-      // the reader's word onto the run vocabulary.
+      // Gables. Two channels into the ink takeoff:
+      //  - gableSides: WHOLE gable ends — the roof page's explicit
+      //    gable_end verdict for a side (the page judges the whole side).
+      //  - gableReads: the elevations' LOCATED gables (center + span) on
+      //    faces whose eave the gable actually breaks — dashed per-SEGMENT
+      //    so a garage/entry gable never un-gutters its whole face.
+      //    Dormers (set_back), frame-overs (eave passes in front), hip
+      //    ends, and gables over a CONTINUOUS eave keep their gutter and
+      //    are filtered here. A read spanning ≥70% of its face promotes to
+      //    a whole-side end inside inkTakeoff.
       const gableSides: ("front" | "back" | "left" | "right")[] = [];
+      const gableReads: {
+        side: "front" | "back" | "left" | "right";
+        centerFrac: number;
+        widthFt: number;
+      }[] = [];
       const faceWord = (k: string): "front" | "back" | "left" | "right" | null =>
         k === "front" ? "front" : k === "rear" || k === "back" ? "back" : k === "left" ? "left" : k === "right" ? "right" : null;
+      if (roofPlanRead?.readable) {
+        for (const sideName of ["front", "rear", "left", "right"] as const) {
+          if (roofPlanRead.sides[sideName]?.gable_end === true) {
+            const w = faceWord(sideName);
+            if (w && !gableSides.includes(w)) gableSides.push(w);
+          }
+        }
+      }
       for (const [k, v] of Object.entries(
-        (perFaceEff ?? {}) as Record<string, { roof_form?: string | null; gable_count?: number | null; continuous_eave?: boolean | null; readable?: boolean } | undefined>,
+        (perFaceEff ?? {}) as Record<
+          string,
+          | {
+              readable?: boolean;
+              continuous_eave?: boolean | null;
+              gables?: {
+                position_frac?: number | null;
+                span_ft?: number | null;
+                set_back_ft?: number | null;
+                eave_passes_in_front?: boolean | null;
+                is_hip_end?: boolean | null;
+              }[];
+            }
+          | undefined
+        >,
       )) {
         const w = faceWord(k);
         if (!w || !v || v.readable === false) continue;
-        const gabled =
-          (v.roof_form === "gabled" && (v.gable_count ?? 0) > 0 && v.continuous_eave === false) ||
-          ((v.gable_count ?? 0) > 0 && v.continuous_eave === false);
-        if (gabled && !gableSides.includes(w)) gableSides.push(w);
+        // A gable only loses its gutter when it BREAKS the eave.
+        if (v.continuous_eave !== false) continue;
+        for (const g of v.gables ?? []) {
+          if (!g) continue;
+          if (g.is_hip_end === true) continue; // hip end — gutter stays
+          if ((g.set_back_ft ?? 0) > 0) continue; // dormer — gutter stays
+          if (g.eave_passes_in_front === true) continue; // frame-over
+          if (
+            typeof g.position_frac !== "number" ||
+            !Number.isFinite(g.position_frac) ||
+            typeof g.span_ft !== "number" ||
+            !(g.span_ft > 0)
+          )
+            continue;
+          gableReads.push({
+            side: w,
+            centerFrac: g.position_frac,
+            widthFt: g.span_ft,
+          });
+        }
       }
       const ink = inkTakeoff({
         ring: analysis.building_footprint ?? [],
         ftPerUnit: rasterFtPerUnit,
         gableSides,
+        gableReads,
         // Placement floor: the roof page's own printed D.S. marks (the
         // classifier's elevation count isn't stashed at estimate time).
         minDownspouts: roofPlanRead?.total_ds_marks ?? null,

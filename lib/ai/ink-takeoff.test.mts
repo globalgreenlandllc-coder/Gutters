@@ -184,3 +184,54 @@ test("summary names the doctrine and the replaced runs", () => {
   assert.match(out!.summary, /verified sheet outline/);
   assert.match(out!.summary, /AI-measured runs were replaced/);
 });
+
+test("partial gable: only the gable's stretch dashes — the rest of the face keeps its gutter", () => {
+  // 50×30 ft rect. A 10 ft entry/garage gable at viewer 25% across the
+  // front must dash ONLY ~10 ft; the remaining ~40 ft of front stays gutter.
+  const out = inkTakeoff({
+    ring: RECT,
+    ftPerUnit: 0.5,
+    gableReads: [{ side: "front", centerFrac: 0.25, widthFt: 10 }],
+  });
+  assert.ok(out);
+  const frontRuns = out!.runs.filter((r) => r.side === "front");
+  const frontFt = frontRuns.reduce((s, r) => s + (r.length_ft ?? 0), 0);
+  assert.equal(frontFt, 40, "front keeps 40 of its 50 ft guttered");
+  assert.equal(out!.gableLf, 10, "exactly the gable width dashes");
+  assert.equal(out!.excluded.length, 1);
+  assert.match(out!.excluded[0].reason, /gable on the front face/);
+  // The rake sits centered at plan x = 25% of the width (viewer=plan on front).
+  const rk = out!.excluded[0];
+  const midX = (rk.start.x + rk.end.x) / 2;
+  assert.ok(Math.abs(midX - 25) < 1e-6, `rake centered at x=25, got ${midX}`);
+  assert.equal(out!.totals.linear_feet_gutter, 150, "160 − 10 ft gable");
+});
+
+test("partial gable ≥70% of its face promotes to a full gable end (whole side dashes)", () => {
+  // Left face is 30 ft; a 25 ft gable ≥ 70% → the whole left side is a
+  // gable end, same as an explicit gableSides entry.
+  const out = inkTakeoff({
+    ring: RECT,
+    ftPerUnit: 0.5,
+    gableReads: [{ side: "left", centerFrac: 0.5, widthFt: 25 }],
+  });
+  assert.ok(out);
+  assert.equal(out!.runs.filter((r) => r.side === "left").length, 0);
+  assert.equal(out!.gableLf, 30, "whole 30 ft side dashed");
+  assert.match(out!.excluded[0].reason, /gable end on the left face/);
+});
+
+test("viewer→plan conversion: a back-face gable at viewer 20% lands on the plan's RIGHT half", () => {
+  // Back viewer left = house right → viewer 0.2 → plan frac 0.8 → high-x.
+  const out = inkTakeoff({
+    ring: RECT,
+    ftPerUnit: 0.5,
+    gableReads: [{ side: "back", centerFrac: 0.2, widthFt: 10 }],
+  });
+  assert.ok(out);
+  assert.equal(out!.excluded.length, 1);
+  const rk = out!.excluded[0];
+  const midX = (rk.start.x + rk.end.x) / 2;
+  assert.ok(midX > 50, `back gable must sit on the plan's right half, got x=${midX}`);
+  assert.ok(Math.abs(midX - 80) < 1e-6, `centered at x=80, got ${midX}`);
+});
