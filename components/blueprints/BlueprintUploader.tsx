@@ -336,10 +336,10 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`group relative cursor-pointer rounded-2xl border-2 border-dashed bg-white p-8 transition-smooth sm:p-12 ${
+        className={`group relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition-smooth sm:p-10 ${
           dragOver
-            ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/30"
-            : "border-zinc-300 hover:border-accent-400 hover:ring-2 hover:ring-accent-500/15"
+            ? "border-accent-500 bg-accent-50/70 ring-4 ring-accent-500/10"
+            : "border-zinc-200 bg-zinc-50/50 hover:border-accent-300 hover:bg-accent-50/40"
         }`}
       >
         <input
@@ -354,25 +354,32 @@ export default function BlueprintUploader() {
         />
         <div className="flex flex-col items-center text-center">
           <div
-            className={`mb-3 rounded-full bg-accent-50 p-3 text-accent-700 ring-1 ring-accent-200 transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
+            className={`bg-cta-gradient mb-4 rounded-2xl p-3 text-white shadow-glow transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
               dragOver ? "-translate-y-0.5 scale-110" : ""
             }`}
           >
-            <Upload size={24} />
+            <Upload size={22} />
           </div>
           <div className="mb-1 text-lg font-semibold tracking-tight text-zinc-900">
             Drop construction plans here
           </div>
-          <div className="max-w-md text-sm text-zinc-500">
+          <div className="max-w-md text-sm leading-relaxed text-zinc-500">
             PDF (multi-page OK) or a single image of the roof plan. Claude
             reads the plan, identifies eaves vs rakes, and returns a gutter
             layout you can drop into a proposal.
           </div>
-          <div className="mt-2 text-xs text-zinc-400">
-            Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+            {["PDF · up to 100 pages", "PNG / JPG", "≤ 50 MB"].map((chip) => (
+              <span
+                key={chip}
+                className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-500"
+              >
+                {chip}
+              </span>
+            ))}
           </div>
           {!isAdmin && creditsRemaining !== null && (
-            <div className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[11px] font-medium text-accent-700">
+            <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2.5 py-0.5 text-[11px] font-medium text-accent-700">
               <Sparkles className="h-3 w-3" />
               Uses 1 blueprint credit · {creditsRemaining} left
             </div>
@@ -393,12 +400,14 @@ export default function BlueprintUploader() {
           variants={fadeInUp}
           className="surface flex items-center gap-3 px-4 py-3"
         >
-          <FileText size={20} className="text-zinc-500" />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200/70">
+            <FileText size={18} />
+          </span>
           <div className="flex-1 min-w-0">
             <div className="truncate text-sm font-medium text-zinc-900">
               {file.name}
             </div>
-            <div className="text-xs text-zinc-500">
+            <div className="text-xs tabular-nums text-zinc-500">
               {(file.size / 1024).toFixed(0)} KB
             </div>
           </div>
@@ -413,7 +422,7 @@ export default function BlueprintUploader() {
           <button
             onClick={onAnalyze}
             disabled={uploading}
-            className="ring-focus press-scale inline-flex h-9 items-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="bg-cta-gradient ring-focus press-scale ![transition:transform_150ms_ease,box-shadow_200ms_ease,opacity_150ms_ease] motion-reduce:![transition:none] inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-[13px] font-semibold text-white shadow-sm hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-sm"
           >
             {uploading ? (
               <>
@@ -421,7 +430,10 @@ export default function BlueprintUploader() {
                 Analyzing…
               </>
             ) : (
-              "Analyze with AI"
+              <>
+                <Sparkles size={14} />
+                Analyze with AI
+              </>
             )}
           </button>
         </motion.div>

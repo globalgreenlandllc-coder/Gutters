@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowRight,
+  ArrowUpRight,
   Clock,
   FileUp,
   Hammer,
@@ -96,31 +97,42 @@ export function StartOptions() {
           stretch the satellite card to match. */}
       <motion.div
         {...enter(0)}
-        className="grid items-start gap-4 lg:grid-cols-2"
+        className="grid items-start gap-5 lg:grid-cols-2"
       >
         <SatelliteTakeoffCard />
 
         {/* Blueprint takeoff — uploader embedded, no navigation away. */}
-        <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-              <FileUp className="h-4 w-4" />
-            </span>
-            <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-              Blueprint takeoff
-            </h2>
-            {/* Honest label: the plan reader is the newest, hardest path.
-                Satellite is the launch hero; this earns the badge off. */}
-            <span className="ml-auto rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
-              BETA
-            </span>
+        <div className="transition-smooth relative rounded-3xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-amber-200 hover:shadow-elevated sm:p-7">
+          {/* Decor layer — clipped separately so nothing inside the card
+              is affected by overflow rules. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl"
+          >
+            <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-amber-400/[0.08] blur-2xl" />
           </div>
-          <p className="mt-3 text-sm text-zinc-500">
-            Upload construction plans — AI reads the roof plan and
-            classifies every edge. Uses one blueprint credit.
-          </p>
-          <div className="mt-4">
-            <BlueprintUploader />
+          <div className="relative">
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_8px_20px_-8px_rgba(245,158,11,0.6)]">
+                <FileUp className="h-5 w-5" />
+              </span>
+              <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
+                Blueprint takeoff
+              </h2>
+              {/* Honest label: the plan reader is the newest, hardest path.
+                  Satellite is the launch hero; this earns the badge off. */}
+              <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold tracking-wide text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                <span aria-hidden className="h-1 w-1 rounded-full bg-amber-500" />
+                BETA
+              </span>
+            </div>
+            <p className="mt-3.5 text-sm leading-relaxed text-zinc-500">
+              Upload construction plans — AI reads the roof plan and
+              classifies every edge. Uses one blueprint credit.
+            </p>
+            <div className="mt-5">
+              <BlueprintUploader />
+            </div>
           </div>
         </div>
       </motion.div>
@@ -128,14 +140,19 @@ export function StartOptions() {
       {/* Row 2 — divider */}
       <motion.div
         {...enter(0.05)}
-        className="mt-8 flex items-center gap-4"
+        className="mt-10 flex items-center gap-3"
         role="separator"
       >
-        <span className="h-px flex-1 bg-zinc-200" />
-        <span className={cn(MICROLABEL, "text-zinc-400")}>
+        <span className="h-px flex-1 bg-gradient-to-r from-transparent via-zinc-200 to-zinc-200" />
+        <span
+          className={cn(
+            MICROLABEL,
+            "rounded-full border border-zinc-200 bg-white px-3.5 py-1.5 text-zinc-400",
+          )}
+        >
           Or start from something else
         </span>
-        <span className="h-px flex-1 bg-zinc-200" />
+        <span className="h-px flex-1 bg-gradient-to-l from-transparent via-zinc-200 to-zinc-200" />
       </motion.div>
 
       {/* Row 3 — secondary starts */}
@@ -150,9 +167,13 @@ export function StartOptions() {
             its comment for the transition dance. */}
         <Link
           href="/dashboard/measure"
-          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] block rounded-2xl border border-accent-200 bg-accent-50/50 p-6 shadow-card hover:border-accent-300"
+          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] group relative block rounded-2xl border border-accent-200 bg-gradient-to-b from-accent-50/80 to-white p-5 shadow-card hover:border-accent-300"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-600 text-white">
+          <ArrowUpRight
+            aria-hidden
+            className="absolute right-4 top-4 h-4 w-4 -translate-x-1 translate-y-1 text-accent-500 opacity-0 transition-[opacity,transform] duration-200 group-hover:translate-x-0 group-hover:translate-y-0 group-hover:opacity-100 motion-reduce:transition-none"
+          />
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cta-gradient text-white shadow-glow">
             <Ruler className="h-4 w-4" />
           </span>
           <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
@@ -165,15 +186,17 @@ export function StartOptions() {
         </Link>
 
         {/* b — Build it yourself (compact dark card, no sample table) */}
-        <div className="relative overflow-hidden rounded-2xl bg-accent-950 p-6 text-white">
+        <div className="relative overflow-hidden rounded-2xl bg-accent-950 p-5 text-white">
           <div
             aria-hidden
-            className="absolute right-4 top-2 select-none text-[64px] font-semibold leading-none text-white/[0.06]"
-          >
-            01
-          </div>
+            className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-accent-500/25 blur-2xl"
+          />
+          <div
+            aria-hidden
+            className="absolute inset-0 [background-image:radial-gradient(rgba(255,255,255,0.13)_1px,transparent_1px)] [background-size:16px_16px] [mask-image:linear-gradient(to_bottom,black,transparent_75%)] opacity-40"
+          />
           <div className="relative">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-500/20 text-accent-300">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-500/20 text-accent-300 ring-1 ring-inset ring-accent-400/30">
               <PenLine className="h-4 w-4" />
             </div>
             <div className={cn(MICROLABEL, "mt-4 text-white/40")}>
@@ -204,9 +227,13 @@ export function StartOptions() {
             motion-reduce twin so reduced motion still collapses it. */}
         <Link
           href="/dashboard/leads"
-          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] block rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-zinc-300"
+          className="hover-lift press-scale ring-focus ![transition:transform_150ms_ease,box-shadow_200ms_cubic-bezier(0.32,0.72,0,1),border-color_150ms_ease] motion-reduce:![transition:none] group relative block rounded-2xl border border-zinc-200/70 bg-white p-5 shadow-card hover:border-zinc-300"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
+          <ArrowUpRight
+            aria-hidden
+            className="absolute right-4 top-4 h-4 w-4 -translate-x-1 translate-y-1 text-zinc-400 opacity-0 transition-[opacity,transform] duration-200 group-hover:translate-x-0 group-hover:translate-y-0 group-hover:opacity-100 motion-reduce:transition-none"
+          />
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200/70">
             <MapPin className="h-4 w-4" />
           </span>
           <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
@@ -220,12 +247,12 @@ export function StartOptions() {
         {/* d — Video walkthrough (coming soon) */}
         <div
           aria-disabled
-          className="relative cursor-default rounded-2xl border border-zinc-200 bg-zinc-50 p-6 opacity-70"
+          className="relative cursor-default rounded-2xl border border-dashed border-zinc-300/80 bg-zinc-50/60 p-5 opacity-70"
         >
-          <span className="absolute right-3 top-3 rounded-full border border-zinc-300 px-2 py-0.5 text-[10px] text-zinc-500">
+          <span className="absolute right-4 top-4 rounded-full border border-zinc-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-500">
             Soon
           </span>
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-100 text-zinc-500">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100 text-zinc-500 ring-1 ring-inset ring-zinc-200">
             <Video className="h-4 w-4" />
           </span>
           <span className="mt-4 block text-[15px] font-semibold tracking-tight text-zinc-900">
@@ -334,198 +361,215 @@ function SatelliteTakeoffCard() {
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-200/70 bg-white p-6 shadow-card">
-      <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-50 text-accent-700">
-          <Satellite className="h-4 w-4" />
-        </span>
-        <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">
-          Satellite takeoff
-        </h2>
-        <span className="ml-auto inline-flex items-center gap-1">
-          <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
-            FREE
-          </span>
-          <span className="rounded-md bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
-            AI
-          </span>
-        </span>
-      </div>
-      <p className="mt-3 text-sm text-zinc-500">
-        Type an address — AI measures eaves, corners, and downspouts from
-        aerial imagery. Free on every plan, no credits used.
-      </p>
-
-      {fromTeaser && (
-        <div className="anim-enter-fade mt-3 rounded-lg bg-accent-50 px-3 py-2 text-xs font-medium text-accent-800 ring-1 ring-accent-200">
-          ✨ Picked up the address from your landing-page scan — hit Run to
-          unlock the full measurements.
-        </div>
-      )}
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          // Enter while a dropdown row is highlighted picks that row,
-          // otherwise submits whatever's in the input.
-          if (highlight >= 0 && suggestions[highlight]) {
-            goAddress(suggestions[highlight]);
-          } else {
-            goAddress();
-          }
-        }}
-        className="mt-5"
+    <div className="transition-smooth relative rounded-3xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-accent-200 hover:shadow-elevated sm:p-7">
+      {/* Decor layer — clipped on its own so the recents dropdown can
+          still overflow the card frame below. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl"
       >
-        <label
-          htmlFor="satellite-address-input"
-          className={cn(MICROLABEL, "text-zinc-400")}
-        >
-          Property address
-        </label>
-        <div className="relative mt-1.5">
-          <div
-            className={cn(
-              "transition-smooth flex h-11 items-center gap-2 rounded-lg border bg-white pl-3.5 pr-3",
-              focused
-                ? "border-accent-500 ring-2 ring-accent-500/15"
-                : "border-zinc-200",
-            )}
-          >
-            <MapPin
-              className={cn(
-                "transition-smooth h-4 w-4 shrink-0",
-                focused ? "text-accent-600" : "text-zinc-400",
-              )}
-            />
-            <input
-              id="satellite-address-input"
-              value={value}
-              onChange={(e) => {
-                setValue(e.target.value);
-                setHighlight(-1);
-              }}
-              onFocus={() => {
-                if (blurTimer.current) {
-                  window.clearTimeout(blurTimer.current);
-                  blurTimer.current = null;
-                }
-                setFocused(true);
-              }}
-              onBlur={() => {
-                // Defer so a mousedown on a dropdown row gets to run
-                // before the dropdown unmounts. setTimeout is the
-                // standard combobox pattern for this.
-                blurTimer.current = window.setTimeout(() => {
-                  setFocused(false);
-                  setHighlight(-1);
-                }, 120);
-              }}
-              onKeyDown={(e) => {
-                if (!showDropdown) return;
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setHighlight((h) =>
-                    h + 1 >= suggestions.length ? 0 : h + 1,
-                  );
-                } else if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setHighlight((h) =>
-                    h <= 0 ? suggestions.length - 1 : h - 1,
-                  );
-                } else if (e.key === "Escape") {
-                  setHighlight(-1);
-                  (e.target as HTMLInputElement).blur();
-                }
-              }}
-              placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
-              autoComplete="off"
-              role="combobox"
-              aria-expanded={showDropdown}
-              aria-autocomplete="list"
-              className="w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
-            />
-          </div>
-
-          {showDropdown && (
-            <ul
-              role="listbox"
-              className="anim-pop origin-top absolute left-0 right-0 top-full z-20 mt-1.5 max-h-80 overflow-auto rounded-xl border border-zinc-200 bg-white py-1.5 shadow-card"
-            >
-              <li
-                className={cn(
-                  MICROLABEL,
-                  "px-3 pb-1 pt-0.5 text-zinc-400",
-                )}
-              >
-                Recent addresses
-              </li>
-              {suggestions.map((s, i) => (
-                <li key={s} role="option" aria-selected={i === highlight}>
-                  <button
-                    type="button"
-                    // mousedown fires before input blur — picks the
-                    // option before the dropdown unmounts.
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      goAddress(s);
-                    }}
-                    onMouseEnter={() => setHighlight(i)}
-                    className={cn(
-                      "transition-smooth flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
-                      i === highlight
-                        ? "bg-accent-50 text-accent-900"
-                        : "text-zinc-700 hover:bg-zinc-50",
-                    )}
-                  >
-                    <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-                    <span className="truncate">{s}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div className="absolute -right-14 -top-14 h-48 w-48 rounded-full bg-accent-500/[0.08] blur-2xl" />
+        <div className="dot-pattern absolute right-0 top-0 h-40 w-64 opacity-70 [mask-image:radial-gradient(180px_120px_at_100%_0%,black,transparent)]" />
+      </div>
+      <div className="relative">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cta-gradient text-white shadow-glow">
+            <Satellite className="h-5 w-5" />
+          </span>
+          <h2 className="text-[17px] font-semibold tracking-tight text-zinc-900">
+            Satellite takeoff
+          </h2>
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              <span aria-hidden className="h-1 w-1 rounded-full bg-emerald-500" />
+              FREE
+            </span>
+            <span className="bg-cta-gradient rounded-full px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
+              AI
+            </span>
+          </span>
         </div>
+        <p className="mt-3.5 text-sm leading-relaxed text-zinc-500">
+          Type an address — AI measures eaves, corners, and downspouts from
+          aerial imagery. Free on every plan, no credits used.
+        </p>
 
-        {/* Job-type toggle — affects scope-of-work language downstream */}
-        <div className="mt-4 flex items-center gap-2">
-          <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
-          <div className="inline-flex rounded-lg border border-zinc-200 p-0.5">
-            {(
-              [
-                { value: "replacement", label: "Replacement", Icon: Hammer },
-                { value: "new", label: "New construction", Icon: Home },
-              ] as const
-            ).map((opt) => {
-              const active = opt.value === jobType;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setJobType(opt.value)}
+        {fromTeaser && (
+          <div className="anim-enter-fade mt-3 rounded-xl bg-accent-50 px-3 py-2 text-xs font-medium text-accent-800 ring-1 ring-inset ring-accent-200">
+            ✨ Picked up the address from your landing-page scan — hit Run to
+            unlock the full measurements.
+          </div>
+        )}
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Enter while a dropdown row is highlighted picks that row,
+            // otherwise submits whatever's in the input.
+            if (highlight >= 0 && suggestions[highlight]) {
+              goAddress(suggestions[highlight]);
+            } else {
+              goAddress();
+            }
+          }}
+          className="mt-5"
+        >
+          <label
+            htmlFor="satellite-address-input"
+            className={cn(MICROLABEL, "text-zinc-400")}
+          >
+            Property address
+          </label>
+          <div className="relative mt-2">
+            <div
+              className={cn(
+                "transition-smooth flex h-12 items-center gap-2.5 rounded-xl border bg-white pl-4 pr-3",
+                focused
+                  ? "border-accent-500 shadow-ring-soft"
+                  : "border-zinc-200 shadow-sm",
+              )}
+            >
+              <MapPin
+                className={cn(
+                  "transition-smooth h-4 w-4 shrink-0",
+                  focused ? "text-accent-600" : "text-zinc-400",
+                )}
+              />
+              <input
+                id="satellite-address-input"
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setHighlight(-1);
+                }}
+                onFocus={() => {
+                  if (blurTimer.current) {
+                    window.clearTimeout(blurTimer.current);
+                    blurTimer.current = null;
+                  }
+                  setFocused(true);
+                }}
+                onBlur={() => {
+                  // Defer so a mousedown on a dropdown row gets to run
+                  // before the dropdown unmounts. setTimeout is the
+                  // standard combobox pattern for this.
+                  blurTimer.current = window.setTimeout(() => {
+                    setFocused(false);
+                    setHighlight(-1);
+                  }, 120);
+                }}
+                onKeyDown={(e) => {
+                  if (!showDropdown) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHighlight((h) =>
+                      h + 1 >= suggestions.length ? 0 : h + 1,
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHighlight((h) =>
+                      h <= 0 ? suggestions.length - 1 : h - 1,
+                    );
+                  } else if (e.key === "Escape") {
+                    setHighlight(-1);
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                placeholder="1247 Maple Ridge Drive, Austin, TX 78704"
+                autoComplete="off"
+                role="combobox"
+                aria-expanded={showDropdown}
+                aria-autocomplete="list"
+                className="w-full bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
+              />
+            </div>
+
+            {showDropdown && (
+              <ul
+                role="listbox"
+                className="anim-pop origin-top absolute left-0 right-0 top-full z-20 mt-2 max-h-80 overflow-auto rounded-xl border border-zinc-200/80 bg-white py-1.5 shadow-elevated"
+              >
+                <li
                   className={cn(
-                    "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium",
-                    active
-                      ? "bg-zinc-100 text-zinc-900"
-                      : "text-zinc-500 hover:text-zinc-900",
+                    MICROLABEL,
+                    "px-3 pb-1 pt-0.5 text-zinc-400",
                   )}
                 >
-                  <opt.Icon className="h-3.5 w-3.5" />
-                  {opt.label}
-                </button>
-              );
-            })}
+                  Recent addresses
+                </li>
+                {suggestions.map((s, i) => (
+                  <li key={s} role="option" aria-selected={i === highlight}>
+                    <button
+                      type="button"
+                      // mousedown fires before input blur — picks the
+                      // option before the dropdown unmounts.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        goAddress(s);
+                      }}
+                      onMouseEnter={() => setHighlight(i)}
+                      className={cn(
+                        "transition-smooth flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
+                        i === highlight
+                          ? "bg-accent-50 text-accent-900"
+                          : "text-zinc-700 hover:bg-zinc-50",
+                      )}
+                    >
+                      <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      <span className="truncate">{s}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        </div>
 
-        <button
-          type="submit"
-          disabled={!value.trim() || submitting}
-          className="transition-smooth ring-focus press-scale mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Sparkles className="h-4 w-4" />
-          {submitting ? "Starting…" : "Run AI takeoff"}
-        </button>
-      </form>
+          {/* Job-type toggle — affects scope-of-work language downstream */}
+          <div className="mt-4 flex items-center gap-2.5">
+            <span className={cn(MICROLABEL, "text-zinc-400")}>Job</span>
+            <div className="inline-flex rounded-full bg-zinc-100 p-1">
+              {(
+                [
+                  { value: "replacement", label: "Replacement", Icon: Hammer },
+                  { value: "new", label: "New construction", Icon: Home },
+                ] as const
+              ).map((opt) => {
+                const active = opt.value === jobType;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setJobType(opt.value)}
+                    aria-pressed={active}
+                    className={cn(
+                      "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold",
+                      active
+                        ? "bg-white text-zinc-900 shadow-sm"
+                        : "text-zinc-500 hover:text-zinc-900",
+                    )}
+                  >
+                    <opt.Icon className="h-3.5 w-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* .press-scale would wipe .transition-smooth's shorthand, so the
+              combined transition list is restated locally (same dance as
+              the hover-lift tiles above). */}
+          <button
+            type="submit"
+            disabled={!value.trim() || submitting}
+            className="bg-cta-gradient ring-focus press-scale ![transition:transform_150ms_ease,box-shadow_200ms_ease,opacity_150ms_ease] motion-reduce:![transition:none] group mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white shadow-sm hover:shadow-glow disabled:cursor-not-allowed disabled:bg-none disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none"
+          >
+            <Sparkles className="h-4 w-4" />
+            {submitting ? "Starting…" : "Run AI takeoff"}
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

@@ -9,13 +9,17 @@ export default function NewProposalPage() {
     <AuthGate>
       <DashboardShell fullBleed={false}>
         {/* This page draws its own header (no shell title). */}
-        <div className="anim-enter font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+        <div className="anim-enter flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent-500" />
           New proposal
         </div>
-        <h1 className="anim-enter stagger-1 mt-2 max-w-md text-[34px] font-semibold leading-[1.05] tracking-tight text-zinc-900 sm:text-[40px]">
-          How do you want to start?
+        <h1 className="anim-enter stagger-1 mt-3 max-w-xl text-[36px] font-semibold leading-[1.04] tracking-tight text-zinc-900 sm:text-[44px]">
+          How do you want to <span className="text-gradient">start?</span>
         </h1>
-        <div className="mt-6 border-b border-zinc-200" />
+        <p className="anim-enter stagger-2 mt-3 max-w-lg text-[15px] leading-relaxed text-zinc-500">
+          Every lane ends in the same place — a priced proposal ready to
+          send. The AI lanes do the measuring for you.
+        </p>
 
         <StartOptions />
       </DashboardShell>
