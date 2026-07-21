@@ -29,6 +29,25 @@ enum UserRole {
   SUPER_ADMIN
 }
 
+enum AnnouncementLevel {
+  INFO
+  SUCCESS
+  WARNING
+  CRITICAL
+}
+
+enum AnnouncementAudience {
+  ALL
+  CONTRACTORS
+  WORKERS
+}
+
+enum SupportStatus {
+  OPEN
+  PENDING
+  RESOLVED
+}
+
 enum UserStatus {
   ACTIVE
   SUSPENDED
@@ -112,6 +131,12 @@ model User {
   // the ?ref cookie; doubles as the "referrer was credited" marker).
   referralCode String? @unique
   referredById String?
+
+  // Admin comms: announcements this user authored (SUPER_ADMIN), the
+  // announcements they've dismissed, and their support tickets.
+  announcementsAuthored  Announcement[]          @relation("AnnouncementAuthor")
+  announcementDismissals AnnouncementDismissal[]
+  supportTickets         SupportTicket[]         @relation("SupportRequester")
 
   @@index([role])
   @@index([status])
@@ -1146,9 +1171,9 @@ model JobAssignment {
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
-  owner    User      @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  worker   Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+  owner    User         @relation("JobOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  worker   Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  proposal Proposal?    @relation(fields: [proposalId], references: [id], onDelete: SetNull)
   expenses JobExpense[]
 
   @@index([ownerId, startsAt])
@@ -1343,4 +1368,81 @@ model TestLabScore {
   @@index([runId, createdAt])
   @@index([createdAt])
   @@map("test_lab_scores")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Admin comms: broadcast announcements (super-admin → users) + a support
+// inbox (users → super-admin). Both AI-assisted (draft copy, triage, reply).
+// ─────────────────────────────────────────────────────────────────────────
+
+model Announcement {
+  id          String               @id @default(cuid())
+  title       String
+  body        String
+  level       AnnouncementLevel    @default(INFO)
+  audience    AnnouncementAudience @default(ALL)
+  createdById String
+  createdBy   User                 @relation("AnnouncementAuthor", fields: [createdById], references: [id], onDelete: Cascade)
+  // null = draft; set when published (shown in-app to the audience).
+  publishedAt DateTime?
+  // Email broadcast bookkeeping — when it went out and to how many.
+  emailedAt   DateTime?
+  emailCount  Int                  @default(0)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  dismissals AnnouncementDismissal[]
+
+  @@index([publishedAt])
+  @@map("announcements")
+}
+
+model AnnouncementDismissal {
+  id             String       @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dismissedAt    DateTime     @default(now())
+
+  @@unique([announcementId, userId])
+  @@index([userId])
+  @@map("announcement_dismissals")
+}
+
+model SupportTicket {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation("SupportRequester", fields: [userId], references: [id], onDelete: Cascade)
+  subject       String
+  status        SupportStatus @default(OPEN)
+  // AI-triaged bucket (billing / bug / how-to / feature / other) — nullable.
+  category      String?
+  // True when the most recent message was from the admin (drives the
+  // user's "you have a reply" dot and the admin inbox "awaiting you" sort).
+  lastFromAdmin Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  messages SupportMessage[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([updatedAt])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // Author user id (requester or admin); null for a system note. No FK so
+  // deleting a user leaves the thread intact for the audit trail.
+  authorId  String?
+  fromAdmin Boolean       @default(false)
+  body      String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
+  @@map("support_messages")
 }
