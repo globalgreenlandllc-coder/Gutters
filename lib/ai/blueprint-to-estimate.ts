@@ -1550,6 +1550,35 @@ export function blueprintToEstimateResult(
           ...(s.tier ? { tier: s.tier } : {}),
         }));
 
+  // ── Run-label sanity (owner rules from the first gabled plan) ─────────
+  // 1. FEATURE names: only the roof-plan-label-derived trio (porch / patio /
+  //    garage) may print on a pill. The AI read's other guesses ("ENTRY" on
+  //    a 47 LF side run) were wrong more often than right — strip them; the
+  //    FRONT/BACK/LEFT/RIGHT chips already say where a run is.
+  // 2. TIER majority: a LOWER roof is by definition the minority (a porch or
+  //    garage wing under the main roof). When most of the priced LF reads
+  //    "lower", the read is inverted or the house is single-story — either
+  //    way the split is unreliable, so every run shows as the main tier
+  //    (uniform color) instead of painting the whole house amber.
+  {
+    const TRUSTED_FEATURES = new Set(["porch", "patio", "garage"]);
+    let lowerFt = 0;
+    let totalFt = 0;
+    for (const l of eaves) {
+      const ft = lineLenFt(l);
+      totalFt += ft;
+      if (l.tier === "lower") lowerFt += ft;
+    }
+    const lowerMajority = totalFt > 0 && lowerFt / totalFt > 0.6;
+    eaves = eaves.map((l) => ({
+      ...l,
+      ...(l.feature && !TRUSTED_FEATURES.has(l.feature)
+        ? { feature: undefined }
+        : {}),
+      ...(lowerMajority && l.tier === "lower" ? { tier: "upper" as const } : {}),
+    }));
+  }
+
   // A downspout ALWAYS hangs on the gutter, so it must sit ON an eave line —
   // never floating off the perimeter (the owner's "don't ever leave a
   // downspout outside" note). Regardless of source (AI read, ink takeoff,
