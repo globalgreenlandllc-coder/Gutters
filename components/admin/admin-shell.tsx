@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { getBellCounts } from "@/app/actions/notifications";
 import { usePathname, useRouter } from "next/navigation";
 import { useClerk } from "@clerk/nextjs";
 import {
@@ -57,6 +58,19 @@ export function AdminShell({
   const { signOut } = useClerk();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Open-support-ticket count → red badge on the Support nav item, polled.
+  const [openTickets, setOpenTickets] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      getBellCounts().then((c) => alive && setOpenTickets(c.adminTickets));
+    load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   async function logout() {
     await signOut();
@@ -121,6 +135,11 @@ export function AdminShell({
                   )}
                 />
                 {n.label}
+                {n.href === "/admin/support" && openTickets > 0 && (
+                  <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">
+                    {openTickets > 9 ? "9+" : openTickets}
+                  </span>
+                )}
               </Link>
             );
           })}
