@@ -64,15 +64,24 @@ export async function POST(req: NextRequest) {
 
     // Same-origin beacons carry Clerk cookies, so signed-in traffic links
     // to its DB user here — that link is what powers signup attribution.
+    // We also read the role so an ADMIN's own traffic is bucketed to the
+    // 'admin' segment on EVERY page (not just /admin) — the owner
+    // dogfooding the marketing site or dashboard must not inflate the real
+    // visitor/user count. Distinct-visitorId counting already collapses an
+    // admin's repeat visits from ONE computer to one; the segment tag keeps
+    // those (and admins on other devices) out of the traffic totals, while
+    // the live feed still shows them in the admin bucket.
     let userId: string | null = null;
+    let isAdmin = false;
     try {
       const { userId: clerkId } = await auth();
       if (clerkId) {
         const u = await db.user.findUnique({
           where: { clerkId },
-          select: { id: true },
+          select: { id: true, role: true },
         });
         userId = u?.id ?? null;
+        isAdmin = u?.role === "SUPER_ADMIN";
       }
     } catch {
       // Anonymous or auth unavailable — track without a user link.
@@ -91,7 +100,12 @@ export async function POST(req: NextRequest) {
         }),
         db.visitorSession.updateMany({
           where: { id: sid },
-          data: { lastSeenAt: now, lastPath: path, ...(userId ? { userId } : {}) },
+          data: {
+            lastSeenAt: now,
+            lastPath: path,
+            ...(userId ? { userId } : {}),
+            ...(isAdmin ? { segment: "admin" } : {}),
+          },
         }),
       ]);
       return done();
@@ -131,7 +145,9 @@ export async function POST(req: NextRequest) {
           id: sid,
           visitorId: vid,
           userId,
-          segment: segmentForPath(path),
+          // Admin PERSON → 'admin' segment regardless of path (owner
+          // dogfooding is not real traffic); everyone else by path.
+          segment: isAdmin ? "admin" : segmentForPath(path),
           entryPath: path,
           lastPath: path,
           referrer,
@@ -159,6 +175,11 @@ export async function POST(req: NextRequest) {
           // post-signup redirect to /dashboard) — the anonymous → user
           // stitch that makes the acquisition funnel attributable.
           ...(userId ? { userId } : {}),
+          // Once we know this session is an admin (auth may resolve a
+          // pageview or two in), flip it to the admin segment so it drops
+          // out of the traffic totals retroactively. Never flips the other
+          // way — a real visitor's first-touch segment stays put.
+          ...(isAdmin ? { segment: "admin" } : {}),
         },
       }),
       db.pageView.create({
