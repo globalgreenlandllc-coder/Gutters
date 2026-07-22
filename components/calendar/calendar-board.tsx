@@ -9,11 +9,14 @@ import {
   type DragEvent,
 } from "react";
 import {
+  Ban,
   CalendarDays,
   CalendarRange,
+  Check,
   ChevronLeft,
   ChevronRight,
   Columns3,
+  ExternalLink,
   Hammer,
   MapPin,
   Phone,
@@ -21,6 +24,8 @@ import {
   Search,
   Sparkles,
   Trash2,
+  Undo2,
+  UserRound,
   Users,
   X,
   Zap,
@@ -35,10 +40,19 @@ import {
   type SchedulableItem,
 } from "@/app/actions/schedule";
 import {
+  cancelJob,
   listJobCalendarEvents,
+  listWorkers,
+  rescheduleJob,
   type JobCalendarEventDTO,
+  type OwnerWorkerDTO,
 } from "@/app/actions/workers";
+import {
+  listCrewAvailability,
+  type CrewAvailabilityEntry,
+} from "@/app/actions/availability";
 import { cn } from "@/lib/utils";
+import { dayKey } from "@/lib/day-key";
 
 /* ------------------------------------------------------------------ */
 /*  Time + grid constants                                             */
@@ -129,14 +143,68 @@ function workerTone(workerId: string) {
   return WORKER_PALETTE[h % WORKER_PALETTE.length];
 }
 
-const JOB_STATUS_LABEL: Record<JobCalendarEventDTO["status"], string> = {
-  OFFERED: "offered",
-  ACCEPTED: "accepted",
-  DECLINED: "declined",
-  IN_PROGRESS: "in progress",
-  COMPLETED: "done",
-  CANCELLED: "cancelled",
+/* Worker-set day availability, keyed workerId → "YYYY-MM-DD" (local). */
+type DayAvailability = "AVAILABLE" | "UNAVAILABLE";
+type AvailabilityMap = Map<string, Map<string, DayAvailability>>;
+
+function buildAvailabilityMap(entries: CrewAvailabilityEntry[]): AvailabilityMap {
+  const map: AvailabilityMap = new Map();
+  for (const e of entries) {
+    let inner = map.get(e.workerId);
+    if (!inner) {
+      inner = new Map();
+      map.set(e.workerId, inner);
+    }
+    inner.set(e.date, e.status);
+  }
+  return map;
+}
+
+/* Job lifecycle paint — the calendar answers "did they accept? are they on
+   site? is it done?" at a glance, so nobody phones anybody. Single source of
+   both the label and the colors for a job status. */
+const JOB_STATUS_META: Record<
+  JobCalendarEventDTO["status"],
+  { label: string; pill: string; dot: string }
+> = {
+  OFFERED: { label: "offered", pill: "bg-amber-100 text-amber-800", dot: "bg-amber-500" },
+  ACCEPTED: { label: "accepted", pill: "bg-emerald-100 text-emerald-800", dot: "bg-emerald-500" },
+  IN_PROGRESS: { label: "in progress", pill: "bg-sky-100 text-sky-800", dot: "bg-sky-500" },
+  COMPLETED: { label: "done", pill: "bg-zinc-100 text-zinc-600", dot: "bg-zinc-400" },
+  DECLINED: { label: "declined", pill: "bg-rose-100 text-rose-700", dot: "bg-rose-500" },
+  CANCELLED: { label: "cancelled", pill: "bg-zinc-100 text-zinc-500", dot: "bg-zinc-300" },
 };
+
+function JobStatusPill({
+  status,
+  className,
+}: {
+  status: JobCalendarEventDTO["status"];
+  className?: string;
+}) {
+  const meta = JOB_STATUS_META[status];
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
+        meta.pill,
+        className,
+      )}
+    >
+      {status === "IN_PROGRESS" ? (
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-70" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-sky-500" />
+        </span>
+      ) : status === "COMPLETED" ? (
+        <Check className="h-2.5 w-2.5" />
+      ) : (
+        <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+      )}
+      {meta.label}
+    </span>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Date helpers — local-time week math                               */
@@ -283,11 +351,16 @@ type BusyInterval = { start: number; end: number };
  * skipping Sundays and anything that collides with an appointment or an
  * assigned crew job. Prefers the earliest options, with a bonus for slots
  * back-to-back with an existing booking (route/trip clustering).
+ *
+ * When a crew member's availability is supplied, days they marked
+ * unavailable are skipped entirely and days they marked available get a
+ * scoring bonus — the scheduler books where the crew said they'd be.
  */
 function findSmartSlots(
   durationMin: number,
   busy: BusyInterval[],
   now: Date,
+  workerDays?: Map<string, DayAvailability>,
 ): SmartSlot[] {
   const candidates: { slot: SmartSlot; score: number }[] = [];
   const dayZero = new Date(now);
@@ -296,6 +369,8 @@ function findSmartSlots(
   for (let day = 0; day < 14; day++) {
     const date = addDays(dayZero, day);
     if (date.getDay() === 0) continue; // Sundays off
+    const avail = workerDays?.get(dayKey(date)) ?? null;
+    if (avail === "UNAVAILABLE") continue; // the crew member blocked this day
 
     for (
       let min = WORK_START_HOUR * 60;
@@ -317,8 +392,10 @@ function findSmartSlots(
           (Math.abs(b.end - s) <= 30 * 60000 || Math.abs(b.start - e) <= 30 * 60000),
       );
 
-      // Earlier is better; back-to-back with an existing visit wins the day.
-      const score = day * 24 * 60 + min - (backToBack ? 240 : 0);
+      // Earlier is better; back-to-back with an existing visit wins the day;
+      // a day the crew member marked available beats an unmarked one.
+      const score =
+        day * 24 * 60 + min - (backToBack ? 240 : 0) - (avail === "AVAILABLE" ? 480 : 0);
       candidates.push({ slot: { start, end, backToBack }, score });
     }
   }
@@ -329,9 +406,9 @@ function findSmartSlots(
   const seenDays = new Set<string>();
   const out: SmartSlot[] = [];
   for (const c of candidates) {
-    const dayKey = c.slot.start.toDateString();
-    if (seenDays.has(dayKey)) continue;
-    seenDays.add(dayKey);
+    const dayStr = c.slot.start.toDateString();
+    if (seenDays.has(dayStr)) continue;
+    seenDays.add(dayStr);
     out.push(c.slot);
     if (out.length >= 4) break;
   }
@@ -363,9 +440,15 @@ export function CalendarBoard() {
     startsAt: string;
     endsAt: string;
     seed?: SchedulableItem;
+    workerId?: string | null;
   } | null>(null);
   const [sidebarFilter, setSidebarFilter] = useState("");
-  const [hiddenWorkers, setHiddenWorkers] = useState<Set<string>>(new Set());
+  const [crew, setCrew] = useState<OwnerWorkerDTO[]>([]);
+  const [availabilityEntries, setAvailabilityEntries] = useState<CrewAvailabilityEntry[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  // Non-null while a calendar tile (not a sidebar card) is being dragged —
+  // turns the sidebar into a "drop to unschedule" target.
+  const [dragSource, setDragSource] = useState<"appt" | "job" | null>(null);
   const [smartFor, setSmartFor] = useState<SchedulableItem | null>(null);
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
   const [monthHoverDay, setMonthHoverDay] = useState<string | null>(null);
@@ -379,7 +462,20 @@ export function CalendarBoard() {
     } else if (window.innerWidth < 1024) {
       setView("day");
     }
+    // ?worker=<id> deep-links straight into one crew member's calendar —
+    // this is what the crew-bar "pop out" button opens in a new tab.
+    const workerParam = new URLSearchParams(window.location.search).get("worker");
+    if (workerParam) setSelectedWorkerId(workerParam);
   }, []);
+
+  // Keep the URL shareable: selecting a crew member writes ?worker=<id>
+  // without triggering a navigation.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (selectedWorkerId) url.searchParams.set("worker", selectedWorkerId);
+    else url.searchParams.delete("worker");
+    window.history.replaceState(null, "", url.toString());
+  }, [selectedWorkerId]);
   const switchView = useCallback((v: ViewMode) => {
     setView(v);
     window.localStorage.setItem("calendar-view", v);
@@ -395,17 +491,45 @@ export function CalendarBoard() {
     [rangeStart, view],
   );
 
+  // Bumped on every optimistic drag mutation. The silent poll uses it to drop
+  // a response that raced a just-committed move (else a stale in-flight fetch
+  // would snap the tile back to where it was dragged from).
+  const mutationSeq = useRef(0);
+
   const refresh = useCallback(async () => {
     setLoading(true);
-    const [appts, jobs, items] = await Promise.all([
+    const [appts, jobs, items, workers, avail] = await Promise.all([
       listAppointments(rangeStart.toISOString(), rangeEnd.toISOString()),
       listJobCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString()),
       listSchedulableItems(),
+      listWorkers(),
+      listCrewAvailability(rangeStart.toISOString(), rangeEnd.toISOString()),
     ]);
     setAppointments(appts);
     setJobEvents(jobs);
     setSchedulable(items);
+    setCrew(workers);
+    setAvailabilityEntries(avail);
     setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeStart.getTime(), rangeEnd.getTime()]);
+
+  // The live-status poll only re-fetches the two things a crew tap changes
+  // (appointments + job events) — not workers/availability/schedulable, which
+  // move on human cadence and are already refreshed on mount, range change,
+  // and after mutations. Keeps the per-minute cost to 2 light queries.
+  const refreshLive = useCallback(async () => {
+    if (dragData.current) return; // never fight an in-progress drag
+    const seq = mutationSeq.current;
+    const [appts, jobs] = await Promise.all([
+      listAppointments(rangeStart.toISOString(), rangeEnd.toISOString()),
+      listJobCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString()),
+    ]);
+    // A drag or mutation landed while we were fetching → our snapshot is
+    // already stale; drop it rather than clobber the optimistic state.
+    if (dragData.current || mutationSeq.current !== seq) return;
+    setAppointments(appts);
+    setJobEvents(jobs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rangeStart.getTime(), rangeEnd.getTime()]);
 
@@ -413,9 +537,48 @@ export function CalendarBoard() {
     refresh();
   }, [refresh]);
 
-  const visibleJobs = useMemo(
-    () => jobEvents.filter((j) => !hiddenWorkers.has(j.workerId)),
-    [jobEvents, hiddenWorkers],
+  // Live board: crew "start job" / "done" taps show up within a minute without
+  // anyone reloading. Paused while the tab is hidden (a backgrounded tab
+  // shouldn't burn queries), and refreshed once the moment it's shown again.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") refreshLive();
+    };
+    const t = setInterval(tick, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshLive();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshLive]);
+
+  const availability = useMemo(
+    () => buildAvailabilityMap(availabilityEntries),
+    [availabilityEntries],
+  );
+  const selectedWorker = useMemo(
+    () => crew.find((w) => w.id === selectedWorkerId) ?? null,
+    [crew, selectedWorkerId],
+  );
+  // A ?worker= deep link (or a since-removed worker) can leave selectedWorkerId
+  // pointing at nobody — which would dim every tile with no chip to explain or
+  // clear it. Once crew has loaded, drop a selection that matches no member.
+  useEffect(() => {
+    if (selectedWorkerId && crew.length > 0 && !crew.some((w) => w.id === selectedWorkerId)) {
+      setSelectedWorkerId(null);
+    }
+  }, [crew, selectedWorkerId]);
+  /** Day availability of the selected crew member, or null when nobody is
+   *  selected / the day is unmarked. */
+  const dayStatusFor = useCallback(
+    (d: Date): DayAvailability | null =>
+      selectedWorkerId
+        ? (availability.get(selectedWorkerId)?.get(dayKey(d)) ?? null)
+        : null,
+    [selectedWorkerId, availability],
   );
 
   const filteredSidebar = useMemo(() => {
@@ -436,6 +599,7 @@ export function CalendarBoard() {
     | { kind: "item"; item: SchedulableItem }
     | { kind: "appt-move"; appt: AppointmentDTO; grabOffsetMin: number }
     | { kind: "appt-resize"; appt: AppointmentDTO }
+    | { kind: "job-move"; job: JobCalendarEventDTO; grabOffsetMin: number }
     | null
   >(null);
 
@@ -443,6 +607,7 @@ export function CalendarBoard() {
     dragData.current = null;
     setDropPreview(null);
     setMonthHoverDay(null);
+    setDragSource(null);
   }
 
   function startDragItem(e: DragEvent, item: SchedulableItem) {
@@ -465,6 +630,23 @@ export function CalendarBoard() {
     };
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", appt.id);
+    setDragSource("appt");
+  }
+
+  function startDragJob(e: DragEvent, job: JobCalendarEventDTO) {
+    const grab =
+      ((e.clientY -
+        (e.currentTarget as HTMLElement).getBoundingClientRect().top) /
+        SLOT_PX) *
+      SLOT_MINUTES;
+    dragData.current = {
+      kind: "job-move",
+      job,
+      grabOffsetMin: Math.round(grab / SLOT_MINUTES) * SLOT_MINUTES,
+    };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", job.id);
+    setDragSource("job");
   }
 
   function startResizeAppt(e: DragEvent, appt: AppointmentDTO) {
@@ -513,15 +695,16 @@ export function CalendarBoard() {
         durationMin: DEFAULT_DURATION_MIN[defaultTypeForItem(d.item)],
         label: d.item.title,
       };
-    } else if (d.kind === "appt-move") {
+    } else if (d.kind === "appt-move" || d.kind === "job-move") {
+      const src = d.kind === "appt-move" ? d.appt : d.job;
       const dur =
-        (new Date(d.appt.endsAt).getTime() - new Date(d.appt.startsAt).getTime()) / 60000;
+        (new Date(src.endsAt).getTime() - new Date(src.startsAt).getTime()) / 60000;
       const slotShift = Math.round(d.grabOffsetMin / SLOT_MINUTES);
       preview = {
         dayIndex: target.dayIndex,
         slotIndex: Math.max(0, target.slotIndex - slotShift),
         durationMin: dur,
-        label: d.appt.title,
+        label: src.title,
       };
     }
     setDropPreview((prev) =>
@@ -540,6 +723,7 @@ export function CalendarBoard() {
     const d = dragData.current;
     clearDrag();
     if (!target || !d) return;
+    mutationSeq.current++; // this drop supersedes any in-flight live poll
 
     if (d.kind === "item") {
       // New appointment seeded from a lead / proposal — opens the create
@@ -551,7 +735,26 @@ export function CalendarBoard() {
         startsAt: start.toISOString(),
         endsAt: end.toISOString(),
         seed: d.item,
+        workerId: selectedWorkerId,
       });
+      return;
+    }
+
+    if (d.kind === "job-move") {
+      const newStart = dateForSlot(weekStart, target.dayIndex, target.slotIndex);
+      newStart.setMinutes(newStart.getMinutes() - d.grabOffsetMin);
+      const duration =
+        new Date(d.job.endsAt).getTime() - new Date(d.job.startsAt).getTime();
+      const newEnd = new Date(newStart.getTime() + duration);
+      setJobEvents((prev) =>
+        prev.map((j) =>
+          j.id === d.job.id
+            ? { ...j, startsAt: newStart.toISOString(), endsAt: newEnd.toISOString() }
+            : j,
+        ),
+      );
+      const r = await rescheduleJob(d.job.id, newStart.toISOString(), newEnd.toISOString());
+      if (!r.ok) refresh();
       return;
     }
 
@@ -603,6 +806,7 @@ export function CalendarBoard() {
     const d = dragData.current;
     clearDrag();
     if (!d) return;
+    mutationSeq.current++; // this drop supersedes any in-flight live poll
 
     if (d.kind === "item") {
       const start = new Date(day);
@@ -612,6 +816,7 @@ export function CalendarBoard() {
         startsAt: start.toISOString(),
         endsAt: new Date(start.getTime() + durMin * 60000).toISOString(),
         seed: d.item,
+        workerId: selectedWorkerId,
       });
       return;
     }
@@ -634,6 +839,61 @@ export function CalendarBoard() {
         endsAt: newEnd.toISOString(),
       });
       if (!r.ok) refresh();
+      return;
+    }
+
+    if (d.kind === "job-move") {
+      const oldStart = new Date(d.job.startsAt);
+      const duration = new Date(d.job.endsAt).getTime() - oldStart.getTime();
+      const newStart = new Date(day);
+      newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+      const newEnd = new Date(newStart.getTime() + duration);
+      setJobEvents((prev) =>
+        prev.map((j) =>
+          j.id === d.job.id
+            ? { ...j, startsAt: newStart.toISOString(), endsAt: newEnd.toISOString() }
+            : j,
+        ),
+      );
+      const r = await rescheduleJob(d.job.id, newStart.toISOString(), newEnd.toISOString());
+      if (!r.ok) refresh();
+    }
+  }
+
+  /**
+   * The reverse direction: dropping a calendar tile onto the sidebar takes it
+   * OFF the schedule. Appointments are deleted (their lead/proposal card
+   * re-surfaces in the list); crew jobs are cancelled (the worker's offer is
+   * withdrawn). Both confirm first — a stray drop shouldn't nuke a booking.
+   */
+  async function onSidebarDrop(e: DragEvent) {
+    e.preventDefault();
+    const d = dragData.current;
+    clearDrag();
+    if (!d) return;
+    mutationSeq.current++; // this unschedule supersedes any in-flight live poll
+
+    if (d.kind === "appt-move") {
+      const ok = window.confirm(
+        `Take "${d.appt.title}" off the calendar? It goes back to the scheduling list.`,
+      );
+      if (!ok) return;
+      setAppointments((prev) => prev.filter((a) => a.id !== d.appt.id));
+      const r = await deleteAppointment(d.appt.id);
+      if (!r.ok) alert(r.reason);
+      refresh();
+      return;
+    }
+
+    if (d.kind === "job-move") {
+      const ok = window.confirm(
+        `Unschedule "${d.job.title}"? The job offered to ${d.job.workerName} will be cancelled.`,
+      );
+      if (!ok) return;
+      setJobEvents((prev) => prev.filter((j) => j.id !== d.job.id));
+      const r = await cancelJob(d.job.id);
+      if (!r.ok) alert(r.reason);
+      refresh();
     }
   }
 
@@ -654,16 +914,15 @@ export function CalendarBoard() {
     return { visits, installs, crewJobs: jobEvents.length, toSchedule: schedulable.length };
   }, [appointments, jobEvents, schedulable]);
 
-  /* Distinct workers in range → legend chips. */
-  const workers = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; count: number }>();
-    for (const j of jobEvents) {
-      const cur = map.get(j.workerId);
-      if (cur) cur.count++;
-      else map.set(j.workerId, { id: j.workerId, name: j.workerName, count: 1 });
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [jobEvents]);
+  /* Bookings per crew member in the visible range (jobs + assigned appts) —
+     shown as a count on each crew chip. */
+  const workerEventCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const j of jobEvents) map.set(j.workerId, (map.get(j.workerId) ?? 0) + 1);
+    for (const a of appointments)
+      if (a.workerId) map.set(a.workerId, (map.get(a.workerId) ?? 0) + 1);
+    return map;
+  }, [jobEvents, appointments]);
 
   return (
     <div className="space-y-4">
@@ -699,17 +958,13 @@ export function CalendarBoard() {
 
       <StatsStrip stats={stats} view={view} />
 
-      {workers.length > 0 && (
-        <WorkerLegend
-          workers={workers}
-          hidden={hiddenWorkers}
-          onToggle={(id) =>
-            setHiddenWorkers((prev) => {
-              const next = new Set(prev);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            })
+      {crew.length > 0 && (
+        <CrewBar
+          crew={crew}
+          counts={workerEventCounts}
+          selectedId={selectedWorkerId}
+          onSelect={(id) =>
+            setSelectedWorkerId((prev) => (prev === id ? null : id))
           }
         />
       )}
@@ -720,8 +975,10 @@ export function CalendarBoard() {
             weekStart={weekStart}
             anchor={anchor}
             appointments={appointments}
-            jobEvents={visibleJobs}
+            jobEvents={jobEvents}
             loading={loading}
+            selectedWorker={selectedWorker}
+            dayStatusFor={dayStatusFor}
             onPickDay={(d) => setAnchor(d)}
             onApptClick={(a) => setEditing(a)}
             onNew={(d) => {
@@ -730,6 +987,7 @@ export function CalendarBoard() {
               setCreating({
                 startsAt: start.toISOString(),
                 endsAt: new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+                workerId: selectedWorkerId,
               });
             }}
           />
@@ -737,12 +995,15 @@ export function CalendarBoard() {
           <WeekGrid
             weekStart={weekStart}
             appointments={appointments}
-            jobEvents={visibleJobs}
+            jobEvents={jobEvents}
             loading={loading}
             dropPreview={dropPreview}
+            selectedWorkerId={selectedWorkerId}
+            dayStatusFor={dayStatusFor}
             onApptClick={(a) => setEditing(a)}
             onApptDragStart={startDragAppt}
             onApptResizeStart={startResizeAppt}
+            onJobDragStart={startDragJob}
             onDragOver={onGridDragOver}
             onDrop={onGridDrop}
             onDragEnd={clearDrag}
@@ -750,6 +1011,7 @@ export function CalendarBoard() {
               setCreating({
                 startsAt: start.toISOString(),
                 endsAt: end.toISOString(),
+                workerId: selectedWorkerId,
               })
             }
           />
@@ -758,14 +1020,17 @@ export function CalendarBoard() {
             gridStart={gridStart}
             month={anchor.getMonth()}
             appointments={appointments}
-            jobEvents={visibleJobs}
+            jobEvents={jobEvents}
             loading={loading}
             hoverDay={monthHoverDay}
+            selectedWorkerId={selectedWorkerId}
+            dayStatusFor={dayStatusFor}
             onHoverDay={setMonthHoverDay}
             onDrop={onMonthDrop}
             onDragEnd={clearDrag}
             onApptClick={(a) => setEditing(a)}
             onApptDragStart={startDragAppt}
+            onJobDragStart={startDragJob}
             onDayOpen={(d) => {
               setAnchor(d);
               switchView("week");
@@ -776,6 +1041,7 @@ export function CalendarBoard() {
               setCreating({
                 startsAt: start.toISOString(),
                 endsAt: new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+                workerId: selectedWorkerId,
               });
             }}
           />
@@ -784,16 +1050,28 @@ export function CalendarBoard() {
         <Sidebar
           items={filteredSidebar}
           filter={sidebarFilter}
+          dropActive={dragSource !== null}
+          dropKind={dragSource}
           onFilter={setSidebarFilter}
           onDragStart={startDragItem}
           onDragEnd={clearDrag}
           onSmart={(item) => setSmartFor(item)}
+          onUnscheduleDragOver={(e) => {
+            const d = dragData.current;
+            if (d?.kind === "appt-move" || d?.kind === "job-move") {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onUnscheduleDrop={onSidebarDrop}
         />
       </div>
 
       {editing && (
         <EditModal
           appt={editing}
+          crew={crew}
+          availability={availability}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -810,6 +1088,9 @@ export function CalendarBoard() {
           startsAt={creating.startsAt}
           endsAt={creating.endsAt}
           seed={creating.seed}
+          defaultWorkerId={creating.workerId ?? null}
+          crew={crew}
+          availability={availability}
           onClose={() => setCreating(null)}
           onCreated={() => {
             setCreating(null);
@@ -820,6 +1101,8 @@ export function CalendarBoard() {
       {smartFor && (
         <SmartScheduleModal
           item={smartFor}
+          worker={selectedWorker}
+          availability={availability}
           onClose={() => setSmartFor(null)}
           onPick={(slot) => {
             setSmartFor(null);
@@ -827,6 +1110,7 @@ export function CalendarBoard() {
               startsAt: slot.start.toISOString(),
               endsAt: slot.end.toISOString(),
               seed: smartFor,
+              workerId: selectedWorkerId,
             });
           }}
         />
@@ -851,6 +1135,8 @@ function DayAgenda({
   appointments,
   jobEvents,
   loading,
+  selectedWorker,
+  dayStatusFor,
   onPickDay,
   onApptClick,
   onNew,
@@ -860,10 +1146,13 @@ function DayAgenda({
   appointments: AppointmentDTO[];
   jobEvents: JobCalendarEventDTO[];
   loading: boolean;
+  selectedWorker: OwnerWorkerDTO | null;
+  dayStatusFor: (d: Date) => DayAvailability | null;
   onPickDay: (d: Date) => void;
   onApptClick: (a: AppointmentDTO) => void;
   onNew: (d: Date) => void;
 }) {
+  const anchorAvail = selectedWorker ? dayStatusFor(anchor) : null;
   const today = new Date();
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -949,6 +1238,34 @@ function DayAgenda({
         })}
       </div>
 
+      {/* Selected crew member's availability for the picked day */}
+      {selectedWorker && (
+        <div
+          className={cn(
+            "flex items-center gap-1.5 border-b border-zinc-200/70 px-3 py-1.5 text-[11px] font-medium",
+            anchorAvail === "AVAILABLE"
+              ? "bg-emerald-50 text-emerald-800"
+              : anchorAvail === "UNAVAILABLE"
+                ? "bg-rose-50 text-rose-800"
+                : "bg-zinc-50 text-zinc-500",
+          )}
+        >
+          {anchorAvail === "AVAILABLE" ? (
+            <Check className="h-3 w-3" />
+          ) : anchorAvail === "UNAVAILABLE" ? (
+            <Ban className="h-3 w-3" />
+          ) : (
+            <UserRound className="h-3 w-3" />
+          )}
+          {selectedWorker.name || selectedWorker.email}
+          {anchorAvail === "AVAILABLE"
+            ? " is available this day"
+            : anchorAvail === "UNAVAILABLE"
+              ? " marked this day unavailable"
+              : " hasn't marked this day"}
+        </div>
+      )}
+
       {/* Agenda list */}
       {loading ? (
         <div className="space-y-2 p-3">
@@ -1032,13 +1349,15 @@ function DayAgenda({
                   </div>
                   <div
                     className={cn(
-                      "flex items-center gap-1 text-[11px] font-medium",
+                      "flex items-center gap-1.5 text-[11px] font-medium",
                       workerTone(tile.job.workerId).text,
                     )}
                   >
                     <Hammer className="h-3 w-3" />
-                    {tile.job.workerName} · {tile.job.kindLabel} ·{" "}
-                    {JOB_STATUS_LABEL[tile.job.status]}
+                    <span className="truncate">
+                      {tile.job.workerName} · {tile.job.kindLabel}
+                    </span>
+                    <JobStatusPill status={tile.job.status} />
                   </div>
                   {tile.job.address && (
                     <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-500">
@@ -1098,7 +1417,8 @@ function Header({
             Schedule
           </h2>
           <p className="text-xs text-zinc-500">
-            Drag leads + proposals onto the calendar — or hit ⚡ for a smart slot.
+            Drag on to book, drag off to unschedule — click a crew member to see
+            their days, or hit ⚡ for a smart slot.
           </p>
         </div>
       </div>
@@ -1219,46 +1539,111 @@ function StatsStrip({
   );
 }
 
-function WorkerLegend({
-  workers,
-  hidden,
-  onToggle,
+/**
+ * All of the owner's crew (workers + subcontractors) as selectable chips.
+ * Clicking one paints that person's availability onto the calendar, spotlights
+ * their bookings, and pre-selects them in every scheduling flow. Click again
+ * to deselect.
+ */
+function CrewBar({
+  crew,
+  counts,
+  selectedId,
+  onSelect,
 }: {
-  workers: { id: string; name: string; count: number }[];
-  hidden: Set<string>;
-  onToggle: (id: string) => void;
+  crew: OwnerWorkerDTO[];
+  counts: Map<string, number>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }) {
+  const groups: { label: string; members: OwnerWorkerDTO[] }[] = [
+    { label: "Crew", members: crew.filter((w) => w.kind !== "SALES") },
+    { label: "Sales", members: crew.filter((w) => w.kind === "SALES") },
+  ].filter((g) => g.members.length > 0);
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="mr-1 inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500">
-        <Users className="h-3.5 w-3.5" />
-        Crew
-      </span>
-      {workers.map((w) => {
-        const tone = workerTone(w.id);
-        const off = hidden.has(w.id);
-        return (
-          <button
-            key={w.id}
-            onClick={() => onToggle(w.id)}
-            title={off ? "Show on calendar" : "Hide from calendar"}
+      {groups.map((g) => (
+        <span key={g.label} className="contents">
+          <span
             className={cn(
-              "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-              off
-                ? "border-zinc-200 bg-white text-zinc-400"
-                : "border-zinc-200 bg-white text-zinc-700 shadow-sm hover:bg-zinc-50",
+              "inline-flex items-center gap-1 text-[11px] font-medium text-zinc-500",
+              g.label === "Sales" && "ml-2",
             )}
           >
-            <span
-              className={cn("h-2 w-2 rounded-full", tone.chip, off && "opacity-30")}
-            />
-            <span className={cn(off && "line-through")}>{w.name}</span>
-            <span className="rounded bg-zinc-100 px-1 text-[10px] tabular-nums text-zinc-500">
-              {w.count}
-            </span>
-          </button>
-        );
-      })}
+            {g.label === "Sales" ? (
+              <UserRound className="h-3.5 w-3.5" />
+            ) : (
+              <Users className="h-3.5 w-3.5" />
+            )}
+            {g.label}
+          </span>
+          {g.members.map((w) => {
+            const tone = workerTone(w.id);
+            const selected = selectedId === w.id;
+            const count = counts.get(w.id) ?? 0;
+            const disabled = w.status === "DISABLED";
+            return (
+              <button
+                key={w.id}
+                onClick={() => !disabled && onSelect(w.id)}
+                title={
+                  disabled
+                    ? "Disabled worker"
+                    : selected
+                      ? "Click to stop viewing their calendar"
+                      : "See their availability + bookings"
+                }
+                className={cn(
+                  "transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                  disabled
+                    ? "cursor-not-allowed border-zinc-200 bg-zinc-50 text-zinc-400"
+                    : selected
+                      ? "border-accent-500 bg-accent-50 text-accent-900 shadow-sm"
+                      : "border-zinc-200 bg-white text-zinc-700 shadow-sm hover:bg-zinc-50",
+                )}
+              >
+                <span className={cn("h-2 w-2 rounded-full", tone.chip, disabled && "opacity-30")} />
+                <span>{w.name || w.email}</span>
+                {w.trade && !selected && (
+                  <span className="hidden text-[10px] text-zinc-400 sm:inline">{w.trade}</span>
+                )}
+                {count > 0 && (
+                  <span
+                    className={cn(
+                      "rounded px-1 text-[10px] tabular-nums",
+                      selected ? "bg-accent-100 text-accent-800" : "bg-zinc-100 text-zinc-500",
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
+                {selected && <Check className="h-3 w-3" />}
+              </button>
+            );
+          })}
+        </span>
+      ))}
+      {selectedId && (
+        <>
+          <a
+            href={`/dashboard/calendar?worker=${selectedId}`}
+            target="_blank"
+            rel="noreferrer"
+            title="Pop out this person's calendar in its own tab"
+            className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm hover:bg-zinc-50"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Pop out
+          </a>
+          <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            available
+            <span className="ml-1 h-1.5 w-1.5 rounded-full bg-rose-400" />
+            <span className="text-rose-700">off</span>
+          </span>
+        </>
+      )}
     </div>
   );
 }
@@ -1273,9 +1658,12 @@ function WeekGrid({
   jobEvents,
   loading,
   dropPreview,
+  selectedWorkerId,
+  dayStatusFor,
   onApptClick,
   onApptDragStart,
   onApptResizeStart,
+  onJobDragStart,
   onDragOver,
   onDrop,
   onDragEnd,
@@ -1286,9 +1674,12 @@ function WeekGrid({
   jobEvents: JobCalendarEventDTO[];
   loading: boolean;
   dropPreview: DropPreview | null;
+  selectedWorkerId: string | null;
+  dayStatusFor: (d: Date) => DayAvailability | null;
   onApptClick: (a: AppointmentDTO) => void;
   onApptDragStart: (e: DragEvent, a: AppointmentDTO) => void;
   onApptResizeStart: (e: DragEvent, a: AppointmentDTO) => void;
+  onJobDragStart: (e: DragEvent, j: JobCalendarEventDTO) => void;
   onDragOver: (e: DragEvent, container: HTMLElement) => void;
   onDrop: (e: DragEvent, container: HTMLElement) => void;
   onDragEnd: () => void;
@@ -1349,6 +1740,7 @@ function WeekGrid({
         {days.map((d, i) => {
           const f = fmtDay(d);
           const isToday = sameDay(d, today);
+          const avail = selectedWorkerId ? dayStatusFor(d) : null;
           return (
             <div
               key={i}
@@ -1368,6 +1760,18 @@ function WeekGrid({
               >
                 {f.date}
               </div>
+              {avail && (
+                <div
+                  className={cn(
+                    "mx-auto mt-0.5 w-fit rounded-full px-1.5 text-[9px] font-semibold uppercase tracking-wide",
+                    avail === "AVAILABLE"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-rose-100 text-rose-700",
+                  )}
+                >
+                  {avail === "AVAILABLE" ? "Available" : "Off"}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1431,6 +1835,19 @@ function WeekGrid({
               {sameDay(d, today) && (
                 <div className="pointer-events-none absolute inset-0 bg-accent-50/30" />
               )}
+              {/* Selected crew member's availability wash */}
+              {selectedWorkerId && dayStatusFor(d) === "AVAILABLE" && (
+                <div className="pointer-events-none absolute inset-0 bg-emerald-100/35" />
+              )}
+              {selectedWorkerId && dayStatusFor(d) === "UNAVAILABLE" && (
+                <div
+                  className="pointer-events-none absolute inset-0 bg-rose-50/60"
+                  style={{
+                    backgroundImage:
+                      "repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(225,29,72,0.07) 10px, rgba(225,29,72,0.07) 20px)",
+                  }}
+                />
+              )}
               {/* Drop ghost — shows where the drag will land */}
               {dropPreview && dropPreview.dayIndex === dayIdx && (
                 <div
@@ -1456,6 +1873,10 @@ function WeekGrid({
                     appt={p.tile.appt}
                     col={p.col}
                     cols={p.cols}
+                    dim={
+                      selectedWorkerId != null &&
+                      p.tile.appt.workerId !== selectedWorkerId
+                    }
                     onClick={() => onApptClick((p.tile as Extract<DayTile, { kind: "appt" }>).appt)}
                     onDragStart={(e) =>
                       onApptDragStart(e, (p.tile as Extract<DayTile, { kind: "appt" }>).appt)
@@ -1465,7 +1886,19 @@ function WeekGrid({
                     }
                   />
                 ) : (
-                  <JobTile key={p.tile.key} job={p.tile.job} col={p.col} cols={p.cols} />
+                  <JobTile
+                    key={p.tile.key}
+                    job={p.tile.job}
+                    col={p.col}
+                    cols={p.cols}
+                    dim={
+                      selectedWorkerId != null &&
+                      p.tile.job.workerId !== selectedWorkerId
+                    }
+                    onDragStart={(e) =>
+                      onJobDragStart(e, (p.tile as Extract<DayTile, { kind: "job" }>).job)
+                    }
+                  />
                 ),
               )}
             </div>
@@ -1526,6 +1959,7 @@ function EventTile({
   appt,
   col,
   cols,
+  dim,
   onClick,
   onDragStart,
   onResizeStart,
@@ -1533,6 +1967,7 @@ function EventTile({
   appt: AppointmentDTO;
   col: number;
   cols: number;
+  dim?: boolean;
   onClick: () => void;
   onDragStart: (e: DragEvent) => void;
   onResizeStart: (e: DragEvent) => void;
@@ -1553,6 +1988,7 @@ function EventTile({
         meta.bg,
         meta.ring,
         appt.status === "CANCELLED" && "opacity-40 line-through",
+        dim && "opacity-35",
       )}
       style={{
         top: (topMin / 60) * HOUR_PX,
@@ -1582,6 +2018,17 @@ function EventTile({
         {fmtTime(start)} – {fmtTime(end)}
         {appt.address ? ` · ${appt.address.split(",")[0]}` : ""}
       </div>
+      {appt.workerName && (
+        <div
+          className={cn(
+            "flex items-center gap-1 truncate pl-3 pr-2 pb-1 text-[10px] opacity-80",
+            meta.text,
+          )}
+        >
+          <UserRound className="h-2.5 w-2.5 shrink-0" />
+          <span className="truncate">{appt.workerName}</span>
+        </div>
+      )}
       {/* Bottom resize handle */}
       <div
         draggable
@@ -1596,18 +2043,22 @@ function EventTile({
   );
 }
 
-/** Read-only tile for a job assigned to a WORKER. Not draggable/resizable —
- *  its schedule belongs to the assignment (manage it on /dashboard/workers).
+/** Tile for a job assigned to a WORKER. Draggable — drop on another slot to
+ *  reschedule, or on the sidebar to cancel; click through for details.
  *  Color is per-worker so a glance shows who's where; a small status word
  *  shows offered / accepted / declined / done. */
 function JobTile({
   job,
   col,
   cols,
+  dim,
+  onDragStart,
 }: {
   job: JobCalendarEventDTO;
   col: number;
   cols: number;
+  dim?: boolean;
+  onDragStart: (e: DragEvent) => void;
 }) {
   const start = new Date(job.startsAt);
   const end = new Date(job.endsAt);
@@ -1619,27 +2070,31 @@ function JobTile({
   return (
     <a
       href="/dashboard/workers"
+      draggable
+      onDragStart={onDragStart}
       className={cn(
-        "absolute z-[5] block overflow-hidden rounded-md ring-1 transition-shadow hover:shadow-md",
+        "absolute z-[5] block cursor-grab overflow-hidden rounded-md ring-1 transition-shadow hover:shadow-md active:cursor-grabbing",
         tone.bg,
         tone.ring,
         dimmed && "opacity-45",
         job.status === "DECLINED" && "line-through",
+        dim && "opacity-35",
       )}
       style={{
         top: (topMin / 60) * HOUR_PX,
         height: Math.max((durMin / 60) * HOUR_PX - 2, SLOT_PX - 2),
         ...colStyle(col, cols),
       }}
-      title={`${job.title} — ${job.workerName} (${JOB_STATUS_LABEL[job.status]})`}
+      title={`${job.title} — ${job.workerName} (${JOB_STATUS_META[job.status].label}) — drag to reschedule`}
     >
       <span className={cn("absolute inset-y-0 left-0 w-[3px]", tone.chip)} aria-hidden />
       <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
         <Hammer className={cn("h-3 w-3 shrink-0", tone.text)} />
         <span className={cn("truncate text-[11px] font-semibold", tone.text)}>{job.title}</span>
       </div>
-      <div className={cn("truncate pl-3 pr-2 text-[10px] opacity-80", tone.text)}>
-        {job.workerName} · {JOB_STATUS_LABEL[job.status]}
+      <div className={cn("flex items-center gap-1 pl-3 pr-2 text-[10px] opacity-90", tone.text)}>
+        <span className="truncate">{job.workerName}</span>
+        <JobStatusPill status={job.status} />
       </div>
       <div className={cn("truncate pl-3 pr-2 pb-1 text-[10px] opacity-70", tone.text)}>
         {fmtTime(start)} – {fmtTime(end)}
@@ -1661,11 +2116,14 @@ function MonthGrid({
   jobEvents,
   loading,
   hoverDay,
+  selectedWorkerId,
+  dayStatusFor,
   onHoverDay,
   onDrop,
   onDragEnd,
   onApptClick,
   onApptDragStart,
+  onJobDragStart,
   onDayOpen,
   onEmptyClick,
 }: {
@@ -1675,11 +2133,14 @@ function MonthGrid({
   jobEvents: JobCalendarEventDTO[];
   loading: boolean;
   hoverDay: string | null;
+  selectedWorkerId: string | null;
+  dayStatusFor: (d: Date) => DayAvailability | null;
   onHoverDay: (key: string | null) => void;
   onDrop: (e: DragEvent, day: Date) => void;
   onDragEnd: () => void;
   onApptClick: (a: AppointmentDTO) => void;
   onApptDragStart: (e: DragEvent, a: AppointmentDTO) => void;
+  onJobDragStart: (e: DragEvent, j: JobCalendarEventDTO) => void;
   onDayOpen: (d: Date) => void;
   onEmptyClick: (d: Date) => void;
 }) {
@@ -1736,6 +2197,7 @@ function MonthGrid({
           const shownAppts = cell.appts.slice(0, MAX_CHIPS);
           const shownJobs = cell.jobs.slice(0, Math.max(0, MAX_CHIPS - shownAppts.length));
           const more = total - shownAppts.length - shownJobs.length;
+          const avail = selectedWorkerId ? dayStatusFor(d) : null;
 
           return (
             <div
@@ -1752,6 +2214,8 @@ function MonthGrid({
                 "transition-smooth relative min-h-[104px] cursor-pointer border-b border-l border-zinc-100 p-1.5 first:border-l-0 [&:nth-child(7n+1)]:border-l-0",
                 inMonth ? "bg-white hover:bg-accent-50/30" : "bg-zinc-50/50",
                 isToday && "bg-accent-50/50",
+                avail === "AVAILABLE" && "bg-emerald-50/70",
+                avail === "UNAVAILABLE" && "bg-rose-50/70",
                 hoverDay === key && "bg-accent-100/60 ring-2 ring-inset ring-accent-400",
               )}
             >
@@ -1774,11 +2238,22 @@ function MonthGrid({
                 >
                   {d.getDate()}
                 </button>
-                {total > 0 && (
-                  <span className="rounded bg-zinc-100 px-1 text-[10px] tabular-nums text-zinc-500">
-                    {total}
-                  </span>
-                )}
+                <span className="flex items-center gap-1">
+                  {avail && (
+                    <span
+                      title={avail === "AVAILABLE" ? "Crew member available" : "Crew member off"}
+                      className={cn(
+                        "h-2 w-2 rounded-full",
+                        avail === "AVAILABLE" ? "bg-emerald-500" : "bg-rose-400",
+                      )}
+                    />
+                  )}
+                  {total > 0 && (
+                    <span className="rounded bg-zinc-100 px-1 text-[10px] tabular-nums text-zinc-500">
+                      {total}
+                    </span>
+                  )}
+                </span>
               </div>
 
               <div className="mt-1 space-y-0.5">
@@ -1804,6 +2279,7 @@ function MonthGrid({
                         meta.ring,
                         meta.text,
                         a.status === "CANCELLED" && "opacity-40 line-through",
+                        selectedWorkerId != null && a.workerId !== selectedWorkerId && "opacity-35",
                       )}
                       title={`${a.title} · ${fmtTime(new Date(a.startsAt))}`}
                     >
@@ -1821,20 +2297,39 @@ function MonthGrid({
                     <a
                       key={j.id}
                       href="/dashboard/workers"
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        onJobDragStart(e, j);
+                      }}
                       onClick={(e) => e.stopPropagation()}
                       className={cn(
-                        "transition-smooth ring-focus flex items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1 hover:ring-2",
+                        "transition-smooth ring-focus flex cursor-grab items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium ring-1 hover:ring-2 active:cursor-grabbing",
                         tone.bg,
                         tone.ring,
                         tone.text,
                         (j.status === "DECLINED" || j.status === "COMPLETED") && "opacity-45",
+                        selectedWorkerId != null && j.workerId !== selectedWorkerId && "opacity-35",
                       )}
-                      title={`${j.title} — ${j.workerName} (${JOB_STATUS_LABEL[j.status]})`}
+                      title={`${j.title} — ${j.workerName} (${JOB_STATUS_META[j.status].label}) — drag to reschedule`}
                     >
                       <Hammer className="h-2.5 w-2.5 shrink-0" />
                       <span className="truncate">
                         {j.workerName.split(" ")[0]} · {j.title}
                       </span>
+                      {j.status === "IN_PROGRESS" ? (
+                        <span className="relative ml-auto flex h-1.5 w-1.5 shrink-0">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-70" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-sky-500" />
+                        </span>
+                      ) : (
+                        <span
+                          className={cn(
+                            "ml-auto h-1.5 w-1.5 shrink-0 rounded-full",
+                            JOB_STATUS_META[j.status].dot,
+                          )}
+                        />
+                      )}
                     </a>
                   );
                 })}
@@ -1880,23 +2375,48 @@ function MonthGrid({
 function Sidebar({
   items,
   filter,
+  dropActive,
+  dropKind,
   onFilter,
   onDragStart,
   onDragEnd,
   onSmart,
+  onUnscheduleDragOver,
+  onUnscheduleDrop,
 }: {
   items: SchedulableItem[];
   filter: string;
+  /** True while a calendar tile is mid-drag — the sidebar becomes the
+   *  "drop to unschedule" target. */
+  dropActive: boolean;
+  dropKind: "appt" | "job" | null;
   onFilter: (v: string) => void;
   onDragStart: (e: DragEvent, item: SchedulableItem) => void;
   onDragEnd: () => void;
   onSmart: (item: SchedulableItem) => void;
+  onUnscheduleDragOver: (e: DragEvent) => void;
+  onUnscheduleDrop: (e: DragEvent) => void;
 }) {
   const leads = items.filter((i) => i.kind === "lead");
   const proposals = items.filter((i) => i.kind === "proposal");
 
   return (
-    <aside className="surface space-y-3 self-start p-3 shadow-card">
+    <aside
+      onDragOver={onUnscheduleDragOver}
+      onDrop={onUnscheduleDrop}
+      className={cn(
+        "surface space-y-3 self-start p-3 shadow-card transition-smooth",
+        dropActive && "ring-2 ring-dashed ring-amber-400",
+      )}
+    >
+      {dropActive && (
+        <div className="flex items-center gap-2 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-900">
+          <Undo2 className="h-4 w-4 shrink-0 text-amber-600" />
+          {dropKind === "job"
+            ? "Drop here to unschedule — the job offer is cancelled"
+            : "Drop here to take it off the calendar"}
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-accent-600" />
         <h2 className="text-sm font-semibold text-zinc-900">Drag onto calendar</h2>
@@ -2036,21 +2556,27 @@ function DragItem({
 
 function SmartScheduleModal({
   item,
+  worker,
+  availability,
   onClose,
   onPick,
 }: {
   item: SchedulableItem;
+  worker: OwnerWorkerDTO | null;
+  availability: AvailabilityMap;
   onClose: () => void;
   onPick: (slot: SmartSlot) => void;
 }) {
   const [slots, setSlots] = useState<SmartSlot[] | null>(null);
   const durationMin = DEFAULT_DURATION_MIN[defaultTypeForItem(item)];
+  const workerName = worker ? worker.name || worker.email : null;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       // Conflicts come from BOTH your appointments and assigned crew jobs
-      // over the scan horizon.
+      // over the scan horizon. With a crew member selected, only THEIR
+      // bookings block — and their availability days steer the picks.
       const now = new Date();
       const scanStart = new Date(now);
       scanStart.setHours(0, 0, 0, 0);
@@ -2063,23 +2589,32 @@ function SmartScheduleModal({
       const busy: BusyInterval[] = [
         ...appts
           .filter((a) => a.status !== "CANCELLED")
+          .filter((a) => (worker ? a.workerId === worker.id || !a.workerId : true))
           .map((a) => ({
             start: new Date(a.startsAt).getTime(),
             end: new Date(a.endsAt).getTime(),
           })),
         ...jobs
           .filter((j) => j.status !== "DECLINED" && j.status !== "COMPLETED")
+          .filter((j) => (worker ? j.workerId === worker.id : true))
           .map((j) => ({
             start: new Date(j.startsAt).getTime(),
             end: new Date(j.endsAt).getTime(),
           })),
       ];
-      setSlots(findSmartSlots(durationMin, busy, now));
+      setSlots(
+        findSmartSlots(
+          durationMin,
+          busy,
+          now,
+          worker ? availability.get(worker.id) : undefined,
+        ),
+      );
     })();
     return () => {
       cancelled = true;
     };
-  }, [item.id, durationMin]);
+  }, [item.id, durationMin, worker, availability]);
 
   return (
     <ModalShell onClose={onClose} title="Smart schedule">
@@ -2090,6 +2625,13 @@ function SmartScheduleModal({
           {durationMin >= 60 ? `${durationMin / 60}h` : `${durationMin}min`}{" "}
           {item.kind === "lead" ? "site visit" : "install"}, inside working hours
           (8 AM–5 PM, no Sundays), avoiding your bookings and crew jobs.
+          {workerName && (
+            <>
+              {" "}
+              Matching <strong>{workerName}</strong>&apos;s schedule — days they
+              marked off are skipped, days they marked available come first.
+            </>
+          )}
         </span>
       </div>
 
@@ -2160,12 +2702,18 @@ function CreateModal({
   startsAt,
   endsAt,
   seed,
+  defaultWorkerId,
+  crew,
+  availability,
   onClose,
   onCreated,
 }: {
   startsAt: string;
   endsAt: string;
   seed?: SchedulableItem;
+  defaultWorkerId: string | null;
+  crew: OwnerWorkerDTO[];
+  availability: AvailabilityMap;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -2179,6 +2727,7 @@ function CreateModal({
   );
   const [start, setStart] = useState(toLocalInput(startsAt));
   const [end, setEnd] = useState(toLocalInput(endsAt));
+  const [workerId, setWorkerId] = useState<string | null>(defaultWorkerId);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2202,6 +2751,7 @@ function CreateModal({
       clientEmail: clientEmail || null,
       leadId: seed?.kind === "lead" ? seed.id : null,
       proposalId: seed?.kind === "proposal" ? seed.id : null,
+      workerId,
     });
     setSaving(false);
     if (!r.ok) {
@@ -2232,6 +2782,10 @@ function CreateModal({
         setClientEmail={setClientEmail}
         notes={notes}
         setNotes={setNotes}
+        workerId={workerId}
+        setWorkerId={setWorkerId}
+        crew={crew}
+        availability={availability}
       />
       {err && (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -2259,11 +2813,15 @@ function CreateModal({
 
 function EditModal({
   appt,
+  crew,
+  availability,
   onClose,
   onSaved,
   onDeleted,
 }: {
   appt: AppointmentDTO;
+  crew: OwnerWorkerDTO[];
+  availability: AvailabilityMap;
   onClose: () => void;
   onSaved: () => void;
   onDeleted: () => void;
@@ -2276,6 +2834,7 @@ function EditModal({
   const [clientName, setClientName] = useState(appt.clientName ?? "");
   const [clientPhone, setClientPhone] = useState(appt.clientPhone ?? "");
   const [clientEmail, setClientEmail] = useState(appt.clientEmail ?? "");
+  const [workerId, setWorkerId] = useState<string | null>(appt.workerId);
   const [notes, setNotes] = useState(appt.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2293,6 +2852,7 @@ function EditModal({
       clientName,
       clientPhone,
       clientEmail,
+      workerId,
     });
     setSaving(false);
     if (!r.ok) {
@@ -2335,6 +2895,10 @@ function EditModal({
         setClientEmail={setClientEmail}
         notes={notes}
         setNotes={setNotes}
+        workerId={workerId}
+        setWorkerId={setWorkerId}
+        crew={crew}
+        availability={availability}
       />
       {err && (
         <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -2430,7 +2994,18 @@ function Form(props: {
   setClientEmail: (v: string) => void;
   notes: string;
   setNotes: (v: string) => void;
+  workerId: string | null;
+  setWorkerId: (v: string | null) => void;
+  crew: OwnerWorkerDTO[];
+  availability: AvailabilityMap;
 }) {
+  const assignable = props.crew.filter((w) => w.status !== "DISABLED");
+  const chosen = assignable.find((w) => w.id === props.workerId) ?? null;
+  // datetime-local is "YYYY-MM-DDTHH:mm" — the first 10 chars are the day key.
+  const startDayKey = props.start.slice(0, 10);
+  const chosenAvail: DayAvailability | null = chosen
+    ? (props.availability.get(chosen.id)?.get(startDayKey) ?? null)
+    : null;
   return (
     <div className="space-y-3">
       <div>
@@ -2486,6 +3061,70 @@ function Form(props: {
           />
         </div>
       </div>
+      {assignable.length > 0 && (
+        <div>
+          <Label>Assign to</Label>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => props.setWorkerId(null)}
+              className={cn(
+                "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+                props.workerId === null
+                  ? "border-accent-500 bg-accent-50 text-accent-900"
+                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
+              )}
+            >
+              Unassigned
+            </button>
+            {assignable.map((w) => {
+              const tone = workerTone(w.id);
+              const active = props.workerId === w.id;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => props.setWorkerId(active ? null : w.id)}
+                  className={cn(
+                    "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+                    active
+                      ? "border-accent-500 bg-accent-50 text-accent-900"
+                      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", tone.chip)} />
+                  {w.name || w.email}
+                </button>
+              );
+            })}
+          </div>
+          {chosen && (
+            <div
+              className={cn(
+                "mt-1.5 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium",
+                chosenAvail === "AVAILABLE"
+                  ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+                  : chosenAvail === "UNAVAILABLE"
+                    ? "bg-rose-50 text-rose-800 ring-1 ring-rose-200"
+                    : "bg-zinc-50 text-zinc-500 ring-1 ring-zinc-200",
+              )}
+            >
+              {chosenAvail === "AVAILABLE" ? (
+                <Check className="h-3 w-3 shrink-0" />
+              ) : chosenAvail === "UNAVAILABLE" ? (
+                <Ban className="h-3 w-3 shrink-0" />
+              ) : (
+                <UserRound className="h-3 w-3 shrink-0" />
+              )}
+              {chosenAvail === "AVAILABLE"
+                ? `${chosen.name || chosen.email} is available that day.`
+                : chosenAvail === "UNAVAILABLE"
+                  ? `${chosen.name || chosen.email} marked that day unavailable — pick another day or double-check with them.`
+                  : `${chosen.name || chosen.email} hasn't marked that day yet.`}
+            </div>
+          )}
+        </div>
+      )}
       <div>
         <Label>Address</Label>
         <div className="relative">

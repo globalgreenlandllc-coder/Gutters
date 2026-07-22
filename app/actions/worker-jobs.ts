@@ -70,6 +70,62 @@ export async function listMyJobs(): Promise<WorkerJobDTO[]> {
   return jobs.map(toWorkerJobDTO);
 }
 
+/** Appointment assigned to the signed-in crew member (sales visit, meeting,
+ *  install walkthrough). Carries no owner pricing — just where to be & when. */
+export type WorkerAppointmentDTO = {
+  id: string;
+  title: string;
+  type: string; // AppointmentType
+  startsAt: string;
+  endsAt: string;
+  address: string | null;
+  notes: string | null;
+  clientName: string | null;
+  clientPhone: string | null;
+};
+
+/** The owner assigns appointments (visits/meetings) to crew — this is how a
+ *  SALES rep's stops land on their portal calendar. Only today-and-upcoming,
+ *  so past visits don't pile up and an `asc take` never truncates the next
+ *  stops off the end. */
+export async function listMyAppointments(): Promise<WorkerAppointmentDTO[]> {
+  const me = await getMe();
+  if (!me) return [];
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const rows = await db.appointment.findMany({
+    where: {
+      worker: { userId: me.user.id },
+      status: { not: "CANCELLED" },
+      startsAt: { gte: todayStart },
+    },
+    orderBy: { startsAt: "asc" },
+    take: 200,
+    select: {
+      id: true,
+      title: true,
+      type: true,
+      startsAt: true,
+      endsAt: true,
+      address: true,
+      notes: true,
+      clientName: true,
+      clientPhone: true,
+    },
+  });
+  return rows.map((a) => ({
+    id: a.id,
+    title: a.title,
+    type: a.type,
+    startsAt: a.startsAt.toISOString(),
+    endsAt: a.endsAt.toISOString(),
+    address: a.address,
+    notes: a.notes,
+    clientName: a.clientName,
+    clientPhone: a.clientPhone,
+  }));
+}
+
 export async function getMyJob(jobId: string): Promise<WorkerJobDTO | null> {
   const me = await getMe();
   if (!me) return null;
@@ -104,8 +160,32 @@ export async function respondToJob(
     },
   });
   revalidatePath("/worker");
+  revalidatePath("/worker/schedule");
   revalidatePath(`/worker/jobs/${jobId}`);
+  // The owner's calendar + workers page are client-fetched (and the calendar
+  // polls every minute), so they pick this up on their own — revalidating
+  // those dynamic routes from the worker's session here would be dead work.
   return { ok: true, status };
+}
+
+/**
+ * Worker taps "Start job" on the day of — ACCEPTED → IN_PROGRESS with a
+ * timestamp. The owner's calendar tile flips to "in progress" and the
+ * notification bell logs it, so nobody has to call to ask if the crew
+ * showed up.
+ */
+export async function markJobStarted(jobId: string): Promise<VoidResult> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in" };
+  const res = await db.jobAssignment.updateMany({
+    where: { id: jobId, worker: { userId: me.user.id }, status: "ACCEPTED" },
+    data: { status: "IN_PROGRESS", startedAt: new Date() },
+  });
+  if (res.count === 0) return { ok: false, reason: "Accept the job before starting it" };
+  revalidatePath("/worker");
+  revalidatePath("/worker/schedule");
+  revalidatePath(`/worker/jobs/${jobId}`);
+  return { ok: true };
 }
 
 export type WorkerExpenseDTO = {
@@ -197,6 +277,7 @@ export async function markJobComplete(jobId: string): Promise<VoidResult> {
   });
   if (res.count === 0) return { ok: false, reason: "This job can't be marked complete" };
   revalidatePath("/worker");
+  revalidatePath("/worker/schedule");
   revalidatePath(`/worker/jobs/${jobId}`);
   return { ok: true };
 }

@@ -58,10 +58,14 @@ export type JobAssignmentRow = {
   scope: string | null;
   workerPayCents: number;
   roofSnapshot: unknown;
+  attachmentUrl: string | null;
+  attachmentName: string | null;
+  attachmentType: string | null;
   startsAt: Date;
   endsAt: Date;
   declineReason: string | null;
   respondedAt: Date | null;
+  startedAt: Date | null;
   completedAt: Date | null;
   createdAt: Date;
   owner?: {
@@ -82,10 +86,16 @@ export type WorkerJobDTO = {
   kindLabel: string;
   scope: string | null;
   workerPayCents: number;
+  /** Owner-attached job file (design/invoice). Sharing it is the owner's
+   *  explicit choice at assign time. */
+  attachmentUrl: string | null;
+  attachmentName: string | null;
+  attachmentType: string | null;
   startsAt: string;
   endsAt: string;
   declineReason: string | null;
   respondedAt: string | null;
+  startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
   roof: WorkerRoofSnapshot | null;
@@ -106,10 +116,14 @@ export function toWorkerJobDTO(row: JobAssignmentRow): WorkerJobDTO {
     kindLabel: JOB_KIND_LABEL[row.kind],
     scope: row.scope,
     workerPayCents: row.workerPayCents,
+    attachmentUrl: row.attachmentUrl ?? null,
+    attachmentName: row.attachmentName ?? null,
+    attachmentType: row.attachmentType ?? null,
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt.toISOString(),
     declineReason: row.declineReason,
     respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
+    startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     roof: (row.roofSnapshot as WorkerRoofSnapshot | null) ?? null,

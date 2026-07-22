@@ -7,12 +7,15 @@ import {
   ArrowLeft,
   MapPin,
   Clock,
+  Download,
+  FileText,
   User,
   Phone,
   Check,
   X,
   CheckCircle2,
   Loader2,
+  Play,
   Plus,
   Receipt,
   Ruler,
@@ -24,6 +27,7 @@ import { WorkerRoof } from "./worker-roof";
 import { fmtMoney, fmtWhen, STATUS_META } from "./format";
 import {
   respondToJob,
+  markJobStarted,
   markJobComplete,
   submitJobExpense,
   listMyJobExpenses,
@@ -33,7 +37,7 @@ import type { WorkerJobDTO } from "@/lib/worker-dto";
 
 export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<null | "accept" | "decline" | "complete">(null);
+  const [busy, setBusy] = useState<null | "accept" | "decline" | "start" | "complete">(null);
   const [err, setErr] = useState<string | null>(null);
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
@@ -55,6 +59,14 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
     setBusy(null);
     if (!r.ok) return setErr(r.reason);
     setDeclining(false);
+    router.refresh();
+  }
+  async function start() {
+    setBusy("start");
+    setErr(null);
+    const r = await markJobStarted(job.id);
+    setBusy(null);
+    if (!r.ok) return setErr(r.reason);
     router.refresh();
   }
   async function complete() {
@@ -89,6 +101,30 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
           <div className="text-2xl font-semibold text-ink">{fmtMoney(job.workerPayCents)}</div>
         </div>
       </div>
+
+      {/* Owner-attached job file (design / invoice) */}
+      {job.attachmentUrl && (
+        <a
+          href={job.attachmentUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="surface group flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 hover-lift press-scale ring-focus"
+        >
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-accent-50 text-accent-700">
+            <FileText className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-medium text-ink">
+              {job.attachmentName || "Job file"}
+            </div>
+            <div className="text-xs text-zinc-500">
+              The job file from {job.owner.company || "your contractor"} — design &
+              details. Tap to open.
+            </div>
+          </div>
+          <Download className="h-4 w-4 text-zinc-300 transition-smooth group-hover:text-zinc-500" />
+        </a>
+      )}
 
       {/* Roof layout */}
       <WorkerRoof roof={job.roof} className="aspect-[16/9] w-full" />
@@ -193,9 +229,39 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
         </div>
       )}
 
-      {(job.status === "ACCEPTED" || job.status === "IN_PROGRESS") && (
+      {job.status === "ACCEPTED" && (
         <div className="sticky bottom-4 z-10">
-          <div className="anim-enter">
+          <div className="anim-enter flex gap-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-elevated">
+            <Button className="flex-1" onClick={start} disabled={busy === "start"}>
+              {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              Start job
+            </Button>
+            <Button variant="outline" className="flex-1" onClick={complete} disabled={busy === "complete"}>
+              {busy === "complete" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Mark complete
+            </Button>
+          </div>
+          <p className="mt-1.5 text-center text-[11px] text-zinc-400">
+            Tapping Start shows &quot;in progress&quot; on your contractor&apos;s calendar — no call needed.
+          </p>
+        </div>
+      )}
+
+      {job.status === "IN_PROGRESS" && (
+        <div className="sticky bottom-4 z-10">
+          <div className="anim-enter space-y-2 rounded-2xl border border-sky-200 bg-white p-3 shadow-elevated">
+            <div className="flex items-center justify-center gap-2 text-sm font-medium text-sky-700">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-500" />
+              </span>
+              Job in progress
+              {job.startedAt && (
+                <span className="text-xs font-normal text-zinc-400">
+                  · started {fmtWhen(job.startedAt)}
+                </span>
+              )}
+            </div>
             <Button className="w-full" onClick={complete} disabled={busy === "complete"}>
               {busy === "complete" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               Mark job complete
@@ -206,7 +272,7 @@ export function WorkerJobDetail({ job }: { job: WorkerJobDTO }) {
 
       {job.status === "COMPLETED" && (
         <div className="anim-enter flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 py-3 text-sm font-medium text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" /> Job completed
+          <CheckCircle2 className="h-4 w-4" /> Job completed — your contractor has been notified
         </div>
       )}
     </div>

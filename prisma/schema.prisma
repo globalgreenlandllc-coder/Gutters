@@ -938,6 +938,8 @@ model Appointment {
 
   leadId     String?
   proposalId String?
+  // Crew member (worker/contractor) this appointment is assigned to.
+  workerId   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -945,10 +947,12 @@ model Appointment {
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
   proposal Proposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+  worker   Worker?   @relation("AppointmentWorker", fields: [workerId], references: [id], onDelete: SetNull)
 
   @@index([userId, startsAt])
   @@index([leadId])
   @@index([proposalId])
+  @@index([workerId])
   @@map("appointments")
 }
 
@@ -1125,6 +1129,7 @@ model Worker {
   name        String?
   phone       String?
   trade       String? // e.g. "Gutter installer", "Roofer"
+  kind        WorkerKind   @default(CREW) // CREW installs; SALES runs visits/meetings
   status      WorkerStatus @default(INVITED)
   inviteToken String       @unique
   invitedAt   DateTime     @default(now())
@@ -1132,16 +1137,52 @@ model Worker {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  owner    User            @relation("WorkerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  account  User?           @relation("WorkerAccount", fields: [userId], references: [id], onDelete: SetNull)
-  jobs     JobAssignment[]
-  expenses JobExpense[]
+  owner        User                 @relation("WorkerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  account      User?                @relation("WorkerAccount", fields: [userId], references: [id], onDelete: SetNull)
+  jobs         JobAssignment[]
+  expenses     JobExpense[]
+  availability WorkerAvailability[]
+  appointments Appointment[]        @relation("AppointmentWorker")
 
   @@unique([ownerId, email])
   @@index([ownerId])
   @@index([userId])
   @@index([inviteToken])
   @@map("workers")
+}
+
+// CREW = installers/subcontractors who take JobAssignments.
+// SALES = reps/designers who take Appointments (visits, meetings) — no job
+// files or pay math, they just get their stops on their own calendar.
+enum WorkerKind {
+  CREW
+  SALES
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  UNAVAILABLE
+}
+
+// A worker's self-declared day availability, shown on the owner's calendar so
+// scheduling happens on days the crew actually works — no phone tag. One row
+// per (worker, day); a day with no row is "unknown" (neutral). The worker
+// edits this from the crew portal; the owner only reads it.
+model WorkerAvailability {
+  id        String             @id @default(cuid())
+  workerId  String
+  date      DateTime           @db.Date
+  status    AvailabilityStatus
+  note      String?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  worker Worker @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  // The unique index on (workerId, date) already serves every read (owner
+  // range scan + the upsert lookup), so no separate @@index is needed.
+  @@unique([workerId, date])
+  @@map("worker_availability")
 }
 
 // A job an owner hands to a worker. This table is the ONLY thing a worker ever
@@ -1162,11 +1203,22 @@ model JobAssignment {
   scope          String?             @db.Text // "what needs to be done", owner-written
   workerPayCents Int                 @default(0) // the WORKER's pay — never the client price
   roofSnapshot   Json? // price-free takeoff geometry + measurements for the worker
+  // Owner-attached job file (design / invoice PDF or photo) stored in Blob.
+  // Attaching it is the owner's explicit choice to share it with the worker.
+  attachmentUrl  String?
+  attachmentName String?
+  attachmentType String? // mime type
+  // When the pay came from "X% of the invoice in the file": the AI-read
+  // invoice total and the percent applied. Audit trail only — workerPayCents
+  // stays the single source of truth for what the worker is owed.
+  invoiceTotalCents Int?
+  payPct            Float?
   startsAt       DateTime
   endsAt         DateTime
   status         JobAssignmentStatus @default(OFFERED)
   declineReason  String?             @db.Text
   respondedAt    DateTime?
+  startedAt      DateTime? // worker tapped "Start job" → IN_PROGRESS
   completedAt    DateTime?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt

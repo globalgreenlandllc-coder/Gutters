@@ -9,7 +9,7 @@ import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderWorkerInviteEmail, renderJobOfferEmail } from "@/lib/email/worker-templates";
 import { buildWorkerRoofSnapshot, JOB_KIND_LABEL } from "@/lib/worker-dto";
 import { checkUserEmailBudget } from "@/lib/abuse/guards";
-import type { JobKind, JobAssignmentStatus, WorkerStatus } from "@prisma/client";
+import type { JobKind, JobAssignmentStatus, WorkerStatus, WorkerKind } from "@prisma/client";
 
 /**
  * workers.ts — OWNER-side crew management + job assignment. Every query is
@@ -23,6 +23,7 @@ export type OwnerWorkerDTO = {
   email: string;
   name: string | null;
   trade: string | null;
+  kind: WorkerKind;
   status: WorkerStatus;
   /** True once the invited person signed up and linked their account. */
   linked: boolean;
@@ -89,6 +90,7 @@ export async function listWorkers(): Promise<OwnerWorkerDTO[]> {
       email: w.email,
       name: w.name,
       trade: w.trade,
+      kind: w.kind,
       status: w.status,
       linked: w.userId != null,
       invitedAt: w.invitedAt.toISOString(),
@@ -102,6 +104,7 @@ export async function inviteWorker(input: {
   email: string;
   name?: string;
   trade?: string;
+  kind?: WorkerKind;
 }): Promise<Result<{ worker: OwnerWorkerDTO; inviteUrl: string; emailSent: boolean }>> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
@@ -112,6 +115,7 @@ export async function inviteWorker(input: {
   if (!emailBudget.ok) return { ok: false, reason: emailBudget.reason };
 
   const token = randomBytes(16).toString("hex");
+  const pending = await isPendingInvite(me.user.id, email);
   // Upsert on (owner, email): re-inviting the same person refreshes the token
   // and re-sends, but never duplicates or un-links an already-accepted worker.
   const worker = await db.worker.upsert({
@@ -119,8 +123,12 @@ export async function inviteWorker(input: {
     update: {
       name: input.name?.trim() || undefined,
       trade: input.trade?.trim() || undefined,
+      // Kind is only (re)set while the invite is still pending — the modal
+      // always sends a default ("CREW"), so writing it to an ACTIVE worker
+      // would silently demote a sales rep on an unrelated resend.
+      ...(pending && input.kind ? { kind: input.kind } : {}),
       // Only reset an un-accepted invite; keep an active worker active.
-      ...(await isPendingInvite(me.user.id, email)
+      ...(pending
         ? { status: "INVITED", inviteToken: token, invitedAt: new Date() }
         : {}),
     },
@@ -129,6 +137,7 @@ export async function inviteWorker(input: {
       email,
       name: input.name?.trim() || null,
       trade: input.trade?.trim() || null,
+      kind: input.kind ?? "CREW",
       status: "INVITED",
       inviteToken: token,
     },
@@ -161,6 +170,7 @@ export async function inviteWorker(input: {
       email: worker.email,
       name: worker.name,
       trade: worker.trade,
+      kind: worker.kind,
       status: worker.status,
       linked: worker.userId != null,
       invitedAt: worker.invitedAt.toISOString(),
@@ -243,6 +253,18 @@ export async function listAssignableProposals(): Promise<AssignableProposalDTO[]
   });
 }
 
+/** The owner's default pay percentages (from /dashboard/financials). Used to
+ *  prefill "worker gets X% of the invoice" in the assign flow. */
+export async function getPayDefaults(): Promise<{ crewPct: number; salesPct: number }> {
+  const me = await getMe();
+  if (!me) return { crewPct: 0, salesPct: 0 };
+  const row = await db.financialSettings.findUnique({
+    where: { userId: me.user.id },
+    select: { crewPct: true, salesPct: true },
+  });
+  return { crewPct: row?.crewPct ?? 0, salesPct: row?.salesPct ?? 0 };
+}
+
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
 export async function assignJob(input: {
@@ -257,6 +279,13 @@ export async function assignJob(input: {
   workerPayCents: number;
   startsAtIso: string;
   endsAtIso: string;
+  /** Owner-attached job file (design/invoice) already uploaded to Blob. */
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentType?: string | null;
+  /** Audit trail when pay = pct × AI-read invoice total. */
+  invoiceTotalCents?: number | null;
+  payPct?: number | null;
   /** When true, create despite a scheduling overlap warning. */
   ignoreConflict?: boolean;
 }): Promise<Result<{ job: OwnerJobDTO; emailSent: boolean }> | { ok: false; reason: string; conflict: true }> {
@@ -281,6 +310,12 @@ export async function assignJob(input: {
   });
   if (!worker) return { ok: false, reason: "Worker not found" };
   if (worker.status === "DISABLED") return { ok: false, reason: "That worker is disabled" };
+  // Jobs (pay + roof file) go to CREW only; SALES reps run appointments. The
+  // assign modal already filters them out — this enforces the split at the
+  // authorization layer so no stale tab or crafted call can hand a sales rep a
+  // priced job.
+  if (worker.kind === "SALES")
+    return { ok: false, reason: "That teammate is a sales rep — assign them a calendar appointment, not a job" };
 
   // Ownership + redacted snapshot from the proposal (if any).
   let roofSnapshot: ReturnType<typeof buildWorkerRoofSnapshot> = null;
@@ -329,6 +364,12 @@ export async function assignJob(input: {
       scope: input.scope?.trim() || null,
       workerPayCents: Math.round(input.workerPayCents),
       roofSnapshot: roofSnapshot ? (roofSnapshot as object) : undefined,
+      attachmentUrl: input.attachmentUrl || null,
+      attachmentName: input.attachmentName || null,
+      attachmentType: input.attachmentType || null,
+      invoiceTotalCents:
+        input.invoiceTotalCents != null ? Math.round(input.invoiceTotalCents) : null,
+      payPct: input.payPct ?? null,
       startsAt,
       endsAt,
       status: "OFFERED",
@@ -462,14 +503,14 @@ export async function listJobCalendarEvents(
   }));
 }
 
-/** Recent worker responses (accepted / declined / completed) for the owner's
- *  notification bell. Newest first. */
+/** Recent worker job events (accepted / declined / started / completed) for
+ *  the owner's notification bell. Newest first. */
 export type WorkerActivityDTO = {
   id: string;
   jobId: string;
   jobTitle: string;
   workerName: string;
-  event: "ACCEPTED" | "DECLINED" | "COMPLETED";
+  event: "ACCEPTED" | "DECLINED" | "STARTED" | "COMPLETED";
   declineReason: string | null;
   at: string;
 };
@@ -483,6 +524,7 @@ export async function listWorkerActivity(): Promise<WorkerActivityDTO[]> {
       ownerId: me.user.id,
       OR: [
         { respondedAt: { gte: since }, status: { in: ["ACCEPTED", "DECLINED", "IN_PROGRESS"] } },
+        { startedAt: { gte: since }, status: "IN_PROGRESS" },
         { completedAt: { gte: since }, status: "COMPLETED" },
       ],
     },
@@ -492,17 +534,53 @@ export async function listWorkerActivity(): Promise<WorkerActivityDTO[]> {
   });
   return jobs.map((j) => {
     const completed = j.status === "COMPLETED";
-    const at = (completed ? j.completedAt : j.respondedAt) ?? j.updatedAt;
+    const started = j.status === "IN_PROGRESS" && j.startedAt != null;
+    const at =
+      (completed ? j.completedAt : started ? j.startedAt : j.respondedAt) ?? j.updatedAt;
     return {
       id: `${j.id}:${j.status}`,
       jobId: j.id,
       jobTitle: j.title,
       workerName: j.worker.name || j.worker.email,
-      event: completed ? "COMPLETED" : j.status === "DECLINED" ? "DECLINED" : "ACCEPTED",
+      event: completed
+        ? "COMPLETED"
+        : started
+          ? "STARTED"
+          : j.status === "DECLINED"
+            ? "DECLINED"
+            : "ACCEPTED",
       declineReason: j.status === "DECLINED" ? j.declineReason : null,
       at: at.toISOString(),
     };
   });
+}
+
+/** Drag-to-move on the owner's calendar. Moves the whole window; the worker
+ *  sees the new time in their portal (no re-offer — same job, new slot). */
+export async function rescheduleJob(
+  jobId: string,
+  startsAtIso: string,
+  endsAtIso: string,
+): Promise<VoidResult> {
+  const me = await getMe();
+  if (!me) return { ok: false, reason: "Not signed in" };
+  const startsAt = new Date(startsAtIso);
+  const endsAt = new Date(endsAtIso);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()))
+    return { ok: false, reason: "Invalid schedule dates" };
+  if (endsAt <= startsAt) return { ok: false, reason: "End time must be after the start time" };
+  const res = await db.jobAssignment.updateMany({
+    where: { id: jobId, ownerId: me.user.id, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+    data: { startsAt, endsAt },
+  });
+  if (res.count === 0) return { ok: false, reason: "Job can't be rescheduled" };
+  revalidatePath("/dashboard/workers");
+  revalidatePath("/dashboard/calendar");
+  // The worker sees the new time in their portal — bust their cache too.
+  revalidatePath("/worker");
+  revalidatePath("/worker/schedule");
+  revalidatePath(`/worker/jobs/${jobId}`);
+  return { ok: true };
 }
 
 export async function cancelJob(jobId: string): Promise<VoidResult> {
@@ -515,5 +593,9 @@ export async function cancelJob(jobId: string): Promise<VoidResult> {
   if (res.count === 0) return { ok: false, reason: "Job can't be cancelled" };
   revalidatePath("/dashboard/workers");
   revalidatePath("/dashboard/calendar");
+  // Withdraw it from the worker's portal too.
+  revalidatePath("/worker");
+  revalidatePath("/worker/schedule");
+  revalidatePath(`/worker/jobs/${jobId}`);
   return { ok: true };
 }
