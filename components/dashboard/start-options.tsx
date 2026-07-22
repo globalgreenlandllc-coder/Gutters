@@ -93,16 +93,13 @@ export function StartOptions() {
   return (
     <div className="mt-6">
       {/* Row 1 — Satellite + Blueprint, always visible, ready to use.
-          items-start: the uploader card is taller and shouldn't
-          stretch the satellite card to match. */}
-      <motion.div
-        {...enter(0)}
-        className="grid items-start gap-5 lg:grid-cols-2"
-      >
+          Default stretch: with the compact dropzone the two cards are
+          near-equal height, and matching frames read cleaner. */}
+      <motion.div {...enter(0)} className="grid gap-5 lg:grid-cols-2">
         <SatelliteTakeoffCard />
 
         {/* Blueprint takeoff — uploader embedded, no navigation away. */}
-        <div className="transition-smooth relative rounded-3xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-amber-200 hover:shadow-elevated sm:p-7">
+        <div className="transition-smooth relative flex flex-col rounded-3xl border border-zinc-200/70 bg-white p-6 shadow-card hover:border-amber-200 hover:shadow-elevated sm:p-7">
           {/* Decor layer — clipped separately so nothing inside the card
               is affected by overflow rules. */}
           <div
@@ -111,7 +108,7 @@ export function StartOptions() {
           >
             <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-amber-400/[0.08] blur-2xl" />
           </div>
-          <div className="relative">
+          <div className="relative flex flex-1 flex-col">
             <div className="flex items-center gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_8px_20px_-8px_rgba(245,158,11,0.6)]">
                 <FileUp className="h-5 w-5" />
@@ -130,7 +127,9 @@ export function StartOptions() {
               Upload construction plans — AI reads the roof plan and
               classifies every edge. Uses one blueprint credit.
             </p>
-            <div className="mt-5">
+            {/* flex-1 + h-full lets the dropzone stretch to the card's
+                remaining height, so the two grid cards stay flush. */}
+            <div className="mt-5 flex-1">
               <BlueprintUploader />
             </div>
           </div>

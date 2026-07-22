@@ -327,7 +327,10 @@ export default function BlueprintUploader() {
   }
 
   return (
-    <div className="space-y-4">
+    // h-full + flex-1 on the dropzone: in a fixed-height host (the start
+    // page card) the zone stretches to fill; standalone (blueprints/new)
+    // it collapses to its natural compact height.
+    <div className="flex h-full flex-col gap-4">
       <div
         onClick={() => inputRef.current?.click()}
         onDrop={onDrop}
@@ -336,7 +339,7 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`group relative cursor-pointer rounded-2xl border-2 border-dashed p-8 transition-smooth sm:p-10 ${
+        className={`group relative flex flex-1 cursor-pointer items-center rounded-2xl border-2 border-dashed p-4 transition-smooth sm:p-5 ${
           dragOver
             ? "border-accent-500 bg-accent-50/70 ring-4 ring-accent-500/10"
             : "border-zinc-200 bg-zinc-50/50 hover:border-accent-300 hover:bg-accent-50/40"
@@ -352,44 +355,48 @@ export default function BlueprintUploader() {
           }}
           className="hidden"
         />
-        <div className="flex flex-col items-center text-center">
+        <div className="flex w-full items-center gap-4">
           <div
-            className={`bg-cta-gradient mb-4 rounded-2xl p-3 text-white shadow-glow transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
+            className={`bg-cta-gradient shrink-0 rounded-xl p-3 text-white shadow-glow transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
               dragOver ? "-translate-y-0.5 scale-110" : ""
             }`}
           >
-            <Upload size={22} />
+            <Upload size={20} />
           </div>
-          <div className="mb-1 text-lg font-semibold tracking-tight text-zinc-900">
-            Drop construction plans here
-          </div>
-          <div className="max-w-md text-sm leading-relaxed text-zinc-500">
-            PDF (multi-page OK) or a single image of the roof plan. Claude
-            reads the plan, identifies eaves vs rakes, and returns a gutter
-            layout you can drop into a proposal.
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
-            {["PDF · up to 100 pages", "PNG / JPG", "≤ 50 MB"].map((chip) => (
-              <span
-                key={chip}
-                className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-500"
-              >
-                {chip}
-              </span>
-            ))}
-          </div>
-          {!isAdmin && creditsRemaining !== null && (
-            <div className="mt-2 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2.5 py-0.5 text-[11px] font-medium text-accent-700">
-              <Sparkles className="h-3 w-3" />
-              Uses 1 blueprint credit · {creditsRemaining} left
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold tracking-tight text-zinc-900">
+              Drop construction plans here
             </div>
-          )}
-          {/* Build marker — if you don't see "v2" on Vercel prod, the
-              new code hasn't deployed yet. Bump this string whenever
-              there's a stale-build question to verify. */}
-          <div className="mt-1 text-[10px] text-zinc-400 opacity-70">
-            uploader v3 · presigned-URL · 15-min token
+            <div className="mt-0.5 text-[13px] text-zinc-500">
+              or click to browse — PDF (multi-page OK) or a photo of the
+              roof plan
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {["PDF · 100 pages", "PNG / JPG", "≤ 50 MB"].map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-500"
+                >
+                  {chip}
+                </span>
+              ))}
+              {!isAdmin && creditsRemaining !== null && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] font-medium text-accent-700">
+                  <Sparkles className="h-3 w-3" />
+                  1 credit · {creditsRemaining} left
+                </span>
+              )}
+              {/* Build marker — if you don't see "v3" on Vercel prod, the
+                  new code hasn't deployed yet. Bump this string whenever
+                  there's a stale-build question to verify. */}
+              <span className="text-[9px] text-zinc-400/80">
+                uploader v3 · presigned-URL · 15-min token
+              </span>
+            </div>
           </div>
+          <span className="transition-smooth hidden shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 shadow-sm group-hover:border-accent-300 group-hover:text-accent-700 sm:inline-flex">
+            Browse
+          </span>
         </div>
       </div>
 
