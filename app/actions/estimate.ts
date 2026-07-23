@@ -1341,12 +1341,15 @@ export async function runEstimateFromPlan(
       // wall-jog flag + the left-right mirror check. Old stashes have no
       // steps_detail → null → byte-identical legacy behavior.
       roofPlanSteps: roofPlanViewerSteps(roofPlanRead),
-      // INK WINS: when the footprint is the roof-plan page's own printed
-      // outline (raster swap applied), every geometry escalation inside the
-      // reconcile is disabled — the pixel-exact ink outranks the rough
-      // per-side step summary that once flattened the 1168G entry recess /
-      // garage projection / porch inset out of the sheet-true shape.
-      footprintIsPlanInk: rasterApplied,
+      // INK WINS: when the footprint is the SHEET'S OWN geometry — the
+      // raster roof-plan ink, the v2 edge-classified vector outline, or the
+      // vector roof read — every geometry escalation inside the reconcile is
+      // disabled. The exact sheet outline outranks the rough per-side step
+      // summaries that once flattened the 1168G recesses out of the raster
+      // shape and carved SEVEN schematic 4-ft notches into Woodinville's
+      // exact vector outline. Carve/flatten exist for the freehand AI vision
+      // trace ONLY.
+      footprintIsPlanInk: rasterApplied || edgeApplied || roofApplied,
     });
     const stepNotes = [...stepRec.notes, ...stepRec.wallJogFlags];
     if (stepNotes.length > 0) {
