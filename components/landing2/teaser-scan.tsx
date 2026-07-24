@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Loader2, MapPin, ScanLine } from "lucide-react";
+import { ArrowRight, Loader2, MapPin, ScanLine, Sparkles } from "lucide-react";
 import { GutterDiagram } from "@/components/estimate/gutter-diagram";
+import { ExampleScanPanel } from "@/components/landing2/example-scan";
+import { EXAMPLE_SCAN } from "@/components/landing2/example-scan-data";
 import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
 
 /**
@@ -44,6 +46,10 @@ export function TeaserScan() {
   const [signupNudge, setSignupNudge] = useState(false);
   const [teaser, setTeaser] = useState<TeaserPayload | null>(null);
   const [step, setStep] = useState(0);
+  // Pre-baked contractor-verified example (see example-scan-data.ts). Hidden
+  // again the moment a real scan result lands — the visitor's own roof wins.
+  const [showExample, setShowExample] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -119,6 +125,7 @@ export function TeaserScan() {
         <label className="relative flex-1">
           <MapPin className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
+            ref={inputRef}
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="Type any US address — watch the AI trace its roof"
@@ -186,6 +193,25 @@ export function TeaserScan() {
             </Link>
           </div>
         </div>
+      )}
+
+      {/* Pre-baked example — a finished, contractor-verified scan the visitor
+          can open without spending a teaser credit. A live result replaces it. */}
+      {EXAMPLE_SCAN && status !== "ready" && !showExample && (
+        <button
+          type="button"
+          onClick={() => setShowExample(true)}
+          className="transition-smooth ring-focus group mt-3 inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-accent-700 hover:text-accent-800"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          No address handy? See a finished example — {EXAMPLE_SCAN.address}
+          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+        </button>
+      )}
+      {EXAMPLE_SCAN && status !== "ready" && showExample && (
+        <ExampleScanPanel
+          onScanYourOwn={() => inputRef.current?.focus()}
+        />
       )}
 
       {status !== "ready" && (
