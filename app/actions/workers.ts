@@ -8,6 +8,12 @@ import { appBaseUrl } from "@/lib/base-url";
 import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderWorkerInviteEmail, renderJobOfferEmail } from "@/lib/email/worker-templates";
 import { buildWorkerRoofSnapshot, JOB_KIND_LABEL } from "@/lib/worker-dto";
+import { deriveTotalCentsFromData } from "@/lib/proposal-mock";
+import {
+  computePayCents,
+  deriveEstimateSource,
+  type EstimateSource,
+} from "@/lib/worker-pay";
 import { checkUserEmailBudget } from "@/lib/abuse/guards";
 import type { JobKind, JobAssignmentStatus, WorkerStatus, WorkerKind } from "@prisma/client";
 
@@ -38,6 +44,12 @@ export type AssignableProposalDTO = {
   clientName: string;
   jobType: string | null;
   hasRoof: boolean;
+  /** The proposal's contract total in cents — the base a worker's pay %
+   *  is applied to when the job comes from an in-app estimate. 0 if the
+   *  proposal has no priced package yet. */
+  estimateTotalCents: number;
+  /** null when the proposal carries no priced estimate to base pay on. */
+  estimateSource: EstimateSource | null;
 };
 
 export type OwnerJobDTO = {
@@ -53,6 +65,10 @@ export type OwnerJobDTO = {
   kindLabel: string;
   scope: string | null;
   workerPayCents: number;
+  /** Audit: the percent applied and what base it was applied to. Owner-only
+   *  — never sent to the worker (would reveal the client price). */
+  payPct: number | null;
+  payBasis: string | null;
   startsAt: string;
   endsAt: string;
   declineReason: string | null;
@@ -235,21 +251,67 @@ export async function resendWorkerInvite(workerId: string): Promise<Result<{ inv
 
 // ── Assignable proposals (job sources) ──────────────────────────────────────
 
-export async function listAssignableProposals(): Promise<AssignableProposalDTO[]> {
+/** One select shared by both assignable-proposal queries — adding a DTO field
+ *  in one query but not the other would ship undefined exactly on the rare
+ *  ensured-row path. */
+const ASSIGNABLE_PROPOSAL_SELECT = {
+  id: true,
+  address: true,
+  clientName: true,
+  data: true,
+  totalCents: true,
+  selectedPackageId: true,
+} as const;
+
+export async function listAssignableProposals(
+  /** Guarantee this proposal is in the result even if it's older than the
+   *  40 most-recent (e.g. scheduling straight off an old row). */
+  ensureId?: string,
+): Promise<AssignableProposalDTO[]> {
   const me = await getMe();
   if (!me) return [];
-  const rows = await db.proposal.findMany({
-    where: { userId: me.user.id },
-    orderBy: { updatedAt: "desc" },
-    take: 40,
-    select: { id: true, address: true, clientName: true, data: true },
-  });
+  // The ensured-row lookup is a cheap indexed hit — run it alongside the list
+  // instead of serializing a second round trip after it.
+  const [rows, ensured] = await Promise.all([
+    db.proposal.findMany({
+      where: { userId: me.user.id },
+      orderBy: { updatedAt: "desc" },
+      take: 40,
+      select: ASSIGNABLE_PROPOSAL_SELECT,
+    }),
+    ensureId
+      ? db.proposal.findFirst({
+          where: { id: ensureId, userId: me.user.id },
+          select: ASSIGNABLE_PROPOSAL_SELECT,
+        })
+      : Promise.resolve(null),
+  ]);
+  if (ensured && !rows.some((r) => r.id === ensured.id)) rows.unshift(ensured);
   return rows.map((r) => {
     const data = (r.data ?? {}) as Record<string, unknown>;
     const jobType = typeof data.jobType === "string" ? data.jobType : null;
     const takeoff = data.takeoff as Record<string, unknown> | undefined;
     const hasRoof = !!takeoff && (Array.isArray(takeoff.eaves) || !!takeoff.roofStructure);
-    return { id: r.id, address: r.address, clientName: r.clientName, jobType, hasRoof };
+    // The base a worker's pay % is applied to for an in-app estimate: the
+    // proposal's derived contract total (selected/recommended tier).
+    const estimateTotalCents = deriveTotalCentsFromData(
+      r.data,
+      r.totalCents,
+      r.selectedPackageId,
+    );
+    const estimateSource: EstimateSource | null = deriveEstimateSource(
+      r.data,
+      estimateTotalCents,
+    );
+    return {
+      id: r.id,
+      address: r.address,
+      clientName: r.clientName,
+      jobType,
+      hasRoof,
+      estimateTotalCents,
+      estimateSource,
+    };
   });
 }
 
@@ -283,9 +345,13 @@ export async function assignJob(input: {
   attachmentUrl?: string | null;
   attachmentName?: string | null;
   attachmentType?: string | null;
-  /** Audit trail when pay = pct × AI-read invoice total. */
-  invoiceTotalCents?: number | null;
+  /** Pay-audit trio (all optional): the base amount the pay was priced
+   *  against, which source it came from, and the percent applied. Validated
+   *  server-side — an unknown basis, a non-positive base, or a percent that
+   *  doesn't actually reproduce workerPayCents is nulled, never stored. */
+  payBaseCents?: number | null;
   payPct?: number | null;
+  payBasis?: "estimate" | "invoice" | null;
   /** When true, create despite a scheduling overlap warning. */
   ignoreConflict?: boolean;
 }): Promise<Result<{ job: OwnerJobDTO; emailSent: boolean }> | { ok: false; reason: string; conflict: true }> {
@@ -351,6 +417,29 @@ export async function assignJob(input: {
     }
   }
 
+  // Normalize the pay-audit trio — server actions are public POST endpoints,
+  // so the "estimate"|"invoice" contract and the percent claim are enforced
+  // here, not trusted from the wire. A record the server never verified would
+  // be decoration, and this trio exists to be a true record.
+  const workerPayCents = Math.round(input.workerPayCents);
+  let payBasis: string | null =
+    input.payBasis === "estimate" || input.payBasis === "invoice" ? input.payBasis : null;
+  let payBaseCents =
+    payBasis != null && input.payBaseCents != null && input.payBaseCents > 0
+      ? Math.round(input.payBaseCents)
+      : null;
+  if (payBaseCents == null) payBasis = null;
+  let payPct =
+    input.payPct != null && Number.isFinite(input.payPct) && input.payPct > 0
+      ? input.payPct
+      : null;
+  if (payPct != null) {
+    // The claim "pay = payPct% of payBaseCents" must reproduce the actual pay
+    // (±1¢ rounding) or the percent is dropped; the base stays for reference.
+    const expected = computePayCents(payBaseCents, payPct);
+    if (expected == null || Math.abs(expected - workerPayCents) > 1) payPct = null;
+  }
+
   const job = await db.jobAssignment.create({
     data: {
       ownerId: me.user.id,
@@ -362,14 +451,14 @@ export async function assignJob(input: {
       clientPhone: input.clientPhone?.trim() || null,
       kind: input.kind,
       scope: input.scope?.trim() || null,
-      workerPayCents: Math.round(input.workerPayCents),
+      workerPayCents,
       roofSnapshot: roofSnapshot ? (roofSnapshot as object) : undefined,
       attachmentUrl: input.attachmentUrl || null,
       attachmentName: input.attachmentName || null,
       attachmentType: input.attachmentType || null,
-      invoiceTotalCents:
-        input.invoiceTotalCents != null ? Math.round(input.invoiceTotalCents) : null,
-      payPct: input.payPct ?? null,
+      payBaseCents,
+      payPct,
+      payBasis,
       startsAt,
       endsAt,
       status: "OFFERED",
@@ -417,6 +506,8 @@ export async function assignJob(input: {
       kindLabel: JOB_KIND_LABEL[job.kind],
       scope: job.scope,
       workerPayCents: job.workerPayCents,
+      payPct: job.payPct,
+      payBasis: job.payBasis,
       startsAt: job.startsAt.toISOString(),
       endsAt: job.endsAt.toISOString(),
       declineReason: job.declineReason,
@@ -448,6 +539,8 @@ export async function listOwnerJobs(): Promise<OwnerJobDTO[]> {
     kindLabel: JOB_KIND_LABEL[j.kind],
     scope: j.scope,
     workerPayCents: j.workerPayCents,
+    payPct: j.payPct,
+    payBasis: j.payBasis,
     startsAt: j.startsAt.toISOString(),
     endsAt: j.endsAt.toISOString(),
     declineReason: j.declineReason,

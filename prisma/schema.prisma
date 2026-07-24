@@ -1208,11 +1208,16 @@ model JobAssignment {
   attachmentUrl  String?
   attachmentName String?
   attachmentType String? // mime type
-  // When the pay came from "X% of the invoice in the file": the AI-read
-  // invoice total and the percent applied. Audit trail only — workerPayCents
-  // stays the single source of truth for what the worker is owed.
-  invoiceTotalCents Int?
-  payPct            Float?
+  // Pay audit trio. payBaseCents = the base amount the assignment was priced
+  // against — the source proposal's estimate total (payBasis="estimate") or
+  // the AI-read uploaded invoice total (payBasis="invoice"). payPct is set
+  // ONLY when the pay actually equals payPct% of that base (server-verified);
+  // a hand-typed pay keeps the base for reference with payPct null. Audit
+  // only — workerPayCents stays the single source of truth for what the
+  // worker is owed, and none of this trio is ever sent to the worker.
+  payBaseCents Int?
+  payPct       Float?
+  payBasis     String? // 'estimate' | 'invoice' (server-whitelisted) | null
   startsAt       DateTime
   endsAt         DateTime
   status         JobAssignmentStatus @default(OFFERED)

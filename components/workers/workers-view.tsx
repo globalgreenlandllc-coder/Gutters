@@ -1,29 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   HardHat,
   Mail,
   Plus,
-  X,
   Check,
   Ban,
   Clock,
   MapPin,
-  DollarSign,
-  FileText,
   Percent,
   Send,
   Copy,
-  AlertTriangle,
   Loader2,
-  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { JOB_KIND_OPTIONS } from "@/lib/worker-dto";
-import type { JobKind, WorkerKind } from "@prisma/client";
+import { fmtMoney, fmtWhen } from "@/components/worker/format";
+import { Modal, Field } from "@/components/workers/modal";
+import type { WorkerKind } from "@prisma/client";
+import { AssignJobModal } from "@/components/workers/assign-job-modal";
 import {
   listWorkers,
   listOwnerJobs,
@@ -31,39 +28,11 @@ import {
   inviteWorker,
   setWorkerStatus,
   resendWorkerInvite,
-  assignJob,
   cancelJob,
-  getPayDefaults,
   type OwnerWorkerDTO,
   type OwnerJobDTO,
   type AssignableProposalDTO,
 } from "@/app/actions/workers";
-
-const fmtMoney = (cents: number) =>
-  `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-
-const fmtWhen = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-/** datetime-local value → ISO; interprets the input as local time. */
-const localToIso = (v: string) => (v ? new Date(v).toISOString() : "");
-/** Default start = next hour, local, as a datetime-local string. */
-function defaultSlot(): { start: string; end: string } {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const fmt = (x: Date) =>
-    `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
-  const end = new Date(d.getTime() + 3 * 3600_000);
-  return { start: fmt(d), end: fmt(end) };
-}
 
 const STATUS_TONE: Record<string, "accent" | "emerald" | "amber" | "rose" | "neutral" | "sky"> = {
   OFFERED: "amber",
@@ -73,38 +42,6 @@ const STATUS_TONE: Record<string, "accent" | "emerald" | "amber" | "rose" | "neu
   DECLINED: "rose",
   CANCELLED: "neutral",
 };
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="anim-enter-fade absolute inset-0 bg-ink/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="surface anim-pop relative z-10 w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-          <h3 className="text-base font-semibold text-ink">{title}</h3>
-          <button onClick={onClose} className="transition-smooth ring-focus rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="max-h-[75vh] overflow-y-auto px-5 py-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <label className="block space-y-1.5">
-    <span className="font-label text-zinc-500">{label}</span>
-    {children}
-  </label>
-);
 
 // ── Invite modal ────────────────────────────────────────────────────────────
 
@@ -212,368 +149,6 @@ function InviteModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
   );
 }
 
-// ── Assign-job modal ────────────────────────────────────────────────────────
-
-function AssignModal({
-  workers,
-  proposals,
-  onClose,
-  onDone,
-}: {
-  workers: OwnerWorkerDTO[];
-  proposals: AssignableProposalDTO[];
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const slot = useMemo(defaultSlot, []);
-  // Jobs go to CREW; sales reps get appointments (assign those on the calendar).
-  const assignable = workers.filter((w) => w.status !== "DISABLED" && w.kind !== "SALES");
-  const [workerId, setWorkerId] = useState(assignable[0]?.id ?? "");
-  const [proposalId, setProposalId] = useState("");
-  const [title, setTitle] = useState("");
-  const [address, setAddress] = useState("");
-  const [clientName, setClientName] = useState("");
-  const [clientPhone, setClientPhone] = useState("");
-  const [kind, setKind] = useState<JobKind>("GUTTERS_REPLACEMENT");
-  const [scope, setScope] = useState("");
-  const [pay, setPay] = useState("");
-  const [payTouched, setPayTouched] = useState(false);
-  const [start, setStart] = useState(slot.start);
-  const [end, setEnd] = useState(slot.end);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<string | null>(null);
-
-  // Job-file attachment + percent-of-invoice pay.
-  const [attachment, setAttachment] = useState<{
-    url: string;
-    name: string;
-    mimeType: string;
-  } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadErr, setUploadErr] = useState<string | null>(null);
-  const [invoiceTotalCents, setInvoiceTotalCents] = useState<number | null>(null);
-  const [extractNote, setExtractNote] = useState<string | null>(null);
-  const [pct, setPct] = useState("10");
-
-  // Default percentage comes from the owner's financial settings (crew %).
-  useEffect(() => {
-    getPayDefaults().then(({ crewPct }) => {
-      if (crewPct > 0) setPct(String(crewPct));
-    });
-  }, []);
-
-  // Auto-fill pay = pct × invoice total, unless the owner typed a pay by hand.
-  useEffect(() => {
-    if (payTouched || invoiceTotalCents == null) return;
-    const p = parseFloat(pct);
-    if (!Number.isFinite(p) || p <= 0) return;
-    setPay(((invoiceTotalCents * p) / 100 / 100).toFixed(2));
-  }, [invoiceTotalCents, pct, payTouched]);
-
-  async function uploadJobFile(file: File) {
-    setUploading(true);
-    setUploadErr(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/job-files", { method: "POST", body: fd });
-      const body = (await res.json()) as {
-        url?: string;
-        name?: string;
-        mimeType?: string;
-        totalCents?: number | null;
-        note?: string | null;
-        error?: string;
-      };
-      if (!res.ok || !body.url) {
-        setUploadErr(body.error || "Upload failed");
-        return;
-      }
-      setAttachment({ url: body.url, name: body.name || file.name, mimeType: body.mimeType || file.type });
-      setInvoiceTotalCents(body.totalCents ?? null);
-      setExtractNote(body.note ?? null);
-    } catch {
-      setUploadErr("Upload failed — check your connection and try again");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  // Prefill from the chosen proposal.
-  function pickProposal(id: string) {
-    setProposalId(id);
-    const p = proposals.find((x) => x.id === id);
-    if (p) {
-      setAddress(p.address);
-      setClientName(p.clientName);
-      setTitle(`Install — ${p.clientName || p.address}`);
-      if (p.jobType === "new") setKind("GUTTERS_NEW");
-      else if (p.jobType === "replacement") setKind("GUTTERS_REPLACEMENT");
-    }
-  }
-
-  async function submit(ignoreConflict: boolean) {
-    setBusy(true);
-    setErr(null);
-    const payCents = Math.round(parseFloat(pay || "0") * 100);
-    const pctNum = parseFloat(pct);
-    const r = await assignJob({
-      workerId,
-      proposalId: proposalId || null,
-      title,
-      address,
-      clientName: clientName || null,
-      clientPhone: clientPhone || null,
-      kind,
-      scope: scope || null,
-      workerPayCents: payCents,
-      startsAtIso: localToIso(start),
-      endsAtIso: localToIso(end),
-      attachmentUrl: attachment?.url ?? null,
-      attachmentName: attachment?.name ?? null,
-      attachmentType: attachment?.mimeType ?? null,
-      invoiceTotalCents,
-      // payPct is the audit claim "pay = pctNum% of the invoice". Only record
-      // it when the pay actually came from that math — if the owner hand-typed
-      // a different pay (payTouched), the percent basis no longer holds.
-      payPct:
-        !payTouched && invoiceTotalCents != null && Number.isFinite(pctNum) && pctNum > 0
-          ? pctNum
-          : null,
-      ignoreConflict,
-    });
-    setBusy(false);
-    if (r.ok) {
-      onDone();
-      onClose();
-      return;
-    }
-    if ("conflict" in r && r.conflict) {
-      setConflict(r.reason);
-      return;
-    }
-    setErr(r.reason);
-  }
-
-  const worker = assignable.find((w) => w.id === workerId);
-
-  return (
-    <Modal title="Assign a job to a worker" onClose={onClose}>
-      <div className="space-y-4">
-        <Field label="Worker *">
-          <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} className="input w-full">
-            {assignable.length === 0 && <option value="">No workers — invite one first</option>}
-            {assignable.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name || w.email} {w.status === "INVITED" ? "(pending)" : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {worker?.status === "INVITED" && (
-          <p className="-mt-2 text-xs text-amber-600">
-            This worker hasn't accepted their invite yet — they'll see the job when they join.
-          </p>
-        )}
-
-        <Field label="From a proposal (optional — carries the roof layout)">
-          <select value={proposalId} onChange={(e) => pickProposal(e.target.value)} className="input w-full">
-            <option value="">— Manual job (no proposal) —</option>
-            {proposals.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.clientName || "—"} · {p.address}
-                {p.hasRoof ? " · has roof" : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        <Field label="Job title *">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Install seamless gutters" className="input w-full" />
-        </Field>
-
-        <Field label="Job type">
-          <select value={kind} onChange={(e) => setKind(e.target.value as JobKind)} className="input w-full">
-            {JOB_KIND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </Field>
-
-        {/* Job file → AI reads the invoice total → pay = your % of it. */}
-        <Field label="Job file (design / invoice — the worker will see it)">
-          <div className="space-y-2">
-            {attachment ? (
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
-                <FileText className="h-4 w-4 shrink-0 text-accent-600" />
-                <span className="min-w-0 flex-1 truncate text-zinc-700">{attachment.name}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAttachment(null);
-                    setInvoiceTotalCents(null);
-                    setExtractNote(null);
-                  }}
-                  className="transition-smooth rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700"
-                  title="Remove file"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <label
-                className={cn(
-                  "transition-smooth flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-zinc-200 px-3 py-3 text-sm text-zinc-500 hover:border-accent-300 hover:text-accent-700",
-                  uploading && "pointer-events-none opacity-60",
-                )}
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Uploading & reading the total…
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4" /> Attach PDF or photo
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="application/pdf,image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) uploadJobFile(f);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            )}
-            {uploadErr && <p className="text-xs text-rose-600">{uploadErr}</p>}
-            {attachment && (
-              <p
-                className={cn(
-                  "rounded-lg px-3 py-2 text-xs",
-                  invoiceTotalCents != null
-                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-                    : "bg-zinc-50 text-zinc-500 ring-1 ring-zinc-200",
-                )}
-              >
-                {invoiceTotalCents != null ? (
-                  <>
-                    Invoice total read: <strong>{fmtMoney(invoiceTotalCents)}</strong>
-                    {extractNote ? ` — ${extractNote}` : ""}. Worker pay below is your % of
-                    it — adjust either.
-                  </>
-                ) : (
-                  "Couldn't find a clear total in this file — type the pay yourself."
-                )}
-              </p>
-            )}
-          </div>
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Worker % of invoice">
-            <div className="relative">
-              <Percent className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.5"
-                value={pct}
-                onChange={(e) => {
-                  setPct(e.target.value);
-                  setPayTouched(false); // changing % re-drives the auto pay
-                }}
-                className="input w-full pl-8"
-              />
-            </div>
-          </Field>
-          <Field label="Worker pay *">
-            <div className="relative">
-              <DollarSign className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={pay}
-                onChange={(e) => {
-                  setPay(e.target.value);
-                  setPayTouched(true);
-                }}
-                placeholder="0.00"
-                className="input w-full pl-8"
-              />
-            </div>
-          </Field>
-        </div>
-
-        <Field label="Job-site address *">
-          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="123 Main St" className="input w-full" />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Client name">
-            <input value={clientName} onChange={(e) => setClientName(e.target.value)} className="input w-full" />
-          </Field>
-          <Field label="Client phone (optional)">
-            <input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} className="input w-full" />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Starts *">
-            <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="input w-full" />
-          </Field>
-          <Field label="Ends *">
-            <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="input w-full" />
-          </Field>
-        </div>
-
-        <Field label="What needs to be done">
-          <textarea
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            rows={3}
-            placeholder="Tear off old gutters, install 6&quot; K-style seamless, 3 downspouts to the back corners…"
-            className="input w-full resize-none"
-          />
-        </Field>
-
-        <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-          The worker sees the client, address, roof layout, and <strong>their pay only</strong> — never your price.
-        </p>
-
-        {conflict ? (
-          <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-            <div className="flex items-start gap-2 text-sm text-amber-800">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{conflict}</span>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setConflict(null)}>Change time</Button>
-              <Button size="sm" onClick={() => submit(true)} disabled={busy}>Assign anyway</Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            {err && <p className="text-sm text-rose-600">{err}</p>}
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => submit(false)} disabled={busy || !workerId || !title || !address}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Assign job
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
-    </Modal>
-  );
-}
 
 // ── Main view ───────────────────────────────────────────────────────────────
 
@@ -649,7 +224,7 @@ export function WorkersView() {
 
       {modal === "invite" && <InviteModal onClose={() => setModal(null)} onDone={refresh} />}
       {modal === "assign" && (
-        <AssignModal workers={workers} proposals={proposals} onClose={() => setModal(null)} onDone={refresh} />
+        <AssignJobModal workers={workers} proposals={proposals} onClose={() => setModal(null)} onDone={refresh} />
       )}
     </div>
   );
@@ -689,7 +264,17 @@ function JobsList({ jobs, onChanged, onAssign }: { jobs: OwnerJobDTO[]; onChange
             )}
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-ink">{fmtMoney(j.workerPayCents)}</span>
+            <div className="text-right">
+              <span className="text-sm font-semibold text-ink">{fmtMoney(j.workerPayCents)}</span>
+              {/* Render the basis only when it's actually recorded — guessing
+                  a label for legacy rows would rewrite their audit trail. */}
+              {j.payPct != null && j.payBasis != null && (
+                <span className="mt-0.5 flex items-center justify-end gap-0.5 text-[11px] text-zinc-400">
+                  <Percent className="h-2.5 w-2.5" />
+                  {j.payPct}% of {j.payBasis}
+                </span>
+              )}
+            </div>
             {!["COMPLETED", "CANCELLED", "DECLINED"].includes(j.status) && (
               <Button
                 variant="ghost"

@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Eye,
   FileDiff,
+  HardHat,
   Loader2,
   MoreHorizontal,
   Search,
@@ -30,6 +31,7 @@ import {
 import { SendModal } from "@/components/proposal/send-modal";
 import { PaymentsDrawer } from "@/components/dashboard/payments-drawer";
 import { DiscountDrawer } from "@/components/dashboard/discount-drawer";
+import { ScheduleFromProposal } from "@/components/workers/schedule-from-proposal";
 import { getMyProposal } from "@/app/actions/dashboard";
 import { deleteProposal } from "@/app/actions/proposals";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -98,6 +100,9 @@ export function ProposalsTable({
   // a live discount request. Auto-opens on ?deal=<proposalId> — the
   // needs-attention feed + notification emails link here.
   const [dealFor, setDealFor] = useState<string | null>(null);
+  // "Schedule crew" — opens the assign-to-worker flow preloaded with this
+  // proposal, so its estimate total seeds the worker-pay percentage.
+  const [scheduleFor, setScheduleFor] = useState<string | null>(null);
   // Reactive to soft navigations too — the sidebar "Done jobs" link
   // lands on this same route with ?filter=done, without a remount.
   const searchParams = useSearchParams();
@@ -548,6 +553,7 @@ export function ProposalsTable({
                       deleting={deletingId === p.id}
                       address={p.address}
                       onPayments={stage ? () => setPayFor(p.id) : undefined}
+                      onSchedule={() => setScheduleFor(p.id)}
                     />
                     <ChevronRight className="hidden h-4 w-4 text-zinc-300 xl:block" />
                   </div>
@@ -581,6 +587,12 @@ export function ProposalsTable({
       {dealFor && (
         <DiscountDrawer proposalId={dealFor} onClose={() => setDealFor(null)} />
       )}
+      {scheduleFor && (
+        <ScheduleFromProposal
+          proposalId={scheduleFor}
+          onClose={() => setScheduleFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -595,11 +607,13 @@ function RowMenu({
   deleting,
   address,
   onPayments,
+  onSchedule,
 }: {
   onDelete: () => void;
   deleting: boolean;
   address: string;
   onPayments?: () => void;
+  onSchedule?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -648,6 +662,21 @@ function RowMenu({
         >
           {!confirming ? (
             <>
+              {onSchedule && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setOpen(false);
+                    onSchedule();
+                  }}
+                  className="transition-smooth ring-focus flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                >
+                  <HardHat className="h-4 w-4 text-zinc-400" />
+                  Schedule crew &amp; set pay
+                </button>
+              )}
               {onPayments && (
                 <button
                   type="button"
