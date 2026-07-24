@@ -47,11 +47,21 @@ export function AnnouncementBanner() {
 
   useEffect(() => {
     let alive = true;
-    void getActiveAnnouncements().then((a) => {
-      if (alive) setItems(a);
-    });
+    const load = () =>
+      void getActiveAnnouncements().then((a) => {
+        if (alive) setItems(a);
+      });
+    load();
+    // The shell (and this banner) mounts once and survives client-side
+    // navigation, so an announcement published mid-session would never show
+    // without a refetch. Coming back to the tab is the natural moment.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
