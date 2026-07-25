@@ -17,6 +17,8 @@ import {
   ChevronRight,
   Columns3,
   ExternalLink,
+  PanelRightClose,
+  PanelRightOpen,
   Hammer,
   MapPin,
   Phone,
@@ -428,7 +430,13 @@ type DropPreview = {
   label: string;
 };
 
-export function CalendarBoard() {
+export function CalendarBoard({
+  /** Chrome-free pop-out mode (?view=standalone): the scheduling rail starts
+   *  collapsed so one crew member's calendar fills the screen. */
+  standalone = false,
+}: {
+  standalone?: boolean;
+} = {}) {
   const [view, setView] = useState<ViewMode>("week");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [appointments, setAppointments] = useState<AppointmentDTO[]>([]);
@@ -452,6 +460,10 @@ export function CalendarBoard() {
   const [smartFor, setSmartFor] = useState<SchedulableItem | null>(null);
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
   const [monthHoverDay, setMonthHoverDay] = useState<string | null>(null);
+  // The right-hand "to schedule" rail. Collapsed by default in a pop-out —
+  // the point of a per-worker tab is a full-width calendar — toggleable back
+  // for drag-to-schedule.
+  const [railOpen, setRailOpen] = useState(!standalone);
 
   // Restore the last-used view across visits. First visit on a phone
   // defaults to the day agenda — 7 grid columns are unreadable there.
@@ -958,18 +970,46 @@ export function CalendarBoard() {
 
       <StatsStrip stats={stats} view={view} />
 
-      {crew.length > 0 && (
-        <CrewBar
-          crew={crew}
-          counts={workerEventCounts}
-          selectedId={selectedWorkerId}
-          onSelect={(id) =>
-            setSelectedWorkerId((prev) => (prev === id ? null : id))
-          }
-        />
-      )}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        {crew.length > 0 ? (
+          <CrewBar
+            crew={crew}
+            counts={workerEventCounts}
+            selectedId={selectedWorkerId}
+            onSelect={(id) =>
+              setSelectedWorkerId((prev) => (prev === id ? null : id))
+            }
+          />
+        ) : (
+          <span aria-hidden />
+        )}
+        {/* Rail toggle — hidden below lg where the rail stacks anyway. */}
+        <button
+          type="button"
+          onClick={() => setRailOpen((v) => !v)}
+          title={railOpen ? "Hide the scheduling list — full-width calendar" : "Show the scheduling list"}
+          className="transition-smooth ring-focus press-scale hidden shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm hover:bg-zinc-50 lg:inline-flex"
+        >
+          {railOpen ? (
+            <>
+              <PanelRightClose className="h-3 w-3" />
+              Hide list
+            </>
+          ) : (
+            <>
+              <PanelRightOpen className="h-3 w-3" />
+              To schedule
+            </>
+          )}
+        </button>
+      </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-4",
+          railOpen && "lg:grid-cols-[1fr_320px]",
+        )}
+      >
         {view === "day" ? (
           <DayAgenda
             weekStart={weekStart}
@@ -1047,24 +1087,28 @@ export function CalendarBoard() {
           />
         )}
 
-        <Sidebar
-          items={filteredSidebar}
-          filter={sidebarFilter}
-          dropActive={dragSource !== null}
-          dropKind={dragSource}
-          onFilter={setSidebarFilter}
-          onDragStart={startDragItem}
-          onDragEnd={clearDrag}
-          onSmart={(item) => setSmartFor(item)}
-          onUnscheduleDragOver={(e) => {
-            const d = dragData.current;
-            if (d?.kind === "appt-move" || d?.kind === "job-move") {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-            }
-          }}
-          onUnscheduleDrop={onSidebarDrop}
-        />
+        {/* Below lg the rail stacks under the grid and the collapse toggle is
+            hidden, so it must stay reachable there — collapse is lg-only. */}
+        <div className={cn(!railOpen && "lg:hidden")}>
+          <Sidebar
+            items={filteredSidebar}
+            filter={sidebarFilter}
+            dropActive={dragSource !== null}
+            dropKind={dragSource}
+            onFilter={setSidebarFilter}
+            onDragStart={startDragItem}
+            onDragEnd={clearDrag}
+            onSmart={(item) => setSmartFor(item)}
+            onUnscheduleDragOver={(e) => {
+              const d = dragData.current;
+              if (d?.kind === "appt-move" || d?.kind === "job-move") {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }
+            }}
+            onUnscheduleDrop={onSidebarDrop}
+          />
+        </div>
       </div>
 
       {editing && (
@@ -1627,10 +1671,10 @@ function CrewBar({
       {selectedId && (
         <>
           <a
-            href={`/dashboard/calendar?worker=${selectedId}`}
+            href={`/dashboard/calendar?worker=${selectedId}&view=standalone`}
             target="_blank"
             rel="noreferrer"
-            title="Pop out this person's calendar in its own tab"
+            title="Pop out this person's calendar full-screen in its own tab"
             className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-600 shadow-sm hover:bg-zinc-50"
           >
             <ExternalLink className="h-3 w-3" />
