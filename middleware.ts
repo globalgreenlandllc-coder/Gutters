@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 
 const isPublic = createRouteMatcher([
   "/",
+  // SEO endpoints — crawlers don't sign in. Without these, Googlebot's
+  // robots.txt fetch redirected to the sign-in page (the matcher below
+  // doesn't exempt .txt/.xml).
+  "/robots.txt",
+  "/sitemap.xml",
   "/demo(.*)",
   "/sign-in(.*)",
   "/sign-up(.*)",

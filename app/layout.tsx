@@ -30,7 +30,19 @@ export const metadata: Metadata = {
   title: "GutterScan — AI Takeoffs, Proposals & Payments for Gutter Contractors",
   description:
     "Type one address. Get an AI-measured takeoff, a three-tier proposal your client e-signs, then run the schedule, crew, and payments — all in one platform.",
-  metadataBase: new URL("https://gutters.app"),
+  // Canonical host (apex 308s to www). This was still the pre-rebrand
+  // gutters.app, which pointed every canonical/OG URL at a dead domain.
+  metadataBase: new URL("https://www.gutterscan.com"),
+  openGraph: {
+    siteName: "GutterScan",
+    type: "website",
+    title: "GutterScan — AI Takeoffs, Proposals & Payments for Gutter Contractors",
+    description:
+      "Type one address. Get an AI-measured takeoff, a three-tier proposal your client e-signs, then run the schedule, crew, and payments — all in one platform.",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
 };
 
 export default function RootLayout({
