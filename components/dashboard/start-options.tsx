@@ -19,6 +19,7 @@ import {
   Video,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAddressSuggestions } from "@/lib/use-address-suggestions";
 import { getRecentAddresses } from "@/app/actions/estimate";
 import BlueprintUploader from "@/components/blueprints/BlueprintUploader";
 
@@ -331,13 +332,32 @@ function SatelliteTakeoffCard() {
     };
   }, []);
 
+  // Live Google-Places suggestions (debounced /api/places proxy) — merged
+  // BELOW the matching recents so muscle-memory picks stay on top.
+  const { suggestions: placeSuggestions, endSession } = useAddressSuggestions(
+    value,
+    focused,
+  );
+
   // Filter the dropdown by the current input. Empty input shows
-  // everything; typing narrows by case-insensitive substring.
-  const suggestions = useMemo(() => {
+  // everything; typing narrows by case-insensitive substring, then live
+  // Places matches fill in after (deduped, capped at 8 rows).
+  const { suggestions, liveSet } = useMemo(() => {
     const q = value.trim().toLowerCase();
-    if (!q) return recents;
-    return recents.filter((a) => a.toLowerCase().includes(q));
-  }, [recents, value]);
+    const base = q ? recents.filter((a) => a.toLowerCase().includes(q)) : recents;
+    const seen = new Set(base.map((a) => a.toLowerCase()));
+    const live: string[] = [];
+    for (const p of placeSuggestions) {
+      const k = p.description.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      live.push(p.description);
+    }
+    return {
+      suggestions: [...base, ...live].slice(0, 8),
+      liveSet: new Set(live),
+    };
+  }, [recents, value, placeSuggestions]);
 
   const showDropdown = focused && suggestions.length > 0;
 
@@ -345,6 +365,7 @@ function SatelliteTakeoffCard() {
     const target = (addr ?? value).trim();
     if (!target || submitting) return;
     setSubmitting(true);
+    endSession(); // close the Places billing session on submit
     // Remember the entered address right away — even if the run fails
     // later, the user may want to retype/edit it from the dropdown
     // rather than re-typing from scratch.
@@ -494,7 +515,7 @@ function SatelliteTakeoffCard() {
                     "px-3 pb-1 pt-0.5 text-zinc-400",
                   )}
                 >
-                  Recent addresses
+                  {liveSet.size > 0 ? "Addresses" : "Recent addresses"}
                 </li>
                 {suggestions.map((s, i) => (
                   <li key={s} role="option" aria-selected={i === highlight}>
@@ -514,7 +535,11 @@ function SatelliteTakeoffCard() {
                           : "text-zinc-700 hover:bg-zinc-50",
                       )}
                     >
-                      <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      {liveSet.has(s) ? (
+                        <MapPin className="h-3.5 w-3.5 shrink-0 text-accent-500" />
+                      ) : (
+                        <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      )}
                       <span className="truncate">{s}</span>
                     </button>
                   </li>

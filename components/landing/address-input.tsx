@@ -7,6 +7,7 @@ import { ArrowRight, MapPin, Play, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/auth-mock";
 import { SAMPLE_ADDRESS } from "@/lib/mock-estimate";
+import { useAddressSuggestions } from "@/lib/use-address-suggestions";
 import { DemoFlow } from "./demo-flow";
 
 const SUGGESTIONS = [
@@ -42,6 +43,8 @@ export function AddressInput({
   // Local fallback when parent doesn't lift the modal state.
   const [localOpen, setLocalOpen] = useState(false);
   const [localAddress, setLocalAddress] = useState("");
+  // Live Google-Places suggestions (debounced via our /api/places proxy).
+  const { suggestions, endSession } = useAddressSuggestions(value, focused);
 
   function openDemo(addr: string) {
     const target = addr.trim() || SAMPLE_ADDRESS;
@@ -129,6 +132,29 @@ export function AddressInput({
             )}
           </button>
         </div>
+
+        {/* Live address suggestions — mousedown (not click) so selection
+            beats the input's onBlur closing the list. */}
+        {focused && suggestions.length > 0 && (
+          <div className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
+            {suggestions.map((s) => (
+              <button
+                key={s.placeId || s.description}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setValue(s.description);
+                  endSession();
+                  submit(s.description);
+                }}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-zinc-700 transition hover:bg-accent-50"
+              >
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                <span className="truncate">{s.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-xs text-zinc-500">
           <span className="text-zinc-400">Try:</span>

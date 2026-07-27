@@ -26,6 +26,10 @@ const isPublic = createRouteMatcher([
   // Landing-page teaser scan — the acquisition hook is anonymous by
   // definition. Tightly rate-limited (edge class + 2/day/IP durable).
   "/api/teaser(.*)",
+  // Address-autocomplete proxy — the landing/teaser inputs are anonymous.
+  // Strictly rate-limited below; the route itself enforces min length +
+  // Google session tokens for per-session billing.
+  "/api/places(.*)",
 ]);
 
 // ---------------------------------------------------------------------
@@ -87,6 +91,9 @@ function limitFor(pathname: string): { limit: number; cls: string } {
   // Teaser scans spend real API money per call — tightest class here;
   // the durable 2/day/IP limit inside the route is the real gate.
   if (pathname.startsWith("/api/teaser")) return { limit: 5, cls: "teaser" };
+  // Autocomplete fires per keystroke (debounced ~300ms client-side) — a
+  // human tops out well under 30 req/min; scripts hit the wall fast.
+  if (pathname.startsWith("/api/places")) return { limit: 30, cls: "places" };
   // Auth + marketing pages (Clerk adds its own bot detection on top).
   if (
     pathname === "/" ||

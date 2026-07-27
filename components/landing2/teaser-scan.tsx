@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAddressSuggestions } from "@/lib/use-address-suggestions";
 import Link from "next/link";
 import { ArrowRight, Loader2, MapPin, ScanLine, Sparkles } from "lucide-react";
 import { GutterDiagram } from "@/components/estimate/gutter-diagram";
@@ -39,6 +40,9 @@ const SCAN_STEPS = [
 
 export function TeaserScan() {
   const [address, setAddress] = useState("");
+  const [addrFocused, setAddrFocused] = useState(false);
+  // Live Google-Places suggestions via the /api/places proxy (debounced).
+  const { suggestions, endSession } = useAddressSuggestions(address, addrFocused);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
     "idle",
   );
@@ -129,9 +133,31 @@ export function TeaserScan() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="Type any US address — watch the AI trace its roof"
-            autoComplete="street-address"
+            autoComplete="off"
+            onFocus={() => setAddrFocused(true)}
+            onBlur={() => setAddrFocused(false)}
             className="ring-focus h-12 w-full rounded-xl border border-zinc-200 bg-zinc-50 pl-10 pr-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-accent-400 focus:bg-white"
           />
+          {/* Address suggestions — mousedown beats the input blur. */}
+          {addrFocused && suggestions.length > 0 && (
+            <div className="absolute left-0 right-0 top-full z-40 mt-1.5 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-elevated">
+              {suggestions.map((sug) => (
+                <button
+                  key={sug.placeId || sug.description}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setAddress(sug.description);
+                    endSession();
+                  }}
+                  className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-zinc-700 transition-smooth hover:bg-accent-50"
+                >
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                  <span className="truncate">{sug.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </label>
         <button
           type="submit"
