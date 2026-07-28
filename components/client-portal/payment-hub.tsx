@@ -16,7 +16,24 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatCurrency } from "@/lib/utils";
-import { AerialSection } from "@/components/proposal/aerial-section";
+import dynamic from "next/dynamic";
+
+// The roof-diagram engine is the heaviest chunk in the homeowner bundle
+// (aerial canvas + roof skeleton + label solver). Lazy-load it so the
+// portal paints fast on phones; a fixed-height skeleton holds the layout
+// until the diagram chunk arrives.
+const AerialSection = dynamic(
+  () =>
+    import("@/components/proposal/aerial-section").then(
+      (m) => m.AerialSection,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[420px] w-full animate-pulse rounded-2xl bg-zinc-100" />
+    ),
+  },
+);
 import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
 import { TermsSection } from "@/components/proposal/terms-section";
