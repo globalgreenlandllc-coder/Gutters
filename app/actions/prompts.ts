@@ -17,12 +17,18 @@ import { SYSTEM_PROMPT as ADDRESS_VISION_DEFAULT } from "@/lib/ai/vision";
 import { SYSTEM_PROMPT as ADDRESS_ROOF_STRUCTURE_DEFAULT } from "@/lib/ai/roof-structure";
 import { CLASSIFIER_SYSTEM as BLUEPRINT_CLASSIFY_DEFAULT } from "@/lib/ai/classify-plans";
 import { BLUEPRINT_FROM_PLANS_SYSTEM as BLUEPRINT_TAKEOFF_DEFAULT } from "@/lib/ai/blueprint-from-plans";
+import { ELEVATION_FACE_SYSTEM as BLUEPRINT_ELEVATION_DEFAULT } from "@/lib/ai/read-elevations";
+import { ROOF_PLAN_SYSTEM as BLUEPRINT_ROOFPLAN_DEFAULT } from "@/lib/ai/read-roof-layout";
+import { PRICING_SYSTEM as PROPOSAL_PRICING_DEFAULT } from "@/lib/ai/price-suggestion";
 
 const DEFAULTS: Record<PromptKey, string> = {
   "address.vision.system": ADDRESS_VISION_DEFAULT,
   "address.roof_structure.system": ADDRESS_ROOF_STRUCTURE_DEFAULT,
   "blueprint.classify.system": BLUEPRINT_CLASSIFY_DEFAULT,
+  "blueprint.elevation.system": BLUEPRINT_ELEVATION_DEFAULT,
+  "blueprint.roofplan.system": BLUEPRINT_ROOFPLAN_DEFAULT,
   "blueprint.takeoff.system": BLUEPRINT_TAKEOFF_DEFAULT,
+  "proposal.pricing.system": PROPOSAL_PRICING_DEFAULT,
 };
 
 export type PromptRow = {

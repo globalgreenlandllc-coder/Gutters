@@ -46,7 +46,7 @@ export function EditablePrice({
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        className={`${className ?? ""} border-b border-dashed border-zinc-300 bg-transparent tabular-nums outline-none transition focus:border-accent-600`}
+        className={`${className ?? ""} border-b border-dashed border-zinc-300 bg-transparent tabular-nums outline-none transition-smooth focus:border-accent-600`}
         style={{ width: `${Math.max(display.length, 2)}ch` }}
       />
     </span>

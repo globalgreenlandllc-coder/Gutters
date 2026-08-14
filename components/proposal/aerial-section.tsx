@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
-import { Pencil, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Pencil, Sparkles, Image as ImageIcon, DraftingCompass } from "lucide-react";
 import { lineLengthFt } from "@/components/estimate/aerial-canvas";
 import { AerialReadonly } from "@/components/estimate/aerial-shared";
+import { GutterDiagram } from "@/components/estimate/gutter-diagram";
 import { PresentationCanvas } from "./presentation-canvas";
 import { GutterSystemBreakdown } from "./gutter-system-breakdown";
+import { ManualMeasurementsCard } from "./manual-measurements-card";
 import { sampleEaves, sampleDownspouts } from "@/lib/mock-estimate";
 import type { Downspout, EditableLine } from "@/lib/types";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -25,7 +27,18 @@ export function AerialSection({
 }) {
   const takeoff = proposal.takeoff;
   const hasRealTakeoff = !!takeoff && takeoff.eaves.length > 0;
+  // Tape-measure proposals (/dashboard/measure) have real numbers but no
+  // geometry to draw — show the honest field-measurement card instead of
+  // the sample cartoon, editable in builder mode so a mis-typed number
+  // is fixable right here. A takeoff traced later (edited eaves) wins.
+  const isManual = proposal.source === "manual" && !hasRealTakeoff;
   const editable = !readOnly && !!onChange && hasRealTakeoff;
+  // Satellite takeoffs get a Photo ⇄ Diagram toggle; the clean drafting
+  // sheet is the default deliverable. Plan takeoffs already render as a
+  // blueprint diagram inside PresentationCanvas, so no toggle there.
+  const isSatellite = !!takeoff?.aerial?.imageDataUrl;
+  const [view, setView] = useState<"diagram" | "photo">("diagram");
+  const showDiagram = isSatellite && view === "diagram";
 
   // Recompute total LF from the live edited eaves so the badge stays in
   // sync as the contractor adjusts the trace. NaN-guard each line:
@@ -86,38 +99,113 @@ export function AerialSection({
     });
   };
 
+  if (isManual) {
+    return (
+      <section data-section="aerial" className="space-y-4">
+        <SectionHeader
+          title="What we measured"
+          sub="Measured on-site with a tape measure — these numbers drive every package price."
+        />
+        <ManualMeasurementsCard
+          measurements={proposal.measurements}
+          onChange={
+            !readOnly && onChange
+              ? (next) => onChange({ ...proposal, measurements: next })
+              : undefined
+          }
+        />
+      </section>
+    );
+  }
+
   return (
     <section data-section="aerial" className="space-y-4">
-      <SectionHeader
-        title="What we measured"
-        sub={
-          hasRealTakeoff
-            ? editable
-              ? "Live takeoff from the satellite image. Drag any handle to refine — totals update instantly."
-              : "Eaves and downspouts traced directly from this property's satellite image."
-            : "Sample geometry — connect this proposal to a takeoff to render the real roof."
-        }
-      />
+      <div className="flex items-start justify-between gap-4">
+        <SectionHeader
+          title="What we measured"
+          sub={
+            hasRealTakeoff
+              ? showDiagram
+                ? "Roof plan drawn from the satellite image at true scale — gutter runs in blue with lengths, numbered downspouts."
+                : editable
+                  ? "Live takeoff from the satellite image. Drag any handle to refine — totals update instantly."
+                  : "Eaves and downspouts traced directly from this property's satellite image."
+              : "Sample geometry — connect this proposal to a takeoff to render the real roof."
+          }
+        />
+        {isSatellite && hasRealTakeoff && (
+          <div className="mt-1 inline-flex shrink-0 rounded-full border border-ink/10 bg-white p-0.5 text-[11px] font-semibold shadow-sm">
+            <button
+              type="button"
+              onClick={() => setView("diagram")}
+              className={
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors " +
+                (view === "diagram"
+                  ? "bg-accent-600 text-white"
+                  : "text-ink/55 hover:text-ink")
+              }
+            >
+              <DraftingCompass className="h-3.5 w-3.5" />
+              Diagram
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("photo")}
+              className={
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors " +
+                (view === "photo"
+                  ? "bg-accent-600 text-white"
+                  : "text-ink/55 hover:text-ink")
+              }
+            >
+              <ImageIcon className="h-3.5 w-3.5" />
+              Photo
+            </button>
+          </div>
+        )}
+      </div>
       <div className="space-y-3">
         <div className="relative overflow-hidden rounded-2xl">
           {hasRealTakeoff ? (
-            <div className="aspect-[16/10]">
-              <PresentationCanvas
-                eaves={takeoff!.eaves}
-                rakes={takeoff!.rakes}
-                downspouts={takeoff!.downspouts}
-                roofStructure={takeoff!.roofStructure}
-                onEavesChange={editable ? handleEavesChange : undefined}
-                onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
-                pxPerFt={takeoff!.canvasPxPerFt}
-                aerialImageUrl={takeoff!.aerial?.imageDataUrl}
-                // Plan-based takeoffs have no satellite image. Switch
-                // the canvas into drafting-paper mode so the gutter
-                // trace reads as an architectural drawing instead of
-                // being painted on top of the cartoon yard scene.
-                planMode={!takeoff!.aerial?.imageDataUrl}
-              />
-            </div>
+            showDiagram ? (
+              <div className="aspect-[16/10]">
+                <GutterDiagram
+                  eaves={takeoff!.eaves}
+                  downspouts={takeoff!.downspouts}
+                  pxPerFt={takeoff!.canvasPxPerFt}
+                  roofStructure={takeoff!.roofStructure}
+                  address={proposal.address}
+                  confidence={takeoff!.roofStructure?.confidence}
+                  // The proposal is the deliverable: perimeter, priced
+                  // gutter runs and downspouts only. Working layers
+                  // (suggestions, rakes, roof seams) live on /estimate.
+                  presentation
+                />
+              </div>
+            ) : (
+              <div className="aspect-[16/10]">
+                <PresentationCanvas
+                  eaves={takeoff!.eaves}
+                  // CLIENT-CLEAN photo: the gray-dashed rakes are a
+                  // working layer ("no gutter here") for the contractor.
+                  // The homeowner's deliverable shows the perimeter,
+                  // priced gutter runs and downspouts only — same rule
+                  // as the presentation diagram above.
+                  rakes={editable ? takeoff!.rakes : []}
+                  downspouts={takeoff!.downspouts}
+                  roofStructure={takeoff!.roofStructure}
+                  onEavesChange={editable ? handleEavesChange : undefined}
+                  onDownspoutsChange={editable ? handleDownspoutsChange : undefined}
+                  pxPerFt={takeoff!.canvasPxPerFt}
+                  aerialImageUrl={takeoff!.aerial?.imageDataUrl}
+                  // Plan-based takeoffs have no satellite image. Switch
+                  // the canvas into drafting-paper mode so the gutter
+                  // trace reads as an architectural drawing instead of
+                  // being painted on top of the cartoon yard scene.
+                  planMode={!takeoff!.aerial?.imageDataUrl}
+                />
+              </div>
+            )
           ) : (
             <AerialReadonly
               eaves={sampleEaves}
@@ -126,14 +214,14 @@ export function AerialSection({
               theme="tactical"
             />
           )}
-          {hasRealTakeoff && (
-            <div className="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-medium text-emerald-200 ring-1 ring-inset ring-emerald-500/40 backdrop-blur">
+          {hasRealTakeoff && !showDiagram && (
+            <div className="anim-enter-fade pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-accent-600/90 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-inset ring-white/20">
               <Sparkles className="h-3 w-3" />
               Live from AI takeoff
             </div>
           )}
-          {editable && (
-            <div className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-slate-900/80 px-2.5 py-1 text-[10px] font-medium text-cyan-100/85 ring-1 ring-inset ring-cyan-400/30 backdrop-blur">
+          {editable && !showDiagram && (
+            <div className="anim-enter-fade stagger-2 pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-ink/80 px-2.5 py-1 text-[10px] font-medium text-white/85 ring-1 ring-inset ring-white/15">
               <Pencil className="h-3 w-3" />
               Hover an eave to drag a corner — totals re-price live
             </div>

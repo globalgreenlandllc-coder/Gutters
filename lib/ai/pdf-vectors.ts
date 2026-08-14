@@ -1,6 +1,12 @@
 import "server-only";
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf";
-import { segmentsFromOps, selectSegments } from "./pdf-segments";
+import {
+  apply,
+  segmentsFromOps,
+  selectFieldSegments,
+  selectSegments,
+  type Mat,
+} from "./pdf-segments";
 
 /**
  * "Read the blueprint better": pull the PDF's REAL vector layer — printed
@@ -21,7 +27,8 @@ import { segmentsFromOps, selectSegments } from "./pdf-segments";
 export type PdfTextItem = {
   /** The printed string, e.g. `24'-6"`, `4:12`, `GABLE`, `ROOF PLAN`. */
   s: string;
-  /** Position in PDF user space (origin bottom-left), rounded to points. */
+  /** Position in RASTER convention (origin top-left, y-down — the page's
+   *  viewport transform is applied), rounded to points. */
   x: number;
   y: number;
 };
@@ -40,10 +47,15 @@ export type PdfPageVectors = {
   /** Other short labels useful for classification: sheet titles,
    *  GABLE/RIDGE/EAVE tags, slope ratios, elevation side names, etc. */
   labels: PdfTextItem[];
-  /** Candidate drawn line segments `[x1,y1,x2,y2]` in the SAME PDF user
-   *  space as the text — the long orthogonal ones include the building
-   *  footprint perimeter; longer diagonals are hips/ridges. */
+  /** Candidate drawn line segments `[x1,y1,x2,y2]` in the SAME raster-
+   *  convention space as the text (y-down, matching the printed sheet) —
+   *  the long orthogonal ones include the building footprint perimeter;
+   *  longer diagonals are hips/ridges. */
   segments: number[][];
+  /** Thin-inclusive axis-aligned framing linework for the truss-field
+   *  arbiter (lib/ai/truss-field.ts). Code-only — never sent to the AI and
+   *  stripped before persistence. */
+  fieldSegments?: number[][];
 };
 
 /**
@@ -79,7 +91,7 @@ const SIZE_MARK_RE = /['"′″]|\bft\b|\bLF\b|\d\s*[-:]\s*\d|\d\/\d/i;
 export async function extractPdfPageText(
   base64: string,
   page1Based: number | null | undefined,
-  opts?: { boldOnly?: boolean },
+  opts?: { boldOnly?: boolean; fieldSegments?: boolean },
 ): Promise<PdfPageVectors | null> {
   try {
     if (!base64) return null;
@@ -90,6 +102,11 @@ export async function extractPdfPageText(
     const pageNum = Math.min(Math.max(1, Math.round(page1Based || 1)), total);
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1 });
+    // Everything leaves this function in RASTER convention (y-down, matching
+    // the printed sheet). Raw pdfjs user space is y-UP — using it directly
+    // mirrored the plan vertically for every downstream consumer (the edge
+    // map the classifier reads, front/back orientation, the canvas render).
+    const vpT = viewport.transform as Mat;
 
     const content = await page.getTextContent();
     const dimensions: PdfTextItem[] = [];
@@ -101,8 +118,9 @@ export async function extractPdfPageText(
       const s = (raw.str ?? "").trim();
       if (!s || s.length > 40) continue;
       const tx = raw.transform ?? [];
-      const x = Math.round(Number(tx[4]) || 0);
-      const y = Math.round(Number(tx[5]) || 0);
+      const [px, py] = apply(vpT, Number(tx[4]) || 0, Number(tx[5]) || 0);
+      const x = Math.round(px);
+      const y = Math.round(py);
       if (DIM_RE.test(s) && SIZE_MARK_RE.test(s)) {
         if (dimensions.length < MAX_TEXT) dimensions.push({ s, x, y });
       } else if (s.length <= 24 && /[A-Za-z0-9]/.test(s)) {
@@ -111,13 +129,13 @@ export async function extractPdfPageText(
     }
 
     let segments: number[][] = [];
+    let fieldSegments: number[][] | undefined;
     try {
       const { OPS } = await getResolvedPDFJS();
       const opList = await page.getOperatorList();
-      segments = selectSegments(
-        segmentsFromOps(opList, OPS),
-        opts?.boldOnly ?? false,
-      );
+      const rawSegs = segmentsFromOps(opList, OPS, vpT);
+      segments = selectSegments(rawSegs, opts?.boldOnly ?? false);
+      if (opts?.fieldSegments) fieldSegments = selectFieldSegments(rawSegs);
     } catch (e) {
       console.warn(
         "[pdf-vectors] segment extraction failed (text still used):",
@@ -135,6 +153,7 @@ export async function extractPdfPageText(
       dimensions,
       labels,
       segments,
+      ...(fieldSegments ? { fieldSegments } : {}),
     };
   } catch (e) {
     console.warn(
@@ -170,10 +189,15 @@ export async function extractPlanVectors(
     const footprint = await extractPdfPageText(base64, fpPage);
     if (footprint) footprint.sheet = "foundation/floor plan";
     // Roof sheet is the dense truss page this feature targets → keep only the
-    // BOLD roof lines (outline + ridge/hip/valley), drop the truss noise.
+    // BOLD roof lines (outline + ridge/hip/valley) for the AI, but ALSO keep
+    // the thin framing linework in the code-only field channel — the truss
+    // arrays are the sheet's own eave/gable answer (truss-field.ts).
     const roof =
       rfPage && rfPage !== fpPage
-        ? await extractPdfPageText(base64, rfPage, { boldOnly: true })
+        ? await extractPdfPageText(base64, rfPage, {
+            boldOnly: true,
+            fieldSegments: true,
+          })
         : null;
     if (roof) roof.sheet = "roof plan";
     if (!footprint && !roof) return null;
@@ -190,8 +214,10 @@ export async function extractPlanVectors(
 
 const fmtText = (items: PdfTextItem[]) =>
   items.map((i) => `${i.s}@(${i.x},${i.y})`).join("  ");
+// Only the 4 coords go to the model — a 5th stroke-weight element (used
+// downstream for wall/dimension tiering) is not geometry the AI should see.
 const fmtSegs = (segs: number[][]) =>
-  segs.map((s) => `[${s.join(",")}]`).join(" ");
+  segs.map((s) => `[${s.slice(0, 4).join(",")}]`).join(" ");
 
 /**
  * Render the extracted vectors into a compact ground-truth block for the
@@ -212,7 +238,7 @@ export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
   if (fp) {
     const where = fp.sheet ?? "foundation/floor plan";
     lines.push(
-      `EXTRACTED VECTOR DATA — BUILDING OUTLINE (page ${fp.page}, ${fp.widthPt}×${fp.heightPt} pt, origin bottom-left, read from the ${where}'s real vector layer). This is the AUTHORITATIVE footprint shape + scale — trust it over pixel-eyeballing:`,
+      `EXTRACTED VECTOR DATA — BUILDING OUTLINE (page ${fp.page}, ${fp.widthPt}×${fp.heightPt} pt, origin TOP-LEFT with y increasing DOWNWARD — same orientation as the page image, read from the ${where}'s real vector layer). This is the AUTHORITATIVE footprint shape + scale — trust it over pixel-eyeballing:`,
     );
     if (fp.dimensions.length) {
       lines.push(
@@ -241,7 +267,7 @@ export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
   const rf = plan.roof;
   if (rf) {
     lines.push(
-      `EXTRACTED VECTOR DATA — ROOF PLAN (page ${rf.page}, ${rf.widthPt}×${rf.heightPt} pt, origin bottom-left). Cross-reference for edge classification ONLY — NOT the footprint authority (this sheet may be a dense framing/truss plan):`,
+      `EXTRACTED VECTOR DATA — ROOF PLAN (page ${rf.page}, ${rf.widthPt}×${rf.heightPt} pt, origin TOP-LEFT, y-down — same orientation as the page image). Cross-reference for edge classification ONLY — NOT the footprint authority (this sheet may be a dense framing/truss plan):`,
     );
     if (rf.labels.length) {
       lines.push(
@@ -262,4 +288,55 @@ export function buildVectorBlock(plan: PlanVectors | null | undefined): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Extract each page's raw text (concatenated items) ONCE — the source the
+ * schedule-area + roof-mass parsers run on. Logs a per-page diagnostic (text
+ * length, whether "ROOF AREA" appears, a snippet around it) plus a summary, so a
+ * re-analyze reveals WHY the roof schedule isn't being read: a genuinely empty
+ * text layer (scanned/image PDF — unpdf can't read it) vs. a format the parser
+ * misses. Fully fail-safe → [] on any error.
+ */
+export async function extractScheduleText(base64: string): Promise<{ page: number; text: string }[]> {
+  try {
+    if (!base64) return [];
+    const bytes = Uint8Array.from(Buffer.from(base64, "base64"));
+    const pdf = await getDocumentProxy(bytes);
+    const total = pdf.numPages;
+    if (!total) return [];
+    const maxPages = Math.min(total, 30);
+    const out: { page: number; text: string }[] = [];
+    let withText = 0;
+    let withRoofArea = 0;
+    for (let p = 1; p <= maxPages; p++) {
+      try {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const text = (content.items as Array<{ str?: string }>).map((i) => i.str ?? "").join(" ");
+        out.push({ page: p, text });
+        if (text.trim().length > 0) withText++;
+        const ra = text.search(/roof\s*area/i);
+        const hasRoofArea = ra >= 0;
+        if (hasRoofArea) withRoofArea++;
+        const hasSF = /\bs\.?\s?f\.?\b|sq\.?\s?ft|square\s+feet/i.test(text);
+        const snippet = hasRoofArea
+          ? ` snippet="${text.slice(Math.max(0, ra - 20), ra + 70).replace(/\s+/g, " ")}"`
+          : "";
+        console.log(
+          `[pdf-vectors] page ${p}: textLen=${text.length} hasRoofArea=${hasRoofArea} hasSF=${hasSF}${snippet}`,
+        );
+      } catch (e) {
+        console.warn(`[pdf-vectors] page ${p} text extraction failed:`, e instanceof Error ? e.message : e);
+      }
+    }
+    console.log(
+      `[pdf-vectors] schedule scan: ${maxPages} page(s), ${withText} with text, ${withRoofArea} with "ROOF AREA".` +
+        (withText === 0 ? " NO TEXT LAYER — likely a scanned/image PDF; unpdf can't read it (that's why the roof schedule is missing)." : ""),
+    );
+    return out;
+  } catch (e) {
+    console.warn("[pdf-vectors] schedule text extraction failed:", e instanceof Error ? e.message : e);
+    return [];
+  }
 }

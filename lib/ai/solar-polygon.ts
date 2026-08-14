@@ -9,6 +9,7 @@ import {
   polygonSelfIntersects,
   simplify,
 } from "./geometry";
+import { symmetricHausdorffPx } from "./roof-geom";
 import type { RoofPolygon } from "./sam";
 
 /** Roof overhang from wall. Typical residential overhang is 18-30 in;
@@ -173,23 +174,33 @@ export function polygonFromSolarMask(
   // On any failure, fall back to the DP-simplified polygon. On
   // self-intersection of the DP polygon itself, fall back to the raw
   // downsampled boundary.
-  const MAX_VERTEX_DRIFT_PX = 40;
+  const MAX_HAUSDORFF_PX = 40;
   const MIN_AREA_RATIO = 0.85;
+  const MAX_AREA_RATIO = 1.15;
   let cleaned: Pt[];
   let cleanup: SolarPolygonResult["cleanup"];
   if (simplified.length >= 4) {
     const ortho = orthogonalizePolygon(simplified);
     const orthoSelfX = polygonSelfIntersects(ortho);
-    const orthoVertChange = ortho.length !== simplified.length;
     const orthoArea =
       polygonArea(ortho) / Math.max(1, polygonArea(simplified));
-    const orthoDrift = maxPairwiseDist(simplified, ortho);
+    // Shape agreement measured independent of vertex count.
+    // orthogonalizePolygon is DESIGNED to merge collinear runs (a coarse
+    // 0.5 m Solar mask commonly regularizes 24 → 10 verts), so a
+    // vertex-count change is the regularizer succeeding, NOT a failure.
+    // The old guard vetoed any count change (and maxPairwiseDist returned
+    // Infinity on unequal lengths), which discarded the clean rectilinear
+    // outline and shipped the jagged DP staircase. Symmetric Hausdorff
+    // asks the right question: does the merged outline still trace the
+    // same walls? The area band (now two-sided) additionally rejects a
+    // regularization that shrank a real wing OR filled in a real notch.
+    const orthoHausdorff = symmetricHausdorffPx(simplified, ortho);
     const orthoOk =
       ortho.length >= 4 &&
       !orthoSelfX &&
-      !orthoVertChange &&
       orthoArea >= MIN_AREA_RATIO &&
-      orthoDrift <= MAX_VERTEX_DRIFT_PX;
+      orthoArea <= MAX_AREA_RATIO &&
+      orthoHausdorff <= MAX_HAUSDORFF_PX;
     if (orthoOk) {
       cleaned = ortho;
       cleanup = { kind: "ortho", vertCount: ortho.length };
@@ -197,11 +208,11 @@ export function polygonFromSolarMask(
       cleaned = simplified;
       const why = orthoSelfX
         ? "ortho self-intersected"
-        : orthoVertChange
-          ? `ortho vert count changed (${simplified.length}→${ortho.length})`
-          : orthoArea < MIN_AREA_RATIO
-            ? `ortho area shrunk to ${(orthoArea * 100).toFixed(0)}%`
-            : `ortho drifted ${orthoDrift.toFixed(0)} px`;
+        : orthoArea < MIN_AREA_RATIO
+          ? `ortho area shrunk to ${(orthoArea * 100).toFixed(0)}%`
+          : orthoArea > MAX_AREA_RATIO
+            ? `ortho area grew to ${(orthoArea * 100).toFixed(0)}%`
+            : `ortho drifted ${orthoHausdorff.toFixed(0)} px`;
       cleanup = {
         kind: "simplified",
         vertCount: simplified.length,
@@ -287,22 +298,6 @@ function polygonArea(points: Pt[]): number {
     sum += a.x * b.y - b.x * a.y;
   }
   return Math.abs(sum) / 2;
-}
-
-/**
- * Largest displacement between two same-length polygons walked in
- * order. Used to detect when ortho regularization yanked a corner
- * far from where it actually was — meaning the dominant-axis estimate
- * was wrong for this shape and the result no longer matches the roof.
- */
-function maxPairwiseDist(a: Pt[], b: Pt[]): number {
-  if (a.length !== b.length) return Infinity;
-  let max = 0;
-  for (let i = 0; i < a.length; i++) {
-    const d = Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y);
-    if (d > max) max = d;
-  }
-  return max;
 }
 
 /**

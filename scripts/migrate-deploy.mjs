@@ -18,8 +18,13 @@
  */
 import { spawnSync } from "node:child_process";
 
-const MAX_ATTEMPTS = Math.max(1, Number(process.env.MIGRATE_MAX_ATTEMPTS) || 5);
-const BACKOFF_MS = Math.max(0, Number(process.env.MIGRATE_BACKOFF_MS) || 4000);
+// 8 linear-backoff attempts ≈ 3.7 min of patience: the 5-attempt/~1-min
+// window still lost a real build to a Neon cold/unreachable spell that the
+// very next push sailed through — a cold compute (or a brief Neon incident)
+// can take minutes, and a couple extra build minutes is far cheaper than a
+// dead deploy.
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.MIGRATE_MAX_ATTEMPTS) || 8);
+const BACKOFF_MS = Math.max(0, Number(process.env.MIGRATE_BACKOFF_MS) || 6000);
 
 // Substrings that mark a transient CONNECTIVITY failure (retry), as opposed
 // to a real migration failure (fail fast). Prisma surfaces P1001/P1002 for
@@ -40,6 +45,27 @@ function isRetryable(output) {
   return RETRYABLE.some((needle) => output.includes(needle));
 }
 
+// Prisma's default connect timeout (~5s) is shorter than a Neon scale-to-zero
+// wake-up can take, so the first attempt used to fail with P1001 and spray the
+// build log with red before a retry landed. Giving the connector 30s covers
+// the wake-up so the FIRST attempt succeeds on a cold compute.
+const CONNECT_TIMEOUT_S = Math.max(
+  1,
+  Number(process.env.MIGRATE_CONNECT_TIMEOUT_S) || 30,
+);
+
+function withConnectTimeout(url) {
+  if (!url || /[?&]connect_timeout=/.test(url)) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}connect_timeout=${CONNECT_TIMEOUT_S}`;
+}
+
+const migrateEnv = {
+  ...process.env,
+  DATABASE_URL: withConnectTimeout(process.env.DATABASE_URL),
+  DATABASE_URL_UNPOOLED: withConnectTimeout(process.env.DATABASE_URL_UNPOOLED),
+};
+
 // Synchronous sleep with no deps (keeps this a single-file, install-free
 // build step). Blocks the thread for `ms`.
 function sleepSync(ms) {
@@ -50,14 +76,15 @@ function sleepSync(ms) {
 for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   const res = spawnSync("npx", ["prisma", "migrate", "deploy"], {
     encoding: "utf8",
-    env: process.env,
+    env: migrateEnv,
   });
 
   const output = (res.stdout || "") + (res.stderr || "");
-  if (res.stdout) process.stdout.write(res.stdout);
-  if (res.stderr) process.stderr.write(res.stderr);
 
   if (res.status === 0) {
+    // Only the winning attempt's output reaches the build log — the failed
+    // attempts' P1001 spam stays buffered and dies here.
+    if (res.stdout) process.stdout.write(res.stdout);
     if (attempt > 1) {
       console.log(
         `[migrate-deploy] succeeded on attempt ${attempt}/${MAX_ATTEMPTS}.`,
@@ -73,6 +100,8 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   }
 
   if (!isRetryable(output)) {
+    if (res.stdout) process.stdout.write(res.stdout);
+    if (res.stderr) process.stderr.write(res.stderr);
     console.error(
       `[migrate-deploy] migration failed (not a connectivity error) — failing the build without retry.`,
     );
@@ -81,10 +110,14 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
 
   if (attempt < MAX_ATTEMPTS) {
     const wait = BACKOFF_MS * attempt; // linear: 4s, 8s, 12s, …
-    console.error(
-      `[migrate-deploy] database unreachable (attempt ${attempt}/${MAX_ATTEMPTS}) — Neon compute is likely cold. Retrying in ${wait}ms…`,
+    console.log(
+      `[migrate-deploy] database not reachable yet (attempt ${attempt}/${MAX_ATTEMPTS}) — waiting ${Math.round(wait / 1000)}s for the Neon compute to wake…`,
     );
     sleepSync(wait);
+  } else {
+    // Out of attempts: NOW show what Prisma actually said, once.
+    if (res.stdout) process.stdout.write(res.stdout);
+    if (res.stderr) process.stderr.write(res.stderr);
   }
 }
 

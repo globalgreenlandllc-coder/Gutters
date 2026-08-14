@@ -11,6 +11,9 @@ export type ProposalEmailVars = {
   portalUrl: string;
   /** Free-form note from the contractor's "compose" textarea. */
   message: string;
+  /** Portal deep link that scrolls to the "Listen to this quote" TTS
+   *  player (portalUrl + ?listen=1). Omit to hide the listen line. */
+  listenUrl?: string;
 };
 
 /**
@@ -59,12 +62,19 @@ export function renderProposalEmail(v: ProposalEmailVars): {
 
             <tr>
               <td align="center" style="padding:24px 28px;">
-                <a href="${escapeAttr(v.portalUrl)}" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">
+                <a href="${escapeAttr(v.portalUrl)}" style="display:inline-block;background:#14688C;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">
                   Review &amp; accept
                 </a>
                 <div style="margin-top:10px;font-size:12px;color:#71717a;">
                   Three packages · digital signature · pay your deposit in one click
                 </div>
+                ${
+                  v.listenUrl
+                    ? `<div style="margin-top:14px;font-size:13px;color:#52525b;">
+                  🎧 On the road? <a href="${escapeAttr(v.listenUrl)}" style="color:#14688C;font-weight:600;">Listen to a one-minute summary</a> of your quote.
+                </div>`
+                    : ""
+                }
               </td>
             </tr>
 
@@ -75,7 +85,7 @@ export function renderProposalEmail(v: ProposalEmailVars): {
                   <a href="tel:${escapeAttr(v.contractorPhone)}" style="color:#3f3f46;text-decoration:none;font-weight:500;">${escapeHtml(v.contractorPhone)}</a>.
                   <br />
                   If the button doesn't work, paste this link into your browser:<br />
-                  <a href="${escapeAttr(v.portalUrl)}" style="color:#0e7490;word-break:break-all;">${escapeHtml(v.portalUrl)}</a>
+                  <a href="${escapeAttr(v.portalUrl)}" style="color:#14688C;word-break:break-all;">${escapeHtml(v.portalUrl)}</a>
                 </div>
               </td>
             </tr>
@@ -83,6 +93,10 @@ export function renderProposalEmail(v: ProposalEmailVars): {
 
           <div style="margin-top:14px;font-size:11px;color:#a1a1aa;">
             Sent securely via Gutters AI on behalf of ${escapeHtml(v.contractorCompany)}.
+            <br />
+            <a href="${escapeAttr(originOf(v.portalUrl))}/?ref=proposal-email" style="color:#a1a1aa;text-decoration:underline;">
+              Powered by GutterScan — send quotes like this in 60 seconds
+            </a>
           </div>
         </td>
       </tr>
@@ -98,6 +112,9 @@ export function renderProposalEmail(v: ProposalEmailVars): {
     v.message,
     "",
     `Review and accept: ${v.portalUrl}`,
+    ...(v.listenUrl
+      ? ["", `On the road? Listen to a one-minute audio summary: ${v.listenUrl}`]
+      : []),
     "",
     `Questions? Reply to this email or call ${v.contractorName} at ${v.contractorPhone}.`,
   ].join("\n");
@@ -116,4 +133,13 @@ function escapeHtml(s: string): string {
 
 function escapeAttr(s: string): string {
   return escapeHtml(s);
+}
+
+/** Origin of the portal link — the landing lives on the same host. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "https://gutters.app";
+  }
 }

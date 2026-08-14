@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,6 +12,8 @@ import {
   Search,
   ShieldAlert,
   Sparkles,
+  Tag,
+  UserCog,
   UserMinus,
   UserPlus,
   Users as UsersIcon,
@@ -22,23 +24,49 @@ import { Button } from "@/components/ui/button";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   adjustCredits,
+  setUserRole,
   setUserStatus,
+  setUserTier,
   startImpersonation,
   type AdminUserRow,
+  type UserTier,
 } from "@/app/actions/admin";
 
-export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
+const TIER_META: Record<
+  UserTier,
+  { label: string; tone: "emerald" | "sky" | "neutral" }
+> = {
+  pro: { label: "Pro", tone: "emerald" },
+  trial: { label: "Trial", tone: "sky" },
+  free: { label: "Free", tone: "neutral" },
+};
+
+const ROLE_LABEL: Record<AdminUserRow["role"], string> = {
+  CONTRACTOR: "Contractor",
+  WORKER: "Worker",
+  SUPER_ADMIN: "Admin",
+};
+
+export function UsersTable({
+  rows: initial,
+  initialQuery = "",
+}: {
+  rows: AdminUserRow[];
+  initialQuery?: string;
+}) {
   const [rows, setRows] = useState(initial);
   const [filter, setFilter] = useState<
     "all" | "active" | "suspended" | "admin" | "no_payments"
   >("all");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [editing, setEditing] = useState<AdminUserRow | null>(null);
   const [confirm, setConfirm] = useState<{
     user: AdminUserRow;
     action: "suspend" | "unsuspend";
   } | null>(null);
   const [impersonating, setImpersonating] = useState<AdminUserRow | null>(null);
+  const [changingRole, setChangingRole] = useState<AdminUserRow | null>(null);
+  const [changingPlan, setChangingPlan] = useState<AdminUserRow | null>(null);
 
   const filtered = rows.filter((r) => {
     if (filter === "active" && r.status !== "ACTIVE") return false;
@@ -61,7 +89,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
 
   return (
     <>
-      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
+      <div className="surface overflow-hidden shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
           <div className="flex flex-wrap gap-1">
             {(
@@ -91,10 +119,10 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition",
+                    "transition-smooth ring-focus inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium",
                     active
                       ? "bg-zinc-900 text-white"
-                      : "text-zinc-600 hover:bg-zinc-100",
+                      : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900",
                   )}
                 >
                   {f.label}
@@ -112,7 +140,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
               );
             })}
           </div>
-          <div className="relative flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm transition focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
+          <div className="transition-smooth relative flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/15">
             <Search className="mr-2 h-4 w-4 text-zinc-400" />
             <input
               value={query}
@@ -123,7 +151,7 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           </div>
         </div>
 
-        <div className="hidden grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500 lg:grid">
+        <div className="font-label hidden grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] gap-4 border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-400 lg:grid">
           <div>Contractor · Email</div>
           <div>Plan</div>
           <div className="text-right">Credits</div>
@@ -144,15 +172,16 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
           <ul>
             {filtered.map((u) => (
               <li key={u.id} className="border-b border-zinc-100 last:border-0">
-                <div className="grid grid-cols-1 gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
+                <div className="transition-smooth grid grid-cols-1 gap-2 px-4 py-3.5 hover:bg-zinc-50/60 lg:grid-cols-[minmax(0,1fr)_120px_110px_120px_120px_110px_60px] lg:items-center lg:gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-zinc-900">
                         {u.company || u.contractorName || u.email}
                       </span>
                       {u.role === "SUPER_ADMIN" && (
-                        <Badge tone="rose">Admin</Badge>
+                        <Badge tone="violet">Admin</Badge>
                       )}
+                      {u.role === "WORKER" && <Badge tone="sky">Worker</Badge>}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-zinc-500">
                       {u.email}
@@ -165,8 +194,19 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                   </div>
 
                   <div className="text-xs text-zinc-600">
-                    Pro · $50/mo
-                    <div className="text-zinc-400">
+                    {u.subscriptionStatus === "PAST_DUE" ? (
+                      // A declining card reads as an at-risk account, not a
+                      // healthy "Pro" — matches the user's own settings badge.
+                      <Badge tone="amber">
+                        <AlertTriangle className="h-3 w-3" />
+                        Payment failed
+                      </Badge>
+                    ) : (
+                      <Badge tone={TIER_META[u.tier].tone}>
+                        {TIER_META[u.tier].label}
+                      </Badge>
+                    )}
+                    <div className="mt-1 text-zinc-400">
                       Joined{" "}
                       {new Date(u.createdAt).toLocaleDateString("en-US", {
                         month: "short",
@@ -201,6 +241,8 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
                       user={u}
                       onEditCredits={() => setEditing(u)}
                       onImpersonate={() => setImpersonating(u)}
+                      onChangeRole={() => setChangingRole(u)}
+                      onChangePlan={() => setChangingPlan(u)}
                       onConfirmStatus={(action) => setConfirm({ user: u, action })}
                     />
                   </div>
@@ -233,6 +275,24 @@ export function UsersTable({ rows: initial }: { rows: AdminUserRow[] }) {
         user={impersonating}
         onClose={() => setImpersonating(null)}
       />
+
+      <RoleDialog
+        user={changingRole}
+        onClose={() => setChangingRole(null)}
+        onApplied={(updated) => {
+          applyRowUpdate(updated);
+          setChangingRole(null);
+        }}
+      />
+
+      <PlanDialog
+        user={changingPlan}
+        onClose={() => setChangingPlan(null)}
+        onApplied={(updated) => {
+          applyRowUpdate(updated);
+          setChangingPlan(null);
+        }}
+      />
     </>
   );
 }
@@ -247,7 +307,7 @@ function StatusBadge({ status }: { status: AdminUserRow["status"] }) {
     );
   }
   return (
-    <Badge tone="accent">
+    <Badge tone="emerald">
       <CheckCircle2 className="h-3 w-3" />
       Active
     </Badge>
@@ -268,7 +328,7 @@ function PaymentsBadge({ payments }: { payments: AdminUserRow["payments"] }) {
     .filter(Boolean)
     .join(" + ");
   return (
-    <Badge tone="accent" className="gap-1">
+    <Badge tone="emerald" className="gap-1">
       <CreditCard className="h-3 w-3" />
       {labels}
     </Badge>
@@ -279,19 +339,24 @@ function RowMenu({
   user,
   onEditCredits,
   onImpersonate,
+  onChangeRole,
+  onChangePlan,
   onConfirmStatus,
 }: {
   user: AdminUserRow;
   onEditCredits: () => void;
   onImpersonate: () => void;
+  onChangeRole: () => void;
+  onChangePlan: () => void;
   onConfirmStatus: (action: "suspend" | "unsuspend") => void;
 }) {
   const [open, setOpen] = useState(false);
+  const isAdmin = user.role === "SUPER_ADMIN";
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+        className="transition-smooth ring-focus flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
         aria-label="Actions"
       >
         <MoreHorizontal className="h-4 w-4" />
@@ -299,13 +364,39 @@ function RowMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
+          <div className="anim-pop origin-top-right absolute right-0 z-20 mt-1 w-52 rounded-xl border border-zinc-200 bg-white p-1 shadow-elevated">
+            <button
+              onClick={() => {
+                onChangePlan();
+                setOpen(false);
+              }}
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+            >
+              <Tag className="h-3.5 w-3.5 text-accent-600" />
+              Change plan
+            </button>
+            <button
+              onClick={() => {
+                onChangeRole();
+                setOpen(false);
+              }}
+              disabled={isAdmin}
+              title={
+                isAdmin
+                  ? "Admins are managed via the ADMIN_EMAILS env var"
+                  : "Switch between Contractor and Worker"
+              }
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+            >
+              <UserCog className="h-3.5 w-3.5 text-accent-600" />
+              Change role
+            </button>
             <button
               onClick={() => {
                 onEditCredits();
                 setOpen(false);
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 transition hover:bg-zinc-50"
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
             >
               <Sparkles className="h-3.5 w-3.5 text-accent-600" />
               Adjust credits
@@ -323,7 +414,7 @@ function RowMenu({
                   ? "Reinstate the user before impersonating"
                   : "Shadow-login as this contractor"
               }
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
+              className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:text-zinc-400 disabled:hover:bg-transparent"
             >
               <Eye className="h-3.5 w-3.5" />
               Impersonate
@@ -336,7 +427,7 @@ function RowMenu({
                   setOpen(false);
                 }}
                 disabled={user.role === "SUPER_ADMIN"}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 <UserMinus className="h-3.5 w-3.5" />
                 Suspend account
@@ -347,7 +438,7 @@ function RowMenu({
                   onConfirmStatus("unsuspend");
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-accent-700 transition hover:bg-accent-50"
+                className="transition-smooth ring-focus flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-accent-700 hover:bg-accent-50"
               >
                 <UserPlus className="h-3.5 w-3.5" />
                 Reinstate account
@@ -395,7 +486,7 @@ function CreditsDialog({
     <Dialog open={!!user} onClose={onClose} title="Adjust credits">
       {user && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {user.company || user.contractorName || user.email}
             </div>
@@ -408,19 +499,19 @@ function CreditsDialog({
           </div>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Adjustment (positive = add bonus credits, negative = mark used)
             </span>
             <input
               type="number"
               value={delta}
               onChange={(e) => setDelta(parseInt(e.target.value, 10) || 0)}
-              className="num-input mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-base font-medium text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input num-input mt-1.5 h-11 text-base font-medium"
             />
           </label>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -428,7 +519,7 @@ function CreditsDialog({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Comp for failed AI run on 1247 Maple Ridge"
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
@@ -478,7 +569,7 @@ function StatusConfirm({
     >
       {confirm && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {confirm.user.company || confirm.user.email}
             </div>
@@ -492,7 +583,7 @@ function StatusConfirm({
           </p>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -504,7 +595,7 @@ function StatusConfirm({
                   ? "e.g. Repeated chargebacks"
                   : "e.g. Resolved billing issue"
               }
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
@@ -557,7 +648,7 @@ function ImpersonateDialog({
     <Dialog open={!!user} onClose={onClose} title="Impersonate contractor">
       {user && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm">
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm">
             <div className="flex items-start gap-2">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
               <div className="text-amber-900">
@@ -574,7 +665,7 @@ function ImpersonateDialog({
             </div>
           </div>
 
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 text-sm">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
             <div className="font-medium text-zinc-900">
               {user.company || user.contractorName || user.email}
             </div>
@@ -582,7 +673,7 @@ function ImpersonateDialog({
           </div>
 
           <label className="block">
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <span className="font-label text-[11px] text-zinc-500">
               Reason (audit log)
             </span>
             <input
@@ -590,12 +681,12 @@ function ImpersonateDialog({
               onChange={(e) => setReason(e.target.value)}
               placeholder="e.g. Debugging Stripe Connect on their account"
               autoFocus
-              className="mt-1.5 h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="input mt-1.5 h-11"
             />
           </label>
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -615,6 +706,235 @@ function ImpersonateDialog({
   );
 }
 
+function RoleDialog({
+  user,
+  onClose,
+  onApplied,
+}: {
+  user: AdminUserRow | null;
+  onClose: () => void;
+  onApplied: (u: AdminUserRow) => void;
+}) {
+  const [role, setRole] = useState<"CONTRACTOR" | "WORKER">("CONTRACTOR");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  // Seed the selection from the user each time the dialog opens; reset when
+  // it closes so reopening the same user re-reads their current role.
+  const seed = user?.role === "WORKER" ? "WORKER" : "CONTRACTOR";
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (!user && seededFor !== null) setSeededFor(null);
+  if (user && seededFor !== user.id) {
+    setSeededFor(user.id);
+    setRole(seed);
+    setError(null);
+  }
+
+  function submit() {
+    if (!user) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await setUserRole(user.id, role);
+        onApplied({ ...user, role });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not change role");
+      }
+    });
+  }
+
+  const options: { id: "CONTRACTOR" | "WORKER"; label: string; hint: string }[] =
+    [
+      { id: "CONTRACTOR", label: "Contractor", hint: "Full owner account" },
+      { id: "WORKER", label: "Worker", hint: "Crew member — redacted pricing" },
+    ];
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Change role">
+      {user && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
+            <div className="font-medium text-zinc-900">
+              {user.company || user.contractorName || user.email}
+            </div>
+            <div className="text-xs text-zinc-500">{user.email}</div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {options.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => setRole(o.id)}
+                className={cn(
+                  "transition-smooth ring-focus rounded-lg border p-3 text-left",
+                  role === o.id
+                    ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/15"
+                    : "border-zinc-200 hover:border-zinc-300",
+                )}
+              >
+                <div className="text-sm font-medium text-zinc-900">{o.label}</div>
+                <div className="mt-0.5 text-xs text-zinc-500">{o.hint}</div>
+              </button>
+            ))}
+          </div>
+
+          <p className="text-xs text-zinc-400">
+            Admin access is managed via the ADMIN_EMAILS env var, not here.
+          </p>
+
+          {error && (
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={submit}
+              disabled={pending || role === user.role}
+            >
+              {pending ? "Saving…" : "Save role"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function PlanDialog({
+  user,
+  onClose,
+  onApplied,
+}: {
+  user: AdminUserRow | null;
+  onClose: () => void;
+  onApplied: (u: AdminUserRow) => void;
+}) {
+  const [tier, setTier] = useState<UserTier>("free");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  if (!user && seededFor !== null) setSeededFor(null);
+  if (user && seededFor !== user.id) {
+    setSeededFor(user.id);
+    setTier(user.tier);
+    setError(null);
+  }
+
+  function submit() {
+    if (!user) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await setUserTier(user.id, tier);
+        // Mirror the server's tier -> status/planId mapping for the
+        // optimistic row so the badge updates without a refetch. Free
+        // deletes the row server-side, so it becomes a null subscription.
+        const mapped =
+          tier === "pro"
+            ? { subscriptionStatus: "ACTIVE" as const, planId: "pro_monthly" }
+            : tier === "trial"
+              ? { subscriptionStatus: "TRIALING" as const, planId: "pro_monthly" }
+              : { subscriptionStatus: null, planId: null };
+        onApplied({ ...user, tier, ...mapped });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not change plan");
+      }
+    });
+  }
+
+  const options: { id: UserTier; label: string; hint: string }[] = [
+    { id: "free", label: "Free", hint: "No subscription" },
+    { id: "trial", label: "Trial", hint: "Trialing Pro" },
+    { id: "pro", label: "Pro", hint: "Counts as paying" },
+  ];
+
+  return (
+    <Dialog open={!!user} onClose={onClose} title="Change plan">
+      {user && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm">
+            <div className="font-medium text-zinc-900">
+              {user.company || user.contractorName || user.email}
+            </div>
+            <div className="text-xs text-zinc-500">{user.email}</div>
+          </div>
+
+          {user.stripeLinked ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm">
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <div className="text-amber-900">
+                  This account has a live Stripe subscription. Change its plan
+                  in Stripe — a manual override here would be overwritten by the
+                  next billing webhook.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {options.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => setTier(o.id)}
+                    className={cn(
+                      "transition-smooth ring-focus rounded-lg border p-3 text-left",
+                      tier === o.id
+                        ? "border-accent-500 bg-accent-50/60 ring-2 ring-accent-500/15"
+                        : "border-zinc-200 hover:border-zinc-300",
+                    )}
+                  >
+                    <div className="text-sm font-medium text-zinc-900">
+                      {o.label}
+                    </div>
+                    <div className="mt-0.5 text-[11px] leading-tight text-zinc-500">
+                      {o.hint}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-400">
+                This sets the billing label only — it doesn&apos;t change credits
+                (use Adjust credits for that).
+              </p>
+            </>
+          )}
+
+          {error && (
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={pending}>
+              {user.stripeLinked ? "Close" : "Cancel"}
+            </Button>
+            {!user.stripeLinked && (
+              <Button
+                size="sm"
+                onClick={submit}
+                disabled={pending || tier === user.tier}
+              >
+                {pending ? "Saving…" : "Save plan"}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 function Dialog({
   open,
   onClose,
@@ -626,11 +946,12 @@ function Dialog({
   title: string;
   children: React.ReactNode;
 }) {
+  const reduce = useReducedMotion();
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -638,20 +959,20 @@ function Dialog({
         >
           <div className="absolute inset-0 bg-zinc-900/30 backdrop-blur-sm" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-elevated"
+            className="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-elevated"
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="transition-smooth ring-focus absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               {title}
             </h2>
             <div className="mt-4">{children}</div>

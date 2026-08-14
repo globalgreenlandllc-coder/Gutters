@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
+import { DUR, EASE, fadeInUp, staggerContainer } from "@/lib/motion";
 import {
   AlertTriangle,
   Building2,
-  Camera,
   PencilRuler,
   RefreshCcw,
   Ruler,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { TopBar } from "./top-bar";
 import { AerialCanvas, lineLengthFt } from "./aerial-canvas";
+import { GutterDiagram } from "./gutter-diagram";
 import { Massing3D } from "./massing-3d";
 import { PdfPlanView } from "./pdf-plan-view";
 import { ElevationsView } from "./elevations-view";
@@ -42,10 +43,18 @@ export function ResultsView({
    *  the right row. */
   planId?: string;
 }) {
+  const reduce = useReducedMotion();
   const [eaves, setEaves] = useState(initial.eaves);
   const [downspouts, setDownspouts] = useState(initial.downspouts);
+  // Satellite (address) estimates open on "Photo & edit" — the trace ON
+  // the real photo — so the contractor verifies/adjusts runs against the
+  // actual roof FIRST; the clean "Diagram" drafting sheet is the second
+  // tab (the deliverable, once the trace is right). Plan estimates keep
+  // the roof plan / sheet / elevations flow.
+  const isSatelliteEstimate =
+    !!initial.aerial?.imageDataUrl && !initial.planSource;
   const [viewMode, setViewMode] = useState<
-    "plan" | "sheet" | "elevations" | "3d"
+    "diagram" | "plan" | "sheet" | "elevations" | "3d"
   >("plan");
   // When the Elevations view hands off to the trace tool, it carries the
   // page to open the Plan-sheet on.
@@ -69,6 +78,12 @@ export function ResultsView({
   // (they're in the old projected space and would misalign); per-edge gable
   // marking on the outline repopulates them.
   const [rakes, setRakes] = useState(initial.rakes);
+  // Suggested interior gutter runs (un-priced tier-break hints). Kept in
+  // their own state so they NEVER enter the priced `eaves` sum. Accepting
+  // one (tap-to-add) moves it out of here and into `eaves`.
+  const [suggestedEaves, setSuggestedEaves] = useState(
+    initial.suggestedEaves ?? [],
+  );
   // Gable flags per traced-outline edge (true = rake/gable, no gutter).
   const [planOutlineGables, setPlanOutlineGables] = useState<boolean[]>([]);
   const setOutline = (o: { x: number; y: number }[]) => {
@@ -202,13 +217,14 @@ export function ResultsView({
     eaves,
     rakes,
     downspouts,
+    suggestedEaves,
     roofStructure,
     aerial: initial.aerial,
     canvasPxPerFt,
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-paper">
       <TopBar
         address={address}
         handoff={handoff}
@@ -216,59 +232,85 @@ export function ResultsView({
         planId={planId}
       />
 
+      {/* The payoff moment after a 30-90s wait: header → canvas → pricing
+          rail rise in with a short stagger instead of one flat fade. */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        initial={reduce ? false : "hidden"}
+        animate="visible"
+        variants={staggerContainer(0.06)}
         className="flex-1"
       >
         <div className="mx-auto grid max-w-[1600px] gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className="flex flex-col gap-4">
-            <PropertyHeader
-              address={address}
-              measurements={measurements}
-              source={initial.source}
-              reused={reused}
-              durationMs={initial.durationMs}
-              notes={initial.notes}
-              onStoriesChange={setStories}
-            />
+            <motion.div variants={fadeInUp}>
+              <PropertyHeader
+                address={address}
+                measurements={measurements}
+                source={initial.source}
+                reused={reused}
+                durationMs={initial.durationMs}
+                notes={initial.notes}
+                onStoriesChange={setStories}
+              />
+            </motion.div>
             {traceQuality && traceQuality.status !== "ok" && (
               <BadTraceBanner
                 quality={traceQuality}
                 hasLines={eaves.length > 0}
                 onDrawFresh={() => {
+                  // Drop the user onto the editable canvas — the drawing
+                  // tool lives in AerialCanvas ("Photo & edit"), which is
+                  // NOT mounted on the default satellite Diagram view, so
+                  // arming drawNonce alone would do nothing there.
+                  //
+                  // Clear EVERYTHING the AI derived, not just the eaves: the
+                  // downspouts, rakes, and suggested tier-drops were all
+                  // placed FROM those eaves, so wiping eaves alone orphans
+                  // them — that's how a "bad pic" redraw left 9 downspouts
+                  // floating over 0 LF of gutter.
                   setEaves([]);
+                  setDownspouts([]);
+                  setRakes([]);
+                  setSuggestedEaves([]);
+                  setViewMode("plan");
                   setDrawNonce((n) => n + 1);
                 }}
-                onKeepAndEdit={() => setDrawNonce((n) => n + 1)}
+                onKeepAndEdit={() => {
+                  setViewMode("plan");
+                  setDrawNonce((n) => n + 1);
+                }}
               />
             )}
-            <div className="min-h-[520px] flex-1">
+            <motion.div variants={fadeInUp} className="min-h-[520px] flex-1">
               {/* Roof plan ⇄ 3D view toggle. 3D is a read-only, decorative
                   massing — pricing/LF comes from the same live eaves either
                   way. Disabled without a real roof outline. */}
-              <div className="mb-2 inline-flex rounded-full border border-zinc-200 p-0.5 text-xs dark:border-zinc-700">
+              <div className="mb-2 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5">
                 {(
                   [
                     "plan",
+                    isSatelliteEstimate ? "diagram" : null,
                     hasSheet ? "sheet" : null,
                     hasSheet ? "elevations" : null,
                     "3d",
                   ].filter(Boolean) as Array<
-                    "plan" | "sheet" | "elevations" | "3d"
+                    "diagram" | "plan" | "sheet" | "elevations" | "3d"
                   >
                 ).map((m) => {
                   const active = viewMode === m;
                   const disabled = m === "3d" && !can3d;
                   const label =
-                    m === "plan"
-                      ? "Roof plan"
-                      : m === "sheet"
-                        ? "Plan sheet"
-                        : m === "elevations"
-                          ? "Elevations"
-                          : "3D";
+                    m === "diagram"
+                      ? "Diagram"
+                      : m === "plan"
+                        ? isSatelliteEstimate
+                          ? "Photo & edit"
+                          : "Roof plan"
+                        : m === "sheet"
+                          ? "Plan sheet"
+                          : m === "elevations"
+                            ? "Elevations"
+                            : "3D";
                   return (
                     <button
                       key={m}
@@ -285,15 +327,27 @@ export function ResultsView({
                               : undefined
                       }
                       className={
-                        "rounded-full px-3 py-1 font-medium transition " +
+                        "ring-focus relative rounded-md px-2.5 py-1 text-xs font-medium transition-smooth " +
                         (active
-                          ? "bg-emerald-600 text-white"
+                          ? "text-zinc-900"
                           : disabled
-                            ? "cursor-not-allowed text-zinc-400"
-                            : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800")
+                            ? "cursor-not-allowed text-zinc-300"
+                            : "text-zinc-500 hover:text-zinc-900")
                       }
                     >
-                      {label}
+                      {/* Sliding highlight — same treatment as the pricing
+                          rail tabs so the two switchers read as one system. */}
+                      {active && (
+                        <motion.span
+                          layoutId="view-mode-pill"
+                          className="absolute inset-0 rounded-md bg-zinc-100"
+                          transition={{
+                            duration: reduce ? 0 : DUR.base,
+                            ease: EASE,
+                          }}
+                        />
+                      )}
+                      <span className="relative">{label}</span>
                     </button>
                   );
                 })}
@@ -333,11 +387,33 @@ export function ResultsView({
                   planSource={initial.planSource}
                   stories={stories}
                 />
+              ) : viewMode === "diagram" ? (
+                <div className="aspect-[16/10] w-full overflow-hidden rounded-xl">
+                  <GutterDiagram
+                    eaves={eaves}
+                    rakes={rakes}
+                    downspouts={downspouts}
+                    roofStructure={roofStructure}
+                    pxPerFt={canvasPxPerFt}
+                    address={address}
+                    confidence={roofStructure?.confidence}
+                  />
+                </div>
               ) : (
                 <AerialCanvas
                   eaves={eaves}
                   rakes={rakes}
                   downspouts={downspouts}
+                  suggestedEaves={suggestedEaves}
+                  onAcceptSuggested={(line) => {
+                    // Move the tapped suggestion OUT of the un-priced pool
+                    // and INTO the priced eaves — from here on it's a normal
+                    // editable run (drag/delete/re-tier like any other).
+                    setSuggestedEaves((prev) =>
+                      prev.filter((l) => l.id !== line.id),
+                    );
+                    setEaves((prev) => [...prev, { ...line, kind: "eave" }]);
+                  }}
                   onEavesChange={setEaves}
                   onRakesChange={setRakes}
                   onDownspoutsChange={setDownspouts}
@@ -346,19 +422,30 @@ export function ResultsView({
                   roofStructure={roofStructure}
                   pxPerFt={canvasPxPerFt}
                   armDrawNonce={drawNonce}
+                  magnetPath={initial.magnetPath}
+                  magnetRingCount={initial.magnetRingCount}
                 />
               )}
-            </div>
-            <SiteContext />
+            </motion.div>
           </div>
 
-          <div className="lg:sticky lg:top-[72px] lg:self-start">
-            <div className="rounded-2xl border border-zinc-200 bg-white shadow-card">
-              <div className="h-[calc(100vh-7rem)] overflow-hidden lg:max-h-[calc(100vh-7rem)]">
-                <PricingPanel measurements={measurements} handoff={handoff} />
+          <motion.div
+            variants={fadeInUp}
+            className="lg:sticky lg:top-[72px] lg:self-start"
+          >
+            <div className="rounded-2xl border border-zinc-200/70 bg-white shadow-card">
+              {/* Desktop: viewport-tall sticky rail with its own inner scroll.
+                  Mobile (stacked): natural height so the page scrolls as one —
+                  a fixed 100vh box here trapped phone users in nested scroll. */}
+              <div className="lg:h-[calc(100vh-7rem)] lg:max-h-[calc(100vh-7rem)] lg:overflow-hidden">
+                <PricingPanel
+                  measurements={measurements}
+                  handoff={handoff}
+                  jobType={jobType}
+                />
               </div>
             </div>
-          </div>
+          </motion.div>
         </div>
       </motion.div>
     </div>
@@ -386,21 +473,19 @@ function PropertyHeader({
   onStoriesChange?: (n: 1 | 2 | 3) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+    <div className="rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-zinc-400" />
-            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h1 className="truncate text-lg font-semibold tracking-tight text-zinc-900">
               {address}
             </h1>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             {onStoriesChange ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-400">
-                  Stories
-                </span>
+                <span className="microlabel">Stories</span>
                 <span className="inline-flex overflow-hidden rounded-full border border-zinc-200 bg-zinc-50/50">
                   {([1, 2, 3] as const).map((n) => {
                     const active = measurements.stories === n;
@@ -410,7 +495,9 @@ function PropertyHeader({
                         type="button"
                         onClick={() => onStoriesChange(n)}
                         className={
-                          "px-2 py-0.5 text-xs font-semibold tabular-nums transition " +
+                          // Inset focus ring — the parent pill clips
+                          // outset rings with overflow-hidden.
+                          "px-2 py-0.5 text-xs font-semibold tabular-nums transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40 " +
                           (active
                             ? "bg-accent-600 text-white"
                             : "text-zinc-600 hover:bg-white hover:text-zinc-900")
@@ -432,11 +519,16 @@ function PropertyHeader({
               </span>
             )}
             <span>·</span>
-            <span>
+            {/* Gutter MITERS (eave-meets-eave corners), not outline corners —
+                rake/unknown edges suppress theirs, so a 16-corner outline can
+                legitimately read "6". Label it what it is. */}
+            <span
+              title={`${measurements.outsideCorners} outside · ${measurements.insideCorners} inside`}
+            >
               <span className="text-zinc-700">
                 {measurements.outsideCorners + measurements.insideCorners}
               </span>{" "}
-              corners
+              gutter miters
             </span>
             <span>·</span>
             <span>
@@ -466,7 +558,10 @@ function PropertyHeader({
             Reused (no credit)
           </Badge>
         )}
-        <span>· {durationMs} ms</span>
+        {/* Notes arrive empty for non-admin users (stripped server-side
+            in runEstimate/runEstimateFromPlan) — the ms timing is the
+            same diagnostic class, so it rides along with them. */}
+        {notes.length > 0 && <span>· {durationMs} ms</span>}
         {notes.map((n) => (
           <span key={n} className="rounded-full bg-zinc-100 px-2 py-0.5">
             {n}
@@ -502,35 +597,6 @@ function SourceBadge({ source }: { source: EstimateResult["source"] }) {
   );
 }
 
-function SiteContext() {
-  const items = [
-    { label: "Front facade", note: "Exposure: South" },
-    { label: "Driveway side", note: "Easy ladder access" },
-    { label: "Backyard", note: "Tree overhang — gutter guards rec." },
-  ];
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
-      <div className="flex items-center gap-2">
-        <Camera className="h-4 w-4 text-zinc-400" />
-        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-          Site context
-        </span>
-      </div>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {items.map((it) => (
-          <div
-            key={it.label}
-            className="rounded-xl border border-zinc-200 bg-zinc-50/40 p-3"
-          >
-            <div className="text-sm font-medium text-zinc-900">{it.label}</div>
-            <div className="mt-0.5 text-xs text-zinc-500">{it.note}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /**
  * "Bad satellite pic — draw it yourself" banner. Shown above the canvas
  * when the server flags the auto-trace as low/unusable (blurry tile, lines
@@ -551,10 +617,14 @@ function BadTraceBanner({
 }) {
   const unusable = quality.status === "unusable";
   return (
-    <div
+    // variants only — joins the results-reveal stagger driven by the
+    // parent container in ResultsView, so the warning rises in with the
+    // rest of the page instead of popping.
+    <motion.div
+      variants={fadeInUp}
       className={cn(
         "rounded-2xl border p-4 shadow-card",
-        unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-white",
+        unusable ? "border-amber-300 bg-amber-50" : "border-zinc-200/70 bg-white",
       )}
     >
       <div className="flex items-start gap-3">
@@ -584,7 +654,7 @@ function BadTraceBanner({
             <button
               type="button"
               onClick={onDrawFresh}
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-zinc-900 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800"
+              className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm transition-smooth hover:bg-accent-700 active:scale-[0.98]"
             >
               <PencilRuler className="h-4 w-4" />
               {unusable && hasLines
@@ -595,7 +665,7 @@ function BadTraceBanner({
               <button
                 type="button"
                 onClick={onKeepAndEdit}
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-700 transition hover:border-zinc-300"
+                className="ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 transition-smooth hover:bg-zinc-50 hover:border-zinc-300 active:scale-[0.98]"
               >
                 Keep AI lines & edit
               </button>
@@ -603,6 +673,6 @@ function BadTraceBanner({
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

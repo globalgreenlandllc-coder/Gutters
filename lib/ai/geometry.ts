@@ -1,8 +1,14 @@
-import "server-only";
+// NOTE: deliberately NOT "server-only". This module is pure coordinate
+// math (no keys, no fetch) — the node test suite and other pure modules
+// (solar-geometry.ts) import it directly. Nothing here is secret; the
+// server-only guard lives in the modules that hold keys and make calls.
 import type { SegmentedEavePolyline } from "./vision";
 import type { RoofPolygon } from "./sam";
-import { STORY_HEIGHT_FT } from "@/lib/types";
-import type { EditableLine, Downspout, Measurements, Stories } from "@/lib/types";
+import { isArchitecturalCorner } from "./roof-geom";
+// Relative (not "@/") so the node test runner resolves it without the
+// Next.js tsconfig path alias.
+import { STORY_HEIGHT_FT } from "../types";
+import type { EditableLine, Downspout, Measurements, Stories } from "../types";
 
 const METERS_PER_FOOT = 0.3048;
 
@@ -547,11 +553,18 @@ export function classifyPolygonCorners(
   polygon: RoofPolygon,
   imageWidth: number,
   imageHeight: number,
+  opts?: {
+    /** Pre-count simplification epsilon in CANVAS px. The default 6 was
+     *  tuned for jaggy SAM masks; on an already-regularized ring (the
+     *  solar engine's) 6 px ≈ 1 ft and silently un-bills the two miters
+     *  of every small real jog — those callers pass a scale-aware value. */
+    simplifyEpsPx?: number;
+  },
 ): { outside: number; inside: number } {
   const pts = ensureCCW(
     simplify(
       transformToCanvas(polygon.points, imageWidth, imageHeight),
-      6,
+      opts?.simplifyEpsPx ?? 6,
     ),
   );
   if (pts.length < 3) return { outside: 0, inside: 0 };
@@ -562,18 +575,28 @@ export function classifyPolygonCorners(
     const prev = pts[(i - 1 + pts.length) % pts.length];
     const curr = pts[i];
     const next = pts[(i + 1) % pts.length];
+    // Only count architectural corners (25–155° turns). A jaggy 0.5 m
+    // Solar-mask polygon carries dozens of near-collinear jitter vertices
+    // and near-180° hairpin spikes; the old |cross|<1e-6-only skip counted
+    // those as real corners and billed phantom miters (the impossible
+    // "7 outside / 15 inside" this house produced).
+    if (!isArchitecturalCorner(prev, curr, next)) continue;
     const v1x = curr.x - prev.x;
     const v1y = curr.y - prev.y;
     const v2x = next.x - curr.x;
     const v2y = next.y - curr.y;
     const cross = v1x * v2y - v1y * v2x;
-    if (Math.abs(cross) < 1e-6) continue; // collinear — not a corner
     // CCW polygon, y-down screen coords:
     //   cross < 0 → right turn at this vertex → OUTSIDE corner
     //   cross > 0 → left turn → INSIDE corner (concave)
     if (cross < 0) outside++;
     else inside++;
   }
+  // A valid simple building footprint always has more outside (convex)
+  // than inside (concave) corners. inside > outside means the polygon is
+  // still noise-dominated — return {0,0} so the caller falls back to the
+  // measurementsFromVision heuristic instead of billing fictitious miters.
+  if (inside > outside) return { outside: 0, inside: 0 };
   return { outside, inside };
 }
 
@@ -614,7 +637,14 @@ export function convexCornersOf(
     const v2x = next.x - curr.x;
     const v2y = next.y - curr.y;
     const cross = v1x * v2y - v1y * v2x;
-    if (cross * cwSign > 0) corners.push(curr);
+    // CONVEX (outside) corners. Sign check derived on reference squares
+    // in y-down screen coords: a visually-CW ring has NEGATIVE signedArea
+    // here (cwSign −1) and its convex corners have cross > 0; a CCW ring
+    // has cross < 0 at convex corners. Both cases ⇒ cross·cwSign < 0.
+    // The old `> 0` comparison returned the REFLEX corners on CW rings
+    // (downspouts at inside corners, 3 drops on a 250 LF house) and
+    // NOTHING on CCW rings.
+    if (cross * cwSign < 0) corners.push(curr);
   }
   return corners;
 }
@@ -725,6 +755,11 @@ export function placeDownspoutsOnPolygon(
   let i = 0;
   for (const cand of scored) {
     if (placed.length >= targetCount) break;
+    // Score 0 = no kept gutter run ends at this corner — there's nothing
+    // to drain. These are corners of held-back / phantom perimeter
+    // sections (a downspout floated in the yard at a corner whose both
+    // runs were demoted to tap-to-add).
+    if (cand.score === 0) continue;
     const tooClose = placed.some(
       (p) => Math.hypot(p.x - cand.x, p.y - cand.y) < MIN_SPACING_PX,
     );
@@ -821,6 +856,10 @@ export function measurementsFromVision(args: {
    *  mock fallback paths where we don't have a polygon. */
   outsideCorners?: number;
   insideCorners?: number;
+  /** Geometry-derived end-cap count (open eave-run terminations, via
+   *  countOpenEaveEnds). When absent, falls back to the topology-blind
+   *  eaveLF/60 length heuristic — kept for the vision/mock paths. */
+  endCaps?: number;
 }): Measurements {
   return {
     eaveLF: Math.round(args.eaveLF),
@@ -829,7 +868,7 @@ export function measurementsFromVision(args: {
       args.outsideCorners ?? Math.max(4, Math.round(args.cornerCount * 0.7)),
     insideCorners:
       args.insideCorners ?? Math.max(0, Math.round(args.cornerCount * 0.3)),
-    endCaps: Math.max(2, Math.round(args.eaveLF / 60)),
+    endCaps: args.endCaps ?? Math.max(2, Math.round(args.eaveLF / 60)),
     downspoutCount: args.downspoutCount,
     stories: args.stories ?? 2,
     wasteFactorPct: 8,

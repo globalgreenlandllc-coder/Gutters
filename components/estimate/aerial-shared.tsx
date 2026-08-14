@@ -15,6 +15,8 @@ import {
   type Pt,
   type Dormer,
 } from "@/lib/roof-skeleton";
+import { engineDrawnGeometry } from "@/lib/roof-structure-view";
+import { dropDanglingLines } from "@/lib/diagram-labels";
 import {
   perimBBox,
   anchorForSide,
@@ -64,16 +66,16 @@ export const THEMES: Record<
     label: "#5eead4",
   },
   schematic: {
-    eave: "#059669",
-    eaveSelected: "#0e7490",
+    eave: "#1479B8",
+    eaveSelected: "#14688C",
     eaveGlowFilter: null,
-    downspout: "#0e7490",
-    downspoutCore: "#0e7490",
+    downspout: "#f8717e",
+    downspoutCore: "#f8717e",
     downspoutGlowFilter: null,
     overlay: null,
-    handleStroke: "#0e7490",
+    handleStroke: "#14688C",
     handleFill: "white",
-    label: "#0e7490",
+    label: "#14688C",
   },
 };
 
@@ -473,7 +475,7 @@ export function AerialReadonly({
               filter:
                 theme === "tactical"
                   ? "drop-shadow(0 0 6px rgba(0,229,255,0.95))"
-                  : "drop-shadow(0 1px 4px rgba(5,150,105,0.45))",
+                  : "drop-shadow(0 1px 4px rgba(20,121,184,0.45))",
             }}
           />
         ))}
@@ -667,6 +669,49 @@ function sideAnchor(
 }
 
 /**
+ * FRONT / BACK / LEFT / RIGHT orientation chip positions + pill boxes.
+ * Exported so the canvases can feed the chips into the label-layout solver
+ * as fixed obstacles (an LF pill must slide around a chip, not under it) —
+ * the SAME numbers the overlay renders, so obstacle and drawing agree.
+ */
+export type OrientationChipBox = {
+  side: OrientSide;
+  label: string;
+  at: Pt;
+  w: number;
+  h: number;
+};
+
+export function orientationChipBoxes(
+  eaves: { points: { x: number; y: number }[]; side?: EaveSide }[],
+  perimeter: readonly Pt[],
+  scale: number,
+): OrientationChipBox[] {
+  const bbox = perimBBox(perimeter);
+  return (
+    [
+      ["front", "FRONT"],
+      ["back", "BACK"],
+      ["left", "LEFT"],
+      ["right", "RIGHT"],
+    ] as [OrientSide, string][]
+  )
+    .map(([side, label]) => {
+      const at = sideAnchor(eaves, side, bbox, scale);
+      return at
+        ? {
+            side,
+            label,
+            at,
+            w: (label.length * 6.2 + 12) * scale,
+            h: 14 * scale,
+          }
+        : null;
+    })
+    .filter((c): c is OrientationChipBox => c !== null);
+}
+
+/**
  * Roof-structure overlay — renders the roof like an architect's roof plan
  * sitting under the gutter trace: the filled building SHAPE, the interior
  * roof planes (ridges / hips / valleys), the perimeter (roof edge), and
@@ -685,6 +730,7 @@ export function RoofStructureOverlay({
   tone = "onDark",
   scale = 1,
   derive = false,
+  perimeterOnly = false,
   eaves = [],
   rakes = [],
 }: {
@@ -699,6 +745,13 @@ export function RoofStructureOverlay({
    *  instead of using the (sparse, unreliable) AI-traced lines. On for
    *  plan takeoffs; off for satellite (which has real ridge detection). */
   derive?: boolean;
+  /** OWNER DOCTRINE (plan takeoffs): the takeoff canvas is a GUTTER
+   *  PERIMETER diagram, not a reconstructed roof. When true, the overlay
+   *  draws ONLY the roof outline + orientation chips — no ridges, hips,
+   *  valleys, tier-step lines, plane shading or gable wings. The solid
+   *  (gutter) and dashed (gable, no gutter) perimeter edges drawn by the
+   *  canvas on top complete the diagram. */
+  perimeterOnly?: boolean;
   /** Eaves carry building side (front/back/left/right) — used to place the
    *  orientation chips. Optional; chips are skipped when absent. */
   eaves?: { points: { x: number; y: number }[]; side?: EaveSide }[];
@@ -714,6 +767,18 @@ export function RoofStructureOverlay({
   // re-renders during eave drag don't recompute the grid decomposition.
   // Hook must run before any early return.
   const skel = useMemo(() => {
+    if (perimeterOnly) {
+      // Gutter-perimeter mode: no interior geometry at all (see prop doc).
+      return {
+        ridges: [] as { points: { x: number; y: number }[] }[],
+        hips: [] as { points: { x: number; y: number }[] }[],
+        valleys: [] as { points: { x: number; y: number }[] }[],
+        gables: [] as { points: { x: number; y: number }[] }[],
+        dormers: [] as Dormer[],
+        faces: [] as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        steps: [] as { points: { x: number; y: number }[] }[],
+      };
+    }
     if (!derive) {
       return {
         ridges: structure.ridges.map((l) => ({ points: l.points })),
@@ -721,19 +786,64 @@ export function RoofStructureOverlay({
         valleys: structure.valleys.map((l) => ({ points: l.points })),
         gables: [] as { points: { x: number; y: number }[] }[],
         dormers: [] as Dormer[],
-        faces: [] as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        // Engine-computed roof PLANES travel with the takeoff — shade them
+        // (full-footprint coverage) instead of nothing. Empty on satellite
+        // and older stored takeoffs, where shading stays off as before.
+        faces: (structure.faces ?? []) as { polygon: { x: number; y: number }[]; downhill: { x: number; y: number } }[],
+        // Tier STEP edges (interior mass boundaries) — verbatim; empty on
+        // satellite and pre-steps stored takeoffs.
+        steps: (structure.steps ?? []).map((l) => ({ points: l.points })),
       };
     }
     // Feed the skeleton both the eaves (gutter runs) AND the rakes (gable
     // edges). A side draws a HIP only where a gutter runs; a side with a
     // rake — or no gutter — draws a flush GABLE end (ridge to the wall), so
     // the gable connects to the roof instead of floating as a separate stub.
+    // Explode each polyline into its constituent segments — NOT first+last.
+    // An eave that follows a wall jog (an L-shaped run) collapsed to a single
+    // diagonal chord that aligned with NO footprint side, so the skeleton's
+    // "this side is guttered → never a gable" veto missed the wall and the
+    // proposal diagram drew a phantom GABLE on a fully guttered hip side.
+    // Per-segment, each straight leg lands on its own wall and the veto holds.
     const toSegs = (ls: { points: { x: number; y: number }[] }[]) =>
       ls
         .filter((e) => e.points.length >= 2)
-        .map((e) => [e.points[0], e.points[e.points.length - 1]] as [Pt, Pt]);
+        .flatMap((e) =>
+          e.points.slice(1).map((p, i) => [e.points[i], p] as [Pt, Pt]),
+        );
+    const isUserGable = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("gable-");
+    // v2/engine rows: the stored structure IS the drawing — render it
+    // verbatim (one source of truth; labels and wedges can't disagree, and
+    // no client-side skeleton re-invents lines the sheet never evidenced).
+    // Contractor-placed gables (Add-gable tool) are explicit and still
+    // surface as dormer wings on top. Legacy rows fall through to the
+    // grid derivation below, satellite stays on the non-derive branch.
+    const engineView = engineDrawnGeometry(structure);
+    if (engineView) {
+      const userDormers = extraGablesFromRakes(
+        toSegs(rakes.filter(isUserGable)),
+        [],
+        structure.perimeter,
+        [], // no eave veto — the contractor placed these on purpose
+      );
+      return { ...engineView, dormers: userDormers };
+    }
     const eaveSegs = toSegs(eaves);
-    const rakeSegs = toSegs(rakes);
+    // v2 gable ENDS travel with the takeoff (structure.gables). Feed them to
+    // the skeleton as rake walls so the derived FACES flip hip→gable on those
+    // sides — without this the left/right wings of a cross-gabled house shade
+    // as hip corner planes that contradict the engine's drawn ridge/valley
+    // lines. They also replace the grid-derived gable list below (labels).
+    const structGables = (structure.gables ?? []).filter(
+      (l) => l.points.length >= 2,
+    );
+    const rakeSegs = [
+      ...toSegs(rakes),
+      ...structGables.map(
+        (l) => [l.points[0], l.points[l.points.length - 1]] as [Pt, Pt],
+      ),
+    ];
     const base = deriveRoofSkeleton(structure.perimeter, {
       eaveSegments: eaveSegs,
       rakeSegments: rakeSegs,
@@ -744,29 +854,73 @@ export function RoofStructureOverlay({
     // skeleton gables AND vetoed where they lie on an eave (a mis-read). A
     // CONTRACTOR-placed gable (Add-gable tool, id "gable-…") is explicit, so it
     // skips the eave veto — a real cross-gable rises above its gutter.
-    const isUser = (l: { id?: string }) =>
-      typeof l.id === "string" && l.id.startsWith("gable-");
     const aiDormers = extraGablesFromRakes(
-      toSegs(rakes.filter((l) => !isUser(l))),
+      toSegs(rakes.filter((l) => !isUserGable(l))),
       base.gables,
       structure.perimeter,
       eaveSegs,
     );
     const userDormers = extraGablesFromRakes(
-      toSegs(rakes.filter(isUser)),
+      toSegs(rakes.filter(isUserGable)),
       base.gables,
       structure.perimeter,
       [], // no eave veto — the contractor placed these on purpose
     );
-    return { ...base, dormers: [...aiDormers, ...userDormers] };
+    // Engine interior lines come in two flavors, drawn differently:
+    //  - SKELETON (ids "engine-…", NOT "engine-gable-…") is the exact straight-
+    //    skeleton — clean converging hips/ridges/valleys. When present it
+    //    REPLACES the grid skeleton's roof lines (so we don't draw the grid fan
+    //    underneath), while KEEPING the grid's gable wings + faces.
+    //  - GABLE (ids "engine-gable-…") is each cross-gable's ridge-back + valleys.
+    //    Valid regardless of the main skeleton, so it's ALWAYS appended — this is
+    //    what draws a FLUSH cross-gable when the engine rejected its main
+    //    skeleton (only the grid hip is drawn then) and the on-eave gable rakes
+    //    got vetoed. Freehand "plan-…" lines are left to the grid derivation.
+    const isEngine = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("engine-");
+    const isGable = (l: { id?: string }) =>
+      typeof l.id === "string" && l.id.startsWith("engine-gable-");
+    const skelEngine = (ls: { id?: string; points: Pt[] }[]) =>
+      ls.filter((l) => isEngine(l) && !isGable(l)).map((l) => ({ points: l.points }));
+    const gableEngine = (ls: { id?: string; points: Pt[] }[]) =>
+      ls.filter(isGable).map((l) => ({ points: l.points }));
+    const eHips = skelEngine(structure.hips ?? []);
+    const eRidges = skelEngine(structure.ridges);
+    const eValleys = skelEngine(structure.valleys);
+    const gRidges = gableEngine(structure.ridges);
+    const gValleys = gableEngine(structure.valleys);
+    const hasEngineSkeleton = eHips.length + eRidges.length + eValleys.length > 0;
+    return {
+      ...base,
+      hips: hasEngineSkeleton ? eHips : base.hips,
+      ridges: [...(hasEngineSkeleton ? eRidges : base.ridges), ...gRidges],
+      valleys: [...(hasEngineSkeleton ? eValleys : base.valleys), ...gValleys],
+      // The takeoff's own gable ends outrank the grid re-derivation — one
+      // source of truth for the GABLE labels (fixes phantom/missing labels
+      // when the two engines disagree).
+      gables:
+        structGables.length > 0
+          ? structGables.map((l) => ({
+              points: [l.points[0], l.points[l.points.length - 1]],
+            }))
+          : base.gables,
+      dormers: [...aiDormers, ...userDormers],
+      // Stored tier steps pass through verbatim on the legacy-derive path
+      // too — the grid never re-derives them (empty on rows without them).
+      steps: (structure.steps ?? []).map((l) => ({ points: l.points })),
+    };
   }, [
     derive,
+    perimeterOnly,
     eaves,
     rakes,
     structure.perimeter,
     structure.ridges,
     structure.hips,
     structure.valleys,
+    structure.gables,
+    structure.faces,
+    structure.steps,
   ]);
   if (structure.perimeter.length < 3) return null;
   const onDark = tone === "onDark";
@@ -778,17 +932,57 @@ export function RoofStructureOverlay({
   const ridgeC = onDark ? "rgba(203,213,225,0.85)" : "rgba(51,65,85,0.78)";
   const hipC = onDark ? "rgba(125,211,252,0.85)" : "rgba(14,116,144,0.78)";
   const valleyC = onDark ? "rgba(196,181,253,0.9)" : "rgba(109,40,217,0.75)";
+  // Tier STEPS: thin SOLID, warm and subtle — visibly different from the
+  // ridge/hip solids and the dashed valleys, and thinner than everything
+  // else so a step reads as "the roof level changes here", not a priced run.
+  const stepC = onDark ? "rgba(253,186,116,0.75)" : "rgba(180,83,9,0.55)";
   const gableC = onDark ? "rgba(148,163,184,0.95)" : "rgba(71,85,105,0.85)";
   const gableText = onDark ? "#cbd5e1" : "#475569";
 
   // Interior roof lines (skel derived above). Map to render descriptors.
-  const lines: { pts: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
-    ...skel.ridges.map((l) => ({ pts: l.points, c: ridgeC, w: 1.5, dash: false })),
-    ...skel.hips.map((l) => ({ pts: l.points, c: hipC, w: 1.6, dash: false })),
-    ...skel.valleys.map((l) => ({ pts: l.points, c: valleyC, w: 1.6, dash: true })),
+  const rawLines: { points: { x: number; y: number }[]; c: string; w: number; dash: boolean }[] = [
+    ...skel.ridges.map((l) => ({ points: l.points, c: ridgeC, w: 1.5, dash: false })),
+    ...skel.hips.map((l) => ({ points: l.points, c: hipC, w: 1.6, dash: false })),
+    ...skel.valleys.map((l) => ({ points: l.points, c: valleyC, w: 1.6, dash: true })),
   ].filter(
-    (l) => l.pts.length >= 2 && segLen(l.pts[0], l.pts[l.pts.length - 1]) > 1.5,
+    (l) => l.points.length >= 2 && segLen(l.points[0], l.points[l.points.length - 1]) > 1.5,
   );
+  // Drop DANGLING interior lines — a ridge/hip/valley that connects to
+  // nothing at one end (e.g. a porch-cover ridge stub the engine emitted
+  // without its cover outline) reads as a random pen stroke, worst on the
+  // client proposal. A well-formed skeleton line touches the perimeter, a
+  // gable end, an eave/rake, or another interior line at BOTH ends.
+  // Display-only: never affects LF / pricing.
+  const anchorSegs: [Pt, Pt][] = [];
+  for (let i = 0; i < structure.perimeter.length; i++) {
+    anchorSegs.push([
+      structure.perimeter[i],
+      structure.perimeter[(i + 1) % structure.perimeter.length],
+    ]);
+  }
+  for (const g of skel.gables) {
+    if (g.points.length >= 2) anchorSegs.push([g.points[0], g.points[g.points.length - 1]]);
+  }
+  for (const dm of skel.dormers ?? []) {
+    if (dm.points.length >= 2) anchorSegs.push([dm.points[0], dm.points[1]]);
+  }
+  for (const src of [eaves, rakes] as { points: { x: number; y: number }[] }[][]) {
+    for (const l of src) {
+      for (let i = 1; i < l.points.length; i++) {
+        anchorSegs.push([l.points[i - 1], l.points[i]]);
+      }
+    }
+  }
+  // Tier steps are real drawn geometry — an interior ridge legitimately
+  // terminates ON a step boundary (a clerestory ridge dying into its own
+  // box), so steps count as anchors. Steps themselves are drawn directly
+  // below (exact mass-decomposition edges, never dangling artifacts).
+  for (const s of skel.steps ?? []) {
+    for (let i = 1; i < s.points.length; i++) {
+      anchorSegs.push([s.points[i - 1], s.points[i]]);
+    }
+  }
+  const lines = dropDanglingLines(rawLines, anchorSegs, 6);
 
   // Roof centroid (perimeter average) — used to nudge the GABLE labels just
   // inside their edge.
@@ -803,20 +997,8 @@ export function RoofStructureOverlay({
   const centroid = { x: cx, y: cy };
   // Orientation chips snap to the building bounding-box edge (off-edge by
   // construction), so FRONT/BACK/LEFT/RIGHT never float in the roof interior.
-  const chipBBox = perimBBox(structure.perimeter);
-  const chips: { side: OrientSide; label: string; at: Pt }[] = (
-    [
-      ["front", "FRONT"],
-      ["back", "BACK"],
-      ["left", "LEFT"],
-      ["right", "RIGHT"],
-    ] as [OrientSide, string][]
-  )
-    .map(([side, label]) => {
-      const at = sideAnchor(eaves, side, chipBBox, scale);
-      return at ? { side, label, at } : null;
-    })
-    .filter((c): c is { side: OrientSide; label: string; at: Pt } => c !== null);
+  // Shared with the canvases (label-layout obstacles) via orientationChipBoxes.
+  const chips = orientationChipBoxes(eaves, structure.perimeter, scale);
 
   const chipText = onDark ? "#e2e8f0" : "#1e3a8a";
   const chipFill = onDark ? "rgba(2,6,23,0.78)" : "rgba(255,255,255,0.92)";
@@ -858,11 +1040,29 @@ export function RoofStructureOverlay({
           />
         ) : null,
       )}
+      {/* Tier STEP edges — thin SOLID interior mass boundaries where one
+          roof level drops to another. Drawn verbatim from the stored takeoff
+          (exact tier decomposition, no dangling-line pass needed) so a
+          multi-tier plan reads as tiers. Display-only, never priced. */}
+      {(skel.steps ?? []).map((l, i) =>
+        l.points.length >= 2 &&
+        segLen(l.points[0], l.points[l.points.length - 1]) > 1.5 ? (
+          <path
+            key={`step-${i}`}
+            d={linePathD(l.points)}
+            fill="none"
+            stroke={stepC}
+            strokeWidth={1.1 * scale}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : null,
+      )}
       {/* Interior roof-plane lines, under the perimeter + the trace */}
       {lines.map((l, i) => (
         <path
           key={`rl-${i}`}
-          d={linePathD(l.pts)}
+          d={linePathD(l.points)}
           fill="none"
           stroke={l.c}
           strokeWidth={l.w * scale}
@@ -1049,9 +1249,7 @@ export function RoofStructureOverlay({
         );
       })}
       {/* Orientation chips — FRONT / BACK / LEFT / RIGHT off each edge */}
-      {chips.map(({ side, label, at }) => {
-        const w = (label.length * 6.2 + 12) * scale;
-        const h = 14 * scale;
+      {chips.map(({ side, label, at, w, h }) => {
         return (
           <g key={side}>
             <rect

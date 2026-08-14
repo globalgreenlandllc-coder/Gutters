@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, Layers, Sparkles, Star } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
+import { DUR, EASE } from "@/lib/motion";
 import { cn, formatCurrency } from "@/lib/utils";
 import {
   markupPctForTarget,
@@ -9,6 +10,7 @@ import {
   type Package,
   type Proposal,
 } from "@/lib/proposal-mock";
+import { AiPriceSwitch } from "./ai-price-switch";
 import { EditablePrice } from "./editable-price";
 
 export function PackagesSection({
@@ -28,6 +30,7 @@ export function PackagesSection({
    *  the contractor's editor — omitted on the read-only client portal. */
   onEditMaterials?: (id: string) => void;
 }) {
+  const reduce = useReducedMotion();
   function update(id: string, patch: Partial<Package>) {
     onChange({
       ...proposal,
@@ -43,6 +46,21 @@ export function PackagesSection({
         title="Choose your package"
         sub="Each tier is sized to your roof. The middle option is most popular."
         readOnly={readOnly}
+        action={
+          // Contractor editor only — the homeowner never sees the switch.
+          !readOnly ? (
+            <AiPriceSwitch
+              packages={proposal.packages}
+              measurements={proposal.measurements}
+              discountPct={proposal.discountPct ?? 0}
+              address={proposal.address}
+              onChangePackages={(packages) =>
+                onChange({ ...proposal, packages })
+              }
+              className="w-64 shrink-0 max-sm:hidden"
+            />
+          ) : undefined
+        }
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -58,33 +76,37 @@ export function PackagesSection({
             <motion.div
               key={p.id}
               whileHover={interactive ? { y: -2 } : undefined}
+              whileTap={interactive ? { scale: 0.99 } : undefined}
+              transition={{ duration: DUR.base, ease: EASE }}
               className={cn(
-                "relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 shadow-card transition",
+                "relative flex flex-col overflow-hidden rounded-2xl border bg-white p-6 shadow-card transition-smooth",
                 selected
                   ? "border-accent-500 ring-2 ring-accent-500/15"
                   : p.recommended
                   ? "border-accent-300"
                   : "border-zinc-200",
-                interactive && !selected && "cursor-pointer hover:border-accent-300",
+                interactive &&
+                  !selected &&
+                  "cursor-pointer hover:border-accent-300 hover:shadow-elevated",
               )}
               onClick={interactive ? () => onSelectPackage(p.id) : undefined}
             >
               {p.recommended && (
-                <div className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent-700">
+                <div className="font-label absolute right-4 top-4 inline-flex items-center gap-1 rounded-md border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] text-accent-700">
                   <Star className="h-2.5 w-2.5" />
                   Most popular
                 </div>
               )}
 
               {readOnly ? (
-                <h3 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+                <h3 className="text-xl font-semibold tracking-tight text-zinc-900">
                   {p.name}
                 </h3>
               ) : (
                 <input
                   value={p.name}
                   onChange={(e) => update(p.id, { name: e.target.value })}
-                  className="font-display w-full bg-transparent text-xl font-semibold tracking-tight text-zinc-900 outline-none"
+                  className="w-full bg-transparent text-xl font-semibold tracking-tight text-zinc-900 outline-none"
                 />
               )}
 
@@ -102,9 +124,10 @@ export function PackagesSection({
                 {readOnly ? (
                   <motion.span
                     key={Math.round(totals.total)}
-                    initial={{ opacity: 0.5, y: -2 }}
+                    initial={reduce ? false : { opacity: 0.5, y: -2 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                    transition={{ duration: DUR.base, ease: EASE }}
+                    className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
                   >
                     {formatCurrency(totals.total)}
                   </motion.span>
@@ -120,18 +143,22 @@ export function PackagesSection({
                         ),
                       })
                     }
-                    className="font-display text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
+                    className="text-3xl font-semibold tracking-tight tabular-nums text-zinc-900"
                   />
                 )}
                 <span className="text-xs text-zinc-500">total</span>
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {formatCurrency(totals.subtotal)} subtotal ·{" "}
-                {p.markupPct.toFixed(1)}% markup
-                {!readOnly && (
-                  <span className="text-zinc-400"> · type any price above</span>
+                {!readOnly && p.pricingMode === "ai" && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-accent-200 bg-accent-50 px-1.5 py-0.5 text-[10px] font-medium text-accent-700">
+                    <Sparkles className="h-2.5 w-2.5" />
+                    AI price
+                  </span>
                 )}
               </div>
+              {!readOnly && !interactive && (
+                <div className="mt-1 text-xs text-zinc-400">
+                  Tap the price to set your number
+                </div>
+              )}
 
               <ul className="mt-5 space-y-2">
                 {p.highlights.map((h, i) => (
@@ -147,7 +174,7 @@ export function PackagesSection({
 
               {p.addOns.length > 0 && (
                 <div className="mt-5 border-t border-zinc-100 pt-4">
-                  <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                  <div className="font-label text-[10px] text-zinc-500">
                     Add-ons
                   </div>
                   <ul className="mt-2 space-y-1.5">
@@ -192,9 +219,9 @@ export function PackagesSection({
                 <button
                   type="button"
                   className={cn(
-                    "mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl text-sm font-medium transition",
+                    "ring-focus active:scale-[0.98] mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg text-sm font-medium transition-smooth",
                     selected
-                      ? "bg-accent-600 text-white shadow-glow"
+                      ? "bg-accent-600 text-white shadow-card"
                       : "border border-zinc-200 text-zinc-700 hover:border-accent-400 hover:text-accent-700",
                   )}
                   onClick={(e) => {
@@ -220,7 +247,7 @@ export function PackagesSection({
                 <button
                   type="button"
                   onClick={() => onEditMaterials(p.id)}
-                  className="mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+                  className="ring-focus active:scale-[0.98] mt-5 inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition-smooth hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
                 >
                   <Layers className="h-4 w-4" />
                   Edit materials & spec
@@ -228,26 +255,13 @@ export function PackagesSection({
               )}
 
               {!readOnly && !interactive && (
-                <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
-                  <span>Markup</span>
-                  <input
-                    type="number"
-                    step={0.5}
-                    value={Math.round(p.markupPct * 10) / 10}
-                    onChange={(e) =>
-                      update(p.id, {
-                        markupPct: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    className="h-7 w-14 rounded-md border border-zinc-200 bg-white px-1.5 text-right text-xs text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  />
-                  <span>%</span>
+                <div className="mt-4 flex items-center justify-end border-t border-zinc-100 pt-3 text-xs">
                   <button
                     type="button"
                     onClick={() =>
                       update(p.id, { recommended: !p.recommended })
                     }
-                    className="ml-auto rounded-md border border-zinc-200 px-2 py-1 text-zinc-700 transition hover:border-accent-400 hover:text-accent-700"
+                    className="ring-focus rounded-md px-2 py-1 font-medium text-zinc-500 transition-smooth hover:text-accent-700"
                   >
                     {p.recommended ? "Unmark popular" : "Mark popular"}
                   </button>
@@ -275,7 +289,7 @@ export function SectionHeader({
   return (
     <div className="flex items-end justify-between gap-3">
       <div>
-        <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
           {title}
         </h2>
         {sub && <p className="mt-1 text-sm text-zinc-600">{sub}</p>}

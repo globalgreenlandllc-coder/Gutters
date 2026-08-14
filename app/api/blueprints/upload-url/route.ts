@@ -4,6 +4,8 @@ import { list } from "@vercel/blob";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
+import { consumeLimit } from "@/lib/abuse/rate-limit";
+import { POLICIES } from "@/lib/abuse/policies";
 
 /**
  * Parses a Vercel Blob token to surface its scope (read-only vs
@@ -208,6 +210,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Same policy as /api/blueprints/presign — both mint upload tokens.
+    const rl = await consumeLimit({
+      policy: POLICIES.blueprintUpload,
+      key: `user:${user.id}`,
+      context: { userId: user.id, route: "/api/blueprints/upload-url" },
+    });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: rl.reason },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+      );
     }
 
     const body = (await request.json()) as HandleUploadBody;

@@ -260,6 +260,14 @@ export async function rotateApiKey(args: {
   return { ok: true, id: created.id };
 }
 
+export type TestApiKeyReason =
+  | "ok"
+  | "invalid_key"
+  | "quota_exceeded"
+  | "network_error"
+  | "not_implemented"
+  | "unknown_error";
+
 export type TestApiKeyResult = {
   ok: boolean;
   /** Provider-specific human-readable status. */
@@ -268,21 +276,22 @@ export type TestApiKeyResult = {
   error: string | null;
   /** Token fingerprint we tested against — confirms which key was used. */
   testedFingerprint: string | null;
+  /** Coarse classification so the UI can render a distinct "out of
+   *  credits" treatment instead of a generic red error box. */
+  reason: TestApiKeyReason;
 };
 
 /**
  * Validates the stored key for a provider by hitting a lightweight
  * provider endpoint. Designed for the admin "Test" button so you can
- * tell *which* problem you're hitting — bad key vs unverified domain
- * vs network — without composing and sending a real email.
+ * tell *which* problem you're hitting — bad key vs out-of-credits vs
+ * network — without waiting for it to surface as a failed analysis.
  *
- * Resend: GET /api-keys with the stored key as Bearer auth. Returns
- *   200  → key works, key is valid
- *   401  → invalid / revoked
- *   anything else → bubble Resend's `message` back
- *
- * Anthropic / OpenAI / Fal etc. — not implemented yet; returns a clear
- * "not implemented" status so the UI can surface that gracefully.
+ * Every branch below makes one small real call against the provider
+ * (a few fractions of a cent at most for the paid ones — OpenAI
+ * embeddings ping, Anthropic 1-token message, fal.ai billing read,
+ * Google Geocoding) so that "out of credits" is detected from the
+ * provider's own response, not guessed.
  */
 export async function testApiKey(
   id: string,
@@ -295,6 +304,7 @@ export async function testApiKey(
       status: "Not authorized",
       error: e instanceof Error ? e.message : String(e),
       testedFingerprint: null,
+      reason: "unknown_error",
     };
   }
 
@@ -306,6 +316,7 @@ export async function testApiKey(
         status: "Key not found",
         error: null,
         testedFingerprint: null,
+        reason: "unknown_error",
       };
     }
 
@@ -322,6 +333,7 @@ export async function testApiKey(
         status: "Could not decrypt stored key (encryption key changed or row corrupt)",
         error: e instanceof Error ? e.message : String(e),
         testedFingerprint: row.fingerprint,
+        reason: "unknown_error",
       };
     }
     if (!value) {
@@ -330,8 +342,11 @@ export async function testApiKey(
         status: "Stored key is empty",
         error: null,
         testedFingerprint: row.fingerprint,
+        reason: "unknown_error",
       };
     }
+
+    const fp = row.fingerprint;
 
     if (row.provider === "RESEND") {
       try {
@@ -352,21 +367,407 @@ export async function testApiKey(
             ok: true,
             status: "Resend accepted the key — sending should work",
             error: null,
-            testedFingerprint: row.fingerprint,
+            testedFingerprint: fp,
+            reason: "ok",
           };
         }
         return {
           ok: false,
           status: `Resend rejected the key (HTTP ${res.status})`,
           error: body.message ?? body.name ?? `HTTP ${res.status}`,
-          testedFingerprint: row.fingerprint,
+          testedFingerprint: fp,
+          reason: res.status === 401 ? "invalid_key" : "unknown_error",
         };
       } catch (e) {
         return {
           ok: false,
           status: "Network error reaching Resend",
           error: e instanceof Error ? e.message : String(e),
-          testedFingerprint: row.fingerprint,
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "OPENAI") {
+      // Cheapest real inference call there is (fractions of a cent) —
+      // listing models doesn't touch billing, so it can't tell "no
+      // credit" apart from "fine". This can.
+      try {
+        const res = await fetch("https://api.openai.com/v1/embeddings", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${value}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model: "text-embedding-3-small", input: "ping" }),
+          cache: "no-store",
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            status: "OpenAI accepted the key and ran a real request",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string; code?: string };
+        };
+        const code = body.error?.code ?? "";
+        const message = body.error?.message ?? `HTTP ${res.status}`;
+        if (code === "insufficient_quota") {
+          return {
+            ok: false,
+            status: "OpenAI account is out of credit",
+            error: message,
+            testedFingerprint: fp,
+            reason: "quota_exceeded",
+          };
+        }
+        if (res.status === 401 || code === "invalid_api_key") {
+          return {
+            ok: false,
+            status: "OpenAI rejected the key as invalid",
+            error: message,
+            testedFingerprint: fp,
+            reason: "invalid_key",
+          };
+        }
+        return {
+          ok: false,
+          status: `OpenAI rejected the request (HTTP ${res.status})`,
+          error: message,
+          testedFingerprint: fp,
+          reason: "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching OpenAI",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "ANTHROPIC") {
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": value,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "hi" }],
+          }),
+          cache: "no-store",
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            status: "Anthropic accepted the key and ran a real request",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string; type?: string };
+        };
+        const message = body.error?.message ?? `HTTP ${res.status}`;
+        if (/credit balance is too low|insufficient\s+cred/i.test(message)) {
+          return {
+            ok: false,
+            status: "Anthropic account is out of credit",
+            error: message,
+            testedFingerprint: fp,
+            reason: "quota_exceeded",
+          };
+        }
+        if (res.status === 401 || body.error?.type === "authentication_error") {
+          return {
+            ok: false,
+            status: "Anthropic rejected the key as invalid",
+            error: message,
+            testedFingerprint: fp,
+            reason: "invalid_key",
+          };
+        }
+        return {
+          ok: false,
+          status: `Anthropic rejected the request (HTTP ${res.status})`,
+          error: message,
+          testedFingerprint: fp,
+          reason: "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching Anthropic",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "FAL") {
+      try {
+        const res = await fetch(
+          "https://api.fal.ai/v1/account/billing?expand=credits",
+          {
+            method: "GET",
+            headers: { Authorization: `Key ${value}` },
+            cache: "no-store",
+          },
+        );
+        const body = (await res.json().catch(() => ({}))) as {
+          credits?: { current_balance?: number; currency?: string };
+          message?: string;
+        };
+        if (res.ok) {
+          const balance = body.credits?.current_balance;
+          if (typeof balance === "number" && balance <= 0) {
+            return {
+              ok: false,
+              status: `fal.ai balance is $${balance.toFixed(2)}`,
+              error: null,
+              testedFingerprint: fp,
+              reason: "quota_exceeded",
+            };
+          }
+          return {
+            ok: true,
+            status:
+              typeof balance === "number"
+                ? `fal.ai accepted the key — balance $${balance.toFixed(2)}`
+                : "fal.ai accepted the key",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        return {
+          ok: false,
+          status:
+            res.status === 401 || res.status === 403
+              ? "fal.ai rejected the billing check (invalid key, or a key without billing-read access)"
+              : `fal.ai rejected the request (HTTP ${res.status})`,
+          error: body.message ?? `HTTP ${res.status}`,
+          testedFingerprint: fp,
+          reason: res.status === 401 ? "invalid_key" : "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching fal.ai",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "GEMINI") {
+      try {
+        const listRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(value)}`,
+          { cache: "no-store" },
+        );
+        const listBody = (await listRes.json().catch(() => ({}))) as {
+          error?: { message?: string; status?: string };
+          models?: { name: string; supportedGenerationMethods?: string[] }[];
+        };
+        if (!listRes.ok) {
+          return {
+            ok: false,
+            status:
+              listRes.status === 400 || listRes.status === 403
+                ? "Google rejected the Gemini key as invalid"
+                : `Gemini rejected the request (HTTP ${listRes.status})`,
+            error: listBody.error?.message ?? `HTTP ${listRes.status}`,
+            testedFingerprint: fp,
+            reason:
+              listRes.status === 400 || listRes.status === 403
+                ? "invalid_key"
+                : "unknown_error",
+          };
+        }
+        // Pick a real model this key can see rather than hardcoding a
+        // generation name that may age out — prefer a "flash" model
+        // for the cheapest possible real call.
+        const usable = (listBody.models ?? []).filter((m) =>
+          m.supportedGenerationMethods?.includes("generateContent"),
+        );
+        const model =
+          usable.find((m) => m.name.includes("flash")) ?? usable[0];
+        if (!model) {
+          return {
+            ok: true,
+            status: "Gemini key is valid (no generateContent model to test billing with)",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        const genRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${model.name}:generateContent?key=${encodeURIComponent(value)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: "hi" }] }],
+              generationConfig: { maxOutputTokens: 1 },
+            }),
+            cache: "no-store",
+          },
+        );
+        if (genRes.ok) {
+          return {
+            ok: true,
+            status: "Gemini accepted the key and ran a real request",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        const genBody = (await genRes.json().catch(() => ({}))) as {
+          error?: { message?: string; status?: string };
+        };
+        const message = genBody.error?.message ?? `HTTP ${genRes.status}`;
+        if (genRes.status === 429) {
+          return {
+            ok: false,
+            status: "Gemini quota exceeded (rate limit or billing account exhausted)",
+            error: message,
+            testedFingerprint: fp,
+            reason: "quota_exceeded",
+          };
+        }
+        return {
+          ok: false,
+          status: `Gemini rejected the request (HTTP ${genRes.status})`,
+          error: message,
+          testedFingerprint: fp,
+          reason: "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching Gemini",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "GOOGLE_MAPS" || row.provider === "GOOGLE_SOLAR") {
+      // Probes the underlying Google Cloud project via the Geocoding
+      // API — the cheapest reliable signal for "this project's billing
+      // is dead" (OVER_QUERY_LIMIT), shared across every API enabled on
+      // the same key. A REQUEST_DENIED here can also just mean this
+      // particular key is restricted to the Solar API only, so we don't
+      // call that one "invalid" — only the unambiguous quota case.
+      try {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?address=1600+Amphitheatre+Parkway&key=${encodeURIComponent(value)}`,
+          { cache: "no-store" },
+        );
+        const body = (await res.json().catch(() => ({}))) as {
+          status?: string;
+          error_message?: string;
+        };
+        if (body.status === "OK") {
+          return {
+            ok: true,
+            status: "Google accepted the key (tested via Geocoding API)",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        if (body.status === "OVER_QUERY_LIMIT") {
+          return {
+            ok: false,
+            status: "Google Cloud billing/quota is exhausted for this project",
+            error: body.error_message ?? body.status,
+            testedFingerprint: fp,
+            reason: "quota_exceeded",
+          };
+        }
+        if (body.status === "REQUEST_DENIED") {
+          return {
+            ok: false,
+            status:
+              row.provider === "GOOGLE_SOLAR"
+                ? "Geocoding API denied this key — may just mean it's restricted to the Solar API only"
+                : "Google rejected the key",
+            error: body.error_message ?? body.status,
+            testedFingerprint: fp,
+            reason: row.provider === "GOOGLE_SOLAR" ? "unknown_error" : "invalid_key",
+          };
+        }
+        return {
+          ok: false,
+          status: `Google returned ${body.status ?? `HTTP ${res.status}`}`,
+          error: body.error_message ?? null,
+          testedFingerprint: fp,
+          reason: "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching Google",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
+        };
+      }
+    }
+
+    if (row.provider === "MAPBOX") {
+      try {
+        const res = await fetch(
+          `https://api.mapbox.com/styles/v1/mapbox/streets-v11?access_token=${encodeURIComponent(value)}`,
+          { cache: "no-store" },
+        );
+        if (res.ok) {
+          return {
+            ok: true,
+            status: "Mapbox accepted the token",
+            error: null,
+            testedFingerprint: fp,
+            reason: "ok",
+          };
+        }
+        const body = (await res.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        return {
+          ok: false,
+          status:
+            res.status === 401
+              ? "Mapbox rejected the token as invalid"
+              : `Mapbox rejected the request (HTTP ${res.status})`,
+          error: body.message ?? `HTTP ${res.status}`,
+          testedFingerprint: fp,
+          reason: res.status === 401 ? "invalid_key" : "unknown_error",
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: "Network error reaching Mapbox",
+          error: e instanceof Error ? e.message : String(e),
+          testedFingerprint: fp,
+          reason: "network_error",
         };
       }
     }
@@ -375,7 +776,8 @@ export async function testApiKey(
       ok: false,
       status: `Test not implemented for ${row.provider} yet`,
       error: null,
-      testedFingerprint: row.fingerprint,
+      testedFingerprint: fp,
+      reason: "not_implemented",
     };
   } catch (e) {
     console.error("[testApiKey] unexpected throw", e);
@@ -384,6 +786,7 @@ export async function testApiKey(
       status: "Unexpected server error during test",
       error: e instanceof Error ? e.message : String(e),
       testedFingerprint: null,
+      reason: "unknown_error",
     };
   }
 }

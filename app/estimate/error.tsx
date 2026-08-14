@@ -34,19 +34,20 @@ export default function EstimateError({
   }, [error]);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="relative w-full max-w-xl">
+    <div className="relative flex min-h-screen items-center justify-center bg-paper px-4">
+      {/* Same entrance as the in-page ErrorScreen/LoadingState cards so a
+          crash lands with the surface's one motion language. */}
+      <div className="anim-enter relative w-full max-w-xl">
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
-        <div className="rounded-2xl border border-rose-200 bg-white p-8 shadow-elevated">
+        <div className="rounded-2xl border border-rose-200 bg-white p-8 shadow-card">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-700">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-rose-700">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+              <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
                 Something broke on the estimate page
               </h1>
               <p className="mt-1 text-sm text-zinc-500">
@@ -56,20 +57,16 @@ export default function EstimateError({
             </div>
           </div>
 
-          <dl className="mt-5 space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm">
+          <dl className="mt-5 space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm">
             <div>
-              <dt className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                Message
-              </dt>
+              <dt className="microlabel">Message</dt>
               <dd className="mt-1 break-words font-mono text-[13px] text-zinc-800">
                 {error.message || "(empty)"}
               </dd>
             </div>
             {error.digest && (
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Digest
-                </dt>
+                <dt className="microlabel">Digest</dt>
                 <dd className="mt-1 font-mono text-[13px] text-zinc-800">
                   {error.digest}
                 </dd>

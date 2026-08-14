@@ -33,7 +33,16 @@ export const apply = (m: Mat, x: number, y: number): [number, number] => [
 export type WSeg = { seg: [number, number, number, number]; w: number | null };
 
 const MIN_SEG_LEN = 18; // points — drops dimension ticks / hatching
-const MAX_SEGMENTS = 140;
+const MAX_SEGMENTS = 300;
+
+// Walk-time guards. CAD exports draw text as thousands of tiny glyph strokes
+// (and the frame/title block FIRST in stream order) — a small emit cap starves
+// the walk before it ever reaches the drawing (the Woodinville A4 bug: exactly
+// ~8300 segments on every sheet = the old cap's fingerprint, drawing area
+// empty). Skip sub-glyph strokes inline instead, and keep a high cap purely as
+// a memory backstop.
+const WALK_MIN_LEN = 4; // points — glyph strokes / dots, never wall pieces
+const WALK_CAP = 60000;
 
 const HAIRLINE_USER = 0.01; // pt — below any real drawn weight (pdfjs width 0)
 /** Device-space stroke weight = user lineWidth × the CTM's isotropic 2D scale
@@ -64,6 +73,15 @@ const deviceWidth = (userWidth: number, ctm: Mat): number => {
 export function segmentsFromOps(
   ops: { fnArray: number[]; argsArray: unknown[] },
   OPS: Record<string, number>,
+  /**
+   * Initial CTM — pass the page's `viewport.transform` (scale 1) so segments
+   * come out in RASTER convention (y-down, crop-box origin, rotation applied)
+   * instead of raw PDF user space (y-UP). Raw user space mirrors the printed
+   * sheet vertically, which silently inverted every front/back judgment made
+   * downstream (edge map, elevation reconciliation, canvas). Omitted → legacy
+   * identity (tests build their own geometry and don't care).
+   */
+  base?: Mat,
 ): WSeg[] {
   const num = (x: unknown): x is number => typeof x === "number";
   // Paint ops that draw a stroked edge → width meaningful. Built from the live
@@ -81,10 +99,15 @@ export function segmentsFromOps(
 
   const out: WSeg[] = [];
   const stack: { ctm: Mat; w: number }[] = [];
-  let ctm: Mat = IDENTITY;
+  const base0: Mat = base ?? IDENTITY;
+  let ctm: Mat = base0;
   let widthUser = 1; // pdfjs initial graphics-state lineWidth
+  const emit = (x1: number, y1: number, x2: number, y2: number, w: number | null) => {
+    if (Math.hypot(x2 - x1, y2 - y1) < WALK_MIN_LEN) return; // glyph stroke
+    out.push({ seg: [x1, y1, x2, y2], w });
+  };
 
-  for (let k = 0; k < ops.fnArray.length && out.length < 8000; k++) {
+  for (let k = 0; k < ops.fnArray.length && out.length < WALK_CAP; k++) {
     const fn = ops.fnArray[k];
     if (fn === OPS.save) {
       stack.push({ ctm, w: widthUser });
@@ -94,7 +117,7 @@ export function segmentsFromOps(
         ctm = popped.ctm;
         widthUser = popped.w;
       } else {
-        ctm = IDENTITY;
+        ctm = base0;
       }
     } else if (fn === OPS.transform) {
       const a = ops.argsArray[k] as number[] | undefined;
@@ -146,7 +169,7 @@ export function segmentsFromOps(
             // lineTo
             if (i + 2 >= p.length) break;
             const [nx, ny] = apply(ctm, p[i + 1], p[i + 2]);
-            if (have) out.push({ seg: [cx, cy, nx, ny], w });
+            if (have) emit(cx, cy, nx, ny, w);
             cx = nx;
             cy = ny;
             i += 3;
@@ -162,7 +185,7 @@ export function segmentsFromOps(
             i += 5;
           } else if (op === 4) {
             // closePath
-            if (have) out.push({ seg: [cx, cy, sx, sy], w });
+            if (have) emit(cx, cy, sx, sy, w);
             cx = sx;
             cy = sy;
             i += 1;
@@ -177,6 +200,67 @@ export function segmentsFromOps(
 }
 
 type KeptSeg = { seg: number[]; len: number; w: number | null };
+
+// Chain-merge tuning. CAD exports draw one wall as a CHAIN of short collinear
+// strokes (line patterns / plotter dashes) — on the Woodinville A4 the walls
+// are 10–18pt pieces, ALL below MIN_SEG_LEN, so without merging the "footprint
+// segments" are just the sheet frame + dimension lines. Merging runs first so
+// a chained wall reads as one long segment.
+const CHAIN_GAP = 6; // points — max gap between chained strokes (door gaps stay open)
+const CHAIN_OFF = 1.2; // points — max off-axis wobble to treat strokes as collinear
+
+/**
+ * Stage 0: merge collinear AXIS-ALIGNED strokes chained with ≤CHAIN_GAP gaps
+ * into single long segments (interval union per shared axis line, so exact
+ * duplicates coalesce too). Diagonals pass through untouched — hips/ridges on
+ * roof sheets are drawn solid, and diagonal hatching must not merge into fake
+ * long lines. Width of a merged run = max of its pieces (a wall's pattern
+ * pieces share a weight; max keeps it eligible for the bold stage).
+ */
+export function mergeCollinearStrokes(raw: WSeg[]): WSeg[] {
+  type Run = { lo: number; hi: number; w: number | null };
+  const groups = new Map<string, { c: number; runs: Run[] }>();
+  const out: WSeg[] = [];
+  for (const { seg, w } of raw) {
+    const horiz = Math.abs(seg[1] - seg[3]) <= CHAIN_OFF;
+    const vert = Math.abs(seg[0] - seg[2]) <= CHAIN_OFF;
+    if (horiz === vert) {
+      out.push({ seg, w }); // diagonal (or degenerate) — pass through
+      continue;
+    }
+    const c = horiz ? (seg[1] + seg[3]) / 2 : (seg[0] + seg[2]) / 2;
+    const key = `${horiz ? "h" : "v"}:${Math.round(c / CHAIN_OFF)}`;
+    const lo = horiz ? Math.min(seg[0], seg[2]) : Math.min(seg[1], seg[3]);
+    const hi = horiz ? Math.max(seg[0], seg[2]) : Math.max(seg[1], seg[3]);
+    const g = groups.get(key) ?? { c, runs: [] };
+    g.runs.push({ lo, hi, w });
+    groups.set(key, g);
+  }
+  for (const [key, g] of groups) {
+    const horiz = key.startsWith("h");
+    g.runs.sort((a, b) => a.lo - b.lo);
+    let cur: Run | null = null;
+    const flush = () => {
+      if (!cur) return;
+      out.push({
+        seg: horiz ? [cur.lo, g.c, cur.hi, g.c] : [g.c, cur.lo, g.c, cur.hi],
+        w: cur.w,
+      });
+      cur = null;
+    };
+    for (const r of g.runs) {
+      if (cur && r.lo - cur.hi <= CHAIN_GAP) {
+        cur.hi = Math.max(cur.hi, r.hi);
+        if (r.w != null && (cur.w == null || r.w > cur.w)) cur.w = r.w;
+      } else {
+        flush();
+        cur = { lo: r.lo, hi: r.hi, w: r.w };
+      }
+    }
+    flush();
+  }
+  return out;
+}
 
 /** Stage 1: length / orientation filter + undirected dedupe, preserving each
  *  segment's device width for the optional bold stage. */
@@ -265,11 +349,58 @@ export function boldFilter(kept: KeptSeg[]): KeptSeg[] {
   return best.bold;
 }
 
-/** Public driver: length filter → (optional) bold filter → longest-first →
- *  cap → bare `number[]` coords. Always returns number[][] like before. */
+/** Public driver: chain-merge → length filter → (optional) bold filter →
+ *  longest-first → cap → coords. Returns `[x1,y1,x2,y2]` when the segment's
+ *  device-space stroke weight is unknown (fill paths, unresolved paint op),
+ *  and `[x1,y1,x2,y2,w]` when it IS known — so a downstream consumer can
+ *  tier by weight (walls vs dimension lines vs sheet frame) without a second
+ *  extraction pass. Every existing consumer indexes s[0..3] and length-guards,
+ *  so the optional 5th element is backward compatible (legacy 4-tuple rows and
+ *  the AI-prompt formatter both stay correct — see fmtSegs). */
 export function selectSegments(raw: WSeg[], boldOnly: boolean): number[][] {
-  const s1 = lengthFilter(raw);
+  const s0 = mergeCollinearStrokes(raw);
+  const s1 = lengthFilter(s0);
   const s2 = boldOnly ? boldFilter(s1) : s1;
   s2.sort((m, n) => n.len - m.len);
-  return s2.slice(0, MAX_SEGMENTS).map((k) => k.seg);
+  return s2
+    .slice(0, MAX_SEGMENTS)
+    .map((k) =>
+      k.w != null && Number.isFinite(k.w) && k.w > 0
+        ? [...k.seg, Math.round(k.w * 100) / 100]
+        : k.seg,
+    );
+}
+
+// Field-segment tuning: the truss/jack fill the bold filter DROPS is exactly
+// the signal the truss-field arbiter needs (lib/ai/truss-field.ts). Keep it
+// in a separate, code-only channel — never formatted into an AI prompt.
+const FIELD_MIN_LEN = 40; // pt (~1.7 ft) — keeps end jacks, drops glyph noise
+const FIELD_MAX_SEGMENTS = 2500;
+
+/** Axis-aligned framing linework at EVERY stroke weight, for the per-edge
+ *  truss-direction test: trusses drawn running INTO a wall mean the wall
+ *  bears them (eave); trusses running ALONG it mean a gable end. Plain
+ *  int 4-tuples, longest first. */
+export function selectFieldSegments(raw: WSeg[]): number[][] {
+  const merged = mergeCollinearStrokes(raw);
+  const kept: { seg: number[]; len: number }[] = [];
+  const seen = new Set<string>();
+  for (const { seg } of merged) {
+    const [x1, y1, x2, y2] = seg;
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    if (dx >= 1.5 && dy >= 1.5) continue; // diagonals: valleys/hatch, not field
+    const len = Math.max(dx, dy);
+    if (len < FIELD_MIN_LEN) continue;
+    const a = [Math.round(x1), Math.round(y1)];
+    const b = [Math.round(x2), Math.round(y2)];
+    const [p, q] =
+      a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]) ? [a, b] : [b, a];
+    const key = `${p[0]},${p[1]},${q[0]},${q[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push({ seg: [p[0], p[1], q[0], q[1]], len });
+  }
+  kept.sort((m, n) => n.len - m.len);
+  return kept.slice(0, FIELD_MAX_SEGMENTS).map((k) => k.seg);
 }

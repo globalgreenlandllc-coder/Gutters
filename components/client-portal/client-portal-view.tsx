@@ -1,28 +1,63 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ShieldCheck, Phone, Mail } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { useProfile } from "@/lib/auth-mock";
-import { AerialSection } from "@/components/proposal/aerial-section";
+import dynamic from "next/dynamic";
+
+// The roof-diagram engine is the heaviest chunk in the homeowner bundle
+// (aerial canvas + roof skeleton + label solver). Lazy-load it so the
+// portal paints fast on phones; a fixed-height skeleton holds the layout
+// until the diagram chunk arrives.
+const AerialSection = dynamic(
+  () =>
+    import("@/components/proposal/aerial-section").then(
+      (m) => m.AerialSection,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[420px] w-full animate-pulse rounded-2xl bg-zinc-100" />
+    ),
+  },
+);
 import { PackagesSection } from "@/components/proposal/packages-section";
 import { PhotosSection } from "@/components/proposal/photos-section";
 import { TermsSection } from "@/components/proposal/terms-section";
 import { SignaturePad } from "./signature-pad";
+import { ListenCard } from "./listen-card";
 import { AcceptBar } from "./accept-bar";
 import { AcceptedScreen } from "./accepted-screen";
+import { PaymentHub } from "./payment-hub";
+import { DiscountThread } from "./discount-thread";
 import { packageTotal, type Proposal } from "@/lib/proposal-mock";
+import { DUR, EASE } from "@/lib/motion";
 import { acceptProposalByToken } from "@/app/actions/proposals";
+import type { PortalPaymentState } from "@/app/actions/payments";
+import type { DiscountThreadDto } from "@/app/actions/discounts";
 
 export function ClientPortalView({
   proposal,
   previewMode,
+  portal,
+  discountThread,
+  audioEnabled,
 }: {
   proposal: Proposal;
   previewMode?: boolean;
+  /** Post-acceptance payment state (schedule, change orders). When set,
+   *  the portal renders the payment hub instead of the accept flow. */
+  portal?: PortalPaymentState | null;
+  /** Pre-acceptance price-negotiation state. Null in preview/demo mode. */
+  discountThread?: DiscountThreadDto | null;
+  /** Shows the "Listen to this quote" TTS player. Only set for real
+   *  persisted proposals — the demo/sample portal has no row to cache
+   *  audio on, and preview mode shouldn't burn TTS on drafts. */
+  audioEnabled?: boolean;
 }) {
   const recommended =
     proposal.packages.find((p) => p.recommended)?.id ??
@@ -40,6 +75,7 @@ export function ClientPortalView({
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [, startAccept] = useTransition();
   const [acceptPending, setAcceptPending] = useState(false);
+  const reduce = useReducedMotion();
 
   const selected =
     proposal.packages.find((p) => p.id === selectedId) ?? proposal.packages[0];
@@ -48,6 +84,12 @@ export function ClientPortalView({
     proposal.measurements,
     proposal.discountPct ?? 0,
   );
+  // List price at zero discount — drives the accept-bar strikethrough so a
+  // negotiated win is visible right where the client commits.
+  const hasDiscount = (proposal.discountPct ?? 0) > 0;
+  const listTotal = hasDiscount
+    ? packageTotal(selected, proposal.measurements, 0).total
+    : undefined;
 
   const canAccept =
     !!signature &&
@@ -60,6 +102,22 @@ export function ClientPortalView({
   else if (!signature) reason = "Sign above to enable accept";
   else if (signerName.trim().length <= 1) reason = "Add your printed name";
   else if (!agreed) reason = "Acknowledge the terms to continue";
+
+  // Accepted proposals get the payment hub: schedule, progress, pay
+  // buttons and change-order approvals. The accept flow below only
+  // renders while the proposal is still open.
+  if (portal && !previewMode) {
+    return (
+      <div className="relative">
+        <PortalNav proposal={proposal} />
+        <PaymentHub
+          proposal={proposal}
+          initialState={portal}
+          token={proposal.token}
+        />
+      </div>
+    );
+  }
 
   if (accepted) {
     const due =
@@ -87,11 +145,20 @@ export function ClientPortalView({
 
       <main className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
+          initial={reduce ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: DUR.entrance, ease: EASE }}
           className="space-y-8"
         >
           <Header proposal={proposal} />
+
+          {audioEnabled && !previewMode && (
+            <ListenCard
+              token={proposal.token}
+              address={proposal.address}
+              company={proposal.contractor.company || "Your contractor"}
+            />
+          )}
 
           <AerialSection proposal={proposal} />
 
@@ -102,6 +169,15 @@ export function ClientPortalView({
             selectedPackageId={selectedId}
             onSelectPackage={setSelectedId}
           />
+
+          {discountThread && !previewMode && (
+            <DiscountThread
+              token={proposal.token}
+              initial={discountThread}
+              selectedPackageId={selectedId}
+              companyName={proposal.contractor.company || "your contractor"}
+            />
+          )}
 
           <PhotosSection
             proposal={proposal}
@@ -116,7 +192,7 @@ export function ClientPortalView({
           />
 
           <section className="space-y-4">
-            <h2 className="font-display text-xl font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-xl font-semibold tracking-tight text-zinc-900">
               Sign & accept
             </h2>
             <SignaturePad
@@ -125,12 +201,12 @@ export function ClientPortalView({
               signerName={signerName}
               onSignerName={setSignerName}
             />
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+            <label className="transition-smooth flex cursor-pointer items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card hover:border-zinc-300">
               <input
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-zinc-300 accent-accent-600"
+                className="ring-focus mt-1 h-4 w-4 rounded border-zinc-300 accent-accent-600"
               />
               <span className="text-sm text-zinc-700">
                 I authorize {proposal.contractor.company} to perform the
@@ -141,6 +217,20 @@ export function ClientPortalView({
           </section>
 
           <ContactCard contractor={proposal.contractor} />
+
+          {/* Growth loop: every proposal reaches a homeowner — and some
+              homeowners are contractors. Quiet, but always present. */}
+          <div className="pb-2 text-center print:hidden">
+            <a
+              href="/?ref=proposal"
+              target="_blank"
+              rel="noopener"
+              className="transition-smooth text-xs text-zinc-400 hover:text-accent-700"
+            >
+              ⚡ Powered by <span className="font-semibold">GutterScan</span> —
+              send quotes like this in 60 seconds →
+            </a>
+          </div>
           <div className="h-32 print:hidden" />
         </motion.div>
       </main>
@@ -148,6 +238,7 @@ export function ClientPortalView({
       <AcceptBar
         packageName={selected.name}
         total={totals.total}
+        listTotal={listTotal}
         depositPct={proposal.depositPct}
         paymentChoice={paymentChoice}
         onPaymentChoice={setPaymentChoice}
@@ -191,7 +282,7 @@ export function ClientPortalView({
 function PortalNav({ proposal }: { proposal: Proposal }) {
   const profile = useProfile();
   return (
-    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/85 backdrop-blur-xl print:hidden">
+    <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white print:hidden">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
         <div className="flex items-center gap-2.5">
           <BrandMark
@@ -204,7 +295,7 @@ function PortalNav({ proposal }: { proposal: Proposal }) {
             <div className="text-sm font-semibold text-zinc-900">
               {proposal.contractor.company}
             </div>
-            <div className="mt-0.5 text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+            <div className="font-label mt-0.5 text-[10px] text-zinc-500">
               Proposal
             </div>
           </div>
@@ -235,9 +326,9 @@ function Header({ proposal }: { proposal: Proposal }) {
         />
         <div className="min-w-0 flex-1">
           <Badge>For {proposal.client.name}</Badge>
-          <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+          <h1 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             Your gutter quote from{" "}
-            <span className="text-gradient">
+            <span className="text-accent-700">
               {proposal.contractor.company}
             </span>
           </h1>
@@ -264,7 +355,7 @@ function ContactCard({
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-      <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="font-label text-[11px] text-zinc-500">
         Questions? Talk to your contractor
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -274,14 +365,14 @@ function ContactCard({
         </div>
         <a
           href={`tel:${contractor.phone}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
+          className="transition-smooth ring-focus inline-flex items-center gap-2 rounded-md text-sm text-zinc-700 hover:text-accent-700"
         >
           <Phone className="h-4 w-4" />
           {contractor.phone}
         </a>
         <a
           href={`mailto:${contractor.email}`}
-          className="inline-flex items-center gap-2 text-sm text-zinc-700 hover:text-accent-700"
+          className="transition-smooth ring-focus inline-flex items-center gap-2 rounded-md text-sm text-zinc-700 hover:text-accent-700"
         >
           <Mail className="h-4 w-4" />
           {contractor.email}

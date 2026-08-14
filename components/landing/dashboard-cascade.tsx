@@ -25,32 +25,41 @@ import {
  */
 export function DashboardCascade() {
   return (
-    <section className="relative isolate overflow-hidden bg-slate-950 py-24 sm:py-32">
+    <section className="relative isolate overflow-hidden bg-ink py-24 sm:py-32">
       {/* Backdrop: subtle radial glow + scan grid */}
       <div
         aria-hidden
-        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(0,229,255,0.18),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(255,43,214,0.12),transparent_50%)]"
+        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(67,83,255,0.16),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(157,92,246,0.12),transparent_50%)]"
       />
       <div
         aria-hidden
         className="absolute inset-0 -z-10 opacity-[0.06]"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(103,232,249,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(103,232,249,0.6) 1px, transparent 1px)",
+            "linear-gradient(rgba(67,83,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(67,83,255,0.6) 1px, transparent 1px)",
           backgroundSize: "48px 48px",
         }}
       />
+      {/* Hyperline stripe bands at the section edges */}
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 left-0 -z-10 hidden w-14 opacity-80 lg:block xl:w-20"
+      />
+      <div
+        aria-hidden
+        className="hl-stripes absolute inset-y-0 right-0 -z-10 hidden w-14 opacity-80 lg:block xl:w-20"
+      />
 
       <div className="mx-auto max-w-7xl px-4 text-center">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-slate-900/60 px-3 py-1 text-xs font-medium text-cyan-200 backdrop-blur">
+        <span className="font-label inline-flex items-center gap-1.5 rounded-md border border-white/25 px-2.5 py-1 text-white">
           <Sparkles className="h-3 w-3" />
           One workflow, address to deposit
         </span>
-        <h2 className="font-display mt-5 text-balance text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+        <h2 className="display-hero mt-6 text-balance text-4xl text-white sm:text-5xl md:text-6xl">
           From <span className="text-gradient">aerial measurement</span> to{" "}
           <span className="text-gradient">paid invoice</span> in one tab.
         </h2>
-        <p className="mx-auto mt-4 max-w-2xl text-balance text-base leading-relaxed text-slate-400">
+        <p className="mx-auto mt-5 max-w-2xl text-balance text-base leading-relaxed text-zinc-400">
           The AI sizes the roof, the proposal builder packages it three ways,
           and the homeowner pays from their phone. You never leave the app.
         </p>
@@ -105,20 +114,20 @@ function MagicRoofCard() {
         transformStyle: "preserve-3d",
       }}
     >
-      <div className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-slate-950 shadow-[0_40px_80px_-20px_rgba(0,229,255,0.25),0_30px_60px_-20px_rgba(0,0,0,0.7)]">
+      <div className="overflow-hidden rounded-2xl border border-accent-500/25 bg-ink shadow-[0_40px_80px_-20px_rgba(67,83,255,0.3),0_30px_60px_-20px_rgba(0,0,0,0.7)]">
         {/* Header bar */}
-        <div className="flex items-center justify-between border-b border-cyan-500/15 bg-slate-900/80 px-3 py-2">
-          <div className="flex items-center gap-2 text-[10px] text-cyan-200">
-            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.95)]" />
+        <div className="flex items-center justify-between border-b border-accent-500/20 bg-ink px-3 py-2">
+          <div className="flex items-center gap-2 text-[10px] text-accent-200">
+            <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-stripe-blue shadow-[0_0_6px_rgba(67,83,255,0.95)]" />
             <span className="font-mono">live takeoff · 6232 97th Dr NE</span>
           </div>
-          <span className="font-mono text-[10px] text-cyan-200/70">
+          <span className="font-mono text-[10px] text-accent-200/70">
             schematic · 1:240
           </span>
         </div>
 
         {/* Stylized vector roof + neon overlay */}
-        <div className="relative aspect-[16/10] overflow-hidden bg-slate-950">
+        <div className="relative aspect-[16/10] overflow-hidden bg-ink">
           <StylizedRoof />
 
           <svg
@@ -132,7 +141,7 @@ function MagicRoofCard() {
               <g key={e.d}>
                 <motion.path
                   d={e.d}
-                  stroke="#00e5ff"
+                  stroke="#4353ff"
                   strokeWidth="10"
                   strokeLinecap="round"
                   fill="none"
@@ -147,7 +156,7 @@ function MagicRoofCard() {
                 />
                 <motion.path
                   d={e.d}
-                  stroke="#a3f7ff"
+                  stroke="#a3b1ff"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                   fill="none"
@@ -176,15 +185,15 @@ function MagicRoofCard() {
                     width={52}
                     height={20}
                     rx={4}
-                    fill="rgba(2,6,23,0.85)"
-                    stroke="#67e8f9"
+                    fill="rgba(13,13,18,0.88)"
+                    stroke="#4353ff"
                     strokeWidth={1}
                   />
                   <text
                     x={e.labelX}
                     y={e.labelY + 2}
                     textAnchor="middle"
-                    fill="#a5f3fc"
+                    fill="#c7d0ff"
                     fontSize="11"
                     fontWeight={600}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
@@ -202,7 +211,7 @@ function MagicRoofCard() {
                   cx={d.x}
                   cy={d.y}
                   r={14}
-                  fill="#ff2bd6"
+                  fill="#f8717e"
                   initial={{ scale: 0, opacity: 0 }}
                   animate={{
                     scale: [0.7, 1.3, 0.9],
@@ -224,24 +233,24 @@ function MagicRoofCard() {
                     stiffness: 240,
                   }}
                 >
-                  <circle cx={d.x} cy={d.y} r="6" fill="#ff2bd6" />
-                  <circle cx={d.x} cy={d.y} r="2.4" fill="#fff0fb" />
+                  <circle cx={d.x} cy={d.y} r="6" fill="#f8717e" />
+                  <circle cx={d.x} cy={d.y} r="2.4" fill="#fff1f2" />
                 </motion.g>
               </g>
             ))}
           </svg>
 
           {/* Bottom legend */}
-          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[9px] text-cyan-200/80">
-            <div className="flex items-center gap-2 rounded-full border border-cyan-500/30 bg-slate-950/80 px-2 py-0.5 backdrop-blur">
-              <span className="h-1.5 w-3 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.95)]" />
+          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[9px] text-accent-200/80">
+            <div className="flex items-center gap-2 rounded-full border border-accent-500/40 bg-ink/80 px-2 py-0.5 backdrop-blur">
+              <span className="h-1.5 w-3 rounded-full bg-stripe-blue shadow-[0_0_6px_rgba(67,83,255,0.95)]" />
               <span className="font-mono">eaves</span>
-              <span className="text-cyan-100">148 LF</span>
+              <span className="text-accent-100">148 LF</span>
             </div>
-            <div className="flex items-center gap-2 rounded-full border border-fuchsia-500/30 bg-slate-950/80 px-2 py-0.5 backdrop-blur">
-              <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(255,43,214,0.95)]" />
+            <div className="flex items-center gap-2 rounded-full border border-stripe-coral/40 bg-ink/80 px-2 py-0.5 backdrop-blur">
+              <span className="h-1.5 w-1.5 rounded-full bg-stripe-coral shadow-[0_0_6px_rgba(248,113,126,0.95)]" />
               <span className="font-mono">downspouts</span>
-              <span className="text-fuchsia-100">5</span>
+              <span className="text-rose-100">5</span>
             </div>
           </div>
         </div>
@@ -296,7 +305,7 @@ function StylizedRoof() {
           <path
             d="M32 0 L0 0 0 32"
             fill="none"
-            stroke="rgba(103,232,249,0.07)"
+            stroke="rgba(67,83,255,0.08)"
             strokeWidth="0.5"
           />
         </pattern>
@@ -321,28 +330,28 @@ function StylizedRoof() {
       <polygon
         points="230,145 510,145 470,230 280,230"
         fill="url(#roof-light)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       {/* South slope */}
       <polygon
         points="280,230 470,230 490,315 230,315"
         fill="url(#roof-mid)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       {/* West hip */}
       <polygon
         points="230,145 280,230 230,315"
         fill="url(#roof-dark)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       {/* East hip (transitions toward the wing) */}
       <polygon
         points="510,145 510,230 470,230"
         fill="url(#roof-dark)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
 
@@ -360,13 +369,13 @@ function StylizedRoof() {
       <polygon
         points="510,175 660,175 640,230 530,230"
         fill="url(#roof-light)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       <polygon
         points="530,230 640,230 660,285 510,285"
         fill="url(#roof-mid)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       {/* East wing ridge */}
@@ -382,7 +391,7 @@ function StylizedRoof() {
       <polygon
         points="660,175 660,285 640,230"
         fill="url(#roof-dark)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
 
@@ -390,7 +399,7 @@ function StylizedRoof() {
       <polygon
         points="280,330 440,330 420,380 300,380"
         fill="url(#roof-mid)"
-        stroke="rgba(103,232,249,0.08)"
+        stroke="rgba(67,83,255,0.1)"
         strokeWidth="0.5"
       />
       <line
@@ -427,9 +436,9 @@ function DataCard() {
         transformStyle: "preserve-3d",
       }}
     >
-      <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4 shadow-[0_30px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl">
+      <div className="rounded-2xl border border-white/10 bg-zinc-900/80 p-4 shadow-[0_30px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-xl">
         <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-slate-950/70 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-cyan-200">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-500/40 bg-ink/70 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-accent-200">
             <Ruler className="h-3 w-3" />
             AI takeoff
           </span>
@@ -440,9 +449,9 @@ function DataCard() {
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <Stat label="Eaves" value="148 LF" tone="cyan" />
-          <Stat label="D-spouts" value="5" tone="magenta" />
-          <Stat label="Stories" value="2" tone="cyan" />
+          <Stat label="Eaves" value="148 LF" tone="blue" />
+          <Stat label="D-spouts" value="5" tone="coral" />
+          <Stat label="Stories" value="2" tone="blue" />
         </div>
 
         <div className="mt-3 space-y-1">
@@ -455,19 +464,19 @@ function DataCard() {
           ].map((r) => (
             <div
               key={r.label}
-              className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1 text-[10px]"
+              className="flex items-center justify-between rounded-md border border-white/10 bg-ink/60 px-2 py-1 text-[10px]"
             >
-              <span className="text-slate-400">{r.label}</span>
-              <span className="font-mono tabular-nums text-cyan-200">
+              <span className="text-zinc-400">{r.label}</span>
+              <span className="font-mono tabular-nums text-accent-200">
                 {r.val}
               </span>
             </div>
           ))}
         </div>
 
-        <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-2 text-[9px] text-slate-500">
+        <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-2 text-[9px] text-zinc-500">
           <span className="font-mono">Solar · GPT-4o · SAM 2</span>
-          <span className="font-mono text-cyan-300/70">~12 sec</span>
+          <span className="font-mono text-accent-300/70">~12 sec</span>
         </div>
       </div>
     </motion.div>
@@ -481,15 +490,15 @@ function Stat({
 }: {
   label: string;
   value: string;
-  tone: "cyan" | "magenta";
+  tone: "blue" | "coral";
 }) {
-  const accent = tone === "cyan" ? "text-cyan-300" : "text-fuchsia-300";
+  const accent = tone === "blue" ? "text-accent-300" : "text-stripe-coral";
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-2 text-center">
+    <div className="rounded-lg border border-white/10 bg-ink/60 px-2 py-2 text-center">
       <div className={`font-mono text-base font-semibold tabular-nums ${accent}`}>
         {value}
       </div>
-      <div className="mt-0.5 text-[9px] uppercase tracking-wider text-slate-500">
+      <div className="mt-0.5 text-[9px] uppercase tracking-wider text-zinc-500">
         {label}
       </div>
     </div>
@@ -533,11 +542,11 @@ function ProposalCard() {
           <PackageCard tier="Pro Shield" price="$4,572" recommended />
           <PackageCard tier="Heritage" price="$8,940" />
         </div>
-        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-right">
-          <div className="text-[9px] font-medium uppercase tracking-wider text-emerald-700">
+        <div className="mt-3 rounded-lg border border-accent-200 bg-accent-50/50 px-3 py-2 text-right">
+          <div className="text-[9px] font-medium uppercase tracking-wider text-accent-700">
             Selected · Pro Shield
           </div>
-          <div className="font-display text-2xl font-semibold tabular-nums text-zinc-900">
+          <div className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
             $4,572
           </div>
         </div>
@@ -559,14 +568,14 @@ function PackageCard({
     <div
       className={`rounded-lg border p-2 ${
         recommended
-          ? "border-emerald-300 bg-emerald-50/50"
+          ? "border-accent-300 bg-accent-50/50"
           : "border-zinc-200 bg-white"
       }`}
     >
       <div className="text-[8px] font-medium uppercase tracking-wider text-zinc-500">
         {tier}
       </div>
-      <div className="mt-1 font-display text-base font-semibold tabular-nums text-zinc-900">
+      <div className="mt-1 text-base font-semibold tracking-tight tabular-nums text-zinc-900">
         {price}
       </div>
     </div>
@@ -605,7 +614,7 @@ function PhoneCard() {
             <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500">
               Rivera Gutterworks
             </div>
-            <div className="mt-1 font-display text-xl font-semibold leading-tight text-zinc-900">
+            <div className="mt-1 text-xl font-semibold leading-tight tracking-tight text-zinc-900">
               Your gutter quote
             </div>
             <div className="mt-1 text-[10px] text-zinc-500">
@@ -618,7 +627,7 @@ function PhoneCard() {
                 <span>30% today</span>
               </div>
               <div className="mt-1 flex items-baseline gap-2">
-                <span className="font-display text-2xl font-semibold tabular-nums text-zinc-900">
+                <span className="text-2xl font-semibold tracking-tight tabular-nums text-zinc-900">
                   $4,572
                 </span>
                 <span className="text-[10px] text-zinc-500">total</span>
@@ -644,7 +653,7 @@ function PhoneCard() {
           <div className="border-t border-zinc-200 bg-white/95 px-3 py-3 backdrop-blur">
             <button
               type="button"
-              className="relative w-full overflow-hidden rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-[0_0_24px_rgba(16,185,129,0.65)]"
+              className="relative w-full overflow-hidden rounded-xl bg-accent-600 px-3 py-2.5 text-xs font-semibold text-white shadow-[0_0_24px_rgba(46,64,232,0.55)]"
               tabIndex={-1}
             >
               <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent [animation:cascadeShimmer_3s_ease_infinite]" />
@@ -654,7 +663,7 @@ function PhoneCard() {
               </span>
             </button>
             <div className="mt-1.5 flex items-center justify-center gap-1 text-[8px] text-zinc-500">
-              <ShieldCheck className="h-2.5 w-2.5 text-emerald-600" />
+              <ShieldCheck className="h-2.5 w-2.5 text-accent-600" />
               Secured by Stripe · Funds direct to contractor
             </div>
           </div>
@@ -690,7 +699,7 @@ function PhoneFrame({ children }: { children: React.ReactNode }) {
 
       <div
         aria-hidden
-        className="absolute -bottom-8 left-1/2 -z-10 h-32 w-56 -translate-x-1/2 rounded-full bg-emerald-500/30 blur-3xl"
+        className="absolute -bottom-8 left-1/2 -z-10 h-32 w-56 -translate-x-1/2 rounded-full bg-accent-500/30 blur-3xl"
       />
 
       <motion.div

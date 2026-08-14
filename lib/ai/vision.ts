@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 import { getPrompt } from "./prompts";
 import type { SatImage } from "./static-map";
 import type { RoofPolygon } from "./sam";
@@ -186,7 +187,7 @@ export async function segmentEavesViaVision(
   const systemPrompt = await getPrompt("address.vision.system", SYSTEM_PROMPT);
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
@@ -217,7 +218,7 @@ export async function segmentEavesViaVision(
         ],
       }),
       cache: "no-store",
-    });
+    }, AI_TIMEOUTS.vision);
 
     if (!res.ok) {
       console.warn(`[vision] HTTP ${res.status}`);

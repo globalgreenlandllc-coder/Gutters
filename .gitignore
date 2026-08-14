@@ -24,3 +24,13 @@ next-env.d.ts
 
 # Local MCP config (may hold a GitHub PAT)
 .mcp.json
+
+# Generated engine/debug render outputs (produced by scripts/*.mts render tools)
+scripts/*.png
+scripts/*.svg
+scripts/*.html
+
+# Claude Code session config
+.claude/
+.vercel
+.env*

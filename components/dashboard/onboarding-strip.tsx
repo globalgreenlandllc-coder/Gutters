@@ -1,8 +1,9 @@
 "use client";
 
 import { Check, CreditCard, Palette, ShieldCheck } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
+import { DUR, EASE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
@@ -33,15 +34,16 @@ const STEPS = [
 ];
 
 export function OnboardingStrip() {
+  const reduceMotion = useReducedMotion();
   const total = STEPS.length;
   const done = STEPS.filter((s) => s.done).length;
   if (done === total) return null;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card"
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-card"
     >
       <div className="flex items-center gap-3">
         <div className="relative flex h-10 w-10 items-center justify-center">
@@ -54,15 +56,22 @@ export function OnboardingStrip() {
               stroke="rgb(228 228 231)"
               strokeWidth="3"
             />
-            <circle
+            {/* Progress arc sweeps from 0 to done/total on mount. */}
+            <motion.circle
               cx="18"
               cy="18"
               r="15"
-              fill="none"
-              stroke="#059669"
+              fill="rgba(20,104,140,0.10)"
+              stroke="#14688C"
               strokeWidth="3"
-              strokeDasharray={`${(done / total) * 94.2} 94.2`}
               strokeLinecap="round"
+              initial={
+                reduceMotion ? false : { strokeDasharray: "0 94.2" }
+              }
+              animate={{
+                strokeDasharray: `${(done / total) * 94.2} 94.2`,
+              }}
+              transition={{ duration: 0.6, ease: EASE, delay: DUR.fast }}
             />
           </svg>
           <span className="text-xs font-semibold text-zinc-900">
@@ -70,10 +79,10 @@ export function OnboardingStrip() {
           </span>
         </div>
         <div>
-          <div className="text-sm font-medium text-zinc-900">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400">
             Finish setup
           </div>
-          <div className="text-xs text-zinc-500">
+          <div className="mt-0.5 text-xs text-zinc-500">
             One step left to start collecting payments.
           </div>
         </div>
@@ -85,7 +94,7 @@ export function OnboardingStrip() {
             key={s.id}
             href={s.href}
             className={cn(
-              "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition",
+              "transition-smooth ring-focus press-scale flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
               s.done
                 ? "border-accent-200 bg-accent-50/40 text-accent-700"
                 : "border-zinc-200 text-zinc-700 hover:border-accent-400 hover:bg-accent-50/40",

@@ -1,6 +1,8 @@
 import "server-only";
 import { PNG } from "pngjs";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
+import { largestConnectedComponent } from "./roof-geom";
 import type { SatImage } from "./static-map";
 
 export type RoofPolygon = {
@@ -36,6 +38,26 @@ export async function segmentRoofViaSam(
    * When omitted, defaults to the image center.
    */
   pointPrompt?: { x: number; y: number },
+  /**
+   * Optional TIGHT box (image-pixel space) hugging the actual building —
+   * derived by the caller from the Google Solar building bbox. SAM treats
+   * a box prompt as "find the dominant object inside this region," so a
+   * box that hugs the roof (rather than the whole yard-padded crop) is far
+   * more likely to return the WHOLE footprint instead of one bright plane.
+   * When omitted, falls back to the whole-crop-minus-5%-margin box.
+   */
+  boxPrompt?: { x_min: number; y_min: number; x_max: number; y_max: number },
+  /**
+   * Optional POSITIVE point prompts (image-pixel space), one per roof
+   * plane — from the Google Solar segment centers. On a big multi-wing
+   * roof a box prompt alone locks onto the single brightest plane; seeding
+   * a positive point INSIDE every wing makes SAM 2 union all the planes
+   * into the whole footprint. Only used on the retry path (the first call
+   * is box-only, which is best for simple roofs — a lone point+box once
+   * returned a 0.4% mask, so points are added only when the box already
+   * under-segmented). Points outside the crop are dropped by the caller.
+   */
+  pointPrompts?: readonly { x: number; y: number }[],
 ): Promise<SamOutcome> {
   const key = await getActiveApiKey("FAL");
   if (!key) return { ok: false, reason: "no FAL key in vault" };
@@ -46,21 +68,32 @@ export async function segmentRoofViaSam(
   // SAM 2 with combined point+box prompts was returning 0.4% masks (just
   // the prompt point). With a box ALONE, SAM treats the box as "find the
   // dominant object inside this region" — which on a building-cropped
-  // tile is the building. Caller already cropped tightly to the footprint
-  // so a small margin gives SAM a clean working area.
+  // tile is the building. Prefer the caller's tight Solar-bbox box (hugs
+  // the roof); otherwise fall back to the whole-crop-minus-5%-margin box.
   const margin = Math.round(Math.min(image.width, image.height) * 0.05);
-  const box = {
-    x_min: margin,
-    y_min: margin,
-    x_max: image.width - margin,
-    y_max: image.height - margin,
-  };
+  const clamp = (v: number, hi: number) => Math.max(0, Math.min(hi, Math.round(v)));
+  const box =
+    boxPrompt &&
+    boxPrompt.x_max - boxPrompt.x_min > 20 &&
+    boxPrompt.y_max - boxPrompt.y_min > 20
+      ? {
+          x_min: clamp(boxPrompt.x_min, image.width),
+          y_min: clamp(boxPrompt.y_min, image.height),
+          x_max: clamp(boxPrompt.x_max, image.width),
+          y_max: clamp(boxPrompt.y_max, image.height),
+        }
+      : {
+          x_min: margin,
+          y_min: margin,
+          x_max: image.width - margin,
+          y_max: image.height - margin,
+        };
   void cx;
   void cy;
 
   let res: Response;
   try {
-    res = await fetch("https://fal.run/fal-ai/sam2/image", {
+    res = await fetchWithTimeout("https://fal.run/fal-ai/sam2/image", {
       method: "POST",
       headers: {
         Authorization: `Key ${key}`,
@@ -77,10 +110,29 @@ export async function segmentRoofViaSam(
             y_max: box.y_max,
             label: 1,
           },
+          // One positive point per roof wing (retry path). SAM 2 unions
+          // the box + every positive point, so each seeded wing joins the
+          // mask — the fix for "segmented one wing not whole roof".
+          ...(pointPrompts ?? [])
+            .filter(
+              (p) =>
+                Number.isFinite(p.x) &&
+                Number.isFinite(p.y) &&
+                p.x >= 0 &&
+                p.y >= 0 &&
+                p.x <= image.width &&
+                p.y <= image.height,
+            )
+            .map((p) => ({
+              type: "point" as const,
+              x: clamp(p.x, image.width),
+              y: clamp(p.y, image.height),
+              label: 1,
+            })),
         ],
       }),
       cache: "no-store",
-    });
+    }, AI_TIMEOUTS.sam);
   } catch (e) {
     return {
       ok: false,
@@ -168,7 +220,7 @@ export async function segmentRoofViaSam(
       const b64 = maskRef.split(",", 2)[1] ?? "";
       maskBytes = Buffer.from(b64, "base64");
     } else {
-      const maskRes = await fetch(maskRef, { cache: "no-store" });
+      const maskRes = await fetchWithTimeout(maskRef, { cache: "no-store" }, AI_TIMEOUTS.imagery);
       if (!maskRes.ok) {
         return { ok: false, reason: `mask download HTTP ${maskRes.status}` };
       }
@@ -258,12 +310,28 @@ export async function segmentRoofViaSam(
     };
   }
 
+  // Restrict to the largest connected component BEFORE tracing. The area
+  // gate (index.ts) is satisfied by chosenCount, which sums ALL foreground
+  // islands — but traceMooreNeighbor walks exactly one boundary from the
+  // first row-scanned fg pixel. A detached speck could capture the trace
+  // (small-bbox garbage polygon) while the gate passes on the real roof
+  // island. Tracing the largest component makes the gate and the traced
+  // polygon describe the SAME pixels, and re-bases areaFraction on it.
+  const comp = largestConnectedComponent(png.width, png.height, chosen.isFg);
+  if (comp.count < chosenCount * 0.5) {
+    return {
+      ok: false,
+      reason: `mask "${chosen.name}" fragmented — largest component ${comp.count}/${chosenCount} fg px (<50%); falling through to Solar mask`,
+    };
+  }
+  const compFg = (x: number, y: number) => comp.mask[y * png.width + x] === 1;
+
   // Trace the boundary
-  const boundary = traceMooreNeighbor(png.width, png.height, chosen.isFg);
+  const boundary = traceMooreNeighbor(png.width, png.height, compFg);
   if (boundary.length < 8) {
     return {
       ok: false,
-      reason: `mask "${chosen.name}" had ${chosenCount} fg pixels but traced to only ${boundary.length} boundary points`,
+      reason: `mask "${chosen.name}" had ${comp.count} fg pixels but traced to only ${boundary.length} boundary points`,
     };
   }
 
@@ -275,7 +343,7 @@ export async function segmentRoofViaSam(
       : boundary;
 
   const bbox = computeBbox(downsampled);
-  const areaFraction = chosenCount / totalPx;
+  const areaFraction = comp.count / totalPx;
 
   return {
     ok: true,

@@ -46,6 +46,29 @@ export function assessSatelliteTrace(args: {
   footprintAreaFt2: number | null;
   /** Solar footprint extent in canvas space. null = no Solar coverage. */
   footprintBboxCanvas: FootprintBboxCanvas | null;
+  /** Number of upper roof tiers Solar detected that the perimeter trace
+   *  does NOT cover — each is an interior gutter (upper roof draining onto
+   *  a lower roof) that isn't auto-drawn. >0 means the trace is a correct
+   *  OUTLINE but is missing interior runs, so it can't be "no-adjustment"
+   *  no matter how clean the perimeter is. */
+  interiorTiersDetected?: number;
+  /** Count of Solar roof segments — diagnostics only. */
+  segmentCount?: number;
+  /** The outline came from the GPT-4o VISION fallback — reached only when
+   *  SAM 2 AND the Solar mask both failed to lock on. Vision is the least
+   *  reliable tracer: it can return a plausibly-sized box that still misses
+   *  a whole wing (every point sits inside the Solar bbox, so the
+   *  containment + LF-ratio checks above pass). Such a trace must never
+   *  read as "ok". */
+  fromVisionFallback?: boolean;
+  /** Vision itself called this a multi-level roof — an extra complexity
+   *  signal for the vision-fallback guardrail. */
+  roofLevelsMulti?: boolean;
+  /** The outline was synthesized from Google Solar's per-plane segment
+   *  bounding boxes (SAM 2 + the Solar raster mask both failed). Those
+   *  boxes are axis-aligned over-approximations of angled planes, so the
+   *  footprint is deterministic but COARSE — it must never read "ok". */
+  coarseFootprint?: boolean;
 }): TraceQuality {
   // 1. No real trace at all — the pipeline fell through to mock geometry.
   if (args.source === "mock") {
@@ -116,9 +139,80 @@ export function assessSatelliteTrace(args: {
     score -= 0.2;
   }
 
-  const confidence = Math.max(0, Math.min(1, score));
-  const status: TraceQuality["status"] =
+  let confidence = Math.max(0, Math.min(1, score));
+  let status: TraceQuality["status"] =
     confidence < 0.45 ? "unusable" : confidence < 0.8 ? "low" : "ok";
 
-  return { status, confidence, reasons: status === "ok" ? [] : reasons };
+  // 6. Multi-tier roof: the perimeter trace is a correct outline but every
+  //    interior eave (upper roof draining onto a lower roof) is missing —
+  //    those are never auto-drawn. Floor the status to "low" so a
+  //    perfectly clean perimeter can't ship as "no adjustment needed" and
+  //    silently under-bill. Never improve an already-worse verdict
+  //    (unusable stays unusable) and never touch the ok→ok happy path
+  //    when there are no tiers.
+  const tiers = args.interiorTiersDetected ?? 0;
+  const tierReasons = [...reasons];
+  if (tiers > 0 && status === "ok") {
+    status = "low";
+    tierReasons.push(
+      `${tiers} upper roof tier${tiers === 1 ? "" : "s"} detected — interior gutters weren't auto-drawn; add them with the drawing tool.`,
+    );
+  } else if (tiers > 0 && status === "low") {
+    tierReasons.push(
+      `${tiers} upper roof tier${tiers === 1 ? "" : "s"} detected — add the interior gutters with the drawing tool.`,
+    );
+  }
+
+  // 7. Provenance guardrail. When the outline came from the GPT-4o vision
+  //    fallback (SAM 2 + Solar mask both failed to lock on), it is the
+  //    weakest tracer and must never read as "ok" — the geometric checks
+  //    above can't catch a plausibly-sized box that still misses a wing,
+  //    because all its points sit inside the Solar footprint. On a COMPLEX
+  //    roof (many Solar planes, an interior tier, or vision's own
+  //    multi-level call) vision is unreliable enough to mark "unusable" and
+  //    route straight to the manual drawing tool. Otherwise a plain "low"
+  //    warning: keep the lines, but tell them to verify the outline.
+  if (args.fromVisionFallback) {
+    const complexRoof =
+      (args.segmentCount ?? 0) >= 5 || tiers > 0 || args.roofLevelsMulti === true;
+    // unshift, not push: the banner surfaces reasons[0], and this
+    // provenance message is the most actionable one for a vision trace —
+    // it must lead any earlier generic reason.
+    if (complexRoof && status !== "unusable") {
+      status = "unusable";
+      confidence = Math.min(confidence, 0.3);
+      tierReasons.unshift(
+        "The precise roof-outline pass couldn't lock on, so this was traced from the photo by AI vision — and on a complex, multi-section roof like this it often misses a wing. Draw the outline to price it accurately.",
+      );
+    } else if (status === "ok") {
+      status = "low";
+      confidence = Math.min(confidence, 0.7);
+      tierReasons.unshift(
+        "Traced from the photo by AI vision (the precise roof-outline pass didn't lock on). Double-check the outline against the image before pricing.",
+      );
+    }
+  }
+
+  // 8. Coarse-footprint guardrail. A segment-bbox footprint is built from
+  //    Google's per-plane roof data because SAM + the raster mask both
+  //    failed on the image. Two ways it goes wrong, and we can't tell which
+  //    from geometry alone: (a) Solar reports only SOME planes, so the
+  //    outline covers PART of the roof (under-bills); (b) the north-aligned
+  //    box over-covers an angled roof (over-bills). Either way it's a rough
+  //    STARTING outline, never a number to send — force "unusable" so the
+  //    prominent redraw prompt fires. The outline still renders as a
+  //    starting point the contractor edits or redraws.
+  if (args.coarseFootprint && status !== "unusable") {
+    status = "unusable";
+    confidence = Math.min(confidence, 0.4);
+    tierReasons.unshift(
+      "This outline came from Google's roof-plane data because the photo was too unclear to trace — it may not cover the whole roof. Use it as a starting point, but redraw the eaves along the actual roofline before you price it.",
+    );
+  }
+
+  return {
+    status,
+    confidence,
+    reasons: status === "ok" ? [] : tierReasons,
+  };
 }

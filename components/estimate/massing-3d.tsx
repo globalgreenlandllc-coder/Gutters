@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { deriveRoofSkeleton } from "@/lib/roof-skeleton";
+import { deriveRoofSkeleton, segmentsOverlap } from "@/lib/roof-skeleton";
 import type {
   Downspout,
   EditableLine,
@@ -94,19 +94,41 @@ export function Massing3D({
       : { ridges: [], hips: [], valleys: [], gables: [] };
 
     const r = modelRadius(perimeter, center);
-    const shortSpanPx = (() => {
-      const bb = bboxOf(perimeter)!;
-      return Math.min(bb.maxX - bb.minX, bb.maxY - bb.minY);
-    })();
-    const ridgeRiseFt = (0.35 * shortSpanPx) / PX_PER_FT; // decorative pitch
-    const { faces, edges } = buildMassing(perimeter, wallFt, skeleton, ridgeRiseFt);
+    const bb = bboxOf(perimeter)!;
+    const shortSpanPx = Math.min(bb.maxX - bb.minX, bb.maxY - bb.minY);
+    const ridgeRiseFt = (0.22 * shortSpanPx) / PX_PER_FT; // gentle decorative pitch
+
+    // Per-edge wall height: a wall that a LOWER-tier eave runs along (covered
+    // porch / patio / garage) steps DOWN below the 2-story body, so the massing
+    // reads as real tiers instead of one flat-topped box.
+    const lowerFt = Math.min(wallHeightFt(1), wallFt);
+    const eaveTol = Math.max(8, Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY) * 0.06);
+    const lowerSegs = eaves
+      .filter((e) => e.tier === "lower" && e.points.length >= 2)
+      .map(
+        (e) =>
+          [e.points[0], e.points[e.points.length - 1]] as [
+            { x: number; y: number },
+            { x: number; y: number },
+          ],
+      );
+    const wallFtFor = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      lowerSegs.some((s) => segmentsOverlap([a, b], s, eaveTol)) ? lowerFt : wallFt;
+
+    const { faces, edges } = buildMassing(
+      perimeter,
+      wallFtFor,
+      skeleton,
+      ridgeRiseFt,
+      wallFt,
+    );
 
     return { center, wallFt, ridgeRiseFt, faces, edges, r };
   }, [eaves, rakes, roofStructure, planSource, stories]);
 
   if (!model) {
     return (
-      <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-cyan-900/40 bg-slate-950 text-sm text-slate-400">
+      <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-slate-950 text-sm text-slate-400">
         3D view needs a roof outline — run a plan takeoff first.
       </div>
     );
@@ -185,7 +207,7 @@ export function Massing3D({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-cyan-900/40 bg-slate-950">
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950">
       <svg
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
         preserveAspectRatio="xMidYMid meet"
@@ -273,7 +295,7 @@ export function Massing3D({
 
       {/* Rotation controls */}
       <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex items-center gap-3 bg-gradient-to-t from-slate-950/90 to-transparent px-4 py-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-cyan-300">
+        <span className="font-label text-[11px] text-accent-300">
           Rotate
         </span>
         <input
@@ -282,7 +304,7 @@ export function Massing3D({
           max={360}
           value={yawDeg}
           onChange={(ev) => setYawDeg(Number(ev.target.value))}
-          className="h-1 flex-1 cursor-pointer accent-cyan-400"
+          className="h-1 flex-1 cursor-pointer accent-accent-400"
           aria-label="Rotate building"
         />
         <div className="flex gap-1">
@@ -299,7 +321,7 @@ export function Massing3D({
               className={
                 "rounded-md px-2 py-1 text-[11px] font-medium transition " +
                 (Math.abs(((yawDeg - deg) % 360 + 360) % 360) < 8
-                  ? "bg-cyan-500 text-slate-950"
+                  ? "bg-accent-500 text-white"
                   : "bg-slate-800 text-slate-300 hover:bg-slate-700")
               }
             >

@@ -4,14 +4,19 @@ import { fetchSatelliteImage, type SatImage } from "./static-map";
 import {
   estimateStoriesFromInsights,
   getBuildingInsights,
+  type BuildingInsights,
   type RoofSegment,
 } from "./solar";
+import { runSolarFirstEstimate } from "./solar-engine";
+import type { SolarLayers } from "./solar-layers";
 import { segmentRoofViaSam, type RoofPolygon } from "./sam";
 import { getRoofMaskFromSolar } from "./solar-mask";
 import { polygonFromSolarMask } from "./solar-polygon";
+import { footprintMaskFromSolarSegments } from "./solar-segment-footprint";
 
 import { classifyEdgeWithAzimuth, ringCentroid } from "./edge-classifier";
 import { cropSatImageToBox } from "./crop";
+import { rectifyOutline } from "./rectify-outline";
 import { segmentEavesViaVision } from "./vision";
 import {
   detectRoofStructureViaVision,
@@ -37,6 +42,7 @@ import {
   simplify,
   transformToCanvas,
 } from "./geometry";
+import { countOpenEaveEnds } from "./roof-geom";
 import {
   assessSatelliteTrace,
   type FootprintBboxCanvas,
@@ -111,6 +117,20 @@ export type EstimateResult = {
    *  draw it yourself" banner on the results screen. Absent for plan
    *  takeoffs (their geometry comes from the PDF, not image tracing). */
   traceQuality?: TraceQuality;
+  /** Suggested INTERIOR gutter runs — the downhill edges of elevated
+   *  Solar roof tiers ("upper roof drops onto lower roof"), which the
+   *  outer-perimeter trace structurally can't see. These are UN-PRICED
+   *  hints only: they are NEVER summed into measurements.eaveLF and never
+   *  auto-merged into `eaves`. The canvas/diagram draws them dashed with a
+   *  tap-to-add affordance; accepting one moves it into the priced eaves.
+   *  Canvas (900×580) space, same as `eaves`. Empty when no tier-breaks
+   *  were detected (or no Solar coverage). */
+  suggestedEaves?: EditableLine[];
+  /** Solar-first engine only: the DETAILED drip-edge polyline in canvas
+   *  coords. The drawing tool snaps to it and traces along it. */
+  magnetPath?: { x: number; y: number }[];
+  /** Prefix of magnetPath that forms the closed outer ring. */
+  magnetRingCount?: number;
 };
 
 /**
@@ -265,8 +285,21 @@ function detectedToCanvasRoofStructure(
   };
 }
 
+/** Optional capture hooks — used ONLY by the admin accuracy lab, which
+ *  snapshots the run's raw solar inputs so it can be replayed offline.
+ *  Absent for every user-facing call; behavior is identical either way. */
+export type PipelineCapture = {
+  onSolarCapture?: (cap: {
+    layers: SolarLayers;
+    insights: BuildingInsights | null;
+    lat: number;
+    lng: number;
+  }) => void;
+};
+
 export async function runAIEstimatePipeline(
   address: string,
+  capture?: PipelineCapture,
 ): Promise<EstimateResult> {
   const t0 = Date.now();
   const notes: string[] = [];
@@ -279,7 +312,69 @@ export async function runAIEstimatePipeline(
       : `Geocoded via mock — ${geocoded.fallbackReason ?? "Google Maps unavailable"}`,
   );
 
-  // 2. Aerial imagery (only if we have a real geocode)
+  // 2. SOLAR-FIRST ENGINE. Google Solar dataLayers returns the building
+  // mask, the DSM, and the aerial ORTHOPHOTO co-registered on one UTM
+  // grid from one capture — a deterministic footprint + eave/rake read
+  // with the photo the contractor sees, aligned by construction. When it
+  // succeeds we're done; every path below is the legacy fallback for
+  // addresses without (usable) Solar coverage.
+  let insights: BuildingInsights | null = null;
+  if (geocoded.source === "google") {
+    insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
+    if (insights) {
+      notes.push(
+        `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
+          insights.totalRoofAreaMeters2,
+        )} m² total`,
+      );
+    } else {
+      notes.push("Solar API: no coverage / unavailable for this location");
+    }
+    try {
+      const capturedInsights = insights;
+      const solar = await runSolarFirstEstimate({
+        lat: geocoded.lat,
+        lng: geocoded.lng,
+        insights,
+        notes,
+        onLayers: capture?.onSolarCapture
+          ? (layers) =>
+              capture.onSolarCapture?.({
+                layers,
+                insights: capturedInsights,
+                lat: geocoded.lat,
+                lng: geocoded.lng,
+              })
+          : undefined,
+      });
+      if (solar) {
+        return {
+          geocoded,
+          ...solar,
+          source: "ai",
+          durationMs: Date.now() - t0,
+          notes,
+        };
+      }
+    } catch (e) {
+      notes.push(
+        `Solar-first engine errored (${e instanceof Error ? e.message : String(e)}) — falling back to the legacy tile pipeline`,
+      );
+    }
+    // When the solar engine bailed because its imagery predates the
+    // current property, the buildingInsights from that SAME aged dataset
+    // are equally untrustworthy — feeding them to the legacy tracer aims
+    // SAM/vision at a structure that may no longer exist. Drop them and
+    // let the tracer work from the geocode point on the CURRENT tile.
+    if (insights && notes.some((n) => n.includes("roof data here is"))) {
+      notes.push(
+        "Ignoring Google's building location data (same outdated capture) — tracing the current photo from the address point instead",
+      );
+      insights = null;
+    }
+  }
+
+  // 2b. Aerial imagery (legacy path; only if we have a real geocode)
   let image: SatImage | null = null;
   if (geocoded.source === "google") {
     const imgOutcome = await fetchSatelliteImage(geocoded.lat, geocoded.lng, {
@@ -295,7 +390,7 @@ export async function runAIEstimatePipeline(
       );
       if (image.primaryFailureReason) {
         notes.push(
-          `Mapbox primary failed (${image.primaryFailureReason}) — fell back to Google`,
+          `Google imagery failed (${image.primaryFailureReason}) — fell back to Mapbox`,
         );
       }
     } else {
@@ -316,15 +411,11 @@ export async function runAIEstimatePipeline(
     | null = null;
   let solarRoofSegments: RoofSegment[] = [];
   if (image) {
-    const insights = await getBuildingInsights(geocoded.lat, geocoded.lng);
+    // Insights already fetched by the solar-first attempt above — reuse.
     if (insights) {
       solarRoofSegments = insights.roofSegments;
       estimatedStories = estimateStoriesFromInsights(insights);
-      notes.push(
-        `Solar API: ${insights.roofSegments.length} roof segments, ${Math.round(
-          insights.totalRoofAreaMeters2,
-        )} m² total · est. ${estimatedStories}-story`,
-      );
+      notes.push(`Legacy tracer: est. ${estimatedStories}-story from Solar footprint heuristic`);
 
       // Project the building's lat/lng bbox onto image pixel space.
       const ne = latLngToImagePixel(
@@ -362,8 +453,6 @@ export async function runAIEstimatePipeline(
           `Building offset from geocode by ${offsetPx}px — pointing AI at actual house`,
         );
       }
-    } else {
-      notes.push("Solar API: no coverage / unavailable for this location");
     }
   }
 
@@ -463,6 +552,16 @@ export async function runAIEstimatePipeline(
   // pixelated blob — tracing it tends to round corners and warp wall
   // angles, which causes the azimuth math to flag rakes as eaves.
   let roofPolygon: RoofPolygon | null = null;
+  // True when roofPolygon was synthesized from Solar segment bboxes (both
+  // image tracers failed) — a coarse footprint that must be trace-quality
+  // flagged so it never reads "ok".
+  let usedCoarseFootprint = false;
+  // True when that coarse footprint is likely INFLATED: the roof sits
+  // off-cardinal, so the union of north-aligned plane bboxes over-covers
+  // the true footprint. Drives "unusable" (redraw) vs "low" (usable,
+  // verify) — a cardinal-aligned roof's bbox union is tight and fine to
+  // ballpark from.
+  let coarseFootprintInflated = false;
   type ClassifiedEdge = {
     a: { lat: number; lng: number };
     b: { lat: number; lng: number };
@@ -508,7 +607,32 @@ export async function runAIEstimatePipeline(
     const samPoint = didCrop
       ? { x: Math.round(workImage.width / 2), y: Math.round(workImage.height / 2) }
       : (buildingPointPx ?? undefined);
-    const samOutcome = await segmentRoofViaSam(workImage, samPoint);
+    // Hand SAM a TIGHT box hugging the actual building (Google Solar bbox
+    // translated into work-image space + ~10px overhang pad), instead of
+    // letting sam.ts default to the whole-crop-minus-5% box. The crop
+    // carries ~120px of yard on every side, so the default box invites SAM
+    // to lock onto one bright plane (this house: 3.7% coverage → rejected).
+    // Bounded: a mis-tightened box still faces the unchanged 15% area gate
+    // and Solar-mask fallback, so worst case === today.
+    let samBox:
+      | { x_min: number; y_min: number; x_max: number; y_max: number }
+      | undefined;
+    if (buildingBoxPx) {
+      const PAD = 10;
+      const bx1 = buildingBoxPx.x1 - cropOffset.x - PAD;
+      const by1 = buildingBoxPx.y1 - cropOffset.y - PAD;
+      const bx2 = buildingBoxPx.x2 - cropOffset.x + PAD;
+      const by2 = buildingBoxPx.y2 - cropOffset.y + PAD;
+      if (bx2 - bx1 > 20 && by2 - by1 > 20) {
+        samBox = { x_min: bx1, y_min: by1, x_max: bx2, y_max: by2 };
+      }
+    }
+    // SAM runs at the crop's NATIVE resolution. A prior 2× upscale (for
+    // sub-pixel corner accuracy) quadrupled the fal.ai payload and pushed
+    // requests past fal's 35s server timeout — SAM would then hard-fail and
+    // the trace fell all the way through to the crude vision rectangle. The
+    // marginal corner gain isn't worth regressing the PRIMARY tracer into a
+    // total miss; the rectify pass below recovers clean corners for free.
     // Gate SAM acceptance on areaFraction. A real residential roof, tightly
     // cropped, occupies 20–55% of the crop. Anything below ~15% means SAM
     // locked onto a sub-region (one gable, a high-contrast plane, a
@@ -518,10 +642,109 @@ export async function runAIEstimatePipeline(
     // outlines and is robust against multi-gable hip roofs that confuse
     // SAM's box prompt.
     const SAM_MIN_AREA_FRACTION = 0.15;
+    let samOutcome = await segmentRoofViaSam(workImage, samPoint, samBox);
+    // MULTI-WING RETRY: on a big roof the box prompt locks onto one bright
+    // plane (this house: 4.2%). Google Solar already handed us a center per
+    // roof segment — seed a positive SAM point inside every wing so SAM 2
+    // unions all the planes into the whole footprint. Fires ONCE, only when
+    // the box result under-segmented AND the roof is genuinely multi-plane;
+    // the seeded retry is kept only if it covers MORE than the box alone,
+    // so the worst case is one extra fal call and === today's fallthrough.
+    const boxCoverage = samOutcome.ok ? samOutcome.polygon.areaFraction : 0;
+    if (boxCoverage < SAM_MIN_AREA_FRACTION && solarRoofSegments.length >= 4) {
+      const seeds = solarRoofSegments
+        .map((s) => s.center)
+        .filter((c): c is { lat: number; lng: number } => !!c)
+        .map((c) => {
+          const px = latLngToImagePixel(
+            c.lat,
+            c.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          return { x: px.x - cropOffset.x, y: px.y - cropOffset.y };
+        })
+        .filter(
+          (p) =>
+            p.x >= 0 &&
+            p.y >= 0 &&
+            p.x <= workImage.width &&
+            p.y <= workImage.height,
+        );
+      if (seeds.length >= 2) {
+        const retry = await segmentRoofViaSam(workImage, samPoint, samBox, seeds);
+        const retryCoverage = retry.ok ? retry.polygon.areaFraction : 0;
+        notes.push(
+          `SAM multi-wing retry (${seeds.length} Solar-segment seeds): ${(
+            retryCoverage * 100
+          ).toFixed(1)}% coverage vs ${(boxCoverage * 100).toFixed(1)}% box-only`,
+        );
+        if (retryCoverage > boxCoverage) samOutcome = retry;
+      }
+    }
+    // OFF-BUILDING QUALITY GATE. Coverage ≠ correctness: the multi-wing
+    // retry can hit 42% area by grabbing shadow/pavement/neighbor roof, so
+    // its boundary wanders far off the actual building (a jagged mess of
+    // eave stubs in the yard). Measure what fraction of the SAM outline
+    // falls outside the Google Solar footprint bbox (projected to image
+    // px); if most of it is off-building, REJECT the trace so we fall to
+    // the deterministic Solar-segment outline instead of shipping garbage.
+    // Only gates when Solar gave us a footprint to check against.
+    const SAM_MAX_OFF_BUILDING = 0.35;
+    let samOffBuildingFrac = 0;
+    if (samOutcome.ok && samOutcome.polygon.points.length >= 8) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const s of solarRoofSegments) {
+        for (const ll of [s.boundingBoxNE, s.boundingBoxSW, s.center]) {
+          if (!ll) continue;
+          const px = latLngToImagePixel(
+            ll.lat,
+            ll.lng,
+            geocoded.lat,
+            geocoded.lng,
+            image.zoom,
+            image.width,
+            image.height,
+          );
+          minX = Math.min(minX, px.x);
+          minY = Math.min(minY, px.y);
+          maxX = Math.max(maxX, px.x);
+          maxY = Math.max(maxY, px.y);
+        }
+      }
+      if (Number.isFinite(minX) && maxX > minX && maxY > minY) {
+        // ~15% overhang pad so real eaves just past the wall aren't counted off.
+        const padX = (maxX - minX) * 0.15;
+        const padY = (maxY - minY) * 0.15;
+        const lo = { x: minX - padX, y: minY - padY };
+        const hi = { x: maxX + padX, y: maxY + padY };
+        const tp = samOutcome.polygon.points.map(translatePoint);
+        const off = tp.filter(
+          (p) => p.x < lo.x || p.x > hi.x || p.y < lo.y || p.y > hi.y,
+        ).length;
+        samOffBuildingFrac = tp.length > 0 ? off / tp.length : 0;
+      }
+    }
+    if (
+      samOutcome.ok &&
+      samOffBuildingFrac > SAM_MAX_OFF_BUILDING &&
+      solarRoofSegments.length >= 4
+    ) {
+      notes.push(
+        `SAM trace rejected: ${(samOffBuildingFrac * 100).toFixed(0)}% of the outline fell outside the Google Solar footprint (the mask grabbed shadow/yard). Using the deterministic Solar-segment outline instead.`,
+      );
+    }
     if (
       samOutcome.ok &&
       samOutcome.polygon.points.length >= 8 &&
-      samOutcome.polygon.areaFraction >= SAM_MIN_AREA_FRACTION
+      samOutcome.polygon.areaFraction >= SAM_MIN_AREA_FRACTION &&
+      !(samOffBuildingFrac > SAM_MAX_OFF_BUILDING && solarRoofSegments.length >= 4)
     ) {
       const translatedPoints = samOutcome.polygon.points.map(translatePoint);
       // Collapse the SAM mask's pixel-stair jaggies into architectural
@@ -532,8 +755,26 @@ export async function runAIEstimatePipeline(
       // epsilon ≈ 8 px @ zoom-20 ≈ 4 ft — anything tighter is mask noise.
       const rawCount = translatedPoints.length;
       const simplifiedPoints = simplify(translatedPoints, 8);
-      const finalPoints =
+      let finalPoints =
         simplifiedPoints.length >= 4 ? simplifiedPoints : translatedPoints;
+      // Manhattan-snap the simplified trace onto its guessed true wall
+      // lines ("a little off? guess it"): forces clean 90° corners and
+      // merges residual stair-steps. Tolerance ≈ 2.5 ft at this tile's
+      // scale — derived through pixelLengthToFeet so it uses the exact
+      // same Mercator convention as the LF math (no double-scale trap).
+      // Non-rectilinear roofs and area-changing snaps bail internally.
+      const ftPerPx = pixelLengthToFeet(1, geocoded.lat, image.zoom);
+      if (ftPerPx > 0) {
+        const rect = rectifyOutline(finalPoints, { snapTolPx: 2.5 / ftPerPx });
+        if (rect.applied) {
+          finalPoints = rect.points;
+          notes.push(
+            `Rectified outline: snapped to ${rect.points.length} right-angle corners (grid at ${rect.angleDeg.toFixed(1)}°)`,
+          );
+        } else {
+          notes.push(`Rectify skipped: ${rect.reason}`);
+        }
+      }
       roofPolygon = {
         points: finalPoints,
         bbox: {
@@ -664,6 +905,61 @@ export async function runAIEstimatePipeline(
     }
   }
 
+  // 4b-ii. SOLAR-SEGMENT FOOTPRINT FALLBACK. Both image tracers failed
+  //   (SAM couldn't lock on, the raster mask was too sparse), but Solar
+  //   still handed us a bounding box PER roof plane. Those boxes come from
+  //   a different Solar product than the sparse mask and collectively
+  //   cover the whole roof — union them into a synthetic mask and trace it
+  //   with the same machinery. Deterministic and image-independent, but a
+  //   coarse over-approximation (axis-aligned plane bboxes), so it's
+  //   trace-quality-flagged (usedCoarseFootprint) and never reads "ok".
+  //   This is the deterministic floor under the weak GPT-4o vision path.
+  if (image && !roofPolygon && solarRoofSegments.length >= 4) {
+    const segMask = footprintMaskFromSolarSegments(solarRoofSegments);
+    if (segMask) {
+      const result = polygonFromSolarMask(
+        segMask,
+        { lat: geocoded.lat, lng: geocoded.lng },
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      if (result && result.polygon.points.length >= 4) {
+        roofPolygon = result.polygon;
+        usedCoarseFootprint = true;
+        // Do NOT azimuth-classify a coarse AABB box — its axis-aligned
+        // edges don't correspond to real roof planes, so the classifier
+        // mislabels most of the perimeter as rake (this house: 5 of 8
+        // edges → only 3 eaves → discarded for vision garbage). The whole
+        // outline IS the eave perimeter on a simple roof; leave it null so
+        // the downstream path prices every edge as a candidate eave, and
+        // the contractor drops any that aren't.
+        classifiedEaveLatLng = null;
+        // Rotation of the roof off cardinal, from the Solar plane azimuths.
+        // Near-cardinal ⇒ the north-aligned bbox union is tight; far ⇒ it
+        // over-covers (up to ~40% long on a 45° roof) → inflated.
+        const azOffsets = solarRoofSegments
+          .map((s) => s.azimuthDegrees)
+          .filter((a) => Number.isFinite(a))
+          .map((a) => {
+            const m = ((a % 90) + 90) % 90;
+            return Math.min(m, 90 - m);
+          })
+          .sort((x, y) => x - y);
+        const medianOff =
+          azOffsets.length > 0 ? azOffsets[Math.floor(azOffsets.length / 2)] : 0;
+        coarseFootprintInflated = medianOff > 12;
+        notes.push(
+          `Solar-segment footprint fallback: unioned ${solarRoofSegments.length} roof planes → ${result.polygon.points.length}-vert perimeter (${(segMask.areaFraction * 100).toFixed(0)}% of the plane grid), whole outline priced as candidate eave. Roof sits ${medianOff.toFixed(0)}° off cardinal${coarseFootprintInflated ? " (angled — the box over-covers)" : ""}. Only covers the roof planes Solar reported, so it can miss sections — a starting outline to redraw, not a final price.`,
+        );
+      } else {
+        notes.push(
+          `Solar-segment footprint fallback produced too small a polygon (${result?.polygon.points.length ?? 0} verts) — falling through to vision.`,
+        );
+      }
+    }
+  }
+
   // 4c. Tier-break detection: a real roof often has stacked tiers
   //     (1-story garage wing attached to a 2-story main, dormers, etc.).
   //     The outer perimeter trace only finds eaves along the building
@@ -680,6 +976,15 @@ export async function runAIEstimatePipeline(
   // angular hip planes, so they drew as straight stubs through the
   // middle of the roof. Contractor adds these eaves manually with the
   // drawing tool when they exist.
+  // Hoisted so BOTH return paths (polygon + vision) can feed the count
+  // into trace-quality — a multi-tier roof whose interior gutters weren't
+  // auto-drawn must never ship as "ok / no adjustment needed."
+  let interiorTiersDetected = 0;
+  // Un-priced "suggested interior gutter" hints, projected to canvas space.
+  // Populated from the tier-break detector below; carried on EstimateResult
+  // so the diagram/canvas can draw them dashed with a tap-to-add affordance.
+  // NEVER summed into eaveLF (money-safe by construction).
+  let suggestedEaves: EditableLine[] = [];
   if (solarRoofSegments.length > 0) {
     const perimeterEdges = (classifiedEaveLatLng ?? []).map((e) => ({
       a: e.a,
@@ -689,6 +994,38 @@ export async function runAIEstimatePipeline(
       solarRoofSegments,
       perimeterEdges,
     );
+    interiorTiersDetected = tierBreaks.length;
+    // Project each tier-break edge (lat/lng) into canvas space using the
+    // SAME transform as the perimeter eaves/rakes (latLngToImagePixel →
+    // transformToCanvas). Guarded on `image` (the projection needs the
+    // tile dims); on the rare no-image path these stay empty.
+    if (image && tierBreaks.length > 0) {
+      suggestedEaves = tierBreaks.map((c, i) => {
+        const a = latLngToImagePixel(
+          c.edge.a.lat,
+          c.edge.a.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        const b = latLngToImagePixel(
+          c.edge.b.lat,
+          c.edge.b.lng,
+          geocoded.lat,
+          geocoded.lng,
+          image.zoom,
+          image.width,
+          image.height,
+        );
+        return {
+          id: `suggested-tier-${i}`,
+          kind: "eave" as const,
+          points: transformToCanvas([a, b], image.width, image.height),
+        };
+      });
+    }
     if (tierBreaks.length > 0) {
       const meanStepFt =
         (tierBreaks.reduce((s, t) => s + t.stepMeters, 0) /
@@ -844,7 +1181,10 @@ export async function runAIEstimatePipeline(
             };
           });
         totalEaveLF = dsmLF * 1.08;
-        sourceLabel = "DSM-classified";
+        // Classification here runs through classifyEdgeWithAzimuth (Solar
+        // plane azimuths), NOT the dead DSM classifier — label it honestly
+        // so the run notes don't misdirect debugging.
+        sourceLabel = "azimuth-classified";
       } else {
         notes.push(
           `DSM kept ${imageSpaceEdges.length} edge(s) — too few to trust, falling back to all ${roofPolygon.points.length} polygon edges`,
@@ -891,11 +1231,54 @@ export async function runAIEstimatePipeline(
       }
     }
 
+    // Over-trace signal (parity with the GPT-4o vision path's √area gate).
+    // The primary SAM path is accepted purely on areaFraction ≥ 0.15,
+    // which catches UNDER-trace (SAM locked onto one wing) but NOT
+    // OVER-trace: SAM can grab roof + cast shadow, or roof + an adjacent
+    // slab/driveway, swallowing the perimeter — that inflated LF would
+    // otherwise ship as priced eaveLF marked "ok / no adjustment". Cross-
+    // check the traced eave LF against Solar's reported roof area (a real
+    // residential perimeter is ~5–8× √area). On an implausible ratio we
+    // FLAG the trace UNUSABLE so the loud "bad pic — draw it yourself"
+    // banner fires and the contractor redraws.
+    //
+    // We deliberately do NOT drop/zero the trace here. Solar area can be
+    // PARTIAL (it reports a subset of planes), which understates the
+    // denominator and inflates this ratio for a perfectly correct trace.
+    // The vision fallback path divides by the SAME Solar area and THROWS
+    // at >11, so zeroing-and-falling-through could compound the two
+    // correlated gates into a hard address error on a good trace. Flagging
+    // (not dropping) keeps the address available and is money-safe: an
+    // over-trace ships loudly flagged for redraw, never silently as trusted.
+    let polygonOvertrace = false;
+    const overtraceSolarAreaM2 = solarRoofSegments.reduce(
+      (s, seg) => s + (seg.areaMeters2 ?? 0),
+      0,
+    );
+    if (eaves.length > 0 && overtraceSolarAreaM2 > 30) {
+      const solarAreaSqft = overtraceSolarAreaM2 * 10.7639;
+      const ratio = totalEaveLF / Math.sqrt(solarAreaSqft);
+      if (ratio > 11) {
+        polygonOvertrace = true;
+        notes.push(
+          `Polygon over-trace: ${totalEaveLF.toFixed(0)} LF / √(${solarAreaSqft.toFixed(
+            0,
+          )} sqft) = ${ratio.toFixed(
+            1,
+          )}× (max 11) — the traced outline may include shadow/pavement; flagged for redraw`,
+        );
+      }
+    }
+
     // Bumped from ≥3 to ≥5. Three eaves on a residential roof almost
     // never represents a real takeoff — it's an L-shape stub at best.
     // Below this floor we'd rather fall through to GPT-4o vision than
-    // ship a sparse answer the contractor can't trust.
-    if (eaves.length >= 5) {
+    // ship a sparse answer the contractor can't trust. EXCEPTION: the
+    // coarse Solar-segment footprint is a deterministic, closed building
+    // perimeter — always keep it over the vision fallback (vision on these
+    // hard roofs draws a worse mess than the clean box), even if it's a
+    // simple 4-edge outline.
+    if (eaves.length >= 5 || (usedCoarseFootprint && eaves.length >= 3)) {
       // Collapse runs that read as multiple segments on the canvas
       // (3 near-collinear vertices on one wall = one continuous eave)
       // before downspout placement and corner counting. Spacing math
@@ -912,13 +1295,28 @@ export async function runAIEstimatePipeline(
       // to weight downspout placement (valleys discharge water onto an
       // eave below; that's a natural drop point).
       const roofStructure = await resolveRoofStructure();
+      // Eaves handed to placeDownspoutsOnPolygon are canvas-space (900×580
+      // viewBox), so downspout spacing must divide by the SATELLITE
+      // canvas-px-per-foot, NOT the plan-takeoff constant 2.4. Passing 2.4
+      // inflates internal LF ~3× (this house's tile ≈7.2 px/ft), which
+      // over-fires the per-30-LF target and the >35-ft mid-run rule and
+      // over-places downspouts. Guard against a non-finite return (NaN ≤ 35
+      // is false → a mid-run downspout on every eave), which the literal
+      // 2.4 could never produce.
+      const rawCpf = canvasPxPerFoot(
+        geocoded.lat,
+        image.zoom,
+        image.width,
+        image.height,
+      );
+      const cpf = Number.isFinite(rawCpf) && rawCpf > 0 ? rawCpf : 2.4;
       const downspouts = placeDownspoutsOnPolygon(
         roofPolygon,
         eaves,
         image.width,
         image.height,
         estimatedStories,
-        2.4,
+        cpf,
         roofStructure?.valleys ?? [],
       );
 
@@ -931,6 +1329,11 @@ export async function runAIEstimatePipeline(
         image.width,
         image.height,
       );
+      // End caps belong at OPEN eave-run terminations (a run that stops in
+      // mid-air, e.g. where an eave meets a rake), a topological quantity —
+      // not the length-blind eaveLF/60 heuristic. Runs computed on the
+      // post-merge eaves so continuous walls count as one run.
+      const openEnds = countOpenEaveEnds(eaves);
       const measurements = measurementsFromVision({
         eaveLF: totalEaveLF,
         downspoutCount: downspouts.length,
@@ -944,6 +1347,7 @@ export async function runAIEstimatePipeline(
           cornerSplit.outside + cornerSplit.inside > 0
             ? cornerSplit.inside
             : undefined,
+        endCaps: Math.max(2, openEnds),
       });
 
       notes.push(
@@ -977,15 +1381,33 @@ export async function runAIEstimatePipeline(
         ),
         traceQuality: (() => {
           const fp = solarFootprintCanvas(solarRoofSegments, geocoded, image);
-          return assessSatelliteTrace({
+          const q = assessSatelliteTrace({
             source: "ai",
             eaves,
             totalEaveLF,
             footprintAreaFt2: fp?.areaFt2 ?? null,
             footprintBboxCanvas: fp?.bbox ?? null,
+            interiorTiersDetected,
+            segmentCount: solarRoofSegments.length,
+            coarseFootprint: usedCoarseFootprint,
           });
+          // An over-traced perimeter (swallowed shadow/pavement) must fire
+          // the loud "draw it yourself" banner even if the other signals
+          // read "ok" — the assessed ratio otherwise only reaches "low".
+          if (polygonOvertrace) {
+            return {
+              status: "unusable" as const,
+              confidence: Math.min(q.confidence, 0.3),
+              reasons: [
+                ...q.reasons,
+                "Traced outline appears to include roof shadow or pavement (perimeter far exceeds roof area) — redraw the outline to price accurately.",
+              ],
+            };
+          }
+          return q;
         })(),
         roofStructure,
+        suggestedEaves,
       };
     }
     notes.push(
@@ -1180,9 +1602,16 @@ export async function runAIEstimatePipeline(
             totalEaveLF,
             footprintAreaFt2: fp?.areaFt2 ?? null,
             footprintBboxCanvas: fp?.bbox ?? null,
+            interiorTiersDetected,
+            segmentCount: solarRoofSegments.length,
+            // This is the weak vision fallback (SAM + Solar mask both
+            // failed) — never let it read as a trustworthy "ok".
+            fromVisionFallback: true,
+            roofLevelsMulti: segmentation.roofLevels === "multi_level",
           });
         })(),
         roofStructure,
+        suggestedEaves,
       };
     }
     notes.push(

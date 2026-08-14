@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { AlertTriangle, Check, Copy, Mail, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/proposal-mock";
@@ -21,6 +21,7 @@ export function SendModal({
   onClose: () => void;
   proposal: Proposal;
 }) {
+  const reduce = useReducedMotion();
   const [phase, setPhase] = useState<"compose" | "sent">("compose");
   // Editable client info — seeded from the proposal but the contractor
   // can correct typos / fill in blanks right before sending. The send
@@ -115,24 +116,26 @@ export function SendModal({
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           onClick={handleClose}
         >
-          <div className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-ink/40" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white shadow-elevated"
+            className="relative w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-elevated"
           >
             <button
+              type="button"
               onClick={handleClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              aria-label="Close"
+              className="ring-focus active:scale-[0.98] absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition-smooth hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>
@@ -144,7 +147,7 @@ export function SendModal({
                     <Mail className="h-5 w-5" />
                   </div>
                   <div>
-                    <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+                    <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                       Send proposal
                     </h2>
                     <p className="text-xs text-zinc-500">
@@ -204,20 +207,26 @@ export function SendModal({
                         type="button"
                         onClick={copy}
                         className={cn(
-                          "ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition",
+                          "ring-focus active:scale-[0.98] ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-smooth",
                           copied
                             ? "border-accent-200 bg-accent-50 text-accent-700"
                             : "border-zinc-200 text-zinc-700 hover:border-accent-400 hover:text-accent-700",
                         )}
                       >
                         {copied ? (
-                          <>
+                          <span
+                            key="copied"
+                            className="anim-enter-fade inline-flex items-center gap-1"
+                          >
                             <Check className="h-3 w-3" /> Copied
-                          </>
+                          </span>
                         ) : (
-                          <>
+                          <span
+                            key="copy"
+                            className="anim-enter-fade inline-flex items-center gap-1"
+                          >
                             <Copy className="h-3 w-3" /> Copy
-                          </>
+                          </span>
                         )}
                       </button>
                     </div>
@@ -225,7 +234,7 @@ export function SendModal({
                 </div>
 
                 {error && (
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                  <div className="anim-enter-fade mt-4 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <div>
                       <div className="font-medium">Couldn't send</div>
@@ -254,14 +263,14 @@ export function SendModal({
             ) : (
               <div className="p-8 text-center">
                 <motion.div
-                  initial={{ scale: 0.6, opacity: 0 }}
+                  initial={reduce ? false : { scale: 0.6, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ type: "spring", damping: 14, stiffness: 220 }}
                   className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200"
                 >
                   <Check className="h-6 w-6" />
                 </motion.div>
-                <h2 className="font-display mt-4 text-xl font-semibold tracking-tight text-zinc-900">
+                <h2 className="mt-4 text-xl font-semibold tracking-tight text-zinc-900">
                   Proposal sent
                 </h2>
                 <p className="mt-1 text-sm text-zinc-600">
@@ -302,7 +311,7 @@ function Row({
 }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2">
-      <span className="w-20 shrink-0 text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label w-20 shrink-0 text-[10px] text-zinc-500">
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>

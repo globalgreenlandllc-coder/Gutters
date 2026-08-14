@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Building2,
   Check,
@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand-mark";
 import { Button } from "@/components/ui/button";
+import { DUR, EASE } from "@/lib/motion";
 import {
   defaultProfile,
   useUpdateProfile,
@@ -129,22 +130,21 @@ export function BrandProfileSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-card">
+    <section className="anim-enter surface p-6 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-50 text-accent-700">
-            <Building2 className="h-5 w-5" />
+        <div>
+          <div className="font-label flex items-center gap-1.5 text-[11px] text-zinc-400">
+            <Building2 className="h-3.5 w-3.5" />
+            Brand
           </div>
-          <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
-              Brand & company profile
-            </h2>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              Shown on every proposal cover and the homeowner portal.
-            </p>
-          </div>
+          <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-900">
+            Brand & company profile
+          </h2>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            Shown on every proposal cover and the homeowner portal.
+          </p>
         </div>
-        <Badge tone={dirty ? "amber" : "accent"}>
+        <Badge tone={dirty ? "amber" : "emerald"}>
           {dirty ? "Unsaved changes" : (
             <>
               <Check className="h-3 w-3" />
@@ -194,7 +194,7 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-1.5 block text-[10px] text-zinc-400">
               Tagline
             </label>
             <textarea
@@ -202,7 +202,7 @@ export function BrandProfileSection() {
               onChange={(e) => update("tagline", e.target.value)}
               rows={2}
               maxLength={120}
-              className="w-full resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+              className="transition-smooth w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
             />
             <div className="mt-1 text-right text-[11px] text-zinc-400">
               {draft.tagline.length}/120
@@ -210,10 +210,10 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-2 block text-[10px] text-zinc-400">
               Logo image
             </label>
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-3">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/40 p-3">
               <BrandMark
                 initials={draft.logo.initials || "GU"}
                 tone={draft.logo.tone}
@@ -252,7 +252,7 @@ export function BrandProfileSection() {
                   <button
                     type="button"
                     onClick={removeLogo}
-                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 transition hover:border-rose-300 hover:text-rose-600"
+                    className="transition-smooth ring-focus press-scale inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600 hover:border-rose-300 hover:text-rose-600"
                   >
                     <Trash2 className="h-3 w-3" />
                     Remove
@@ -261,7 +261,7 @@ export function BrandProfileSection() {
               </div>
             </div>
             {uploadError && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <div className="anim-enter-fade mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 <ImageIcon className="h-3.5 w-3.5" />
                 {uploadError}
               </div>
@@ -269,7 +269,7 @@ export function BrandProfileSection() {
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+            <label className="font-label mb-2 block text-[10px] text-zinc-400">
               Logo color (used when no image is set)
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -281,7 +281,7 @@ export function BrandProfileSection() {
                     type="button"
                     onClick={() => setLogo("tone", t.id)}
                     className={cn(
-                      "flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs transition",
+                      "transition-smooth ring-focus press-scale flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs",
                       selected
                         ? "border-zinc-300 bg-zinc-50 text-zinc-900"
                         : "border-zinc-200 text-zinc-600 hover:border-zinc-300",
@@ -313,14 +313,16 @@ export function BrandProfileSection() {
 }
 
 function ProposalPreview({ draft }: { draft: ContractorProfile }) {
+  const reduceMotion = useReducedMotion();
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-3 rounded-2xl border border-zinc-200 bg-zinc-50/40 p-4"
+      initial={reduceMotion ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: DUR.slow, ease: EASE }}
+      className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/40 p-4"
     >
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium uppercase tracking-wider text-zinc-500">
+        <span className="font-label text-[10px] text-zinc-400">
           Live preview
         </span>
         <span className="inline-flex items-center gap-1 text-zinc-500">
@@ -382,14 +384,14 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label mb-1.5 block text-[10px] text-zinc-400">
         {label}
       </span>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+        className="input"
       />
       {hint && (
         <span className="mt-1 block text-[11px] text-zinc-400">{hint}</span>

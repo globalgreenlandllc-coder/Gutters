@@ -53,7 +53,7 @@ export default async function WhoAmIPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-12 font-mono text-sm">
-      <h1 className="font-display text-2xl font-semibold tracking-tight text-zinc-900">
+      <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
         whoami diagnostic
       </h1>
       <p className="mt-1 text-xs text-zinc-500">
@@ -163,8 +163,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-4 shadow-card">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+    <section className="surface mt-6 p-4 shadow-card">
+      <div className="font-label text-[11px] text-zinc-400">
         {title}
       </div>
       <div className="mt-2 space-y-1">{children}</div>
@@ -183,7 +183,7 @@ function Row({
 }) {
   const color =
     tone === "ok"
-      ? "text-accent-700"
+      ? "text-emerald-700"
       : tone === "bad"
         ? "text-rose-700"
         : tone === "warn"
@@ -225,7 +225,7 @@ function Diagnosis({
   }
   if (dbRole === "SUPER_ADMIN") {
     return (
-      <p className="text-accent-700">
+      <p className="text-emerald-700">
         ✅ Everything's correct — you should see the admin sidebar entry on
         /dashboard. If you don't, hard-refresh the page (Cmd-Shift-R).
       </p>

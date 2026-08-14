@@ -1,18 +1,59 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { upload } from "@vercel/blob/client";
-import { Upload, FileText, Loader2, X } from "lucide-react";
+import { Upload, FileText, Loader2, Sparkles, X, Zap } from "lucide-react";
+import { fadeInUp } from "@/lib/motion";
+import { useSession } from "@/lib/auth-mock";
+
+/** Copy-only stage labels for the analyzing strip. Purely visual — the
+ *  upload/analyze flow doesn't report progress, so we pace expectations
+ *  on a timer and park on the last stage until the redirect. */
+const ANALYZE_STAGES = [
+  "Uploading plan",
+  "Reading the plan",
+  "Classifying edges",
+  "Drawing the layout",
+];
 
 export default function BlueprintUploader() {
   const router = useRouter();
+  const { session } = useSession();
   const inputRef = useRef<HTMLInputElement>(null);
+  const reduce = useReducedMotion();
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Visual-only ticker for the analyzing strip (see ANALYZE_STAGES).
+  const [stageIdx, setStageIdx] = useState(0);
+
+  // Blueprint analyses are what credits meter (address estimates are
+  // free). Client-side courtesy gate — the server enforces the same
+  // check with a 402 on POST /api/blueprints.
+  const isAdmin = session?.user.role === "SUPER_ADMIN";
+  const creditsRemaining = session
+    ? Math.max(
+        session.credits.included + session.credits.bonus - session.credits.used,
+        0,
+      )
+    : null;
+  const outOfCredits = !isAdmin && creditsRemaining === 0;
+
+  useEffect(() => {
+    if (!uploading) {
+      setStageIdx(0);
+      return;
+    }
+    const id = setInterval(
+      () => setStageIdx((s) => Math.min(s + 1, ANALYZE_STAGES.length - 1)),
+      12_000,
+    );
+    return () => clearInterval(id);
+  }, [uploading]);
 
   const pickFile = useCallback((f: File) => {
     setFile(f);
@@ -30,7 +71,7 @@ export default function BlueprintUploader() {
   );
 
   const onAnalyze = async () => {
-    if (!file) return;
+    if (!file || outOfCredits) return;
     setUploading(true);
     setError(null);
     try {
@@ -246,8 +287,50 @@ export default function BlueprintUploader() {
     }
   };
 
+  // Out of blueprint credits: swap the dropzone for an upgrade card —
+  // no point picking a file the server will 402.
+  if (outOfCredits) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+            <Zap className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-zinc-900">
+              You&rsquo;re out of blueprint credits
+            </div>
+            <p className="mt-1 text-sm leading-relaxed text-zinc-600">
+              Each blueprint analysis uses one credit. Upgrade to Pro for a
+              monthly allowance, or buy a credit pack — satellite address
+              estimates stay free either way.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Link
+                href="/dashboard/settings"
+                className="transition-smooth ring-focus press-scale inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-700"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Upgrade or top up
+              </Link>
+              <Link
+                href="/dashboard/proposals/new"
+                className="transition-smooth ring-focus inline-flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3.5 text-[13px] font-medium text-zinc-700 hover:border-zinc-300 hover:text-zinc-900"
+              >
+                Run a free address estimate
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4">
+    // h-full + flex-1 on the dropzone: in a fixed-height host (the start
+    // page card) the zone stretches to fill; standalone (blueprints/new)
+    // it collapses to its natural compact height.
+    <div className="flex h-full flex-col gap-4">
       <div
         onClick={() => inputRef.current?.click()}
         onDrop={onDrop}
@@ -256,10 +339,10 @@ export default function BlueprintUploader() {
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 sm:p-12 transition-colors ${
+        className={`group relative flex flex-1 cursor-pointer items-center rounded-2xl border-2 border-dashed p-4 transition-smooth sm:p-5 ${
           dragOver
-            ? "border-emerald-500/70 bg-emerald-500/5"
-            : "border-slate-700 bg-slate-900/40 hover:border-slate-600 hover:bg-slate-900/60"
+            ? "border-accent-500 bg-accent-50/70 ring-4 ring-accent-500/10"
+            : "border-zinc-200 bg-zinc-50/50 hover:border-accent-300 hover:bg-accent-50/40"
         }`}
       >
         <input
@@ -272,48 +355,72 @@ export default function BlueprintUploader() {
           }}
           className="hidden"
         />
-        <div className="flex flex-col items-center text-center">
-          <div className="rounded-full bg-emerald-500/10 p-3 ring-1 ring-emerald-500/30 text-emerald-300 mb-3">
-            <Upload size={24} />
+        <div className="flex w-full items-center gap-4">
+          <div
+            className={`bg-cta-gradient shrink-0 rounded-xl p-3 text-white shadow-glow transition-transform duration-200 motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-105 ${
+              dragOver ? "-translate-y-0.5 scale-110" : ""
+            }`}
+          >
+            <Upload size={20} />
           </div>
-          <div className="text-white font-semibold text-lg mb-1">
-            Drop construction plans here
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold tracking-tight text-zinc-900">
+              Drop construction plans here
+            </div>
+            <div className="mt-0.5 text-[13px] text-zinc-500">
+              or click to browse — PDF (multi-page OK) or a photo of the
+              roof plan
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {["PDF · 100 pages", "PNG / JPG", "≤ 50 MB"].map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-500"
+                >
+                  {chip}
+                </span>
+              ))}
+              {!isAdmin && creditsRemaining !== null && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-accent-200 bg-accent-50 px-2 py-0.5 text-[10px] font-medium text-accent-700">
+                  <Sparkles className="h-3 w-3" />
+                  1 credit · {creditsRemaining} left
+                </span>
+              )}
+              {/* Build marker — if you don't see "v3" on Vercel prod, the
+                  new code hasn't deployed yet. Bump this string whenever
+                  there's a stale-build question to verify. */}
+              <span className="text-[9px] text-zinc-400/80">
+                uploader v3 · presigned-URL · 15-min token
+              </span>
+            </div>
           </div>
-          <div className="text-slate-400 text-sm max-w-md">
-            PDF (multi-page OK) or a single image of the roof plan. Claude
-            reads the plan, identifies eaves vs rakes, and returns a gutter
-            layout you can drop into a proposal.
-          </div>
-          <div className="text-slate-500 text-xs mt-2">
-            Up to 50 MB · PDF (up to 100 pages) or PNG / JPG
-          </div>
-          {/* Build marker — if you don't see "v2" on Vercel prod, the
-              new code hasn't deployed yet. Bump this string whenever
-              there's a stale-build question to verify. */}
-          <div className="text-[10px] text-slate-600 mt-1 opacity-60">
-            uploader v3 · presigned-URL · 15-min token
-          </div>
+          <span className="transition-smooth hidden shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 shadow-sm group-hover:border-accent-300 group-hover:text-accent-700 sm:inline-flex">
+            Browse
+          </span>
         </div>
       </div>
 
       {file && (
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3"
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
+          className="surface flex items-center gap-3 px-4 py-3"
         >
-          <FileText size={20} className="text-slate-300" />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-50 text-accent-700 ring-1 ring-inset ring-accent-200/70">
+            <FileText size={18} />
+          </span>
           <div className="flex-1 min-w-0">
-            <div className="text-sm text-white font-medium truncate">
+            <div className="truncate text-sm font-medium text-zinc-900">
               {file.name}
             </div>
-            <div className="text-xs text-slate-500">
+            <div className="text-xs tabular-nums text-zinc-500">
               {(file.size / 1024).toFixed(0)} KB
             </div>
           </div>
           <button
             onClick={() => setFile(null)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            className="ring-focus press-scale rounded-lg p-1.5 text-zinc-400 transition-smooth hover:bg-zinc-100 hover:text-zinc-900"
             aria-label="Remove file"
             disabled={uploading}
           >
@@ -322,7 +429,7 @@ export default function BlueprintUploader() {
           <button
             onClick={onAnalyze}
             disabled={uploading}
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 transition"
+            className="bg-cta-gradient ring-focus press-scale ![transition:transform_150ms_ease,box-shadow_200ms_ease,opacity_150ms_ease] motion-reduce:![transition:none] inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-[13px] font-semibold text-white shadow-sm hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:shadow-sm"
           >
             {uploading ? (
               <>
@@ -330,23 +437,63 @@ export default function BlueprintUploader() {
                 Analyzing…
               </>
             ) : (
-              "Analyze with AI"
+              <>
+                <Sparkles size={14} />
+                Analyze with AI
+              </>
             )}
           </button>
         </motion.div>
       )}
 
       {uploading && (
-        <div className="text-xs text-slate-500 italic">
-          This usually takes 30–60 seconds. Claude needs to find the roof plan,
-          classify every edge, and produce the JSON layout.
-        </div>
+        <motion.div
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
+          className="surface px-4 py-3.5"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="microlabel text-accent-700">Analyzing plan</span>
+            <span className="text-xs tabular-nums text-zinc-400">
+              usually 30–60s
+            </span>
+          </div>
+          <div className="skeleton mt-2.5 h-1.5 w-full rounded-full" />
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+            {ANALYZE_STAGES.map((stage, i) => (
+              <span key={stage} className="flex items-center gap-x-2">
+                {i > 0 && (
+                  <span aria-hidden className="text-zinc-300">
+                    →
+                  </span>
+                )}
+                <span
+                  className={`transition-smooth ${
+                    i === stageIdx
+                      ? "font-semibold text-accent-700"
+                      : i < stageIdx
+                        ? "text-zinc-500"
+                        : "text-zinc-400"
+                  }`}
+                >
+                  {stage}
+                </span>
+              </span>
+            ))}
+          </div>
+        </motion.div>
       )}
 
       {error && (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
+        <motion.div
+          initial={reduce ? false : "hidden"}
+          animate="visible"
+          variants={fadeInUp}
+          className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+        >
           {error}
-        </div>
+        </motion.div>
       )}
     </div>
   );

@@ -26,6 +26,14 @@ export type CropResult = {
  *   - GPT-4o sees more pixel detail per inch of roof
  *   - The building fills the frame, eliminating "wrong building" picks
  */
+
+// NOTE: a 2× SAM upscale once lived here (bilinear, for sub-pixel corner
+// accuracy). It quadrupled the fal.ai payload and pushed requests past
+// fal's 35s timeout → SAM hard-failed and traces fell through to the crude
+// vision rectangle. Removed — SAM runs at the crop's native resolution and
+// the rectify pass recovers clean corners for free. Don't reintroduce an
+// upscale without a much smaller cap AND a fal timeout/retry guard.
+
 export function cropSatImageToBox(
   image: SatImage,
   box: { x1: number; y1: number; x2: number; y2: number },

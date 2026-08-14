@@ -10,7 +10,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "relative rounded-2xl border border-zinc-200 bg-white shadow-card",
+        "relative rounded-2xl border border-zinc-200/70 bg-white shadow-card transition-[border-color,box-shadow,transform] duration-200 motion-reduce:transition-none",
         className,
       )}
     >

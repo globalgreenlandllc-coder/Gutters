@@ -57,6 +57,7 @@ export async function geminiBlueprintFromPlan(
     const system = await getPrompt(
       "blueprint.takeoff.system",
       BLUEPRINT_FROM_PLANS_SYSTEM,
+      { requiredMarkers: ["read_all_sheets", "roof_forms"] },
     );
     const userText =
       "Construction plans attached. Find the roof plan page(s) and return the " +

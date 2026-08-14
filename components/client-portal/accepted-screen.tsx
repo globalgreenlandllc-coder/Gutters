@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   CalendarClock,
   Check,
@@ -11,6 +11,19 @@ import {
 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { formatCurrency } from "@/lib/utils";
+import { DUR, EASE, fadeInUp, staggerContainer } from "@/lib/motion";
+
+/** Celebration pop for the check circle — the one gently springy moment
+ *  in the portal. Plays once, on acceptance; everything after it settles
+ *  with the house ease-out. */
+const checkPop: Variants = {
+  hidden: { scale: 0.6, opacity: 0 },
+  visible: {
+    scale: 1,
+    opacity: 1,
+    transition: { type: "spring", damping: 18, stiffness: 240 },
+  },
+};
 
 export function AcceptedScreen({
   packageName,
@@ -32,43 +45,55 @@ export function AcceptedScreen({
   const stripeUrl = contractor.stripePaymentUrl ?? null;
   const squareUrl = contractor.squarePaymentUrl ?? null;
   const hasPayment = !!(stripeUrl || squareUrl);
+  const reduce = useReducedMotion();
   return (
-    <div className="relative min-h-screen overflow-hidden">
+    <motion.div
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: DUR.slow, ease: EASE }}
+      className="relative min-h-screen overflow-hidden"
+    >
       <div className="pointer-events-none absolute inset-0 bg-grid opacity-30 [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_70%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/3 h-[400px] w-[700px] -translate-x-1/2 rounded-full bg-accent-200/40 blur-3xl" />
 
-      <div className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4 py-16">
+      <motion.div
+        initial={reduce ? false : "hidden"}
+        animate="visible"
+        variants={staggerContainer(0.07, 0.1)}
+        className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-4 py-16"
+      >
         <Logo />
         <motion.div
-          initial={{ scale: 0.6, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", damping: 14, stiffness: 220 }}
-          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-accent-100 text-accent-700 ring-1 ring-inset ring-accent-200 shadow-glow"
+          variants={checkPop}
+          className="mt-10 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200 shadow-card"
         >
           <Check className="h-10 w-10" />
         </motion.div>
 
         <motion.h1
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="font-display mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
+          variants={fadeInUp}
+          className="mt-6 text-balance text-center text-4xl font-semibold tracking-tight text-zinc-900"
         >
           You're all set,{" "}
-          <span className="text-gradient">
+          <span className="text-accent-700">
             {signerName.split(" ")[0]}
           </span>
           .
         </motion.h1>
-        <p className="mt-3 max-w-md text-center text-zinc-600">
+        <motion.p
+          variants={fadeInUp}
+          className="mt-3 max-w-md text-center text-zinc-600"
+        >
           {contractor.company} received your signed proposal.{" "}
           {hasPayment
             ? `Pay ${formatCurrency(amount)} below to lock in scheduling.`
             : `${contractor.name} will reach out shortly to arrange payment and scheduling.`}
-        </p>
+        </motion.p>
 
         {hasPayment && (
-          <div className="mt-6 flex w-full flex-col items-stretch gap-2 sm:max-w-md">
+          <motion.div
+            variants={fadeInUp}
+            className="mt-6 flex w-full flex-col items-stretch gap-2 sm:max-w-md"
+          >
             {stripeUrl && (
               <PayButton
                 href={stripeUrl}
@@ -86,7 +111,7 @@ export function AcceptedScreen({
             <p className="text-center text-xs text-zinc-500">
               Opens {contractor.company}'s secure payment page in a new tab.
             </p>
-          </div>
+          </motion.div>
         )}
 
         <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
@@ -103,16 +128,19 @@ export function AcceptedScreen({
           />
         </div>
 
-        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-5 text-center text-sm text-zinc-600 shadow-card">
+        <motion.div
+          variants={fadeInUp}
+          className="mt-10 rounded-2xl border border-zinc-200 bg-white p-5 text-center text-sm text-zinc-600 shadow-card"
+        >
           Selected:{" "}
           <span className="font-medium text-zinc-900">{packageName}</span> ·
           Paid today:{" "}
           <span className="font-medium text-zinc-900">
             {formatCurrency(amount)}
           </span>
-        </div>
-      </div>
-    </div>
+        </motion.div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -126,11 +154,14 @@ function Tile({
   body: string;
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-card">
+    <motion.div
+      variants={fadeInUp}
+      className="rounded-xl border border-zinc-200 bg-white p-4 shadow-card"
+    >
       <Icon className="h-5 w-5 text-accent-700" />
       <div className="mt-2 font-medium text-zinc-900">{title}</div>
       <div className="mt-0.5 text-xs text-zinc-500">{body}</div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -145,14 +176,14 @@ function PayButton({
 }) {
   const cls =
     variant === "primary"
-      ? "bg-zinc-900 text-white hover:bg-zinc-800"
+      ? "bg-accent-600 text-white hover:bg-accent-500"
       : "border border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300";
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-medium shadow-card transition ${cls}`}
+      className={`transition-smooth press-scale ring-focus inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-medium shadow-card ${cls}`}
     >
       <CreditCard className="h-4 w-4" />
       {label}

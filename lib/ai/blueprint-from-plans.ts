@@ -3,7 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getActiveApiKey } from "@/lib/api-keys";
 import { getPrompt } from "./prompts";
 import { buildVectorBlock, type PlanVectors } from "./pdf-vectors";
-import type { GeometryConstraints } from "./classify-plans";
+import type { GeometryConstraints, PlanClassification } from "./classify-plans";
+import { geometryQualityPenalty } from "./blueprint-trace-quality";
 
 export type BlueprintPoint = { x: number; y: number };
 
@@ -201,10 +202,140 @@ Even without that note, default to including them — the residential
 norm is to gutter every covered eave.
 </covered_projections>
 
+<penetrations_and_fireplace>
+Some roof features are NOT gutter edges and NOT masses. Recognize them so you
+neither gutter them nor let them distort the traced outline. Classify anything on
+the roof with the two-question test — this makes the read work on ANY plan, not
+just the ones with features listed here:
+  1. Is it ATTACHED to this building's roof? If NO → EXCLUDE entirely and keep it
+     OUT of the footprint polygon (a detached "MASONRY FIRE-PIT BY OTHERS" in the
+     yard, a separate shed, a pergola, an uncovered deck).
+  2. Does it break the wall plane / add an eave or a rake? If NO → it is a
+     PENETRATION: exclude it, never gutter it, never treat it as a jog. Examples:
+       - a direct-vent "F.P. FLUE" / gas-fireplace flue (a PIPE through the roof)
+       - plumbing vent stacks, roof / ridge / attic vents
+       - a SKYLIGHT (in-plane glass, e.g. "4'x4' SKYLIGHT w/ LAM. GLASS")
+       - solar panels, HVAC / mechanical roof units
+     If YES → it is a MASS: trace it and gutter its eaves.
+
+FIREPLACE — three different things, handled three different ways; do NOT lump
+them together:
+  - MASONRY CHIMNEY CHASE that projects past the wall → a real roof MASS with
+    eaves/rakes; it needs a CRICKET (back-slope) where it meets the roof. Include.
+  - DIRECT-VENT FLUE (pipe, "F.P. FLUE") → a PENETRATION: no eave, no gutter, no
+    jog. Exclude.
+  - Detached MASONRY FIRE-PIT "by others" → detached: exclude entirely and never
+    let it enter the footprint outline.
+
+SLOPE CHANGE — a "SLOPE CHANGE" line (e.g. 6:12 → 4:12) is a horizontal pitch
+break WITHIN one roof plane, not an eave/rake/ridge. It adds no gutter LF; just
+don't mistake it for a ridge or an eave.
+</penetrations_and_fireplace>
+
+<read_all_sheets>
+Use EVERY sheet in the set, not just the roof plan — the truth is spread across
+them and they cross-check each other:
+- ROOF FRAMING / TRUSS PLAN: its drawn HIP LINES are the single most reliable
+  hip-vs-gable evidence. A hip is a ~45° line springing INWARD from an OUTSIDE
+  (convex) building corner to a ridge; it proves BOTH walls at that corner are
+  EAVES (gutter). A valley is a ~45° line at an INSIDE (reflex) corner. A ridge
+  running to a wall with NO hip is a gable end (rake). If the framing plan shows
+  hips at every outside corner and no gable-end trusses, the roof is FULLY
+  HIPPED — gutter the whole perimeter, add ZERO gables.
+- ELEVATIONS: hip end (horizontal eave + inward hip slopes) = eave; gable end
+  (two rakes down to the wall, no horizontal eave) = rake.
+- SECTIONS: an eave OVERHANG at a wall corroborates a hip/eave; a flush rake at
+  the wall top corroborates a gable.
+Reconcile the roof plan, framing plan, elevations and sections; where they
+conflict, say so in the notes. Do NOT rely on the roof plan alone.
+
+WHICH SHEET TO TRUST FOR WHAT — a plan set rarely has one perfect page:
+- footprint SHAPE + printed dimensions: FOUNDATION or MAIN FLOOR plan (crisp
+  wall lines, overall dimension strings). Never take roof form from these.
+- roof FORM (hip/gable per corner): a design ROOF PLAN when present; else the
+  ROOF FRAMING/TRUSS plan (GABLE END TRUSS labels and hip-jack fans name the
+  form outright — a dense truss field is still readable evidence); else the
+  four elevations.
+- TIERS + stories + drop heights: elevations and building SECTIONS.
+Name in the notes which page served each role, so a wrong pick is visible.
+</read_all_sheets>
+
+<roof_forms>
+Know the roof vocabulary BEFORE tracing — recognize the form, then apply its
+gutter consequence instead of reasoning edge-by-edge from scratch:
+- HIP: every wall tops out at a horizontal eave; hips climb from every outside
+  corner. Gutter the FULL perimeter; zero rakes.
+- GABLE / CROSS-GABLE: ridge runs to the wall at each gable end — those end
+  walls are RAKES (no gutter); the side walls are eaves.
+- DUTCH GABLE (gablet): a hip that breaks into a small gable near the ridge —
+  the EAVE still wraps the corner below it (gutter stays); only the little
+  gablet is rake.
+- JERKINHEAD (clipped gable): a gable whose peak is hipped back — treat the
+  end wall as RAKE (the clip rarely carries gutter).
+- GAMBREL (barn) / MANSARD: gutter sits at the BOTTOM of the lower slope —
+  eaves on the long sides (gambrel) or all four sides (mansard).
+- SHED / MONOPITCH: ONE low eave edge gets the gutter; the high edge and the
+  side edges are rakes.
+- FLAT with PARAPET: no exterior gutters at all — internal drains/scuppers.
+  Do not invent eave LF on a parapet roof.
+- BUTTERFLY: drains to an internal valley — gutter/leader at the low center,
+  not the perimeter.
+- CLERESTORY / STEPPED PRAIRIE: one roof plane steps above another with a
+  window band between — BOTH tiers carry eaves; the step is not a gable.
+- SALTBOX / ASYMMETRIC GABLE: still a gable — rakes at the ends, eaves on the
+  two (unequal) sides.
+Real houses COMBINE these per wing (hip main + gable garage + shed porch is
+common). Name the form(s) you identified in the notes.
+</roof_forms>
+
+<four_faces_and_flush_default>
+Read all FOUR elevations (front, rear, left, right) on their own. NEVER derive
+one face from another and NEVER assume front/back or left/right symmetry — a
+house can be a busy cross-gable in front and a plain hip with a patio in back.
+Run the gable count + eave-vs-rake pass separately on EACH face.
+
+MANY homes are FULLY HIPPED (prairie / ranch / Northwest contemporary): every
+face steps down to a continuous eave, hips climb from every outside corner, and
+there are ZERO gables — including over the garage and entry. This is normal, not
+an edge case. Do NOT manufacture a garage/entry/porch gable on a hipped front:
+if the roof over the garage doors has a horizontal eave with hips climbing
+inward, it is an EAVE that carries a gutter, not a gable. A small decorative
+gablet over an entry is the exception, not the rule — confirm a true gable
+(rakes to the corners, no horizontal eave) before dropping the front eave.
+
+A gable's projection decides whether it has guttered SIDE eaves, and projection
+is visible only in the perpendicular (side) elevation or the roof-plan footprint
+— NOT in the face view. So DEFAULT every gable to FLUSH: rakes only (no gutter),
+no side eaves, and the eave runs straight PAST beneath it as one continuous run.
+Only treat a gable as PROJECTING (adding two guttered side eaves whose length =
+the projection depth) when a side elevation or the roof plan positively shows it
+jutting out. A porch/entry gable carried on POSTS or a BEAM is the one that
+usually IS projecting — confirm its depth from the side view.
+
+Consequence: a flush front gable does NOT break the front eave — keep the front
+eave a single continuous guttered run except where a mass is confirmed to
+project. Do not add side-eave runs for a gable you cannot prove projects;
+assuming projection is what inflates the takeoff.
+
+If an elevation is too low-resolution to tell a horizontal eave from a sloped
+rake, or to judge a projection, say so in the notes (e.g. "front elevation
+unreadable — projection indeterminate") rather than guessing.
+</four_faces_and_flush_default>
+
 <cross_reference>
 Do not trace the roof plan in isolation. Every residential plan set
 has 3-5 sheets that constrain the takeoff and you MUST reconcile
-across them before emitting geometry:
+across them before emitting geometry.
+
+HUNT ACROSS EVERY PAGE. A roof feature — a gable, a footprint jog, a covered
+porch/patio/deck, a chimney chase, a skylight, a slope change, a garage offset —
+may be visible on ONE sheet and absent on another. If it shows on the floor plan,
+the roof-framing plan, an elevation, or the roof-vent / area SCHEDULE but is
+unclear on the roof plan, still account for it — go looking on the other pages
+rather than dropping a feature because a single sheet omits it. In particular the
+roof-vent / area schedule lists each roof MASS by name + area (e.g. "UPPER ROOF
+2902 sf", "PATIO ROOF 228 sf", "PORCH ROOF 180 sf"): every named mass there MUST
+appear in your geometry, and its area ÷ span is a depth cross-check.
 
 1. ROOF PLAN (and ELEVATIONS) — the roof plan gives the footprint
    GEOMETRY / SHAPE; the ELEVATIONS give the eave-vs-rake / ridge / hip /
@@ -627,11 +758,15 @@ SELF-CHECK BEFORE EMITTING JSON:
 5. GABLE CHECK (per 2b + 2c): two passes. (a) WHOLE-SIDE: every side you
    marked a GABLE END in 2c carries ZERO gutter_run on its MAIN face — its
    two slopes are excluded_edges of kind "rake"; if you placed an upper-tier
-   eave on a gable-end side's main face, delete it. BUT preserve any
-   LOWER-tier porch/patio/entry eave on that side per the EXCEPTION in 2c —
-   a gable end can still have a lower covered porch that keeps its gutter.
-   Do NOT strip the eave off a HIPPED end (a trapezoid roofline with a
-   visible horizontal eave) either — that eave stays. (b) PER-RUN:
+   eave on a gable-end side's main face, delete it. This applies REGARDLESS
+   of whether the footprint steps/jogs there — a gable end flush with its
+   neighboring walls (no pop-out, no setback) is still a gable end and still
+   gets ZERO gutter on its main face; do not let "the wall doesn't jog" talk
+   you into leaving a gutter_run there. BUT preserve any LOWER-tier
+   porch/patio/entry eave on that side per the EXCEPTION in 2c — a gable end
+   can still have a lower covered porch that keeps its gutter. Do NOT strip
+   the eave off a HIPPED end (a trapezoid roofline with a visible horizontal
+   eave) either — that eave stays. (b) PER-RUN:
    every remaining gutter_run must sit under a HORIZONTAL roofline segment;
    if a run sits under a SLOPED roofline or across a "^" gable peak, delete
    it (re-class as a rake). Confirm every gable peak carries ZERO gutter.
@@ -675,6 +810,18 @@ the building sections, and the elevations: if there is living space
 above the garage (bedroom, bonus, media room) or its outer wall rises
 the full two stories, the garage eaves are "upper" tier (~20 ft), NOT
 lower. Only a detached or clearly 1-story garage roof is "lower".
+
+A PROJECTING section is NOT automatically lower-tier either — tier is
+about the roof PLANE'S HEIGHT off grade, not whether the footprint pops
+out. A bay window, cantilevered second-floor overhang, second-floor
+deck/balcony cover, or upper dormer that sits ABOVE the first floor is
+"upper" tier even though it juts out past the main wall below it, as
+long as its own eave line is still up at the 2-story height. Check the
+elevation's actual eave HEIGHT for that jog, not just whether the
+footprint jogs there: a bump-out reads "lower" only when its roofline
+visibly drops to the short (9-11 ft) porch/patio height in the SAME
+elevation, not merely because building_footprint has a jog at that
+position.
 
 Cues from the roof plan:
 - Lower-tier runs are usually on bump-outs that protrude from the main
@@ -1235,6 +1382,18 @@ export type BlueprintRunOptions = {
    *  geometry instead of eyeballing pixels. null/absent → unchanged
    *  vision-only behavior. */
   vectorGeometry?: PlanVectors | null;
+  /** Stage-1 classification (schedule area, width×depth, roof shape). When
+   *  present, the best-of scorer additionally rewards the trace whose footprint
+   *  agrees with the stated roof area — so a candidate missing a wing/mass loses.
+   *  Scale-free, so a mere px→ft scale mislabel (which leaves the measured LF
+   *  intact) is NOT penalized. */
+  classification?: PlanClassification | null;
+  /** Learned-calibration prompt block (takeoff-calibration.ts) built from
+   *  this contractor's past corrected takeoffs. Injected into the USER
+   *  message (never the cached system prompt) as a soft prior — "your eave
+   *  totals have run ~12% high" — with an explicit instruction that the
+   *  current plan's printed dimensions always win. null/absent → no-op. */
+  learnedCalibration?: string | null;
 };
 
 /**
@@ -1246,6 +1405,7 @@ export type BlueprintRunOptions = {
 export function scoreBlueprintAnalysis(
   a: BlueprintAnalysis,
   c?: GeometryConstraints,
+  classification?: PlanClassification | null,
 ): number {
   const fin = (p?: { x: number; y: number } | null) =>
     !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -1262,17 +1422,23 @@ export function scoreBlueprintAnalysis(
   if (totalLF <= 0) s -= 20; // no priced geometry at all
   if (c?.max_total_eave_lf && totalLF > c.max_total_eave_lf)
     s -= (totalLF - c.max_total_eave_lf) * 0.1 + 8;
-  s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
-  // A real footprint encloses area; a collapsed / single-dot trace doesn't.
-  if (fp.length >= 3) {
-    let area = 0;
-    for (let i = 0; i < fp.length; i++) {
-      const p = fp[i];
-      const q = fp[(i + 1) % fp.length];
-      area += p.x * q.y - q.x * p.y;
-    }
-    if (Math.abs(area) < 1) s -= 15;
+  // Downspout floor: the elevations counted a hard LOWER bound. A trace that
+  // places fewer dropped real drainage (the 1168G gemini roll: 9 placed vs 13
+  // visible) — penalize the shortfall so a complete sibling wins; never
+  // reward exceeding the floor.
+  if (c?.min_downspouts && c.min_downspouts > 0) {
+    const placed = (a.downspouts ?? []).filter((d) => fin(d?.at)).length;
+    if (placed < c.min_downspouts) s -= (c.min_downspouts - placed) * 2;
   }
+  s += a.confidence === "high" ? 5 : a.confidence === "medium" ? 2 : 0;
+
+  // Geometry-quality gate (pure, unit-tested in blueprint-trace-quality.ts):
+  // demote a self-intersecting/collapsed footprint (the centroid-fan cause), a
+  // trace whose scale-free area falls short of the stated schedule (missing
+  // wing), and a trace whose eave LF is an implausibly small fraction of the
+  // footprint perimeter (an under-trace, e.g. 120 LF on a 326 ft perimeter).
+  // Reject-implausible only — never fabricates or prices geometry.
+  s -= geometryQualityPenalty(a, classification);
   return s;
 }
 
@@ -1321,14 +1487,14 @@ export async function blueprintFromPlanSourcesBestOf(
   if (ok.length === 0) return results[0]; // all failed — surface the reason
   ok.sort(
     (a, b) =>
-      scoreBlueprintAnalysis(b.analysis, opts.constraints) -
-      scoreBlueprintAnalysis(a.analysis, opts.constraints),
+      scoreBlueprintAnalysis(b.analysis, opts.constraints, opts.classification) -
+      scoreBlueprintAnalysis(a.analysis, opts.constraints, opts.classification),
   );
   const best = ok[0];
   const models = ok.map((r) => r.usage.model);
   best.analysis.notes = [
     ...(best.analysis.notes ?? []),
-    `Best of ${ok.length} reads (${[...new Set(models)].join(", ")}) — kept the most complete, in-envelope trace from ${best.usage.model}.`,
+    `Best of ${ok.length} reads (${[...new Set(models)].join(", ")}) — kept the highest-scoring valid trace (simple, in-envelope footprint) from ${best.usage.model}.`,
   ];
   return best;
 }
@@ -1360,6 +1526,7 @@ export async function blueprintFromPlanSources(
         "the gutter layout JSON per the schema.\n\n" +
         constraintsBlock +
         buildVectorBlock(opts.vectorGeometry) +
+        (opts.learnedCalibration ?? "") +
         "OUTPUT FORMAT: respond with a single JSON object only. No preamble, " +
         "no commentary, no markdown code fences. The response must start " +
         "with `{` and end with `}`. The downstream parser extracts the " +
@@ -1401,9 +1568,13 @@ export async function blueprintFromPlanSources(
   ];
 
   try {
+    // Stale-override guard: an /admin/prompts override saved before the
+    // hip-evidence + roof-form blocks existed would silently regress every
+    // takeoff — bypass it for the code default (loud console warning).
     const blueprintSystem = await getPrompt(
       "blueprint.takeoff.system",
       BLUEPRINT_FROM_PLANS_SYSTEM,
+      { requiredMarkers: ["read_all_sheets", "roof_forms"] },
     );
     const response = await client.messages.create({
       model: MODEL,

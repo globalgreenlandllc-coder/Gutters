@@ -157,7 +157,7 @@ export function DemoFlow({
           transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
           onClick={(e) => e.stopPropagation()}
           className={cn(
-            "relative flex flex-col overflow-hidden rounded-3xl bg-white shadow-[0_25px_90px_-15px_rgba(0,0,0,0.55)] ring-1 ring-black/10 transition-[max-width,max-height,width,height] duration-500 ease-out",
+            "relative flex flex-col overflow-hidden rounded-2xl bg-white shadow-[0_25px_90px_-15px_rgba(0,0,0,0.55)] ring-1 ring-black/10 transition-[max-width,max-height,width,height] duration-500 ease-out",
             inProposal
               ? "h-[92vh] max-h-[860px] w-[95vw] max-w-[1200px]"
               : "h-[90vh] max-h-[640px] w-[92vw] max-w-[1080px]",
@@ -177,7 +177,7 @@ export function DemoFlow({
               accent bar while viewing proposal. */}
           <div className="relative h-0.5 w-full overflow-hidden bg-zinc-100">
             <motion.div
-              className="absolute inset-y-0 left-0 bg-gradient-to-r from-accent-500 via-cyan-500 to-violet-500"
+              className="absolute inset-y-0 left-0 bg-gradient-to-r from-stripe-blue via-stripe-violet to-stripe-coral"
               animate={{ width: `${(inProposal ? 1 : pipelineProgress) * 100}%` }}
               transition={{ duration: 0.5, ease: "easeOut" }}
             />
@@ -356,8 +356,8 @@ function AerialStage({ phase }: { phase: Phase }) {
             <stop offset="100%" stopColor="#14532d" />
           </radialGradient>
           <linearGradient id="scan-glow" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="rgba(34,197,94,0)" />
-            <stop offset="100%" stopColor="rgba(34,197,94,0.4)" />
+            <stop offset="0%" stopColor="rgba(67,83,255,0)" />
+            <stop offset="100%" stopColor="rgba(67,83,255,0.4)" />
           </linearGradient>
           <filter id="aerial-shadow" x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur in="SourceAlpha" stdDeviation="4" />
@@ -385,7 +385,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                   y1={0}
                   x2={i * 50}
                   y2={VH}
-                  stroke="rgba(34,197,94,0.18)"
+                  stroke="rgba(67,83,255,0.22)"
                   strokeWidth="0.5"
                 />
               ))}
@@ -396,7 +396,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                   y1={i * 50}
                   x2={VW}
                   y2={i * 50}
-                  stroke="rgba(34,197,94,0.18)"
+                  stroke="rgba(67,83,255,0.22)"
                   strokeWidth="0.5"
                 />
               ))}
@@ -411,10 +411,10 @@ function AerialStage({ phase }: { phase: Phase }) {
                 cy={VH / 2}
                 r="48"
                 fill="none"
-                stroke="rgba(34,197,94,0.45)"
+                stroke="rgba(67,83,255,0.5)"
                 strokeWidth="1.5"
               />
-              <circle cx={VW / 2} cy={VH / 2} r="6" fill="#22c55e" />
+              <circle cx={VW / 2} cy={VH / 2} r="6" fill="#4353ff" />
             </motion.g>
             <text
               x={VW / 2}
@@ -539,7 +539,7 @@ function AerialStage({ phase }: { phase: Phase }) {
               width="524"
               height="204"
               fill="none"
-              stroke="rgba(34,197,94,0.7)"
+              stroke="rgba(67,83,255,0.8)"
               strokeWidth="1.4"
               strokeDasharray="6 6"
               rx="4"
@@ -549,7 +549,7 @@ function AerialStage({ phase }: { phase: Phase }) {
               y="170"
               width="160"
               height="18"
-              fill="rgba(34,197,94,0.95)"
+              fill="rgba(67,83,255,0.95)"
               rx="2"
             />
             <text
@@ -557,7 +557,7 @@ function AerialStage({ phase }: { phase: Phase }) {
               y="184"
               fontSize="11"
               fontWeight="700"
-              fill="#0b1220"
+              fill="#ffffff"
               fontFamily="ui-sans-serif, system-ui"
             >
               ROOF DETECTED · 98%
@@ -572,7 +572,7 @@ function AerialStage({ phase }: { phase: Phase }) {
               x="0"
               width={VW}
               height="3"
-              fill="rgba(34,197,94,0.9)"
+              fill="rgba(67,83,255,0.9)"
               initial={{ y: 100 }}
               animate={{ y: VH - 100 }}
               transition={{ duration: 1.6, ease: "easeInOut" }}
@@ -604,7 +604,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke="#22c55e"
+                  stroke="#4353ff"
                   strokeWidth="9"
                   strokeLinecap="round"
                   opacity="0.25"
@@ -617,7 +617,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                   y1={a.y}
                   x2={b.x}
                   y2={b.y}
-                  stroke="#22c55e"
+                  stroke="#4353ff"
                   strokeWidth="3.5"
                   strokeLinecap="round"
                   initial={{ pathLength: 0, opacity: 0 }}
@@ -639,7 +639,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                     height="20"
                     rx="10"
                     fill="rgba(15,23,42,0.94)"
-                    stroke="#22c55e"
+                    stroke="#4353ff"
                     strokeWidth="1"
                   />
                   <text
@@ -648,7 +648,7 @@ function AerialStage({ phase }: { phase: Phase }) {
                     textAnchor="middle"
                     fontSize="11"
                     fontWeight="700"
-                    fill="#bbf7d0"
+                    fill="#c7d0ff"
                     fontFamily="ui-sans-serif, system-ui"
                   >
                     {lengthFt} LF
@@ -673,12 +673,12 @@ function AerialStage({ phase }: { phase: Phase }) {
                 damping: 17,
               }}
             >
-              <circle cx={ds.x} cy={ds.y} r="18" fill="rgba(14,165,233,0.25)" />
+              <circle cx={ds.x} cy={ds.y} r="18" fill="rgba(248,113,126,0.28)" />
               <circle
                 cx={ds.x}
                 cy={ds.y}
                 r="11"
-                fill="#0ea5e9"
+                fill="#f8717e"
                 stroke="white"
                 strokeWidth="2.5"
               />
@@ -703,9 +703,9 @@ function AerialStage({ phase }: { phase: Phase }) {
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/85 px-3 py-1 text-[11px] font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-500/30 backdrop-blur"
+            className="inline-flex items-center gap-1.5 rounded-full bg-ink/85 px-3 py-1 text-[11px] font-semibold text-accent-200 ring-1 ring-inset ring-accent-500/40 backdrop-blur"
           >
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-stripe-blue" />
             AI vision · 98% confidence
           </motion.div>
         )}
@@ -840,15 +840,15 @@ function StatusPanel({
               <Row label="Stories" value={`${sampleMeasurements.stories}`} />
               <Row label="Waste" value={`${sampleMeasurements.wasteFactorPct}%`} />
             </dl>
-            <div className="mt-3 rounded-xl bg-gradient-to-br from-accent-50 to-cyan-50 p-3 ring-1 ring-inset ring-accent-200">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-accent-700">
+            <div className="mt-3 rounded-lg bg-accent-50 p-3 ring-1 ring-inset ring-accent-200">
+              <div className="font-label text-[10px] text-accent-700">
                 Pro Shield total
               </div>
               <CountUp
                 from={0}
                 to={4280}
                 durationMs={1100}
-                className="font-display mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900"
+                className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900"
                 prefix="$"
               />
               <div className="text-[11px] text-zinc-500">
@@ -886,7 +886,7 @@ function StatusPanel({
                   initial={{ opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.05 + i * 0.12 }}
-                  className="flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                  className="flex items-center gap-1.5 rounded-md bg-accent-50 px-2 py-1 text-accent-700 ring-1 ring-inset ring-accent-200"
                 >
                   <s.icon className="h-3 w-3" />
                   {s.label}

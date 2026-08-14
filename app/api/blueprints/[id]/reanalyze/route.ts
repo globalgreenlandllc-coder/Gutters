@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { get as blobGet, list as blobList } from "@vercel/blob";
 
 import { db } from "@/lib/db";
+import { humanizeAiError, isFatalAiOutage } from "@/lib/ai/humanize-error";
 import {
   blueprintFromPlanSourcesBestOf,
   type PlanSource,
@@ -19,6 +20,22 @@ import {
 import { clampBlueprintToEnvelope } from "@/lib/ai/clamp-blueprint";
 import { reconcileEaves } from "@/lib/ai/reconcile-eaves";
 import { extractPlanVectors } from "@/lib/ai/pdf-vectors";
+import { extractGateEvidence, runBlueprintGates } from "@/lib/ai/blueprint-gates";
+import { readAllElevations } from "@/lib/ai/read-elevations";
+import { readRoofPlanLayout, describeRoofPlanReading } from "@/lib/ai/read-roof-layout";
+import { computeRasterOutlineStash } from "@/lib/ai/raster-outline";
+import { classifyPerimeterEdges, edgeTakeoffEnabled } from "@/lib/ai/classify-edges";
+import { getLearnedCalibration } from "@/lib/ai/takeoff-corrections";
+import { readRoofFromVectors, reconcileRoofPerimeter } from "@/lib/ai/roof-from-vectors";
+import { elevationStepsForVectorGate } from "@/lib/ai/eave-step-reconcile";
+import { extractBuildingOutline } from "@/lib/ai/outline-from-vectors";
+import { consumeLimit } from "@/lib/abuse/rate-limit";
+import { POLICIES, EST_COST_CENTS } from "@/lib/abuse/policies";
+import {
+  checkAiSpendAllowed,
+  recordSpend,
+  estimateModelCostCents,
+} from "@/lib/abuse/spend-guard";
 
 export const maxDuration = 300;
 
@@ -51,10 +68,40 @@ export async function POST(
   }
   const user = await db.user.findUnique({
     where: { clerkId },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // Same guard pair as the upload route — a re-analyze burns the same
+  // Opus ensemble as a fresh upload, and it's a one-click button.
+  // Deliberately NO credit gate/debit here: the plan already consumed a
+  // blueprint credit when it was first analyzed, so refinement re-runs
+  // are free (mirrors free same-address satellite re-runs). The rate
+  // limit above (a few per hour) is what bounds the cost.
+  const isAdmin = user.role === "SUPER_ADMIN";
+  if (!isAdmin) {
+    const rl = await consumeLimit({
+      policy: POLICIES.blueprintAnalyze,
+      key: `user:${user.id}`,
+      context: { userId: user.id, route: "/api/blueprints/reanalyze" },
+    });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: rl.reason },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+      );
+    }
+  }
+  const spend = await checkAiSpendAllowed({
+    userId: user.id,
+    kind: "BLUEPRINT_ANALYSIS",
+    estCostCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+    isAdmin,
+  });
+  if (!spend.ok) {
+    return NextResponse.json({ error: spend.reason }, { status: 503 });
   }
 
   const { id } = await context.params;
@@ -193,6 +240,17 @@ export async function POST(
       console.log(`[/api/blueprints/${id}/reanalyze] starting re-analysis`);
       const stage1 = isPdf ? await classifyPlanSheets(finalSource) : null;
       if (stage1 && !stage1.ok) {
+        // Dead key/account = every downstream Anthropic call fails too.
+        // Abort with the plain billing/auth message instead of overwriting
+        // a good stored analysis with a degraded one (see /api/blueprints).
+        if (isFatalAiOutage(stage1.reason)) {
+          console.error("[/api/blueprints/reanalyze] fatal AI outage:", stage1.reason);
+          await db.planAnalysis.update({
+            where: { id },
+            data: { status: "FAILED", errorMessage: humanizeAiError(stage1.reason) },
+          });
+          return;
+        }
         console.warn(
           `[/api/blueprints/${id}/reanalyze] classifier failed (continuing): ${stage1.reason}`,
         );
@@ -210,6 +268,66 @@ export async function POST(
             })
           : null;
 
+      // Independent per-face elevation reads (Correction 1) — run concurrently
+      // with the takeoff below. Same wire-in as the upload path.
+      const elevationReadsEnabled = process.env.BLUEPRINT_ELEVATION_READS !== "0";
+      const elevationsP =
+        isPdf && elevationReadsEnabled
+          ? readAllElevations(finalSource, stage1 && stage1.ok ? stage1.classification : null)
+          : Promise.resolve(null);
+
+      // 📄 ROOF-PLAN PAGE READ — same wire-in as the upload path (owner
+      // doctrine: the roof framing / roof plan page is the layout truth,
+      // ranked above the elevations). Scanned/raster sets only; runs
+      // concurrently with the elevation reads; never throws (a transient
+      // outage stores readable:false). Disable with BLUEPRINT_ROOFPLAN_READ=0.
+      const scannedSet =
+        isPdf &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) < 4 &&
+        (vectorGeometry?.footprint?.segments?.length ?? 0) < 4;
+      const roofPlanPage =
+        stage1 && stage1.ok
+          ? (stage1.classification.roof_plan_page ??
+            (stage1.classification.sheets ?? []).find(
+              (s) => s.sheet_type === "roof_plan" && Number.isFinite(s.page_index),
+            )?.page_index ??
+            null)
+          : null;
+      const roofPlanP =
+        scannedSet && roofPlanPage != null && process.env.BLUEPRINT_ROOFPLAN_READ !== "0"
+          ? readRoofPlanLayout(finalSource, { page: roofPlanPage })
+          : Promise.resolve(null);
+
+      // 📄 RASTER ROOF OUTLINE — same wire-in as the upload path:
+      // deterministic (no AI spend), scanned sets only. The roof-plan page's
+      // embedded scan is traced + hard-gated against the classifier's printed
+      // overalls; the stash is stored verbatim and the estimate path swaps
+      // the vision-traced footprint SHAPE for it (priced LF untouched).
+      // Failure stores {ok:false, reasons} — never sinks the run.
+      // Kill switch: BLUEPRINT_RASTER_OUTLINE=0.
+      const rasterOutlineP =
+        scannedSet && roofPlanPage != null && finalSource.kind === "pdf"
+          ? computeRasterOutlineStash({
+              pdfBase64: finalSource.base64,
+              page: roofPlanPage,
+              printedDimsFt:
+                stage1 && stage1.ok
+                  ? [
+                      stage1.classification.building_dimensions?.width_ft,
+                      stage1.classification.building_dimensions?.depth_ft,
+                    ]
+                  : null,
+              statedBoxFt2:
+                stage1 &&
+                stage1.ok &&
+                stage1.classification.building_dimensions?.width_ft &&
+                stage1.classification.building_dimensions?.depth_ft
+                  ? stage1.classification.building_dimensions.width_ft *
+                    stage1.classification.building_dimensions.depth_ft
+                  : null,
+            })
+          : Promise.resolve(null);
+
       // Best-of ensemble: three independent Opus reads + a Gemini read when a
       // Gemini key is configured (cross-provider). Keep the best.
       const geminiReaders = (await geminiAvailable())
@@ -221,16 +339,33 @@ export async function POST(
               }),
           ]
         : [];
+      // Learned calibration — same wire-in as the upload path: a soft prior
+      // from this contractor's past corrected takeoffs, injected into the
+      // read's user message. Also pass the classification so the best-of
+      // scorer applies the same stated-area demotion the upload path does.
+      const calibration = await getLearnedCalibration(user.id);
       const result = await blueprintFromPlanSourcesBestOf(
         [finalSource],
-        { constraints, vectorGeometry },
+        {
+          constraints,
+          vectorGeometry,
+          classification: stage1 && stage1.ok ? stage1.classification : null,
+          learnedCalibration: calibration?.promptBlock ?? null,
+        },
         3,
         geminiReaders,
       );
       if (!result.ok) {
+        await recordSpend({
+          userId: user.id,
+          kind: "BLUEPRINT_ANALYSIS",
+          costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+          meta: { planId: id, failed: true, reanalyze: true },
+        });
+        console.error("[/api/blueprints/reanalyze] analysis failed:", result.reason);
         await db.planAnalysis.update({
           where: { id },
-          data: { status: "FAILED", errorMessage: result.reason },
+          data: { status: "FAILED", errorMessage: humanizeAiError(result.reason) },
         });
         return;
       }
@@ -251,9 +386,219 @@ export async function POST(
         reconciled,
         constraints,
       );
+
+      // Gate EVIDENCE extracted early (same wire-in as the upload path) —
+      // the edge takeoff's reconcile consumes roofMasses; the gates run
+      // AFTER the takeoff so its D-chip reads anchor the stated-box check.
+      const gateEvidence = await extractGateEvidence({
+        pdfBase64: isPdf && finalSource.kind === "pdf" ? finalSource.base64 : null,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+      });
+      if (calibration?.promptBlock) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📚 Learned calibration applied — ${calibration.sampleCount} past corrected takeoff(s) from this account ` +
+            `(median eave bias ${calibration.medianLfDeltaPct > 0 ? "+" : ""}${calibration.medianLfDeltaPct.toFixed(0)}%). ` +
+            `The read was told where its history ran high/low; this plan's printed dimensions still win.`,
+        ];
+      }
+
+      const elevations = await elevationsP;
+      if (elevations && elevations.review_flags.length > 0) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          ...elevations.review_flags.map((f) => `🧭 ${f}`),
+        ];
+      }
+
+      // Roof-plan layout read (started above, resolved now) — same
+      // fail-safe contract as the upload path: never throws.
+      const roofPlanRead = await roofPlanP;
+      if (roofPlanRead) {
+        finalAnalysis.notes = [
+          ...finalAnalysis.notes,
+          `📄 Roof-plan page ${roofPlanRead.page ?? "?"}: ${describeRoofPlanReading(roofPlanRead.reading)}`,
+          ...roofPlanRead.reading.notes.slice(0, 3).map((n) => `📄 Roof-plan note: ${n}`),
+        ];
+        console.log(
+          `[/api/blueprints/${id}/reanalyze] roof-plan read: page=${roofPlanRead.page} readable=${roofPlanRead.reading.readable} hips_at_corners=${roofPlanRead.reading.hips_at_corners} ds=${roofPlanRead.reading.total_ds_marks}`,
+        );
+      }
+
+      // Raster roof outline (started above, resolved now) — same stash
+      // convention as the upload path; the estimate path does the swap.
+      const rasterOutline = await rasterOutlineP;
+      if (rasterOutline) {
+        console.log(
+          `[/api/blueprints/${id}/reanalyze] raster outline: page=${rasterOutline.page} ok=${rasterOutline.ok}` +
+            (rasterOutline.ok
+              ? ` (${rasterOutline.ring?.length ?? 0} corners @ ${rasterOutline.ftPerPx} ft/px)`
+              : ` — ${rasterOutline.reasons.join("; ")}`),
+        );
+      }
+
+      // v2 EDGE TAKEOFF — one expensive vision call that classifies the
+      // plan's own vector outline edge-by-edge (eave/rake/unknown + D.S.
+      // marks + dimension values). Stored on the row; the estimate path
+      // consumes it INSTEAD of freehand runs + blind closure. Fail-safe:
+      // any miss stores {ok:false} and v1 behavior is unchanged.
+      let edgeTakeoff: Awaited<ReturnType<typeof classifyPerimeterEdges>> | null = null;
+      if (
+        edgeTakeoffEnabled() &&
+        isPdf &&
+        finalSource.kind === "pdf" &&
+        Array.isArray(vectorGeometry?.roof?.segments) &&
+        (vectorGeometry?.roof?.segments?.length ?? 0) >= 4
+      ) {
+        try {
+          const rsegs = vectorGeometry!.roof!.segments as number[][];
+          const rlabels = vectorGeometry!.roof!.labels ?? [];
+          const fp = finalAnalysis.building_footprint ?? [];
+          let expectedAspect: number | undefined;
+          if (fp.length >= 3) {
+            const xs = fp.map((p) => p.x).filter(Number.isFinite);
+            const ys = fp.map((p) => p.y).filter(Number.isFinite);
+            const w = Math.max(...xs) - Math.min(...xs);
+            const h = Math.max(...ys) - Math.min(...ys);
+            if (w > 0 && h > 0) expectedAspect = Math.max(w, h) / Math.min(w, h);
+          }
+          const roof = readRoofFromVectors(
+            rlabels,
+            rsegs,
+            expectedAspect ? { expectedAspect } : undefined,
+          );
+          if (roof && roof.perimeter.length > 4 && roof.perimeter.length <= 60) {
+            // Cross-validate the priced perimeter BEFORE classification —
+            // same wire-in as the upload path: phantom dimension-line pockets
+            // snap back onto the sheet's heavy linework, flattened jogs are
+            // adopted from the foundation-plan outline. Null = trace stands.
+            let outline = roof.perimeter;
+            const fpRepairSegs = vectorGeometry?.footprint?.segments;
+            const fpOutline =
+              Array.isArray(fpRepairSegs) && fpRepairSegs.length >= 4
+                ? (extractBuildingOutline(fpRepairSegs)?.polygon ?? null)
+                : null;
+            const repair = reconcileRoofPerimeter({
+              perimeter: roof.perimeter,
+              segments: rsegs,
+              footprintOutline: fpOutline,
+              // ELEVATIONS-FIRST jog gate — same wire-in as the upload path:
+              // per-face eave-line breaks from the already-awaited elevation
+              // reads; null (old reads) → legacy behavior byte-identical.
+              elevationSteps: elevationStepsForVectorGate(elevations?.per_face ?? null),
+            });
+            if (repair) {
+              outline = repair.perimeter;
+              console.log(
+                `[/api/blueprints/${id}/reanalyze] outline repair: ${repair.snappedEdges} phantom edge(s) snapped, ` +
+                  `${repair.jogsAdopted} jog(s) adopted (${roof.perimeter.length} → ${outline.length} corners)`,
+              );
+            }
+            edgeTakeoff = await classifyPerimeterEdges({
+              source: finalSource,
+              outline,
+              segments: rsegs,
+              roofPageSize: {
+                widthPt: vectorGeometry?.roof?.widthPt,
+                heightPt: vectorGeometry?.roof?.heightPt,
+              },
+              footprint: vectorGeometry?.footprint ?? null,
+              // Per-face elevation reads: the code-enforced gable budget —
+              // every rake call is reconciled against the elevation the wall
+              // actually faces (reconcile-edge-classes.ts).
+              perFace: elevations?.per_face ?? null,
+              // Thin framing linework — the truss-field arbiter reads
+              // eave/gable straight off the sheet's truss arrays.
+              fieldSegments: vectorGeometry?.roof?.fieldSegments ?? null,
+              // Roof-area schedule masses — the reconcile's beam/posts
+              // plausibility + porch-stub shortfall evidence.
+              roofMasses: gateEvidence.roofMasses.length
+                ? gateEvidence.roofMasses
+                : null,
+            });
+            // Repair notes land ONLY when the repaired outline actually
+            // prices (edgeTakeoff.ok) — on the v1 fallback the panel must
+            // not claim jogs were adopted into an outline nobody uses.
+            if (repair && edgeTakeoff.ok) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...repair.notes];
+            }
+            if (edgeTakeoff.notes.length > 0) {
+              finalAnalysis.notes = [...finalAnalysis.notes, ...edgeTakeoff.notes];
+            }
+            if (!edgeTakeoff.ok) {
+              console.warn(
+                `[/api/blueprints/${id}/reanalyze] edge classifier failed (v1 path stays): ${edgeTakeoff.reason}`,
+              );
+            }
+          }
+        } catch (e) {
+          console.warn(
+            `[/api/blueprints/${id}/reanalyze] edge takeoff threw (v1 path stays):`,
+            e instanceof Error ? e.message : e,
+          );
+        }
+      }
+
+      // Deterministic roof-engine gates — same wire-in as the upload path:
+      // runs AFTER the edge takeoff so the D-chip printed reads can anchor
+      // the stated-box cross-check (evidence scan ran early, above).
+      const gates = await runBlueprintGates({
+        analysis: finalAnalysis,
+        classification: stage1 && stage1.ok ? stage1.classification : null,
+        pdfBase64: isPdf && finalSource.kind === "pdf" ? finalSource.base64 : null,
+        evidence: gateEvidence,
+        printedDimsFt: edgeTakeoff?.ok
+          ? edgeTakeoff.dimReads
+              .map((r) => r.feet)
+              .filter((f): f is number => typeof f === "number" && Number.isFinite(f))
+          : null,
+        // Gate the outline that's ACTUALLY PRICED (v2 edge takeoff) at its
+        // solved scale — same wire-in as the upload path.
+        pricedOutline:
+          edgeTakeoff?.ok &&
+          typeof edgeTakeoff.ptPerFt === "number" &&
+          Number.isFinite(edgeTakeoff.ptPerFt) &&
+          edgeTakeoff.ptPerFt > 0
+            ? {
+                ring: edgeTakeoff.outline,
+                ftPerUnit: 1 / edgeTakeoff.ptPerFt,
+                source: "edge-classified outline",
+              }
+            : null,
+      });
+      if (gates.notes.length > 0) {
+        finalAnalysis.notes = [...finalAnalysis.notes, ...gates.notes];
+      }
+
       const analysisJson: Record<string, unknown> = {
         ...(finalAnalysis as unknown as Record<string, unknown>),
       };
+      analysisJson._engine = {
+        reviewFlags: gates.reviewFlags,
+        scaleFtPerPx: gates.scaleFtPerPx,
+        scheduleArea: gates.scheduleArea,
+        roofMasses: gates.roofMasses,
+        orientation: gates.orientation,
+      };
+      if (elevations) {
+        analysisJson._perFace = {
+          per_face: elevations.per_face,
+          symmetry_assumed: false,
+          elevation_unreadable: elevations.elevation_unreadable,
+          usage: elevations.usage,
+        };
+      }
+      if (roofPlanRead) {
+        // Same free-form stash convention as _perFace/_classifier: the
+        // estimate path re-parses it defensively (parseRoofPlanReading).
+        analysisJson._roofPlanRead = roofPlanRead;
+      }
+      if (rasterOutline) {
+        // JSON-small by contract: the ring only (never the bitmap), and the
+        // ring only when the gates passed. Consumed by applyRasterOutline on
+        // the estimate path; old rows without the field stay byte-identical.
+        analysisJson._rasterOutline = rasterOutline;
+      }
       if (stage1 && stage1.ok) {
         analysisJson._classifier = {
           classification: stage1.classification,
@@ -261,7 +606,17 @@ export async function POST(
         };
       }
       if (vectorGeometry) {
-        analysisJson._vectorGeometry = vectorGeometry;
+        // Strip the code-only field channel — bulky and never needed after
+        // classification (recomputed on re-analyze).
+        analysisJson._vectorGeometry = vectorGeometry.roof?.fieldSegments
+          ? {
+              ...vectorGeometry,
+              roof: { ...vectorGeometry.roof, fieldSegments: undefined },
+            }
+          : vectorGeometry;
+      }
+      if (edgeTakeoff) {
+        analysisJson._edgeTakeoff = edgeTakeoff;
       }
 
       const totalInputTokens =
@@ -286,9 +641,29 @@ export async function POST(
           durationMs: totalDurationMs,
         },
       });
+
+      await recordSpend({
+        userId: user.id,
+        kind: "BLUEPRINT_ANALYSIS",
+        provider: "anthropic",
+        costCents: Math.max(
+          estimateModelCostCents(result.usage.model, totalInputTokens, totalOutputTokens),
+          EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+        ),
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        meta: { planId: id, model: result.usage.model, reanalyze: true },
+      });
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "blueprint re-analysis failed";
+      await recordSpend({
+        userId: user.id,
+        kind: "BLUEPRINT_ANALYSIS",
+        costCents: EST_COST_CENTS.BLUEPRINT_ANALYSIS,
+        meta: { planId: id, failed: true, reanalyze: true },
+      });
+      const message = humanizeAiError(
+        e instanceof Error ? e.message : "blueprint re-analysis failed",
+      );
       console.error(`[/api/blueprints/${id}/reanalyze] threw:`, e);
       await db.planAnalysis
         .update({

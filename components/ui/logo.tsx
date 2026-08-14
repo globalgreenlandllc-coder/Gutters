@@ -1,5 +1,10 @@
 import { cn } from "@/lib/utils";
 
+/**
+ * Hyperline-style logotype: heavy uppercase wordmark followed by a filled
+ * square. Inherits color via text-* so it works on light and dark surfaces
+ * (defaults to ink).
+ */
 export function Logo({
   className,
   showSubtitle = true,
@@ -8,34 +13,21 @@ export function Logo({
   showSubtitle?: boolean;
 }) {
   return (
-    <div className={cn("flex items-center gap-2.5", className)}>
-      <div className="relative h-8 w-8">
-        <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow" />
-        <svg
-          viewBox="0 0 32 32"
-          className="absolute inset-0 h-8 w-8 text-white"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M6 12 L16 6 L26 12" />
-          <path d="M8 12 L8 22 L24 22 L24 12" />
-          <path d="M11 22 L11 26" />
-          <path d="M21 22 L21 26" />
-        </svg>
-      </div>
-      <div className="flex flex-col leading-none">
-        <span className="font-display text-lg font-semibold tracking-tight text-zinc-900">
-          Gutters
+    <div className={cn("flex flex-col leading-none text-ink", className)}>
+      <span className="flex items-center gap-1.5">
+        <span className="font-display text-[17px] uppercase tracking-[-0.01em]">
+          Gutterscan
         </span>
-        {showSubtitle && (
-          <span className="text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            AI Takeoff
-          </span>
-        )}
-      </div>
+        <span
+          aria-hidden
+          className="inline-block h-[0.55em] w-[0.55em] bg-current"
+        />
+      </span>
+      {showSubtitle && (
+        <span className="mt-1 font-mono text-[9px] font-bold uppercase tracking-[0.28em] opacity-50">
+          AI Takeoff
+        </span>
+      )}
     </div>
   );
 }

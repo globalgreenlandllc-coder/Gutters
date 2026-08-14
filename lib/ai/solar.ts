@@ -1,5 +1,6 @@
 import "server-only";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type RoofSegment = {
   pitchDegrees: number;
@@ -74,7 +75,7 @@ export async function getBuildingInsights(
     `&requiredQuality=LOW&key=${encodeURIComponent(key)}`;
 
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetchWithTimeout(url, { cache: "no-store" }, AI_TIMEOUTS.solar);
     if (!res.ok) {
       // Solar API isn't available for many regions — silent fallback
       return null;

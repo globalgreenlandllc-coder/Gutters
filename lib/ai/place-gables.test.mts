@@ -1,0 +1,350 @@
+/**
+ * Pure node tests for placeGablesFromFaces. Run:
+ *   npx tsx --test lib/ai/place-gables.test.mts
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { placeGablesFromFaces, resolveFaceSlots } from "./place-gables.ts";
+import type { FaceReadingRaw, FaceGableRead } from "./face-merge.ts";
+import { runRoofEngine } from "../roof-engine.ts";
+
+// 640×510 px outline; at 10 px/ft that's 64×51 ft (the Woodinville overall).
+const OUTLINE = [
+  { x: 0, y: 0 },
+  { x: 640, y: 0 },
+  { x: 640, y: 510 },
+  { x: 0, y: 510 },
+];
+const PX_PER_FT = 10;
+
+function g(over: Partial<FaceGableRead>): FaceGableRead {
+  return {
+    id: "g",
+    kind: "other",
+    span_ft: 12,
+    pitch: 6,
+    position_frac: 0.5,
+    eave_condition_guess: "flush",
+    supported_on: "wall",
+    shows_projection_cue: false,
+    notes: "",
+    ...over,
+  };
+}
+function face(over: Partial<FaceReadingRaw>): FaceReadingRaw {
+  return {
+    face: "north",
+    readable: true,
+    unreadable_reason: null,
+    gable_count: null,
+    continuous_eave: true,
+    gables: [],
+    projections: [],
+    projection_cues: [],
+    confidence: "high",
+    ...over,
+  };
+}
+
+test("places a gable at its position along the correct outline edge, facing outward", () => {
+  // South face (y = 510 in this y-down frame), one gable at 25% from the left.
+  const perFace = {
+    south: face({ face: "south", gables: [g({ id: "s1", position_frac: 0.25, span_ft: 16 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  const gb = gables[0];
+  assert.equal(gb.facing, "S");
+  // On the south edge → y = 510. Flush (wall) → projection 0.
+  assert.equal(gb.baseCenter.y, 510);
+  assert.equal(gb.projection, 0);
+  // span 16 ft × 10 px/ft = 160 px.
+  assert.equal(gb.span, 160);
+});
+
+test("Case 2: a set-back read (set_back_ft) becomes a dormer — setbackFt in px, roof_mounted, no gutter", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "dormer", set_back_ft: 5, span_ft: 12 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  const gb = gables[0];
+  assert.equal(gb.setbackFt, 50); // 5 ft × 10 px/ft
+  assert.equal(gb.eaveCondition, "roof_mounted"); // treated as a dormer
+  assert.equal(gb.projection, 0); // still zero gutter — the eave runs whole in front
+});
+
+test("Case 2: a normal at-eave gable has no setbackFt and stays flush", () => {
+  const perFace = { north: face({ face: "north", gables: [g({ id: "n1" })] }) };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables[0].setbackFt, undefined);
+  assert.equal(gables[0].eaveCondition, "flush");
+});
+
+test("posts/beam gable is promoted to PROJECTING with a schematic depth + flag", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", supported_on: "posts", span_ft: 10 })] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables[0].facing, "N");
+  assert.equal(gables[0].eaveCondition, "projecting");
+  assert.ok(gables[0].projection > 0, "posts ⇒ projecting depth > 0");
+  assert.ok(notes.some((n) => /porch/.test(n) && /verify/.test(n)));
+});
+
+test("depth comes from the PLAN (roof area ÷ span) when a matching roof mass is stated", () => {
+  const perFace = {
+    north: face({
+      face: "north",
+      gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })],
+    }),
+  };
+  // PORCH ROOF = 180 sf, span 12 ft ⇒ depth 15 ft (= 150 px at 10 px/ft).
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }, { label: "patio", areaFt2: 228 }],
+  });
+  assert.equal(gables[0].projection, 15 * PX_PER_FT);
+  assert.ok(notes.some((n) => /porch roof area 180 sf ÷ 12 ft span/.test(n)));
+  // An entry porch shares the "porch" roof-area label.
+  const entry = placeGablesFromFaces(
+    { north: face({ face: "north", gables: [g({ id: "e", kind: "entry", supported_on: "posts", span_ft: 12 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+    { roofMasses: [{ label: "porch", areaFt2: 180 }] },
+  );
+  assert.equal(entry.gables[0].projection, 15 * PX_PER_FT);
+});
+
+test("two-angle rule: a FRONT porch's depth comes from the PERPENDICULAR (side) elevation", () => {
+  // Front (north) porch on posts; the WEST side elevation sees it in profile and
+  // measures its depth = 8 ft. That side-elevation depth wins over roof-area.
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    west: face({ face: "west", projections: [{ kind: "porch", depth_ft: 8, notes: "porch in profile" }] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }], // ÷12 = 15 ft (the cross-check)
+  });
+  // Side-elevation depth (8 ft) wins, not the 15 ft from roof-area÷span.
+  assert.equal(gables[0].projection, 8 * PX_PER_FT);
+  assert.ok(notes.some((n) => /side \(perpendicular\) elevation/.test(n)));
+  // The two sources disagree by >35% (8 vs 15) → a verify note.
+  assert.ok(notes.some((n) => /8 ft from the side elevation vs 15 ft/.test(n)));
+});
+
+test("roof-area÷span is used when NO perpendicular projection is available", () => {
+  const perFace = {
+    north: face({ face: "north", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    // no readable side elevation reporting the porch in profile
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT, {
+    roofMasses: [{ label: "porch", areaFt2: 180 }],
+  });
+  assert.equal(gables[0].projection, 15 * PX_PER_FT); // 180 ÷ 12
+  assert.ok(notes.some((n) => /roof area 180 sf ÷ 12 ft span/.test(n)));
+});
+
+test("unread / empty faces contribute nothing; no scale ⇒ nothing", () => {
+  assert.equal(
+    placeGablesFromFaces({ east: face({ face: "east", readable: false }) }, OUTLINE, PX_PER_FT).gables.length,
+    0,
+  );
+  assert.equal(placeGablesFromFaces({}, OUTLINE, PX_PER_FT).gables.length, 0);
+  assert.equal(placeGablesFromFaces({ north: face({ gables: [g({})] }) }, OUTLINE, 0).gables.length, 0);
+});
+
+test("jogged front: gables route to the correct sub-edge (bay vs wall), not one principal edge", () => {
+  // South (front) face has 3 sub-edges: left wall (y=510), a projecting bay
+  // (y=560) in the middle, right wall (y=510). The old single-principal-edge
+  // logic squeezed EVERY front gable onto the furthest-out bay; now each gable
+  // lands on the sub-edge its position_frac maps to across the full face width.
+  const OUTLINE_JOG = [
+    { x: 0, y: 0 },
+    { x: 640, y: 0 },
+    { x: 640, y: 510 },
+    { x: 440, y: 510 },
+    { x: 440, y: 560 },
+    { x: 200, y: 560 },
+    { x: 200, y: 510 },
+    { x: 0, y: 510 },
+  ];
+  const perFace = {
+    south: face({
+      face: "south",
+      gables: [
+        // PROJECTING (on posts) over the bay → rides the bay's outer eave.
+        g({ id: "mid", position_frac: 0.5, span_ft: 12, supported_on: "posts" }),
+        g({ id: "left", position_frac: 0.05, span_ft: 12 }), // flush, over a wall segment
+        // FLUSH gable positioned over the bay → sits on the house WALL plane
+        // (y=510), NOT parked on the pop-out's outer eave in front of it.
+        g({ id: "mid_flush", position_frac: 0.45, span_ft: 14 }),
+      ],
+    }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE_JOG, PX_PER_FT);
+  assert.equal(gables.length, 3);
+  const mid = gables.find((gg) => gg.name === "mid")!;
+  const left = gables.find((gg) => gg.name === "left")!;
+  const midFlush = gables.find((gg) => gg.name === "mid_flush")!;
+  // Projecting gable rides the bay's outer eave (y=560); flush gables sit on the
+  // wall plane (y=510) even when a pop-out stands in front of them.
+  assert.equal(mid.baseCenter.y, 560);
+  assert.equal(left.baseCenter.y, 510);
+  assert.equal(midFlush.baseCenter.y, 510);
+});
+
+test("end-to-end: placed gables drive the engine → front porch adds guttered side eaves + a valley", () => {
+  const perFace = {
+    north: face({
+      face: "north",
+      gable_count: 2,
+      gables: [
+        g({ id: "front_gable", position_frac: 0.3, span_ft: 14 }), // flush
+        g({ id: "front_porch", position_frac: 0.5, span_ft: 10, supported_on: "posts" }), // projecting
+      ],
+    }),
+    south: face({ face: "south", gable_count: 1, gables: [g({ id: "rear_gable", position_frac: 0.5, span_ft: 16 })] }),
+  };
+  const { gables } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 3);
+
+  const res = runRoofEngine([
+    { name: "main", outline: OUTLINE, statedArea: null, eaveEdges: [0, 1, 2, 3], gables },
+  ]);
+  // Only the projecting porch contributes guttered SIDE EAVES (the two flush
+  // gable-ends add zero gutter) — but every gable, flush or projecting, draws a
+  // ridge-back + two valleys, so all 3 placed gables contribute 6 gable valleys.
+  assert.equal(res.masses[0].edges.filter((e) => e.gutter && e.source === "gable:front_porch").length, 2);
+  assert.equal(res.masses[0].interior.filter((e) => e.type === "valley" && e.source?.startsWith("gable:")).length, 6);
+  assert.equal(res.reviewFlags.filter((f) => f.code === "gable_flush").length, 2);
+});
+
+// ── Orientation: viewer left/right physics + derived compass normals ─────────
+
+test("position_frac follows the OUTSIDE viewer: south face 0.25 = west of center, north face 0 = the EAST end", () => {
+  // South face: viewer stands south looking north — their left hand points
+  // WEST (min x), so frac 0.25 lands at x = 0.25 × 640 = 160.
+  const south = placeGablesFromFaces(
+    { south: face({ face: "south", gables: [g({ id: "s", position_frac: 0.25 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+  ).gables[0];
+  assert.equal(south.baseCenter.y, 510);
+  assert.equal(south.baseCenter.x, 160);
+  // North face: viewer stands north looking south — their left hand points
+  // EAST (max x), so frac 0 is the east end of the wall.
+  const north = placeGablesFromFaces(
+    { north: face({ face: "north", gables: [g({ id: "n", position_frac: 0 })] }) },
+    OUTLINE,
+    PX_PER_FT,
+  ).gables[0];
+  assert.equal(north.baseCenter.y, 0);
+  assert.equal(north.baseCenter.x, 640);
+});
+
+test("derived faceNormals (front-at-bottom, front=north): north gables land on the BOTTOM edge, west on the RIGHT", () => {
+  // The Woodinville case — elevation titles say FRONT/NORTH + RIGHT/WEST, so
+  // the compass is rotated 180° from north-up on the canvas.
+  const rotated = {
+    north: { x: 0, y: 1 },
+    south: { x: 0, y: -1 },
+    east: { x: -1, y: 0 },
+    west: { x: 1, y: 0 },
+  };
+  const placed = placeGablesFromFaces(
+    {
+      north: face({
+        face: "north",
+        gables: [
+          g({ id: "master", position_frac: 0.2 }),
+          g({ id: "entry", position_frac: 0.5 }),
+          g({ id: "great", position_frac: 0.8 }),
+        ],
+      }),
+      west: face({ face: "west", gables: [g({ id: "w1", position_frac: 0.5 })] }),
+    },
+    OUTLINE,
+    PX_PER_FT,
+    { faceNormals: rotated },
+  ).gables;
+  const north = placed.filter((x) => ["master", "entry", "great"].includes(x.name));
+  assert.equal(north.length, 3);
+  for (const gb of north) {
+    assert.equal(gb.baseCenter.y, 510, `${gb.name} sits on the canvas-BOTTOM edge (the front)`);
+    assert.equal(gb.facing, "S", `${gb.name} projects outward past the bottom (canvas letter)`);
+  }
+  // Viewer of the north elevation (standing north = below the canvas bottom,
+  // looking up-canvas): left hand = east = canvas-LEFT ⇒ frac increases with x.
+  const xs = Object.fromEntries(north.map((x) => [x.name, x.baseCenter.x]));
+  assert.ok(xs.master < xs.entry && xs.entry < xs.great, "frac order runs east(left)→west(right) for the rotated viewer");
+  const west = placed.find((x) => x.name === "w1")!;
+  assert.equal(west.baseCenter.x, 640, "west gable sits on the canvas-RIGHT edge");
+  assert.equal(west.facing, "E");
+});
+
+// ── House-relative perFace keys (modern read-elevations rows) ────────────────
+// read-elevations keys faces "front"/"rear"/"left"/"right" (house-relative,
+// straight off the sheet titles). The old cardinal-only loop left those reads
+// invisible: perFace["north"] was undefined, so NO elevation gables placed.
+
+test("HOUSE-RELATIVE read: a real front porch gable PLACES (was: none) at the correct position", () => {
+  const perFace = {
+    front: face({ face: "front", gables: [g({ id: "front_porch", kind: "porch", supported_on: "posts", span_ft: 12, position_frac: 0.25 })] }),
+    rear: face({ face: "rear" }),
+    left: face({ face: "left" }),
+    right: face({ face: "right" }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1, "the house-relative gable places");
+  const gb = gables[0];
+  // Front = canvas bottom (y=510, front-at-bottom convention); the outside
+  // viewer's frac 0.25 lands at x=160 — identical physics to the south face.
+  assert.equal(gb.baseCenter.y, 510);
+  assert.equal(gb.baseCenter.x, 160);
+  assert.equal(gb.facing, "S");
+  assert.equal(gb.eaveCondition, "projecting");
+  assert.equal(gb.span, 120);
+  assert.ok(notes.some((n) => /front/.test(n) && /front_porch/.test(n) && /verify/.test(n)));
+});
+
+test("HOUSE-RELATIVE read: porch depth resolves from the PERPENDICULAR side (right elevation in profile)", () => {
+  const perFace = {
+    front: face({ face: "front", gables: [g({ id: "porch", kind: "porch", supported_on: "posts", span_ft: 12 })] }),
+    right: face({ face: "right", projections: [{ kind: "porch", depth_ft: 8, notes: "porch in profile" }] }),
+  };
+  const { gables, notes } = placeGablesFromFaces(perFace, OUTLINE, PX_PER_FT);
+  assert.equal(gables.length, 1);
+  assert.equal(gables[0].projection, 8 * PX_PER_FT, "perp-depth lookup follows the resolved keys");
+  assert.ok(notes.some((n) => /side \(perpendicular\) elevation/.test(n)));
+});
+
+test("cardinal-keyed OLD rows still place identically (fallback path)", () => {
+  const mk = (key: string, faceName: string) => ({
+    [key]: face({ face: faceName as never, gables: [g({ id: "s1", position_frac: 0.25, span_ft: 16 })] }),
+  });
+  const legacy = placeGablesFromFaces(mk("south", "south"), OUTLINE, PX_PER_FT).gables;
+  const modern = placeGablesFromFaces(mk("front", "front"), OUTLINE, PX_PER_FT).gables;
+  assert.equal(legacy.length, 1, "cardinal row still places");
+  assert.deepEqual(legacy, modern, "front (house) and south (cardinal) resolve to the same placement");
+});
+
+test("resolveFaceSlots: house keys win, cardinal keys fall back; normals follow the key family", () => {
+  // Cardinal-only row → cardinal keys, default north-up normals, legacy perp order.
+  const cardinal = resolveFaceSlots({ north: {}, south: {}, east: {}, west: {} });
+  assert.deepEqual(cardinal.map((s) => s.key), ["north", "south", "east", "west"]);
+  assert.deepEqual(cardinal[0].normal, { x: 0, y: -1 });
+  assert.deepEqual(cardinal[0].perpKeys, ["east", "west"]);
+  assert.deepEqual(cardinal[2].perpKeys, ["north", "south"]);
+  // House-relative row → house keys, front-at-bottom canvas normals.
+  const house = resolveFaceSlots({ front: {}, rear: {}, left: {}, right: {} });
+  assert.deepEqual(house.map((s) => s.key), ["rear", "front", "right", "left"]);
+  assert.deepEqual(house[1].normal, { x: 0, y: 1 });
+  assert.deepEqual(house[1].perpKeys, ["right", "left"]);
+  // Derived faceNormals rotate CARDINAL sides only; house sides stay canvas-fixed.
+  const rotated = { north: { x: 0, y: 1 }, south: { x: 0, y: -1 }, east: { x: -1, y: 0 }, west: { x: 1, y: 0 } };
+  assert.deepEqual(resolveFaceSlots({ north: {} }, rotated)[0].normal, { x: 0, y: 1 });
+  assert.deepEqual(resolveFaceSlots({ front: {} }, rotated)[1].normal, { x: 0, y: 1 });
+  // "back" is accepted as an alias of "rear".
+  assert.equal(resolveFaceSlots({ back: {} })[0].key, "back");
+  assert.deepEqual(resolveFaceSlots({ back: {} })[0].normal, { x: 0, y: -1 });
+});

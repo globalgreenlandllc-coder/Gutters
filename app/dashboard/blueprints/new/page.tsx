@@ -2,6 +2,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import BlueprintUploader from "@/components/blueprints/BlueprintUploader";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 
 export const metadata: Metadata = {
   title: "New Blueprint · Gutters",
@@ -11,24 +12,24 @@ export const metadata: Metadata = {
 
 export default function NewBlueprintPage() {
   return (
-    <div className="w-full max-w-3xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href="/dashboard/blueprints"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition"
-      >
-        <ChevronLeft size={14} /> Blueprints
-      </Link>
-      <header>
-        <h1 className="text-3xl font-bold text-white tracking-tight">
-          New blueprint
-        </h1>
-        <p className="text-slate-400 mt-1 max-w-xl">
-          Upload a roof plan (PDF or image). Claude reads it, identifies every
-          eave vs rake, and produces a gutter layout you can include in the
-          customer proposal.
-        </p>
-      </header>
-      <BlueprintUploader />
-    </div>
+    <DashboardShell
+      title="New blueprint"
+      subtitle="Upload a roof plan (PDF or image). Claude reads it, identifies every eave vs rake, and produces a gutter layout you can include in the customer proposal."
+      contentClassName="max-w-3xl"
+    >
+      <div className="anim-enter space-y-6">
+        <Link
+          href="/dashboard/blueprints"
+          className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
+        >
+          <ChevronLeft
+            size={14}
+            className="transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none"
+          />{" "}
+          Blueprints
+        </Link>
+        <BlueprintUploader />
+      </div>
+    </DashboardShell>
   );
 }

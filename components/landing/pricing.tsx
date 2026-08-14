@@ -2,8 +2,8 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { ArrowRight, Check, Repeat, Sparkles, Zap } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ArrowRight, Check, Repeat } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/auth-mock";
 
 const FEATURES = [
@@ -22,48 +22,43 @@ export function Pricing() {
   const ctaHref = session ? "/dashboard" : "/sign-in?next=/dashboard";
 
   return (
-    <section id="pricing" className="relative mx-auto max-w-7xl px-4 py-24">
-      <div className="mb-14 flex flex-col items-center text-center">
-        <Badge>
-          <Sparkles className="h-3 w-3" />
-          Simple, usage-based pricing
-        </Badge>
-        <h2 className="font-display mt-5 text-balance text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl md:text-5xl">
-          One plan that{" "}
-          <span className="text-gradient">pays for itself</span> on the first
-          job.
-        </h2>
-        <p className="mt-4 max-w-2xl text-zinc-600">
-          $50 a month gets you 12 estimates. Each address you run after that is
-          $5. Re-run the same address up to ten times in 24 hours — at no extra
-          charge.
-        </p>
-      </div>
+    <section id="pricing" className="relative overflow-hidden bg-white py-24">
+      <div className="mx-auto max-w-7xl px-4">
+        <div className="mb-14 flex flex-col items-center text-center">
+          <span className="font-label inline-flex items-center rounded-md border border-ink/20 px-2.5 py-1 text-ink">
+            Pricing
+          </span>
+          <h2 className="display-hero mt-6 text-balance text-3xl text-ink sm:text-4xl md:text-5xl">
+            One plan that{" "}
+            <span className="text-gradient">pays for itself</span> on the first
+            job.
+          </h2>
+          <p className="mt-4 max-w-2xl text-zinc-600">
+            $50 a month gets you 12 estimates. Each address you run after that
+            is $5. Re-run the same address up to ten times in 24 hours — at no
+            extra charge.
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.55 }}
-          className="relative overflow-hidden rounded-3xl border border-accent-200 bg-gradient-to-br from-accent-50 via-white to-sky-50 p-8 shadow-elevated sm:p-10"
-        >
-          <div className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-accent-300/30 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-12 left-1/3 h-40 w-40 rounded-full bg-sky-300/20 blur-3xl" />
-
-          <div className="relative">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-80px" }}
+            transition={{ duration: 0.5 }}
+            className="surface relative overflow-hidden p-8 shadow-elevated sm:p-10"
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <Badge>
-                <Zap className="h-3 w-3" />
+              <span className="font-label inline-flex items-center rounded-md border border-ink/20 px-2.5 py-1 text-ink">
                 Pro
-              </Badge>
+              </span>
               <span className="text-xs text-zinc-500">
                 Cancel anytime · No card to start
               </span>
             </div>
 
             <div className="mt-6 flex items-baseline gap-2">
-              <span className="font-display text-6xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+              <span className="text-6xl font-semibold tracking-tight text-zinc-900 tabular-nums">
                 $50
               </span>
               <span className="text-zinc-500">/ month</span>
@@ -74,11 +69,11 @@ export function Pricing() {
               per address after that
             </p>
 
-            <ul className="mt-7 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <ul className="mt-7 grid grid-cols-1 sm:grid-cols-2 sm:gap-x-8">
               {FEATURES.map((f) => (
                 <li
                   key={f}
-                  className="flex items-start gap-2 text-sm text-zinc-700"
+                  className="flex items-start gap-2 border-t border-zinc-100 py-2.5 text-sm text-zinc-700"
                 >
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent-600" />
                   <span>{f}</span>
@@ -86,50 +81,49 @@ export function Pricing() {
               ))}
             </ul>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link
-                href={ctaHref}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-accent-600 px-6 text-sm font-semibold text-white shadow-glow transition hover:bg-accent-700 active:translate-y-px sm:flex-1"
-              >
-                {session ? "Open dashboard" : "Start free trial"}
-                <ArrowRight className="h-4 w-4" />
+            <div className="mt-8 flex flex-col gap-3 border-t border-zinc-100 pt-6 sm:flex-row sm:items-center">
+              <Link href={ctaHref} className="sm:flex-1">
+                <Button variant="dark" size="lg" className="w-full">
+                  {session ? "Open dashboard" : "Start free trial"}
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
               </Link>
               <span className="text-xs text-zinc-500">
                 14 days free · then $50/month
               </span>
             </div>
+          </motion.div>
+
+          <div className="space-y-3">
+            <Tile
+              badge={<><span className="font-semibold">$5</span> · per address</>}
+              title="Add-on credits"
+              body="Need more than 12 in a month? Each additional address is a flat $5 — billed at the end of the cycle."
+            />
+            <Tile
+              icon={Repeat}
+              badge="Free re-runs"
+              title="Same address, 10× in 24h"
+              body="Edits, re-pulls, and refinements on a single property are free. Each unique address counts as one credit."
+            />
+            <Tile
+              badge="Free demo"
+              title="Try it before you pay"
+              body="Run a sample address from the dashboard with no credit card."
+            />
           </div>
-        </motion.div>
-
-        <div className="space-y-3">
-          <Tile
-            badge={<><span className="font-semibold">$5</span> · per address</>}
-            title="Add-on credits"
-            body="Need more than 12 in a month? Each additional address is a flat $5 — billed at the end of the cycle."
-          />
-          <Tile
-            icon={Repeat}
-            badge="Free re-runs"
-            title="Same address, 10× in 24h"
-            body="Edits, re-pulls, and refinements on a single property are free. Each unique address counts as one credit."
-          />
-          <Tile
-            badge="Free demo"
-            title="Try it before you pay"
-            body="Run a sample address from the dashboard with no credit card."
-          />
         </div>
-      </div>
 
-      <p className="mt-8 text-center text-xs text-zinc-500">
-        Need a higher volume team plan?{" "}
-        <a
-          href="mailto:hello@gutters.app"
-          className="font-medium text-accent-700 hover:text-accent-800"
-        >
-          Talk to sales
-        </a>
-      </p>
+        <p className="mt-8 text-center text-xs text-zinc-500">
+          Need a higher volume team plan?{" "}
+          <a
+            href="mailto:hello@gutters.app"
+            className="font-medium text-accent-700 hover:text-accent-800"
+          >
+            Talk to sales
+          </a>
+        </p>
+      </div>
     </section>
   );
 }
@@ -150,7 +144,7 @@ function Tile({
       initial={{ opacity: 0, y: 8 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-60px" }}
-      className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card"
+      className="surface p-5 shadow-card"
     >
       <div className="flex items-center gap-2 text-xs font-medium text-zinc-600">
         {Icon && (
@@ -158,11 +152,11 @@ function Tile({
             <Icon className="h-3.5 w-3.5" />
           </span>
         )}
-        <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700">
+        <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700">
           {badge}
         </span>
       </div>
-      <div className="mt-3 font-display text-base font-semibold tracking-tight text-zinc-900">
+      <div className="mt-3 text-base font-semibold tracking-tight text-zinc-900">
         {title}
       </div>
       <p className="mt-1 text-sm text-zinc-600">{body}</p>

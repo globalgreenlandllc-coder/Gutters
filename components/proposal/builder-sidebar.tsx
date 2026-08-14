@@ -1,7 +1,8 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { CheckCircle2, FileText, Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import { Layers, Send, SlidersHorizontal, Tag } from "lucide-react";
+import { DUR, EASE } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
@@ -10,7 +11,9 @@ import {
   packageTotal,
   type Proposal,
 } from "@/lib/proposal-mock";
+import { AiPriceSwitch } from "./ai-price-switch";
 import { EditablePrice } from "./editable-price";
+import { ProfitPanel } from "./profit-panel";
 
 export function BuilderSidebar({
   proposal,
@@ -26,6 +29,7 @@ export function BuilderSidebar({
    *  contractor can rebuild materials without leaving preview. */
   onEditMaterials?: (id: string) => void;
 }) {
+  const reduce = useReducedMotion();
   const discountPct = Math.max(0, Math.min(50, proposal.discountPct ?? 0));
   const totals = proposal.packages.map((p) => {
     const noDiscount = packageTotal(p, proposal.measurements, 0);
@@ -40,12 +44,11 @@ export function BuilderSidebar({
   });
   const recommended =
     totals.find((t) => t.pkg.recommended) ?? totals[1] ?? totals[0];
-  const enabledTermsCount = proposal.terms.filter((t) => t.enabled).length;
 
   return (
     <aside className="space-y-4">
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="font-label text-[11px] text-zinc-500">
           Most popular
         </div>
         <div className="mt-1 flex items-baseline gap-2">
@@ -69,10 +72,10 @@ export function BuilderSidebar({
                   ),
                 })
               }
-              className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums"
+              className="text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums"
             />
           ) : (
-            <span className="font-display text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+            <span className="text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
               —
             </span>
           )}
@@ -92,10 +95,10 @@ export function BuilderSidebar({
                   type="button"
                   onClick={() => onEditMaterials(pkg.id)}
                   title="Edit this tier's materials & spec"
-                  className="group inline-flex items-center gap-1.5 text-zinc-700 transition hover:text-accent-700"
+                  className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-zinc-700 transition-smooth hover:text-accent-700"
                 >
-                  <SlidersHorizontal className="h-3 w-3 text-zinc-400 transition group-hover:text-accent-600" />
-                  <span className="border-b border-dashed border-transparent group-hover:border-accent-300">
+                  <SlidersHorizontal className="h-3 w-3 text-zinc-400 transition-smooth group-hover:text-accent-600" />
+                  <span className="border-b border-dashed border-transparent transition-smooth group-hover:border-accent-300">
                     {pkg.name}
                   </span>
                 </button>
@@ -110,8 +113,9 @@ export function BuilderSidebar({
                 )}
                 <motion.span
                   key={Math.round(total)}
-                  initial={{ opacity: 0.4 }}
-                  animate={{ opacity: 1 }}
+                  initial={reduce ? false : { opacity: 0.4, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: DUR.base, ease: EASE }}
                   className={
                     discountPct > 0
                       ? "tabular-nums font-medium text-emerald-700"
@@ -125,11 +129,23 @@ export function BuilderSidebar({
           ))}
         </div>
 
+        {/* The pricing switch — same proposal-wide toggle as the
+            materials builder, surfaced here so comparing AI pricing
+            against your own is one tap from the summary. */}
+        <AiPriceSwitch
+          packages={proposal.packages}
+          measurements={proposal.measurements}
+          discountPct={discountPct}
+          address={proposal.address}
+          onChangePackages={(packages) => onChange({ ...proposal, packages })}
+          className="mt-3"
+        />
+
         {onEditMaterials && recommended && (
           <button
             type="button"
             onClick={() => onEditMaterials(recommended.pkg.id)}
-            className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-zinc-200 text-sm font-medium text-zinc-700 transition hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
+            className="ring-focus active:scale-[0.98] mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-200 text-sm font-medium text-zinc-700 transition-smooth hover:border-accent-400 hover:bg-accent-50/40 hover:text-accent-700"
           >
             <Layers className="h-4 w-4" />
             Edit materials & spec
@@ -167,17 +183,15 @@ export function BuilderSidebar({
           <Send className="h-4 w-4" />
           Send to client
         </Button>
-        <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
-          <span className="flex items-center gap-1.5">
-            <FileText className="h-3 w-3" />
-            {proposal.photos.length} photos · {enabledTermsCount} terms
-          </span>
+        <div className="mt-3 flex justify-center">
           <Badge tone="neutral">Auto-saved</Badge>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
-        <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <ProfitPanel proposal={proposal} onChange={onChange} />
+
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-card">
+        <div className="font-label text-[11px] text-zinc-500">
           Recipient
         </div>
         <input
@@ -198,23 +212,9 @@ export function BuilderSidebar({
               client: { ...proposal.client, email: e.target.value },
             })
           }
-          className="mt-1 w-full bg-transparent text-sm text-zinc-600 outline-none"
+          placeholder="client@email.com"
+          className="mt-1 w-full bg-transparent text-sm text-zinc-600 outline-none placeholder:text-zinc-400"
         />
-
-        <ul className="mt-4 space-y-1.5 text-xs text-zinc-500">
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Email + secure portal link
-          </li>
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Stripe Connect deposit on accept
-          </li>
-          <li className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-600" />
-            Live "viewed" + "accepted" status
-          </li>
-        </ul>
       </div>
     </aside>
   );
@@ -276,8 +276,8 @@ function DiscountSlider({
     <div
       className={
         active
-          ? "rounded-xl border border-emerald-200 bg-emerald-50/60 p-3"
-          : "rounded-xl border border-zinc-200 bg-zinc-50/40 p-3"
+          ? "rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 transition-smooth"
+          : "rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 transition-smooth"
       }
     >
       <div className="flex items-center justify-between gap-2 text-xs">
@@ -322,7 +322,7 @@ function DiscountSlider({
         value={pct}
         onChange={(e) => onChangePct(parseFloat(e.target.value))}
         className={
-          "mt-2.5 h-2 w-full appearance-none rounded-full outline-none " +
+          "ring-focus mt-2.5 h-2 w-full appearance-none rounded-full outline-none " +
           (active
             ? "bg-emerald-200 [&::-webkit-slider-thumb]:bg-emerald-600 [&::-moz-range-thumb]:bg-emerald-600"
             : "bg-zinc-200 [&::-webkit-slider-thumb]:bg-zinc-600 [&::-moz-range-thumb]:bg-zinc-600") +
@@ -341,7 +341,7 @@ function DiscountSlider({
               type="button"
               onClick={() => onChangePct(preset)}
               className={
-                "rounded-full px-2 py-0.5 text-[10px] font-medium transition " +
+                "ring-focus active:scale-[0.98] rounded-full px-2 py-0.5 text-[10px] font-medium transition-smooth " +
                 (isActive
                   ? "bg-emerald-600 text-white shadow-sm"
                   : "bg-white text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50")
@@ -362,9 +362,9 @@ function DiscountSlider({
             value={label}
             onChange={(e) => onChangeLabel(e.target.value)}
             placeholder="e.g. Spring promo, Repeat client, Cash discount"
-            className="mt-2.5 w-full rounded-lg border border-emerald-300 bg-white/80 px-2.5 py-1.5 text-xs text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+            className="anim-enter-fade mt-2.5 w-full rounded-lg border border-emerald-300 bg-white/80 px-2.5 py-1.5 text-xs text-zinc-900 outline-none transition-smooth placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
           />
-          <div className="mt-2 flex items-baseline justify-between text-[11px]">
+          <div className="anim-enter-fade mt-2 flex items-baseline justify-between text-[11px]">
             <span className="text-emerald-800">
               Saves{" "}
               <span className="font-semibold tabular-nums">

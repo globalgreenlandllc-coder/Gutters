@@ -1,4 +1,5 @@
 import LeadsMap from "@/components/leads/LeadsMap";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import { getActiveApiKey } from "@/lib/api-keys";
 import { Metadata } from "next";
 
@@ -10,5 +11,9 @@ export const metadata: Metadata = {
 export default async function LeadsPage() {
   const googleMapsKey = await getActiveApiKey("GOOGLE_MAPS");
 
-  return <LeadsMap apiKey={googleMapsKey || "dummy_key"} />;
+  return (
+    <DashboardShell title="Leads" fullBleed>
+      <LeadsMap apiKey={googleMapsKey || "dummy_key"} />
+    </DashboardShell>
+  );
 }

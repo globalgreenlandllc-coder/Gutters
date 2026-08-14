@@ -4,6 +4,7 @@ import { ChevronLeft, AlertCircle } from "lucide-react";
 import { auth } from "@clerk/nextjs/server";
 
 import { db } from "@/lib/db";
+import { DashboardShell } from "@/components/dashboard/dashboard-nav";
 import {
   VectorInspector,
   type ExtractedVectors,
@@ -57,72 +58,87 @@ export default async function BlueprintDetailPage({
     redirect(`/estimate?planId=${row.id}`);
   }
 
+  const metaLine = [
+    row.pageCount
+      ? `${row.pageCount} page${row.pageCount === 1 ? "" : "s"}`
+      : null,
+    `uploaded ${new Date(row.createdAt).toLocaleString()}`,
+    row.modelUsed,
+    row.durationMs ? `${(row.durationMs / 1000).toFixed(1)}s` : null,
+    row.cacheHit ? "cache hit" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href="/dashboard/blueprints"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition"
-      >
-        <ChevronLeft size={14} /> Blueprints
-      </Link>
+    <DashboardShell
+      title={row.filename}
+      subtitle={metaLine}
+      contentClassName="max-w-6xl"
+    >
+      <div className="space-y-6">
+        <Link
+          href="/dashboard/blueprints"
+          className="ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
+        >
+          <ChevronLeft
+            size={14}
+            className="transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none"
+          />{" "}
+          Blueprints
+        </Link>
 
-      <header>
-        <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight truncate">
-          {row.filename}
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">
-          {row.pageCount
-            ? `${row.pageCount} page${row.pageCount === 1 ? "" : "s"} · `
-            : ""}
-          uploaded {new Date(row.createdAt).toLocaleString()}
-          {row.modelUsed && ` · ${row.modelUsed}`}
-          {row.durationMs && ` · ${(row.durationMs / 1000).toFixed(1)}s`}
-          {row.cacheHit && " · cache hit"}
-        </p>
-      </header>
-
-      {row.status === "FAILED" && (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
-          <div className="flex items-center gap-2 mb-1 font-semibold">
-            <AlertCircle size={14} /> Analysis failed
-          </div>
-          <div className="text-rose-200/90">
-            {row.errorMessage ?? "Unknown error"}
-          </div>
-          <Link
-            href="/dashboard/blueprints/new"
-            className="inline-block mt-2 text-rose-200 hover:text-white underline underline-offset-2"
-          >
-            Upload a new plan
-          </Link>
-        </div>
-      )}
-
-      {row.status === "QUEUED" && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
-          Analysis is still in progress. Refresh this page in a few seconds.
-        </div>
-      )}
-      {inspect &&
-        (vectors ? (
-          <div className="space-y-3">
+        {row.status === "FAILED" && (
+          <div className="anim-enter rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <AlertCircle size={14} /> Analysis failed
+            </div>
+            <div className="text-rose-700/90">
+              {row.errorMessage ?? "Unknown error"}
+            </div>
             <Link
-              href={`/estimate?planId=${row.id}`}
-              className="inline-flex items-center gap-1.5 text-sm text-cyan-300 transition hover:text-white"
+              href="/dashboard/blueprints/new"
+              className="ring-focus mt-2 inline-block rounded text-rose-700 underline underline-offset-2 transition-smooth hover:text-rose-900"
             >
-              Open the takeoff →
+              Upload a new plan
             </Link>
-            <VectorInspector vg={vectors} />
           </div>
-        ) : (
-          <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-sm text-slate-300">
-            No vector data was extracted for this plan — it may be a raster /
-            scanned PDF, a non-vector export, or the page had no usable text or
-            line geometry. Stage 2 ran vision-only.
+        )}
+
+        {row.status === "QUEUED" && (
+          <div className="anim-enter-fade rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            Analysis is still in progress. Refresh this page in a few seconds.
+            {/* Shimmer bar — signals "live / in progress" without polling. */}
+            <div className="skeleton mt-3 h-1 w-full rounded-full" />
           </div>
-        ))}
-      {/* Successful analyses redirect to /estimate?planId=... above (unless
-          ?inspect=1, which shows the extracted-vector debug view here). */}
-    </div>
+        )}
+        {inspect &&
+          (vectors ? (
+            <div className="space-y-3">
+              <Link
+                href={`/estimate?planId=${row.id}`}
+                className="anim-enter-fade ring-focus group inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-accent-700 transition-smooth hover:text-accent-800"
+              >
+                Open the takeoff{" "}
+                <span
+                  aria-hidden
+                  className="inline-block transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
+                >
+                  →
+                </span>
+              </Link>
+              <VectorInspector vg={vectors} />
+            </div>
+          ) : (
+            <div className="anim-enter surface p-4 text-sm text-zinc-600">
+              No vector data was extracted for this plan — it may be a raster /
+              scanned PDF, a non-vector export, or the page had no usable text or
+              line geometry. Stage 2 ran vision-only.
+            </div>
+          ))}
+        {/* Successful analyses redirect to /estimate?planId=... above (unless
+            ?inspect=1, which shows the extracted-vector debug view here). */}
+      </div>
+    </DashboardShell>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { ChevronDown, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DUR, EASE } from "@/lib/motion";
 import type { Proposal } from "@/lib/proposal-mock";
 import { SectionHeader } from "./packages-section";
 
@@ -16,6 +17,7 @@ export function TermsSection({
   onChange: (p: Proposal) => void;
   readOnly?: boolean;
 }) {
+  const reduce = useReducedMotion();
   const [openId, setOpenId] = useState<string | null>(null);
 
   function update(id: string, patch: Partial<Proposal["terms"][number]>) {
@@ -55,19 +57,19 @@ export function TermsSection({
                   !t.enabled && !readOnly && "opacity-50",
                 )}
               >
-                <div className="flex items-center gap-3 px-4 py-3">
+                <div className="flex items-center gap-3 px-4 py-3 transition-smooth hover:bg-zinc-50/60">
                   {!readOnly && (
                     <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
                   )}
                   <button
                     type="button"
                     onClick={() => setOpenId(open ? null : t.id)}
-                    className="flex flex-1 items-center justify-between gap-2 text-left"
+                    className="ring-focus flex flex-1 items-center justify-between gap-2 rounded-md text-left"
                   >
                     <span className="font-medium text-zinc-900">{t.title}</span>
                     <ChevronDown
                       className={cn(
-                        "h-4 w-4 text-zinc-400 transition-transform",
+                        "h-4 w-4 text-zinc-400 transition-transform motion-reduce:transition-none",
                         open && "rotate-180",
                       )}
                     />
@@ -93,7 +95,7 @@ export function TermsSection({
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
+                      transition={{ duration: reduce ? 0 : DUR.base, ease: EASE }}
                       className="overflow-hidden"
                     >
                       <div className="px-4 pb-4">
@@ -108,7 +110,7 @@ export function TermsSection({
                               update(t.id, { body: e.target.value })
                             }
                             rows={3}
-                            className="w-full resize-none rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-relaxed text-zinc-700 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                            className="w-full resize-none rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-relaxed text-zinc-700 outline-none transition-smooth focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
                           />
                         )}
                       </div>

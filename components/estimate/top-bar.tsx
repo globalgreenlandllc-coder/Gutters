@@ -3,15 +3,16 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
-  ArrowLeft,
   Check,
-  Download,
+  ChevronLeft,
   Loader2,
   RefreshCw,
   Save,
   Send,
 } from "lucide-react";
+import { DUR, EASE } from "@/lib/motion";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import {
   type EstimateHandoff,
 } from "@/lib/estimate-handoff";
 import { saveDraftFromEstimate } from "@/app/actions/proposals";
+import { useEstimateJob } from "@/components/estimate/estimate-job";
 
 type SaveState =
   | { kind: "idle" }
@@ -50,9 +52,11 @@ export function TopBar({
   planId?: string;
 }) {
   const router = useRouter();
+  const reduce = useReducedMotion();
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const [, startTransition] = useTransition();
   const [reanalyzing, setReanalyzing] = useState(false);
+  const { startJob } = useEstimateJob();
 
   const onReanalyze = async () => {
     if (!planId || reanalyzing) return;
@@ -73,8 +77,13 @@ export function TopBar({
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      // Bounce back through the estimate route so the page polls the
-      // QUEUED row and the contractor sees the loading screen.
+      // Force-restart the global job — the provider caches a "ready"
+      // result per planId, and without the force it would short-circuit
+      // straight back to the stale takeoff instead of polling the
+      // QUEUED re-analysis.
+      startJob({ planId, jobType }, { force: true });
+      // Bounce back through the estimate route so the contractor sees
+      // the loading screen while the provider polls the QUEUED row.
       router.push(`/estimate?planId=${planId}&jobType=${jobType}`);
       router.refresh();
     } catch (e) {
@@ -109,6 +118,10 @@ export function TopBar({
         totalCents: 0,
         existingId,
         jobType,
+        // Plan-flow estimates carry the PlanAnalysis id so the save also
+        // snapshots the (possibly edited) takeoff onto the plan row as
+        // learning ground truth. Absent for the aerial flow.
+        planId,
       });
       if (result.ok) {
         setSave({ kind: "saved", draftId: result.id, at: Date.now() });
@@ -120,31 +133,46 @@ export function TopBar({
 
   // Status badge on the address line. Reflects what the contractor sees
   // when they navigate to /dashboard/proposals: nothing → Draft → Saved.
-  const statusBadge =
-    save.kind === "saved" ? (
-      <Badge tone="accent" className="hidden sm:inline-flex">
-        <Check className="h-3 w-3" />
-        Saved · Draft
-      </Badge>
-    ) : save.kind === "saving" ? (
-      <Badge tone="neutral" className="hidden sm:inline-flex">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        Saving…
-      </Badge>
-    ) : (
-      <Badge tone="neutral" className="hidden sm:inline-flex">
-        Draft
-      </Badge>
-    );
+  // Keyed by state so the swap crossfades (Draft → Saving… → Saved)
+  // instead of snapping — this is the confirmation of the user's most
+  // anxious action, so the transition should feel deliberate.
+  const statusKey =
+    save.kind === "saved" ? "saved" : save.kind === "saving" ? "saving" : "draft";
+  const statusBadge = (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.span
+        key={statusKey}
+        initial={reduce ? false : { opacity: 0, y: 2 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -2 }}
+        transition={{ duration: DUR.fast, ease: EASE }}
+        className="hidden sm:inline-flex"
+      >
+        {save.kind === "saved" ? (
+          <Badge tone="accent">
+            <Check className="h-3 w-3" />
+            Saved · Draft
+          </Badge>
+        ) : save.kind === "saving" ? (
+          <Badge tone="neutral">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Saving…
+          </Badge>
+        ) : (
+          <Badge tone="neutral">Draft</Badge>
+        )}
+      </motion.span>
+    </AnimatePresence>
+  );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-zinc-200 bg-white/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-4 px-4">
+    <header className="sticky top-0 z-40 border-b border-zinc-200/70 bg-white">
+      <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4">
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 text-sm text-zinc-500 transition hover:text-zinc-900"
+          className="group ring-focus flex items-center gap-1 rounded-md text-sm text-zinc-500 transition-smooth hover:text-zinc-900"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 motion-reduce:transition-none" />
           <span className="hidden sm:inline">Dashboard</span>
         </Link>
         <div className="hidden h-6 w-px bg-zinc-200 md:block" />
@@ -153,52 +181,49 @@ export function TopBar({
         </div>
         <div className="hidden h-6 w-px bg-zinc-200 md:block" />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-900">
-              {address}
-            </span>
-            <span
-              title={
-                jobType === "new"
-                  ? "New construction — no tear-off line items by default"
-                  : "Replacement — includes tear-off + disposal"
-              }
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-sm font-semibold text-zinc-900">
+            {address}
+          </span>
+          <span
+            title={
+              jobType === "new"
+                ? "New construction — no tear-off line items by default"
+                : "Replacement — includes tear-off + disposal"
+            }
+          >
+            <Badge
+              tone={jobType === "new" ? "accent" : "neutral"}
+              className="hidden sm:inline-flex"
             >
-              <Badge
-                tone={jobType === "new" ? "accent" : "neutral"}
-                className="hidden sm:inline-flex"
+              {jobType === "new" ? "New construction" : "Replacement"}
+            </Badge>
+          </span>
+          {statusBadge}
+          {save.kind === "saved" && (
+            <span className="anim-enter-fade hidden whitespace-nowrap text-xs text-zinc-500 lg:inline">
+              Saved to{" "}
+              <Link
+                href="/dashboard/proposals"
+                className="ring-focus rounded-sm text-accent-700 underline-offset-2 transition-smooth hover:underline"
               >
-                {jobType === "new" ? "New construction" : "Replacement"}
-              </Badge>
+                Proposals
+              </Link>
+              {" · "}
+              {timeAgo(save.at)}
             </span>
-            {statusBadge}
-          </div>
-          <div className="text-xs text-zinc-500">
-            {save.kind === "saved" ? (
-              <>
-                Saved to{" "}
-                <Link
-                  href="/dashboard/proposals"
-                  className="text-accent-700 underline-offset-2 hover:underline"
-                >
-                  Proposals
-                </Link>
-                {" · "}
-                {timeAgo(save.at)} · AI confidence 96%
-              </>
-            ) : save.kind === "error" ? (
-              <span className="text-rose-600">{save.message}</span>
-            ) : (
-              "AI confidence 96% · 2 corrections suggested"
-            )}
-          </div>
+          )}
+          {save.kind === "error" && (
+            <span className="anim-enter-fade hidden truncate text-xs text-rose-600 lg:inline">
+              {save.message}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
           {planId && (
             <Button
-              variant="secondary"
+              variant="ghost"
               size="sm"
               onClick={onReanalyze}
               disabled={reanalyzing}
@@ -209,20 +234,14 @@ export function TopBar({
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+              {/* Icon-only below sm — three text buttons don't fit a phone. */}
+              <span className="hidden sm:inline">
+                {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+              </span>
             </Button>
           )}
           <Button
-            variant="secondary"
-            size="sm"
-            className="hidden sm:inline-flex"
-            onClick={handoffAndGo}
-          >
-            <Download className="h-4 w-4" />
-            PDF
-          </Button>
-          <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
             onClick={onSaveDraft}
             disabled={!handoff || save.kind === "saving"}
@@ -239,15 +258,17 @@ export function TopBar({
             ) : (
               <Save className="h-4 w-4" />
             )}
-            {save.kind === "saving"
-              ? "Saving…"
-              : save.kind === "saved"
-                ? "Saved"
-                : "Save proposal"}
+            <span className="hidden sm:inline">
+              {save.kind === "saving"
+                ? "Saving…"
+                : save.kind === "saved"
+                  ? "Saved"
+                  : "Save draft"}
+            </span>
           </Button>
           <Button size="sm" onClick={handoffAndGo}>
             <Send className="h-4 w-4" />
-            Send proposal
+            <span className="hidden sm:inline">Send proposal</span>
           </Button>
         </div>
       </div>

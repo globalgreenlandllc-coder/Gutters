@@ -1,4 +1,6 @@
-import "server-only";
+// Pure math (no keys, no fetch) — importable from tests and other pure
+// modules. The Mercator-tile entry point below is one projector choice;
+// the solar-first engine injects a UTM-grid projector instead.
 import type { RoofSegment } from "./solar";
 import { latLngToImagePixel } from "./geometry";
 
@@ -37,42 +39,89 @@ export function buildSegmentRidges(
   imageHeight: number,
   options: { minPitchDeg?: number; minAreaM2?: number } = {},
 ): SegmentRidge[] {
+  return buildSegmentRidgesProjected(
+    segments,
+    (lat, lng) =>
+      latLngToImagePixel(
+        lat,
+        lng,
+        geocoded.lat,
+        geocoded.lng,
+        zoom,
+        imageWidth,
+        imageHeight,
+      ),
+    options,
+  );
+}
+
+/**
+ * Projector-agnostic core: the caller supplies lat/lng → pixel-space
+ * mapping. The Mercator-tile wrapper above uses latLngToImagePixel; the
+ * solar-first engine uses the dataLayers UTM grid (uniform meters/px),
+ * where the same ridge math is exact instead of approximate.
+ *
+ * NOTE the azimuth→direction conversion below assumes the pixel grid is
+ * north-up (x → east, y → south). Both current projectors satisfy that.
+ */
+export function buildSegmentRidgesProjected(
+  segments: RoofSegment[],
+  project: (lat: number, lng: number) => { x: number; y: number },
+  options: {
+    minPitchDeg?: number;
+    minAreaM2?: number;
+    /** Pixel-space merge tolerances. The defaults were tuned for the
+     *  legacy Mercator tile (~0.05 m/px); a caller on a different grid
+     *  (the solar engine's 0.1 m/px UTM crop) MUST pass meter-derived
+     *  values or separate roof masses get welded into one long ridge. */
+    mergePerpPx?: number;
+    mergeGapPx?: number;
+    minLenPx?: number;
+    /** When set, a segment only contributes a ridge if an OPPOSITE-facing
+     *  segment (azimuth ≈ 180° apart) sits within this distance — a real
+     *  ridge is the meeting line of two planes. Hip-end planes have no
+     *  opposite partner, and without this their mid-plane bbox chords
+     *  draw as phantom "ridges" across the roof. Legacy callers omit it
+     *  (unchanged behavior). */
+    pairMaxDistPx?: number;
+  } = {},
+): SegmentRidge[] {
   const minPitch = options.minPitchDeg ?? 8;
   const minArea = options.minAreaM2 ?? 6;
+
+  // Opposite-partner test (only when pairMaxDistPx is set).
+  const centersPx = segments.map((s) =>
+    s.center ? project(s.center.lat, s.center.lng) : null,
+  );
+  const hasOppositePartner = (i: number): boolean => {
+    const maxD = options.pairMaxDistPx;
+    if (maxD == null) return true;
+    const ci = centersPx[i];
+    if (!ci) return false;
+    for (let j = 0; j < segments.length; j++) {
+      if (j === i) continue;
+      const cj = centersPx[j];
+      if (!cj) continue;
+      const sj = segments[j];
+      if (sj.pitchDegrees < minPitch || sj.areaMeters2 < minArea) continue;
+      const raw =
+        (((segments[i].azimuthDegrees - sj.azimuthDegrees) % 360) + 360) % 360;
+      if (Math.abs(raw - 180) > 35) continue;
+      if (Math.hypot(cj.x - ci.x, cj.y - ci.y) <= maxD) return true;
+    }
+    return false;
+  };
 
   const out: SegmentRidge[] = [];
   segments.forEach((seg, i) => {
     if (seg.pitchDegrees < minPitch) return;
     if (seg.areaMeters2 < minArea) return;
     if (!seg.center || !seg.boundingBoxNE || !seg.boundingBoxSW) return;
+    if (!hasOppositePartner(i)) return;
 
-    const center = latLngToImagePixel(
-      seg.center.lat,
-      seg.center.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
-    const ne = latLngToImagePixel(
-      seg.boundingBoxNE.lat,
-      seg.boundingBoxNE.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
-    const sw = latLngToImagePixel(
-      seg.boundingBoxSW.lat,
-      seg.boundingBoxSW.lng,
-      geocoded.lat,
-      geocoded.lng,
-      zoom,
-      imageWidth,
-      imageHeight,
-    );
+    const center = project(seg.center.lat, seg.center.lng);
+    const ne = project(seg.boundingBoxNE.lat, seg.boundingBoxNE.lng);
+    const sw = project(seg.boundingBoxSW.lat, seg.boundingBoxSW.lng);
 
     // Bounding box width/height in IMAGE PIXELS. SW.y > NE.y in image
     // space because image-y grows downward but lat grows northward.
@@ -96,7 +145,7 @@ export function buildSegmentRidges(
     const rawLen = bboxW * Math.abs(dirX) + bboxH * Math.abs(dirY);
     const diag = Math.hypot(bboxW, bboxH);
     const len = Math.min(rawLen, diag);
-    if (len < 12) return; // < ~3 ft on the ground, not worth labeling
+    if (len < (options.minLenPx ?? 12)) return; // too short to label
 
     const half = len / 2;
     const a = {
@@ -117,7 +166,7 @@ export function buildSegmentRidges(
     out.push({ id: `solar-ridge-${i}`, a, b, confidence });
   });
 
-  return mergeCollinearRidges(out);
+  return mergeCollinearRidges(out, options.mergePerpPx, options.mergeGapPx);
 }
 
 /**
@@ -131,10 +180,14 @@ export function buildSegmentRidges(
  *     (≈ 1.5 m) of each other along the axis.
  * Replaces them with a single ridge spanning the full extent.
  */
-function mergeCollinearRidges(ridges: SegmentRidge[]): SegmentRidge[] {
+function mergeCollinearRidges(
+  ridges: SegmentRidge[],
+  perpDistPx = 16,
+  gapPx = 30,
+): SegmentRidge[] {
   const ANGLE_TOL_RAD = (6 * Math.PI) / 180;
-  const PERP_DIST_PX = 16;
-  const GAP_PX = 30;
+  const PERP_DIST_PX = perpDistPx;
+  const GAP_PX = gapPx;
 
   const remaining = [...ridges];
   const out: SegmentRidge[] = [];

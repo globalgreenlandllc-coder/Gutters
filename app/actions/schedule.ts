@@ -20,7 +20,13 @@ export type AppointmentDTO = {
   clientEmail: string | null;
   leadId: string | null;
   proposalId: string | null;
+  workerId: string | null;
+  workerName: string | null;
 };
+
+const apptInclude = {
+  worker: { select: { name: true, email: true } },
+} as const;
 
 function toDTO(row: {
   id: string;
@@ -37,6 +43,8 @@ function toDTO(row: {
   clientEmail: string | null;
   leadId: string | null;
   proposalId: string | null;
+  workerId: string | null;
+  worker: { name: string | null; email: string } | null;
 }): AppointmentDTO {
   return {
     id: row.id,
@@ -53,7 +61,26 @@ function toDTO(row: {
     clientEmail: row.clientEmail,
     leadId: row.leadId,
     proposalId: row.proposalId,
+    workerId: row.workerId,
+    workerName: row.worker ? row.worker.name || row.worker.email : null,
   };
+}
+
+/** A workerId supplied by the client is only trusted after this check — the
+ *  worker must belong to the signed-in owner and not be disabled. */
+async function resolveWorkerId(
+  ownerId: string,
+  workerId: string | null | undefined,
+): Promise<{ ok: true; workerId: string | null } | { ok: false; reason: string }> {
+  if (!workerId) return { ok: true, workerId: null };
+  const worker = await db.worker.findFirst({
+    where: { id: workerId, ownerId },
+    select: { id: true, status: true },
+  });
+  if (!worker) return { ok: false, reason: "Worker not found" };
+  if (worker.status === "DISABLED")
+    return { ok: false, reason: "That worker is disabled" };
+  return { ok: true, workerId: worker.id };
 }
 
 /**
@@ -86,6 +113,7 @@ export async function listAppointments(
       endsAt: { gt: start },
     },
     orderBy: { startsAt: "asc" },
+    include: apptInclude,
   });
   return rows.map(toDTO);
 }
@@ -103,6 +131,7 @@ export type CreateAppointmentInput = {
   clientEmail?: string | null;
   leadId?: string | null;
   proposalId?: string | null;
+  workerId?: string | null;
 };
 
 export type AppointmentResult =
@@ -128,6 +157,9 @@ export async function createAppointment(
       return { ok: false, reason: "Title is required" };
     }
 
+    const workerCheck = await resolveWorkerId(me.user.id, input.workerId);
+    if (!workerCheck.ok) return { ok: false, reason: workerCheck.reason };
+
     const row = await db.appointment.create({
       data: {
         userId: me.user.id,
@@ -143,7 +175,9 @@ export async function createAppointment(
         clientEmail: input.clientEmail?.trim() || null,
         leadId: input.leadId || null,
         proposalId: input.proposalId || null,
+        workerId: workerCheck.workerId,
       },
+      include: apptInclude,
     });
     revalidatePath("/dashboard/calendar");
     return { ok: true, appointment: toDTO(row) };
@@ -168,6 +202,7 @@ export type UpdateAppointmentInput = Partial<{
   clientName: string | null;
   clientPhone: string | null;
   clientEmail: string | null;
+  workerId: string | null;
 }>;
 
 /**
@@ -200,6 +235,11 @@ export async function updateAppointment(
     if (patch.clientName !== undefined) data.clientName = patch.clientName;
     if (patch.clientPhone !== undefined) data.clientPhone = patch.clientPhone;
     if (patch.clientEmail !== undefined) data.clientEmail = patch.clientEmail;
+    if (patch.workerId !== undefined) {
+      const workerCheck = await resolveWorkerId(me.user.id, patch.workerId);
+      if (!workerCheck.ok) return { ok: false, reason: workerCheck.reason };
+      data.workerId = workerCheck.workerId;
+    }
 
     if (
       data.startsAt instanceof Date &&
@@ -214,6 +254,7 @@ export async function updateAppointment(
     const row = await db.appointment.update({
       where: { id, userId: me.user.id },
       data,
+      include: apptInclude,
     });
     revalidatePath("/dashboard/calendar");
     return { ok: true, appointment: toDTO(row) };

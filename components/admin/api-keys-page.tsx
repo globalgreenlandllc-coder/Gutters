@@ -1,16 +1,21 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   AlertTriangle,
+  Bot,
   Check,
   Copy,
+  CreditCard,
+  Database,
   Eye,
+  ExternalLink,
   Key,
   Lock,
   Loader2,
   Mail,
+  Map as MapIcon,
   Plug,
   RefreshCw,
   Send,
@@ -108,6 +113,59 @@ const PROVIDER_META: Record<
   },
 };
 
+// Where an admin goes to top up the provider's own account balance —
+// distinct from ADD_KEY_HINTS (which is about grabbing a credential).
+// Rendered as a persistent "Billing" link on any configured key, and
+// promoted to a call-to-action when a Test comes back quota_exceeded.
+const PROVIDER_BILLING_URL: Partial<Record<ApiKeyProvider, string>> = {
+  OPENAI: "https://platform.openai.com/settings/organization/billing/overview",
+  ANTHROPIC: "https://console.anthropic.com/settings/billing",
+  FAL: "https://fal.ai/dashboard/billing",
+  GEMINI: "https://console.cloud.google.com/billing",
+  GOOGLE_MAPS: "https://console.cloud.google.com/billing",
+  GOOGLE_SOLAR: "https://console.cloud.google.com/billing",
+  MAPBOX: "https://account.mapbox.com/billing/",
+  RESEND: "https://resend.com/settings/billing",
+};
+
+const CATEGORIES: {
+  key: string;
+  label: string;
+  icon: typeof MapIcon;
+  providers: ApiKeyProvider[];
+}[] = [
+  {
+    key: "mapping",
+    label: "Mapping & imagery",
+    icon: MapIcon,
+    providers: ["GOOGLE_MAPS", "GOOGLE_SOLAR", "MAPBOX", "NEARMAP", "EAGLEVIEW"],
+  },
+  {
+    key: "ai",
+    label: "AI vision & inference",
+    icon: Bot,
+    providers: ["OPENAI", "ANTHROPIC", "GEMINI", "FAL"],
+  },
+  {
+    key: "comms",
+    label: "Communications",
+    icon: Mail,
+    providers: ["RESEND"],
+  },
+  {
+    key: "payments",
+    label: "Payments",
+    icon: CreditCard,
+    providers: ["STRIPE_SECRET", "STRIPE_WEBHOOK"],
+  },
+  {
+    key: "data",
+    label: "Public data",
+    icon: Database,
+    providers: ["SOCRATA"],
+  },
+];
+
 // Per-provider hint that renders inside the Add Key dialog. Tells the
 // admin where to actually grab the credential from + what format to
 // expect. Skips the user-friendly back-and-forth where the admin
@@ -202,7 +260,7 @@ export function ApiKeysPage({
       <div className="mx-auto max-w-[1400px] space-y-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
               API key vault
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-zinc-500">
@@ -211,51 +269,73 @@ export function ApiKeysPage({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge tone={configuredCount === ALL_PROVIDERS.length ? "accent" : "amber"}>
+            <Badge tone={configuredCount === ALL_PROVIDERS.length ? "emerald" : "amber"}>
               <Lock className="h-3 w-3" />
               {configuredCount} of {ALL_PROVIDERS.length} configured
             </Badge>
           </div>
         </header>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {ALL_PROVIDERS.map((provider) => {
-            const meta = PROVIDER_META[provider];
-            const list = byProvider.get(provider) ?? [];
-            const active = list.find((r) => r.active);
-            const inactive = list.filter((r) => !r.active);
-            return (
-              <ProviderCard
-                key={provider}
-                provider={provider}
-                label={meta.label}
-                sub={meta.sub}
-                tone={meta.tone}
-                active={active}
-                inactive={inactive}
-                onAdd={() => setPhase({ kind: "add", provider })}
-                onRotate={(row) => setPhase({ kind: "rotate", row })}
-                onReveal={(row) => setPhase({ kind: "reveal", row })}
-                onTest={(row) => testApiKey(row.id)}
-                onRevoke={async (row) => {
-                  if (
-                    !window.confirm(
-                      `Revoke ${meta.label} key (…${row.fingerprint.slice(-4)})? Apps using it will start failing immediately.`,
-                    )
-                  ) {
-                    return;
-                  }
-                  await revokeApiKey(row.id);
-                  await refetch();
-                }}
-              />
-            );
-          })}
-        </div>
+        {CATEGORIES.map((cat) => {
+          const configuredInCat = cat.providers.filter((p) =>
+            byProvider.get(p)?.some((r) => r.active),
+          ).length;
+          const CatIcon = cat.icon;
+          return (
+            <section key={cat.key} className="space-y-3">
+              <div className="flex items-center gap-2 px-0.5">
+                <CatIcon className="h-4 w-4 text-zinc-400" />
+                <h2 className="font-label text-xs text-zinc-500">
+                  {cat.label}
+                </h2>
+                <span className="text-xs text-zinc-300">·</span>
+                <span className="text-xs text-zinc-400">
+                  {configuredInCat}/{cat.providers.length}
+                </span>
+                <div className="h-px flex-1 bg-zinc-100" />
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {cat.providers.map((provider) => {
+                  const meta = PROVIDER_META[provider];
+                  const list = byProvider.get(provider) ?? [];
+                  const active = list.find((r) => r.active);
+                  const inactive = list.filter((r) => !r.active);
+                  return (
+                    <ProviderCard
+                      key={provider}
+                      provider={provider}
+                      label={meta.label}
+                      sub={meta.sub}
+                      tone={meta.tone}
+                      billingUrl={PROVIDER_BILLING_URL[provider]}
+                      active={active}
+                      inactive={inactive}
+                      onAdd={() => setPhase({ kind: "add", provider })}
+                      onRotate={(row) => setPhase({ kind: "rotate", row })}
+                      onReveal={(row) => setPhase({ kind: "reveal", row })}
+                      onTest={(row) => testApiKey(row.id)}
+                      onRevoke={async (row) => {
+                        if (
+                          !window.confirm(
+                            `Revoke ${meta.label} key (…${row.fingerprint.slice(-4)})? Apps using it will start failing immediately.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        await revokeApiKey(row.id);
+                        await refetch();
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
 
-        <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+        <section className="surface p-5 shadow-card">
           <div className="flex items-center justify-between">
-            <h2 className="font-display text-base font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900">
               Vault audit log
             </h2>
             <span className="text-xs text-zinc-500">
@@ -330,6 +410,7 @@ function ProviderCard({
   label,
   sub,
   tone,
+  billingUrl,
   active,
   inactive,
   onAdd,
@@ -342,14 +423,17 @@ function ProviderCard({
   label: string;
   sub: string;
   tone: Parameters<typeof Badge>[0]["tone"];
+  /** Where to add funds to the provider's own account, if known. */
+  billingUrl?: string;
   active: ApiKeyRow | undefined;
   inactive: ApiKeyRow[];
   onAdd: () => void;
   onRotate: (row: ApiKeyRow) => void;
   onReveal: (row: ApiKeyRow) => void;
   onRevoke: (row: ApiKeyRow) => void | Promise<void>;
-  /** Hits a provider endpoint to validate the stored key. RESEND is
-   *  wired today; other providers return "not implemented". */
+  /** Hits a provider endpoint to validate the stored key and, for the
+   *  paid providers, run one minimal real request so "out of credits"
+   *  is detected instead of guessed. */
   onTest?: (row: ApiKeyRow) => Promise<TestApiKeyResult>;
 }) {
   const [showHistory, setShowHistory] = useState(false);
@@ -364,7 +448,7 @@ function ProviderCard({
   return (
     <div
       className={cn(
-        "flex flex-col rounded-2xl border bg-white p-5 shadow-card transition",
+        "transition-smooth flex flex-col rounded-xl border bg-white p-5 shadow-card",
         active ? "border-zinc-200" : "border-dashed border-zinc-300",
       )}
     >
@@ -378,20 +462,28 @@ function ProviderCard({
           </div>
           <p className="mt-1 text-xs text-zinc-500">{sub}</p>
         </div>
-        {active ? (
-          <Badge tone="accent">
-            <Check className="h-3 w-3" />
-            Active
-          </Badge>
-        ) : (
-          <Badge tone="amber">Missing</Badge>
-        )}
+        <div className="flex flex-col items-end gap-1.5">
+          {active ? (
+            <Badge tone="emerald">
+              <Check className="h-3 w-3" />
+              Active
+            </Badge>
+          ) : (
+            <Badge tone="amber">Missing</Badge>
+          )}
+          {testResult?.reason === "quota_exceeded" && (
+            <Badge tone="rose">
+              <CreditCard className="h-3 w-3" />
+              Out of credits
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="mt-4 flex-1">
         {active ? (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3">
-            <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+            <div className="font-label text-[10px] text-zinc-400">
               Fingerprint
             </div>
             <div className="mt-0.5 font-mono text-sm text-zinc-900">
@@ -422,16 +514,43 @@ function ProviderCard({
             </div>
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-zinc-200 p-3 text-xs text-zinc-500">
+          <div className="rounded-lg border border-dashed border-zinc-200 p-3 text-xs text-zinc-500">
             Not configured. The provider call will fail until a key is added.
           </div>
         )}
       </div>
 
-      {active && testResult && (
+      {active && testResult && testResult.reason === "quota_exceeded" && (
+        <div className="anim-enter-fade mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+          <div className="flex items-start gap-1.5">
+            <CreditCard className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="font-medium">{testResult.status}</div>
+              {testResult.error && (
+                <div className="mt-0.5 break-words font-mono text-[10px] opacity-80">
+                  {testResult.error}
+                </div>
+              )}
+            </div>
+          </div>
+          {billingUrl && (
+            <a
+              href={billingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-smooth ring-focus mt-2 inline-flex items-center gap-1.5 rounded-md bg-rose-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-rose-700"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Add credits
+            </a>
+          )}
+        </div>
+      )}
+
+      {active && testResult && testResult.reason !== "quota_exceeded" && (
         <div
           className={cn(
-            "mt-3 rounded-lg border px-3 py-2 text-xs",
+            "anim-enter-fade mt-3 rounded-lg border px-3 py-2 text-xs",
             testResult.ok
               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
               : "border-rose-200 bg-rose-50 text-rose-800",
@@ -465,7 +584,7 @@ function ProviderCard({
           {sendTestResult && (
             <div
               className={cn(
-                "rounded-lg border px-3 py-2 text-xs",
+                "anim-enter-fade rounded-lg border px-3 py-2 text-xs",
                 sendTestResult.ok
                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                   : "border-rose-200 bg-rose-50 text-rose-800",
@@ -514,7 +633,7 @@ function ProviderCard({
                 value={testEmailAddr}
                 onChange={(e) => setTestEmailAddr(e.target.value)}
                 placeholder="you@example.com"
-                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
+                className="transition-smooth h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15"
               />
               <Button
                 size="sm"
@@ -534,7 +653,7 @@ function ProviderCard({
                   setTestEmailOpen(false);
                   setSendTestResult(null);
                 }}
-                className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                className="transition-smooth ring-focus rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                 aria-label="Cancel"
               >
                 <X className="h-3.5 w-3.5" />
@@ -600,9 +719,21 @@ function ProviderCard({
               <RefreshCw className="h-3.5 w-3.5" />
               Rotate
             </Button>
+            {billingUrl && (
+              <a
+                href={billingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-smooth ring-focus inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                title={`Manage ${label} billing / add credits`}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Billing
+              </a>
+            )}
             <button
               onClick={() => onRevoke(active)}
-              className="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-rose-700 transition hover:bg-rose-50"
+              className="transition-smooth ring-focus ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
             >
               <ShieldOff className="h-3 w-3" />
               Revoke
@@ -620,7 +751,7 @@ function ProviderCard({
         <div className="mt-4 border-t border-zinc-100 pt-3">
           <button
             onClick={() => setShowHistory((v) => !v)}
-            className="flex w-full items-center justify-between text-xs text-zinc-500 hover:text-zinc-900"
+            className="transition-smooth ring-focus flex w-full items-center justify-between rounded-md text-xs text-zinc-500 hover:text-zinc-900"
           >
             <span>{inactive.length} prior {inactive.length === 1 ? "key" : "keys"}</span>
             <span className="text-[10px] uppercase tracking-wider">
@@ -628,7 +759,7 @@ function ProviderCard({
             </span>
           </button>
           {showHistory && (
-            <ul className="mt-2 space-y-1">
+            <ul className="anim-enter-fade mt-2 space-y-1">
               {inactive.map((r) => (
                 <li
                   key={r.id}
@@ -657,7 +788,7 @@ function ActionBadge({ action }: { action: string }) {
     string,
     { label: string; tone: Parameters<typeof Badge>[0]["tone"] }
   > = {
-    API_KEY_CREATED: { label: "Created", tone: "accent" },
+    API_KEY_CREATED: { label: "Created", tone: "emerald" },
     API_KEY_ROTATED: { label: "Rotated", tone: "sky" },
     API_KEY_REVOKED: { label: "Revoked", tone: "rose" },
     API_KEY_VIEWED: { label: "Viewed", tone: "violet" },
@@ -753,7 +884,7 @@ function AddDialog({
           />
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -811,7 +942,7 @@ function RotateDialog({
     >
       {row && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 text-xs text-zinc-600">
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
             Current: <span className="font-mono">···{row.fingerprint.slice(-8)}</span>
             <span className="ml-2 text-zinc-400">
               · added {new Date(row.createdAt).toLocaleDateString()}
@@ -834,7 +965,7 @@ function RotateDialog({
           />
 
           {error && (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <div className="anim-enter-fade rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -903,7 +1034,7 @@ function RevealDialog({
                 <span className="font-medium">VIEWED</span> event with your
                 identity, the timestamp, and the fingerprint.
               </p>
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 text-xs text-zinc-600">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                 Fingerprint:{" "}
                 <span className="font-mono">···{row.fingerprint.slice(-8)}</span>
               </div>
@@ -922,8 +1053,8 @@ function RevealDialog({
                 Don't share this value. The reveal was logged at{" "}
                 {new Date().toLocaleTimeString()}.
               </p>
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3">
-                <div className="text-xs uppercase tracking-wider text-zinc-500">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                <div className="font-label text-[10px] text-zinc-400">
                   Plaintext value
                 </div>
                 <pre className="mt-1 break-all font-mono text-sm text-zinc-900">
@@ -979,7 +1110,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      <span className="font-label mb-1.5 block text-[11px] text-zinc-500">
         {label}
       </span>
       <input
@@ -988,10 +1119,7 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        className={cn(
-          "h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/15",
-          mono && "font-mono",
-        )}
+        className={cn("input h-11", mono && "font-mono")}
       />
     </label>
   );
@@ -1008,11 +1136,12 @@ function Dialog({
   title: string;
   children: React.ReactNode;
 }) {
+  const reduce = useReducedMotion();
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -1020,20 +1149,20 @@ function Dialog({
         >
           <div className="absolute inset-0 bg-zinc-900/30 backdrop-blur-sm" />
           <motion.div
-            initial={{ scale: 0.95, opacity: 0, y: 8 }}
+            initial={reduce ? false : { scale: 0.95, opacity: 0, y: 8 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ type: "spring", damping: 22, stiffness: 280 }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-elevated"
+            className="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-elevated"
           >
             <button
               onClick={onClose}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900"
+              className="transition-smooth ring-focus absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" />
             </button>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+            <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
               {title}
             </h2>
             <div className="mt-4">{children}</div>

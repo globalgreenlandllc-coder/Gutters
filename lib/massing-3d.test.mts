@@ -79,6 +79,30 @@ test("buildMassing: square → 4 wall quads, all finite, plus lifted roof edges"
   assert.ok(edges.filter((e) => e.kind === "gable").length >= 3, "gable drawn as a triangle");
 });
 
+test("buildMassing: per-edge tier heights step the lower wall down, roof at body", () => {
+  const skel = { ridges: [{ points: [{ x: 25, y: 40 }, { x: 75, y: 40 }] }], hips: [], valleys: [], gables: [] };
+  const wallFtFor = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    a.y === 0 && b.y === 0 ? 10 : 20; // top edge = lower porch
+  const { faces, edges } = buildMassing(SQUARE, wallFtFor, skel, 8, 20);
+  const topWall = faces.find((f) => f.verts[0].y === 0 && f.verts[1].y === 0)!;
+  assert.ok(
+    topWall.verts.some((v) => v.z === 10) && !topWall.verts.some((v) => v.z === 20),
+    "top wall steps to 10",
+  );
+  const sideWall = faces.find((f) => !(f.verts[0].y === 0 && f.verts[1].y === 0))!;
+  assert.ok(sideWall.verts.some((v) => v.z === 20), "body walls stay at 20");
+  assert.equal(
+    edges.find((e) => e.kind === "ridge")!.a.z,
+    28,
+    "ridge at body+rise regardless of tiers",
+  );
+});
+
+test("buildMassing: number wallFt still works (back-compat)", () => {
+  const { faces } = buildMassing(SQUARE, 20, { ridges: [], hips: [], valleys: [], gables: [] }, 8);
+  assert.ok(faces.every((f) => f.verts.some((v) => v.z === 20)));
+});
+
 test("sortFacesByDepth: far faces first (painter's algorithm)", () => {
   const c = { cx: 50, cy: 40 };
   const near: P3[] = [{ x: 50, y: 0, z: 0 }];

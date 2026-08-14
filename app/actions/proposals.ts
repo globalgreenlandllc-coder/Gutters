@@ -9,11 +9,18 @@ import { sendEmailViaResend } from "@/lib/email/resend";
 import { renderProposalEmail } from "@/lib/email/proposal-template";
 import {
   blankProposal,
+  deriveTotalCentsFromData,
   packageTotal,
+  sanitizeProposalForClient,
   type Proposal,
 } from "@/lib/proposal-mock";
 import type { Downspout, EditableLine, Measurements } from "@/lib/types";
+import { checkUserEmailBudget, checkPortalWrite } from "@/lib/abuse/guards";
+import { POLICIES } from "@/lib/abuse/policies";
+import { FREE_PROPOSALS_PER_MONTH } from "@/lib/stripe";
+import { captureTakeoffCorrection } from "@/lib/ai/takeoff-corrections";
 import { getMe } from "./me";
+import { createDefaultSchedule } from "./payments";
 
 export type SendProposalResult =
   | { ok: true; token: string; portalUrl: string; messageId: string }
@@ -45,6 +52,13 @@ export async function sendProposal(args: {
     return { ok: false, reason: "Property address is required before sending" };
   }
 
+  // Per-sender email budget (20/hr, 100/day) — a compromised account
+  // can't turn the proposal sender into a spam cannon.
+  const emailBudget = await checkUserEmailBudget(me.user.id, "sendProposal");
+  if (!emailBudget.ok) {
+    return { ok: false, reason: emailBudget.reason };
+  }
+
   // Persist (or update) the proposal so /p/[token] resolves to real data.
   const data = proposal as unknown as Prisma.InputJsonValue;
   const contractorSnap = proposal.contractor as unknown as Prisma.InputJsonValue;
@@ -58,6 +72,31 @@ export async function sendProposal(args: {
         where: { publicToken: proposal.token, userId: me.user.id },
       })
     : null;
+
+  // Free-plan cap: N distinct proposals sent per calendar month.
+  // Re-sending an already-sent proposal is free (its row already counted
+  // — that's why `existing` is excluded), drafts are unlimited, and Pro
+  // (renewing sub) or admin never hits this. The nudge lands exactly at
+  // the money moment: a contractor sending real quotes has real jobs.
+  const isPro = me.credits.renews || me.user.role === "SUPER_ADMIN";
+  if (!isPro) {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const sentThisMonth = await db.proposal.count({
+      where: {
+        userId: me.user.id,
+        sentAt: { gte: monthStart },
+        ...(existing ? { id: { not: existing.id } } : {}),
+      },
+    });
+    if (sentThisMonth >= FREE_PROPOSALS_PER_MONTH) {
+      return {
+        ok: false,
+        reason: `The free plan sends ${FREE_PROPOSALS_PER_MONTH} proposals a month — upgrade to Pro in Settings → Billing for unlimited sending.`,
+      };
+    }
+  }
 
   const row = existing
     ? await db.proposal.update({
@@ -102,6 +141,7 @@ export async function sendProposal(args: {
     validDays: proposal.validDays || 30,
     portalUrl,
     message,
+    listenUrl: `${portalUrl}?listen=1`,
   });
 
   const result = await sendEmailViaResend({
@@ -180,7 +220,11 @@ export async function getProposalByToken(
     // ignore
   }
 
-  return row.data as unknown as Proposal;
+  // Public boundary: the portal page serializes this object wholesale,
+  // so contractor-private pricing internals (AI quote, stashed manual
+  // markup, pricing mode) are stripped here — the client sees one
+  // price, with no trace of how it was set.
+  return sanitizeProposalForClient(row.data as unknown as Proposal);
 }
 
 function isPlausibleEmail(s: string): boolean {
@@ -239,6 +283,10 @@ export async function saveDraftFromEstimate(args: {
   /** Whether this is a new-construction job or a replacement. Stored on
    *  the proposal JSON blob so the scope-of-work language can branch. */
   jobType?: "new" | "replacement";
+  /** PlanAnalysis row id when this estimate came from a plan upload. Links
+   *  the saved (possibly contractor-edited) takeoff back to the AI output
+   *  that produced it — the ground-truth pair the learning loop trains on. */
+  planId?: string;
 }): Promise<SaveDraftResult> {
   try {
     return await saveDraftFromEstimateImpl(args);
@@ -268,6 +316,7 @@ async function saveDraftFromEstimateImpl(args: {
   totalCents?: number;
   existingId?: string;
   jobType?: "new" | "replacement";
+  planId?: string;
 }): Promise<SaveDraftResult> {
   const me = await getMe();
   if (!me) return { ok: false, reason: "Not signed in" };
@@ -283,10 +332,25 @@ async function saveDraftFromEstimateImpl(args: {
   // accessible via `data.jobType` in any downstream code that wants to
   // branch scope-of-work text on it.
   const blank = blankProposal();
-  const draft: Proposal & { jobType?: "new" | "replacement" } = {
+  const draft: Proposal & {
+    jobType?: "new" | "replacement";
+    planId?: string;
+  } = {
     ...blank,
+    // Old-gutter removal line per job type: replacement defaults to the
+    // FREE ($X value) marketing line; a new build has nothing to remove.
+    packages: blank.packages.map((p) => ({
+      ...p,
+      config: {
+        ...p.config,
+        oldGutterRemoval: args.jobType === "new" ? "none" : "free",
+      },
+    })),
     token: randomBytes(12).toString("hex"),
     jobType: args.jobType ?? "replacement",
+    // Source-plan link (extra JSON key, same pattern as jobType) so a
+    // proposal's corrected takeoff can be traced back to its PlanAnalysis.
+    planId: args.planId,
     address: args.address,
     measurements: args.measurements,
     takeoff: {
@@ -374,6 +438,24 @@ async function saveDraftFromEstimateImpl(args: {
       });
 
   revalidatePath("/dashboard/proposals");
+
+  // Learning loop: snapshot the saved takeoff onto the source PlanAnalysis
+  // row (editedJson) as the contractor-verified counterpart to the AI's
+  // analysisJson. Fire-and-forget semantics — capture failure never fails
+  // the save (captureTakeoffCorrection swallows its own errors).
+  if (args.planId) {
+    await captureTakeoffCorrection({
+      userId: me.user.id,
+      planId: args.planId,
+      takeoff: {
+        eaves: args.eaves,
+        rakes: args.rakes,
+        downspouts: args.downspouts,
+        measurements: args.measurements,
+      },
+      source: "estimate-draft-save",
+    });
+  }
 
   return { ok: true, id: row.id, token: row.publicToken, status: "DRAFT" };
 }
@@ -525,6 +607,18 @@ export async function acceptProposalByToken(args: {
   paymentChoice: "deposit" | "full";
 }): Promise<AcceptProposalResult> {
   try {
+    // Unauthenticated write that mutates contract state and emails the
+    // contractor — per-token + per-IP limited. Legit re-accepts are
+    // already idempotent no-ops, so 5/day/token never blocks a human.
+    const guard = await checkPortalWrite(
+      POLICIES.portalAccept,
+      args.token,
+      "acceptProposalByToken",
+    );
+    if (!guard.ok) {
+      return { ok: false, reason: guard.reason };
+    }
+
     const row = await db.proposal.findUnique({
       where: { publicToken: args.token },
       include: { user: { include: { contractorProfile: true } } },
@@ -554,8 +648,38 @@ export async function acceptProposalByToken(args: {
         status: "ACCEPTED",
         acceptedAt: now,
         selectedPackageId: args.selectedPackageId ?? row.selectedPackageId,
+        // Lock the contract total to the package the homeowner actually
+        // picked — the stored column may still reflect the recommended
+        // tier from draft time.
+        totalCents: deriveTotalCentsFromData(
+          row.data,
+          row.totalCents,
+          args.selectedPackageId ?? row.selectedPackageId,
+        ),
       },
     });
+
+    // Build the payment schedule from the homeowner's choice (deposit +
+    // final, or one full payment). Best-effort: acceptance must never
+    // fail because of schedule bookkeeping — getPaymentOverview lazily
+    // repairs missing schedules later.
+    try {
+      await createDefaultSchedule({
+        row: {
+          id: accepted.id,
+          status: "ACCEPTED",
+          totalCents: accepted.totalCents,
+          paidCents: accepted.paidCents,
+          selectedPackageId: accepted.selectedPackageId,
+          acceptedAt: accepted.acceptedAt,
+          updatedAt: accepted.updatedAt,
+          data: accepted.data,
+        },
+        paymentChoice: args.paymentChoice,
+      });
+    } catch (e) {
+      console.warn("[acceptProposalByToken] schedule creation failed", e);
+    }
 
     await db.proposalEvent.create({
       data: {
@@ -573,6 +697,18 @@ export async function acceptProposalByToken(args: {
       },
     });
 
+    // Close out any live price negotiation — the price is locked now, so a
+    // still-OPEN/COUNTERED request would linger in the contractor's queue.
+    // Best-effort: acceptance must never fail on this bookkeeping.
+    try {
+      await db.discountRequest.updateMany({
+        where: { proposalId: row.id, status: { in: ["OPEN", "COUNTERED"] } },
+        data: { status: "EXPIRED", turn: "NONE", decidedAt: now },
+      });
+    } catch (e) {
+      console.warn("[acceptProposalByToken] discount cleanup failed", e);
+    }
+
     // Best-effort contractor notification.
     let contractorNotified = false;
     const contractorEmail = row.user?.contractorProfile?.email ?? row.user?.email;
@@ -584,14 +720,14 @@ export async function acceptProposalByToken(args: {
         const totalDollars = (totalCents / 100).toFixed(2);
         const html =
           `<div style="font-family:system-ui,sans-serif;color:#0f172a;line-height:1.5;max-width:560px">` +
-          `<h2 style="margin:0 0 8px;color:#059669">Proposal accepted ✓</h2>` +
+          `<h2 style="margin:0 0 8px;color:#14688C">Proposal accepted ✓</h2>` +
           `<p>${escapeHtml(args.signerName || row.clientName || "Your client")} just accepted the proposal for <strong>${escapeHtml(row.address)}</strong>.</p>` +
           (totalCents > 0
             ? `<p>Total: <strong>$${totalDollars}</strong></p>`
             : "") +
           `<p>Payment choice: <strong>${args.paymentChoice === "deposit" ? "Deposit only" : "Full upfront"}</strong></p>` +
-          `<p style="margin-top:20px"><a href="${dashUrl}" style="background:#059669;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Open dashboard</a>` +
-          ` &nbsp; <a href="${portalUrl}" style="color:#059669">View signed proposal</a></p>` +
+          `<p style="margin-top:20px"><a href="${dashUrl}" style="background:#14688C;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Open dashboard</a>` +
+          ` &nbsp; <a href="${portalUrl}" style="color:#14688C">View signed proposal</a></p>` +
           `<p style="color:#64748b;font-size:13px;margin-top:24px">Accepted at ${now.toISOString()}.</p>` +
           `</div>`;
         const text =

@@ -2,6 +2,7 @@ import "server-only";
 import { fromArrayBuffer, type GeoTIFFImage } from "geotiff";
 import proj4 from "proj4";
 import { getActiveApiKey } from "@/lib/api-keys";
+import { AI_TIMEOUTS, fetchWithTimeout } from "./http";
 
 export type SolarMaskOutcome =
   | {
@@ -61,7 +62,9 @@ export async function getRoofMaskFromSolar(
     `&radiusMeters=${radiusMeters}` +
     `&view=FULL_LAYERS` +
     `&requiredQuality=LOW` +
-    `&pixelSizeMeters=0.5` +
+    // 0.25 (was 0.5): 4× the pixels per wall. The solar-first engine
+    // fetches at 0.1; this module only serves the legacy fallback now.
+    `&pixelSizeMeters=0.25` +
     `&key=${encodeURIComponent(key)}`;
 
   type DataLayersResponse = {
@@ -72,7 +75,7 @@ export async function getRoofMaskFromSolar(
 
   let dlData: DataLayersResponse;
   try {
-    const res = await fetch(dlUrl, { cache: "no-store" });
+    const res = await fetchWithTimeout(dlUrl, { cache: "no-store" }, AI_TIMEOUTS.solarMask);
     if (!res.ok) {
       return {
         ok: false,
@@ -101,7 +104,7 @@ export async function getRoofMaskFromSolar(
 
   let tiffBytes: ArrayBuffer;
   try {
-    const res = await fetch(maskUrl, { cache: "no-store" });
+    const res = await fetchWithTimeout(maskUrl, { cache: "no-store" }, AI_TIMEOUTS.solarMask);
     if (!res.ok) {
       return { ok: false, reason: `mask GeoTIFF HTTP ${res.status}` };
     }

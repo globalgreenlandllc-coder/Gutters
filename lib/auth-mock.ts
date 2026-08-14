@@ -26,10 +26,14 @@ export type ContractorProfile = {
 };
 
 export type Credits = {
+  /** Blueprint-takeoff credits (address estimates are free, unmetered). */
   included: number;
   used: number;
   bonus: number;
   resetsAt: string;
+  /** True on an active Pro sub — `included` refreshes monthly. Free-plan
+   *  credits are one-time and never renew. */
+  renews: boolean;
 };
 
 export type Impersonation = {
@@ -47,7 +51,7 @@ export type Session = {
     email: string;
     initials: string;
     provider: "email" | "google" | "other";
-    role: "CONTRACTOR" | "SUPER_ADMIN";
+    role: "CONTRACTOR" | "WORKER" | "SUPER_ADMIN";
   };
   profile: ContractorProfile;
   credits: Credits;

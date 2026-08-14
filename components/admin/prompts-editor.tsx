@@ -9,6 +9,7 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   resetPromptTemplate,
@@ -30,6 +31,12 @@ const GROUPS: { category: PromptRow["category"]; title: string; blurb: string }[
       blurb:
         "Drives the PDF-plan estimate (upload construction plans → AI measures the gutters).",
     },
+    {
+      category: "proposal",
+      title: "Proposal builder",
+      blurb:
+        "Drives the AI helpers inside the proposal editor (the location-based recommended price).",
+    },
   ];
 
 export function PromptsEditor({ rows }: { rows: PromptRow[] }) {
@@ -41,7 +48,7 @@ export function PromptsEditor({ rows }: { rows: PromptRow[] }) {
         return (
           <section key={g.category}>
             <div className="mb-3">
-              <h2 className="font-display text-lg font-semibold tracking-tight text-zinc-900">
+              <h2 className="text-lg font-semibold tracking-tight text-zinc-900">
                 {g.title}
               </h2>
               <p className="text-sm text-zinc-500">{g.blurb}</p>
@@ -118,20 +125,16 @@ function PromptCard({ row }: { row: PromptRow }) {
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card">
+    <div className="surface p-5 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-medium text-zinc-900">{row.label}</h3>
-            <span className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+            <Badge tone="neutral" className="gap-1">
               <Sparkles className="h-3 w-3" />
               {row.model}
-            </span>
-            {customized && (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-700 ring-1 ring-inset ring-amber-200">
-                Customized
-              </span>
-            )}
+            </Badge>
+            {customized && <Badge tone="amber">Customized</Badge>}
           </div>
           <p className="mt-1 max-w-2xl text-sm text-zinc-500">
             {row.description}
@@ -149,7 +152,7 @@ function PromptCard({ row }: { row: PromptRow }) {
         onChange={(e) => setDraft(e.target.value)}
         spellCheck={false}
         rows={14}
-        className="mt-4 w-full resize-y rounded-xl border border-zinc-200 bg-zinc-50/40 p-3 font-mono text-xs leading-relaxed text-zinc-800 outline-none transition focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
+        className="transition-smooth mt-4 w-full resize-y rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-[13px] leading-relaxed text-zinc-800 outline-none focus:border-accent-500 focus:bg-white focus:ring-2 focus:ring-accent-500/15"
       />
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -158,8 +161,8 @@ function PromptCard({ row }: { row: PromptRow }) {
           onClick={save}
           disabled={pending || !dirty}
           className={cn(
-            "inline-flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-sm font-semibold shadow-sm transition disabled:opacity-50",
-            "bg-zinc-900 text-white hover:bg-zinc-800",
+            "transition-smooth press-scale ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium shadow-sm disabled:opacity-50",
+            "bg-accent-600 text-white hover:bg-accent-700",
           )}
         >
           {pending && action === "save" ? (
@@ -180,7 +183,7 @@ function PromptCard({ row }: { row: PromptRow }) {
           type="button"
           onClick={reset}
           disabled={pending}
-          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 disabled:opacity-50"
+          className="transition-smooth press-scale ring-focus inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-800 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
         >
           {pending && action === "reset" ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -191,10 +194,10 @@ function PromptCard({ row }: { row: PromptRow }) {
         </button>
 
         {dirty && (
-          <span className="text-xs text-amber-700">Unsaved changes</span>
+          <span className="anim-enter-fade text-xs text-amber-700">Unsaved changes</span>
         )}
         {error && (
-          <span className="inline-flex items-center gap-1 text-xs text-rose-600">
+          <span className="anim-enter-fade inline-flex items-center gap-1 text-xs text-rose-600">
             <AlertTriangle className="h-3.5 w-3.5" />
             {error}
           </span>

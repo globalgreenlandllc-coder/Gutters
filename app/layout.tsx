@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans } from "next/font/google";
+import { Inter, Archivo_Black, Space_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { SessionProvider } from "@/components/auth/session-provider";
+import { EstimateJobProvider } from "@/components/estimate/estimate-job";
+import { Tracker } from "@/components/analytics/tracker";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,17 +12,37 @@ const inter = Inter({
   display: "swap",
 });
 
-const display = Plus_Jakarta_Sans({
+const display = Archivo_Black({
   subsets: ["latin"],
+  weight: "400",
   variable: "--font-display",
   display: "swap",
 });
 
+const mono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Gutters — Instant AI Gutter Takeoff",
+  title: "GutterScan — AI Takeoffs, Proposals & Payments for Gutter Contractors",
   description:
-    "Type one address. Get an AI-measured estimate, professional proposal, and accept payment in under a minute.",
-  metadataBase: new URL("https://gutters.app"),
+    "Type one address. Get an AI-measured takeoff, a three-tier proposal your client e-signs, then run the schedule, crew, and payments — all in one platform.",
+  // Canonical host (apex 308s to www). This was still the pre-rebrand
+  // gutters.app, which pointed every canonical/OG URL at a dead domain.
+  metadataBase: new URL("https://www.gutterscan.com"),
+  openGraph: {
+    siteName: "GutterScan",
+    type: "website",
+    title: "GutterScan — AI Takeoffs, Proposals & Payments for Gutter Contractors",
+    description:
+      "Type one address. Get an AI-measured takeoff, a three-tier proposal your client e-signs, then run the schedule, crew, and payments — all in one platform.",
+  },
+  twitter: {
+    card: "summary_large_image",
+  },
 };
 
 export default function RootLayout({
@@ -32,18 +54,27 @@ export default function RootLayout({
     <ClerkProvider
       appearance={{
         variables: {
-          colorPrimary: "#059669",
-          colorText: "#18181b",
+          colorPrimary: "#14688C",
+          colorText: "#0d0d12",
           colorBackground: "#ffffff",
           colorInputBackground: "#ffffff",
-          colorInputText: "#18181b",
-          borderRadius: "0.75rem",
+          colorInputText: "#0d0d12",
+          borderRadius: "0.5rem",
         },
       }}
     >
-      <html lang="en" className={`${inter.variable} ${display.variable}`}>
+      <html
+        lang="en"
+        className={`${inter.variable} ${display.variable} ${mono.variable}`}
+      >
         <body className="font-sans antialiased text-zinc-900">
-          <SessionProvider>{children}</SessionProvider>
+          {/* EstimateJobProvider lives above routing so a running
+              takeoff analysis (and its floating mini-window) survives
+              navigation anywhere in the app. */}
+          <SessionProvider>
+            <EstimateJobProvider>{children}</EstimateJobProvider>
+          </SessionProvider>
+          <Tracker />
         </body>
       </html>
     </ClerkProvider>

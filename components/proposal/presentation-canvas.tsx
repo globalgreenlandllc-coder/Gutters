@@ -12,14 +12,20 @@ import {
   pathFor,
   lineLengthFt,
   RoofStructureOverlay,
+  orientationChipBoxes,
 } from "@/components/estimate/aerial-shared";
+import {
+  layoutLabels,
+  type LabelBox,
+  type PlacedLabel,
+} from "@/lib/diagram-labels";
 import type { Downspout, EditableLine, RoofStructure } from "@/lib/types";
 
 /**
  * Proposal-quality canvas. Same data shape as AerialCanvas but stripped
  * of the editor chrome:
  *   - No toolbar, no theme toggle, no layers panel.
- *   - Eaves render as a thin, even cyan stroke with a soft glow (no
+ *   - Eaves render as a thin, even royal-blue stroke with a soft glow (no
  *     animated draw-in — clients see a finished drawing).
  *   - Rakes render as gray-dashed "no gutter" lines, also non-glowing.
  *   - Downspouts are small pinned dots — no pulsing halo. The pulse
@@ -137,6 +143,188 @@ export function PresentationCanvas({
     ? `translate(${frame.tx} ${frame.ty}) scale(${frame.k})`
     : undefined;
 
+  // Center of the traced footprint — LF labels kick AWAY from this so they
+  // land outside the outline (never across the roof interior, where they
+  // crossed the derived hip/ridge lines).
+  const eavesCentroid = useMemo(() => {
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (const l of eaves) {
+      for (const p of l.points) {
+        sx += p.x;
+        sy += p.y;
+        n++;
+      }
+    }
+    if (n === 0) return { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+    return { x: sx / n, y: sy / n };
+  }, [eaves]);
+
+  // Client-readable downspout numbering: 1..N walking clockwise around the
+  // house from the top-left, so the pins read as an ordered walk-around
+  // (and match a count, "12 downspouts") instead of random dots.
+  const dropNumber = useMemo(() => {
+    if (downspouts.length === 0) return new Map<string, number>();
+    let cx = 0;
+    let cy = 0;
+    for (const d of downspouts) {
+      cx += d.x;
+      cy += d.y;
+    }
+    cx /= downspouts.length;
+    cy /= downspouts.length;
+    const start = (-Math.PI * 3) / 4; // top-left
+    const key = (d: Downspout) =>
+      (Math.atan2(d.y - cy, d.x - cx) - start + Math.PI * 2) % (Math.PI * 2);
+    const sorted = [...downspouts].sort((a, b) => key(a) - key(b));
+    return new Map(sorted.map((d, i) => [d.id, i + 1]));
+  }, [downspouts]);
+
+  // Drop-height policy: on most houses every downspout drops the same
+  // height, and 12 identical "10′" pills are pure noise. Show the common
+  // height ONCE (in the totals pill) and badge only the OUTLIERS — the
+  // porch drop at 10′ on a 20′ house is exactly what deserves a callout.
+  const heightInfo = useMemo(() => {
+    const hs = downspouts
+      .map((d) => Math.round(d.heightFt))
+      .filter((h) => h > 0);
+    if (hs.length === 0) return { mode: 0, uniform: false };
+    const counts = new Map<number, number>();
+    for (const h of hs) counts.set(h, (counts.get(h) ?? 0) + 1);
+    let mode = hs[0];
+    let best = 0;
+    for (const [h, c] of counts) {
+      if (c > best) {
+        mode = h;
+        best = c;
+      }
+    }
+    return { mode, uniform: counts.size === 1 && hs.length === downspouts.length };
+  }, [downspouts]);
+
+  // Miter markers — tiny drafting diamonds where two runs meet, tying the
+  // "N gutter miters" stat to visible corners on the drawing. Interior
+  // vertices of a jogging run count, and so do coincident endpoints of two
+  // separate runs. Skipped near a downspout pin (the pin covers them).
+  const miterPts = useMemo(() => {
+    if (!planMode) return [] as { x: number; y: number }[];
+    const pts: { x: number; y: number }[] = [];
+    for (const l of eaves) {
+      for (let i = 1; i < l.points.length - 1; i++) pts.push(l.points[i]);
+    }
+    const ends = eaves
+      .filter((l) => l.points.length >= 2)
+      .flatMap((l) => [l.points[0], l.points[l.points.length - 1]]);
+    for (let i = 0; i < ends.length; i++) {
+      for (let j = i + 1; j < ends.length; j++) {
+        if (Math.hypot(ends[i].x - ends[j].x, ends[i].y - ends[j].y) <= 3) {
+          pts.push({
+            x: (ends[i].x + ends[j].x) / 2,
+            y: (ends[i].y + ends[j].y) / 2,
+          });
+        }
+      }
+    }
+    const out: { x: number; y: number }[] = [];
+    for (const p of pts) {
+      if (out.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 3)) continue;
+      if (downspouts.some((d) => Math.hypot(d.x - p.x, d.y - p.y) < 7 * vs))
+        continue;
+      out.push(p);
+    }
+    return out;
+  }, [planMode, eaves, downspouts, vs]);
+
+  // Global label layout (plan mode): start every LF pill outward off its
+  // run, then relax collisions away — pills can't cover each other, a
+  // downspout pin, an orientation chip, or cross another run. Labels that
+  // had to travel get a thin leader back to their run.
+  const labelLayout = useMemo(() => {
+    if (!planMode) return null;
+    const items: LabelBox[] = [];
+    const anchors = new Map<string, { x: number; y: number }>();
+    for (const line of eaves) {
+      if (line.points.length < 2) continue;
+      const len = Math.round(lineLengthFt(line, pxPerFt));
+      if (len < 8) continue; // mirrors LABEL_MIN_FT below
+      const a = line.points[0];
+      const b = line.points[line.points.length - 1];
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const nl = Math.hypot(dx, dy) || 1;
+      let nx = -dy / nl;
+      let ny = dx / nl;
+      if ((mx - eavesCentroid.x) * nx + (my - eavesCentroid.y) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      const off = 15 * vs;
+      items.push({
+        id: line.id,
+        cx: mx + nx * off,
+        cy: my + ny * off,
+        w: 42 * vs,
+        h: 15 * vs,
+      });
+      anchors.set(line.id, { x: mx, y: my });
+    }
+    // Outlier drop-height badges ride through the same solver.
+    for (const d of downspouts) {
+      if (!(d.heightFt > 0)) continue;
+      if (Math.round(d.heightFt) === heightInfo.mode) continue;
+      items.push({
+        id: `dsh-${d.id}`,
+        cx: d.x + 26 * vs,
+        cy: d.y - 11 * vs,
+        w: 44 * vs,
+        h: 13 * vs,
+      });
+      anchors.set(`dsh-${d.id}`, { x: d.x, y: d.y });
+    }
+    const segments = [...eaves, ...rakes].flatMap((l) =>
+      l.points.slice(1).map((p, i) => ({ a: l.points[i], b: p, pad: 2.5 * vs })),
+    );
+    const discs = downspouts.map((d) => ({ x: d.x, y: d.y, r: 10 * vs }));
+    const rects = (
+      roofStructure
+        ? orientationChipBoxes(eaves, roofStructure.perimeter, vs)
+        : []
+    ).map((c) => ({ cx: c.at.x, cy: c.at.y, w: c.w, h: c.h }));
+    // Frame interior, mapped into geometry coords when the trace is
+    // magnified (the pills render inside the scaled group).
+    const pad = 18;
+    const bounds = frame
+      ? {
+          minX: (pad - frame.tx) / frame.k,
+          minY: (pad - frame.ty) / frame.k,
+          maxX: (VIEWBOX_W - pad - frame.tx) / frame.k,
+          maxY: (VIEWBOX_H - pad - frame.ty) / frame.k,
+        }
+      : { minX: pad, minY: pad, maxX: VIEWBOX_W - pad, maxY: VIEWBOX_H - pad };
+    return {
+      placed: layoutLabels(
+        items,
+        { segments, discs, rects },
+        { bounds, gap: 3 * vs },
+      ),
+      anchors,
+    };
+  }, [
+    planMode,
+    eaves,
+    rakes,
+    downspouts,
+    roofStructure,
+    vs,
+    frame,
+    pxPerFt,
+    eavesCentroid,
+    heightInfo,
+  ]);
+
   function svgPoint(e: React.PointerEvent): { x: number; y: number } {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -202,17 +390,17 @@ export function PresentationCanvas({
       {/* Floating total — replaces the editor's busy Legend strip */}
       <div
         className={
-          "pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-card backdrop-blur " +
+          "pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-card " +
           (planMode
-            ? "border-cyan-700/30 bg-[#f7f4ee]/85 text-cyan-900"
-            : "border-cyan-500/30 bg-slate-950/80 text-cyan-100")
+            ? "border-accent-700/30 bg-[#f7f4ee]/95 text-accent-900"
+            : "border-accent-500/30 bg-slate-950/90 text-accent-300")
         }
       >
         <span
           className={
             planMode
-              ? "inline-block h-1.5 w-3 rounded-full bg-cyan-700"
-              : "inline-block h-1.5 w-3 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(0,229,255,0.9)]"
+              ? "inline-block h-1.5 w-3 rounded-full bg-accent-700"
+              : "inline-block h-1.5 w-3 rounded-full bg-[#1479B8] shadow-[0_0_6px_rgba(20,121,184,0.9)]"
           }
         />
         <span className="tabular-nums">
@@ -225,14 +413,14 @@ export function PresentationCanvas({
         </span>
         <span
           className={
-            planMode ? "h-3 w-px bg-cyan-800/30" : "h-3 w-px bg-cyan-500/30"
+            planMode ? "h-3 w-px bg-accent-800/30" : "h-3 w-px bg-accent-500/30"
           }
         />
         <span
           className={
             planMode
               ? "inline-block h-1.5 w-1.5 rounded-full bg-slate-900"
-              : "inline-block h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(255,43,214,0.9)]"
+              : "inline-block h-1.5 w-1.5 rounded-full bg-stripe-coral shadow-[0_0_6px_rgba(248,113,126,0.9)]"
           }
         />
         <span className="tabular-nums">
@@ -242,8 +430,45 @@ export function PresentationCanvas({
             {downspouts.length}
           </span>{" "}
           drops
+          {/* One shared height note instead of 12 identical per-pin
+              badges — per-pin badges only appear for outliers. */}
+          {planMode && heightInfo.uniform && heightInfo.mode > 0 && (
+            <span className="text-slate-500"> @ {heightInfo.mode}′</span>
+          )}
         </span>
       </div>
+
+      {/* Client legend — explains the ink colors + numbered pins in one
+          glance (and prints cleanly on the PDF). Only when there's
+          something to explain. */}
+      {planMode && (downspouts.length > 0 || eaves.some((l) => l.tier === "lower")) && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-full border border-accent-700/20 bg-[#f7f4ee]/95 px-3 py-1.5 shadow-card">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#10475e]">
+            <span className="inline-block h-[3px] w-4 rounded-full bg-[#115673]" />
+            Gutter
+          </span>
+          {eaves.some((l) => l.tier === "lower") && (
+            <span
+              className="inline-flex items-center gap-1.5 text-[10px] font-semibold"
+              style={{ color: "#7c5320" }}
+            >
+              <span
+                className="inline-block h-[3px] w-4 rounded-full"
+                style={{ background: "#a8712c" }}
+              />
+              Low-roof gutter
+            </span>
+          )}
+          {downspouts.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#10475e]">
+              <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#115673] text-[8px] font-bold text-[#f7f4ee]">
+                1
+              </span>
+              Downspout
+            </span>
+          )}
+        </div>
+      )}
 
       <svg
         ref={svgRef}
@@ -263,7 +488,7 @@ export function PresentationCanvas({
         ) : (
           <AerialBackground />
         )}
-        {/* Subtle scrim so cyan + pink pop against bright satellite
+        {/* Subtle scrim so blue + coral pop against bright satellite
             imagery. Skipped in plan mode — the drafting-paper
             background is already light and a dark scrim on top would
             wash out the architectural feel. */}
@@ -282,43 +507,66 @@ export function PresentationCanvas({
             small trace fills the frame while the drafting border stays at
             full size. `geomTransform` is undefined (identity) otherwise. */}
         <g transform={geomTransform}>
-        {/* Roof outline + ridge/hip/valley lines under the trace, so the
-            full roof shape reads and missing runs show as bare outline. */}
+        {/* GUTTER PERIMETER (owner doctrine): the client review diagram is a
+            gutter takeoff, not a reconstructed roof. Draw ONLY the roof
+            outline — no ridges, hips, valleys, tier lines, plane shading or
+            gable wings (those rendered the fanned tangle + dashed diagonals
+            the owner flagged). The solid gutters (teal / amber low-roof) and
+            dashed gables are drawn by this canvas on top; downspouts + LF
+            pills complete it. Matches the estimate canvas's perimeterOnly. */}
         {planMode && roofStructure && (
           <RoofStructureOverlay
             structure={roofStructure}
             tone="onLight"
             scale={vs}
-            derive
+            perimeterOnly
             eaves={eaves}
             rakes={rakes}
           />
         )}
-        {/* Rakes — gray-dashed, low-opacity, non-interactive. In PLAN mode
-            the overlay draws connected GABLE ends from these rakes, so skip
-            the separate floating stubs there. */}
-        {!planMode && rakes.map((line) => (
+        {/* Rakes — gray-dashed "GABLE (no gutter)" edges, non-interactive.
+            Drawn in BOTH modes now: the perimeter-only overlay no longer
+            derives connected gable wings, so this is the sole source of the
+            dashed gable edges on the plan diagram. A diagonal rake (>15° off
+            both axes on a rectilinear plan) is an artifact — skip it, same
+            guard as the estimate takeoff. */}
+        {rakes
+          .filter((line) => {
+            if (!planMode) return true;
+            const a = line.points[0];
+            const b = line.points[line.points.length - 1];
+            if (!a || !b) return false;
+            const dx = Math.abs(b.x - a.x);
+            const dy = Math.abs(b.y - a.y);
+            const len = Math.hypot(dx, dy);
+            return !(len > 0 && dx / len > 0.26 && dy / len > 0.26);
+          })
+          .map((line) => (
           <motion.path
             key={line.id}
             d={pathFor(line)}
-            stroke={planMode ? "#1e3a8a" : "#94a3b8"}
+            stroke={planMode ? "#64748b" : "#94a3b8"}
             strokeWidth={1.75 * vs}
             strokeDasharray={`${5 * vs} ${4 * vs}`}
             strokeLinecap="round"
             fill="none"
-            opacity={planMode ? 0.6 : 0.55}
+            opacity={planMode ? 0.7 : 0.55}
             pointerEvents="none"
             initial={{ opacity: 0 }}
-            animate={{ opacity: planMode ? 0.6 : 0.55 }}
+            animate={{ opacity: planMode ? 0.7 : 0.55 }}
             transition={{ duration: 0.4, delay: 0.1 }}
           />
         ))}
 
-        {/* Eaves — clean stroke, soft glow, no draw-in animation */}
+        {/* Eaves — clean stroke, soft glow, no draw-in animation. Lower-
+            roof runs (garage/porch tier) render amber-brown in plan mode
+            so the client reads two gutter systems at a glance — same
+            palette as the satellite diagram's low-roof color. */}
         {eaves.map((line) => {
           const isSelected = selectedId === line.id;
           const isHover = hoverId === line.id;
           const active = isSelected || isHover;
+          const lower = line.tier === "lower";
           return (
             <g key={line.id}>
               {/* Wider invisible hit area so hover/select is forgiving */}
@@ -343,14 +591,18 @@ export function PresentationCanvas({
                 stroke={
                   planMode
                     ? // Plan mode: architectural-ink palette. Saturated
-                      // cyan/sky still reads as "gutter" but no glow —
+                      // blue still reads as "gutter" but no glow —
                       // glows clip on print and look fake on paper.
-                      active
-                      ? "#0891b2"
-                      : "#0e7490"
+                      lower
+                      ? active
+                        ? "#7c5320"
+                        : "#a8712c"
+                      : active
+                        ? "#14688C"
+                        : "#115673"
                     : active
-                      ? "#a3f7ff"
-                      : "#00e5ff"
+                      ? "#93C6DC"
+                      : "#1479B8"
                 }
                 strokeWidth={(active ? 3.5 : 2.5) * vs}
                 strokeLinecap="round"
@@ -363,8 +615,8 @@ export function PresentationCanvas({
                   filter: planMode
                     ? undefined
                     : active
-                      ? "drop-shadow(0 0 6px rgba(0,229,255,0.85))"
-                      : "drop-shadow(0 0 3px rgba(0,229,255,0.55))",
+                      ? "drop-shadow(0 0 6px rgba(20,121,184,0.85))"
+                      : "drop-shadow(0 0 3px rgba(20,121,184,0.55))",
                 }}
               />
 
@@ -378,7 +630,7 @@ export function PresentationCanvas({
                     cy={pt.y}
                     r={5 * vs}
                     fill="#0b1220"
-                    stroke="#a3f7ff"
+                    stroke="#93C6DC"
                     strokeWidth={2 * vs}
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -398,14 +650,52 @@ export function PresentationCanvas({
                 planMode={planMode}
                 scale={vs}
                 pxPerFt={pxPerFt}
+                at={labelLayout?.placed.get(line.id)}
+                outsideAnchor={eavesCentroid}
+                lower={lower}
               />
             </g>
           );
         })}
 
-        {/* Downspouts — small clean pins, no pulse halo */}
+        {/* Miter markers — small drafting diamonds at run-to-run corners,
+            so the "N gutter miters" stat has a visible counterpart. */}
+        {miterPts.map((p, i) => (
+          <rect
+            key={`mt-${i}`}
+            x={p.x - 1.7 * vs}
+            y={p.y - 1.7 * vs}
+            width={3.4 * vs}
+            height={3.4 * vs}
+            transform={`rotate(45 ${p.x} ${p.y})`}
+            fill="#f7f4ee"
+            stroke="#115673"
+            strokeWidth={0.9 * vs}
+            pointerEvents="none"
+          />
+        ))}
+
+        {/* Downspouts — numbered pins (clockwise walk-around order), so the
+            markers read as an ordered system a client can count, not a
+            scatter of dots. Drop height is NOT repeated on every pin: the
+            common height lives in the totals pill; only outliers (a porch
+            drop shorter than the house drop) get their own badge. */}
         {downspouts.map((d) => {
           const isSelected = selectedId === d.id;
+          const num = dropNumber.get(d.id);
+          const hRound = Math.round(d.heightFt);
+          const placedBadge = labelLayout?.placed.get(`dsh-${d.id}`);
+          // Outlier badge (solver-placed), or the selected pin while the
+          // contractor is nudging it (so the height stays inspectable).
+          const badge =
+            d.heightFt > 0 && (placedBadge || isSelected)
+              ? {
+                  cx: placedBadge?.cx ?? d.x + 26 * vs,
+                  cy: placedBadge?.cy ?? d.y - 11 * vs,
+                  moved: placedBadge?.moved ?? 0,
+                }
+              : null;
+          const pinR = (isSelected ? 8 : 6.5) * vs;
           return (
             <g
               key={d.id}
@@ -422,51 +712,71 @@ export function PresentationCanvas({
               <motion.circle
                 cx={d.x}
                 cy={d.y}
-                r={(isSelected ? 7 : 5.5) * vs}
-                fill={planMode ? "#0f172a" : "#ff2bd6"}
+                r={pinR}
+                fill={planMode ? (isSelected ? "#14688C" : "#115673") : "#f8717e"}
                 stroke={planMode ? "#f7f4ee" : "white"}
-                strokeWidth={(planMode ? 2 : 1.8) * vs}
+                strokeWidth={(planMode ? 1.6 : 1.8) * vs}
                 initial={{ opacity: 0, scale: 0.6 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25 }}
                 style={{
                   filter: planMode
                     ? undefined
-                    : "drop-shadow(0 0 4px rgba(255,43,214,0.7))",
+                    : "drop-shadow(0 0 4px rgba(248,113,126,0.7))",
                 }}
               />
-              <circle
-                cx={d.x}
-                cy={d.y}
-                r={1.8 * vs}
-                fill={planMode ? "#f7f4ee" : "#fff0fb"}
-              />
-              {/* Plan-mode height pill — surfaces per-downspout drop
-                  height so the contractor can spot a porch downspout
-                  sitting at 20 ft (wrong) or a 2-story body downspout
-                  sitting at 10 ft (wrong). Suppressed in aerial mode
-                  to keep the satellite background readable. */}
-              {planMode && d.heightFt > 0 && (
+              {num != null ? (
+                <text
+                  x={d.x}
+                  y={d.y + 2.6 * vs}
+                  textAnchor="middle"
+                  fontSize={(num >= 10 ? 6.6 : 7.5) * vs}
+                  fontWeight={700}
+                  fontFamily="ui-sans-serif, system-ui"
+                  fill={planMode ? "#f7f4ee" : "#fff1f2"}
+                  pointerEvents="none"
+                >
+                  {num}
+                </text>
+              ) : (
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={1.8 * vs}
+                  fill={planMode ? "#f7f4ee" : "#fff1f2"}
+                />
+              )}
+              {planMode && badge && (
                 <g pointerEvents="none">
+                  {badge.moved > 14 * vs && (
+                    <line
+                      x1={d.x}
+                      y1={d.y}
+                      x2={badge.cx}
+                      y2={badge.cy}
+                      stroke="rgba(17,86,115,0.38)"
+                      strokeWidth={0.8 * vs}
+                    />
+                  )}
                   <rect
-                    x={d.x + 8 * vs}
-                    y={d.y - 8 * vs}
-                    width={26 * vs}
-                    height={14 * vs}
+                    x={badge.cx - 22 * vs}
+                    y={badge.cy - 6.5 * vs}
+                    width={44 * vs}
+                    height={13 * vs}
                     rx={3 * vs}
                     fill="#f7f4ee"
-                    stroke="#0e7490"
-                    strokeWidth={0.6 * vs}
+                    stroke="#115673"
+                    strokeWidth={0.7 * vs}
                   />
                   <text
-                    x={d.x + 21 * vs}
-                    y={d.y + 2 * vs}
-                    fontSize={9 * vs}
+                    x={badge.cx}
+                    y={badge.cy + 2.6 * vs}
+                    fontSize={7.5 * vs}
                     fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                    fill="#0e7490"
+                    fill="#115673"
                     textAnchor="middle"
                   >
-                    {Math.round(d.heightFt)}′
+                    {hRound}′ drop
                   </text>
                 </g>
               )}
@@ -491,6 +801,9 @@ function SegmentLabel({
   planMode,
   scale = 1,
   pxPerFt,
+  at,
+  outsideAnchor,
+  lower = false,
 }: {
   line: EditableLine;
   emphasized: boolean;
@@ -501,6 +814,16 @@ function SegmentLabel({
    *  zoomed in to frame a small trace). Keeps the pill a constant size
    *  on screen instead of ballooning with the zoom. */
   scale?: number;
+  /** Solver-resolved pill center (plan mode) — the global layout pass has
+   *  already pushed it clear of other pills / pins / chips / runs. When it
+   *  had to travel, a thin leader ties it back to its run. */
+  at?: PlacedLabel;
+  /** Footprint center: the fallback placement kicks the pill AWAY from
+   *  this so it lands outside the outline. */
+  outsideAnchor?: { x: number; y: number };
+  /** Lower-roof tier run — pill borders/text follow the amber-brown
+   *  low-roof color so label and line read as one system. */
+  lower?: boolean;
 }) {
   if (line.points.length < 2) return null;
   const a = line.points[0];
@@ -516,14 +839,14 @@ function SegmentLabel({
   const ny = (dx / norm) * offset;
   const cx = (a.x + b.x) / 2;
   const cy = (a.y + b.y) / 2;
-  // Offset away from the trace centroid so labels don't escape the
-  // viewBox on corner eaves near the edge. Uses the current viewBox
-  // center (which tracks the zoom window) rather than the fixed canvas
-  // center, so labels still kick outward when the camera is zoomed in.
-  const towardCenter = (cx - VIEWBOX_W / 2) * nx + (cy - VIEWBOX_H / 2) * ny;
-  const sign = towardCenter > 0 ? -1 : 1;
-  const labelCx = cx + nx * sign;
-  const labelCy = cy + ny * sign;
+  // Kick the pill away from the footprint center so it lands OUTSIDE the
+  // outline (labels inside the roof crossed the hip/ridge skeleton).
+  // Falls back to the viewBox center when no anchor is available.
+  const anchor = outsideAnchor ?? { x: VIEWBOX_W / 2, y: VIEWBOX_H / 2 };
+  const sign = (cx - anchor.x) * nx + (cy - anchor.y) * ny >= 0 ? 1 : -1;
+  const labelCx = at ? at.cx : cx + nx * sign;
+  const labelCy = at ? at.cy : cy + ny * sign;
+  const showLeader = planMode && !!at && at.moved > 18 * scale;
 
   const w = (emphasized ? 52 : 38) * scale;
   const h = (emphasized ? 18 : 14) * scale;
@@ -536,6 +859,16 @@ function SegmentLabel({
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.2, delay: 0.15 }}
     >
+      {showLeader && (
+        <line
+          x1={cx}
+          y1={cy}
+          x2={labelCx}
+          y2={labelCy}
+          stroke={lower ? "rgba(168,113,44,0.45)" : "rgba(17,86,115,0.38)"}
+          strokeWidth={0.8 * scale}
+        />
+      )}
       <rect
         x={labelCx - w / 2}
         y={labelCy - h / 2}
@@ -545,12 +878,16 @@ function SegmentLabel({
         fill={planMode ? "#f7f4ee" : "rgba(2,6,23,0.85)"}
         stroke={
           planMode
-            ? emphasized
-              ? "#0e7490"
-              : "rgba(14, 116, 144, 0.55)"
+            ? lower
+              ? emphasized
+                ? "#7c5320"
+                : "rgba(168,113,44,0.7)"
+              : emphasized
+                ? "#115673"
+                : "rgba(17, 86, 115, 0.55)"
             : emphasized
-              ? "#67e8f9"
-              : "rgba(103,232,249,0.45)"
+              ? "#93C6DC"
+              : "rgba(147,198,220,0.45)"
         }
         strokeWidth={(emphasized ? 1.2 : 0.8) * scale}
       />
@@ -560,12 +897,14 @@ function SegmentLabel({
         textAnchor="middle"
         fill={
           planMode
-            ? emphasized
-              ? "#155e75"
-              : "#0e7490"
+            ? lower
+              ? "#7c5320"
+              : emphasized
+                ? "#10475E"
+                : "#115673"
             : emphasized
-              ? "#a5f3fc"
-              : "#67e8f9"
+              ? "#BFDEEA"
+              : "#93C6DC"
         }
         fontSize={fontSize}
         fontWeight={600}
