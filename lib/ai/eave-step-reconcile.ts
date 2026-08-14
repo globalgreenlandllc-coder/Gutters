@@ -117,6 +117,12 @@ export type EaveStepReconcileResult = {
   /** Traced jogs the same face's elevation CONTRADICTS (straight eave read
    *  where the trace steps) — flag-only, nothing deleted or unpriced. */
   wallJogFlags: string[];
+  /** The perpendicular return walls each carve exposed (outer→inner, one per
+   *  new riser). The downstream closure pass normally prices these like any
+   *  uncovered span — but when that pass is skipped (AI trace that isn't
+   *  unanimously hip), the caller surfaces them as unpriced suggestions so a
+   *  carved jog is never silently un-guttered on its returns. */
+  carvedReturnLegs: EaveStepSuggestion[];
 };
 
 /** The two faces perpendicular to a face — where this face's pop-out depths
@@ -139,6 +145,22 @@ const plausibleDepthFt = (d: unknown): d is number =>
 
 /** Schematic return depth when no perpendicular profile measured one. */
 const SCHEMATIC_DEPTH_FT = 4;
+
+/** |shoelace| area of a ring in u² — carve budget bookkeeping only. */
+function ringAreaU2(ring: Pt[]): number {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i];
+    const q = ring[(i + 1) % ring.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Total carved-away area may never exceed this share of the footprint —
+ *  mirrors the squaring pass's area-drift gate. Past it, remaining carves
+ *  fall back to suggest-don't-carve. */
+const MAX_CARVE_AREA_FRAC = 0.1;
 
 // ————————————————————————————————————————————————————————————————————————
 // Face geometry — adapted from place-gables.ts faceEdges/faceU (copied, not
@@ -768,9 +790,14 @@ function carryCarveFollowers<
   });
   const exclOut = args.excluded.map((ee) => {
     if (!isFinitePt(ee.start as Pt) || !isFinitePt(ee.end as Pt)) return ee;
-    const s2 = distToSeg(ee.start, span.a, span.b) <= snapTol ? shift(ee.start) : ee.start;
-    const e2 = distToSeg(ee.end, span.a, span.b) <= snapTol ? shift(ee.end) : ee.end;
-    return s2 === ee.start && e2 === ee.end ? ee : { ...ee, start: s2, end: e2 };
+    const sOn = distToSeg(ee.start, span.a, span.b) <= snapTol;
+    const eOn = distToSeg(ee.end, span.a, span.b) <= snapTol;
+    // Both endpoints ride the moved span → shift whole. Exactly ONE on it
+    // (a rake straddling the recess boundary) must NOT be half-shifted into
+    // a skewed dash that lies on neither the old nor the new outline —
+    // leave it where the trace drew it.
+    if (!sOn || !eOn) return ee;
+    return { ...ee, start: shift(ee.start), end: shift(ee.end) };
   });
 
   return { runs: runsOut, dss: dssOut, excluded: exclOut, touched };
@@ -945,6 +972,7 @@ export function reconcileEaveSteps(args: {
     verifiedJogIds: [],
     carvedJogIds: [],
     wallJogFlags: [],
+    carvedReturnLegs: [],
   };
   try {
     // perFace may be absent while the roof page still located steps — the
@@ -1010,6 +1038,10 @@ export function reconcileEaveSteps(args: {
     const verifiedJogIds: string[] = [];
     const carvedJogIds: string[] = [];
     const wallJogFlags: string[] = [];
+    const carvedReturnLegs: EaveStepSuggestion[] = [];
+    /** Carve area budget — measured against the PRE-carve footprint. */
+    const areaBudgetU2 = ringAreaU2(ring) * MAX_CARVE_AREA_FRAC;
+    let carvedAreaU2 = 0;
     /** front/rear step patterns for the mirror check (roof-page-ruled only —
      *  the elevations ARE viewer-frame by definition, only the plan-frame
      *  page can expose a flipped canvas). */
@@ -1104,6 +1136,11 @@ export function reconcileEaveSteps(args: {
           s.position_frac >= 0 &&
           s.position_frac <= 1,
       );
+      // Steps the source COUNTED but could not locate: the side has real
+      // fascia steps somewhere. Flattening or flagging traced jogs against
+      // a read that admits steps it can't place would erase exactly the
+      // geometry the read is corroborating — both are suppressed below.
+      const unlocated = stepsRaw.length - elevSteps.length;
 
       // Mirror-check inputs (front/rear, roof-page-ruled sides only) — the
       // PRE-flatten traced pattern, so a flipped canvas is still detectable
@@ -1134,7 +1171,14 @@ export function reconcileEaveSteps(args: {
             tracedFracs: tracedPre.map((t) => (t.u - uMin) / width),
           },
         ]) !== null;
-      if (straightenOn && fromRoofPlan && !mirrorSuspect && edges.length > 1) {
+      if (unlocated > 0 && tracedPre.length > 0) {
+        notes.push(
+          `${unlocated} fascia step${unlocated === 1 ? "" : "s"} on the ${face} side ${
+            unlocated === 1 ? "was" : "were"
+          } reported without a usable location — the traced jogs there are KEPT as drawn (nothing flattened or flagged against an unlocatable read).`,
+        );
+      }
+      if (straightenOn && fromRoofPlan && !mirrorSuspect && unlocated === 0 && edges.length > 1) {
         const roofUs = elevSteps.map((s) => uMin + (s.position_frac as number) * width);
         const flat = flattenPhantomJogs({
           ring,
@@ -1305,12 +1349,20 @@ export function reconcileEaveSteps(args: {
           // A recessed middle needs "in" on the left step and "out" on the
           // right one (unknowns pass); an outward-first pair would be a
           // PROJECTING middle — growing the envelope is never carved.
+          const spanFits = !!b && b.u - a.u >= minSpanU && b.u - a.u <= maxSpanU;
+          // Explicit out-then-in = a PROJECTING middle (a bump-out the trace
+          // missed). Outward geometry is never carved — and carving its two
+          // flanks INWARD would cut a recess where the building grows. When
+          // both offsets say so, both steps go straight to suggest-only.
+          if (spanFits && offA === "outward" && offB === "inward") {
+            notes.push(
+              `PROJECTING JOG (${fromRoofPlan ? "roof-plan page" : "elevations"}) — the ${face} side steps OUT at ~${Math.round(a.frac * 100)}% and back in at ~${Math.round(b!.frac * 100)}%: a bump-out the trace missed. Outward geometry is never carved; unpriced returns are suggested instead — verify on the canvas.`,
+            );
+            pi += 2;
+            continue;
+          }
           const pairOk =
-            !!b &&
-            b.u - a.u >= minSpanU &&
-            b.u - a.u <= maxSpanU &&
-            offA !== "outward" &&
-            offB !== "inward";
+            spanFits && offA !== "outward" && offB !== "inward";
           if (pairOk) {
             ops.push({ steps: [a, b], op: { kind: "notch", u1: a.u, u2: b.u } });
             pi += 2;
@@ -1330,6 +1382,15 @@ export function reconcileEaveSteps(args: {
           let applied = 0;
           while (ai < attempts.length && applied < 4) {
             const o = attempts[ai++];
+            // Carve budget: past MAX_CARVE_AREA_FRAC of the original
+            // footprint, remaining steps fall back to suggest-don't-carve —
+            // a schematic pass must never re-sculpt a tenth of the building.
+            if (carvedAreaU2 >= areaBudgetU2) {
+              notes.push(
+                `Carve budget reached on the ${face} side (~${Math.round(MAX_CARVE_AREA_FRAC * 100)}% of the footprint already recessed) — the remaining located steps are suggested, not carved.`,
+              );
+              break;
+            }
             const freshEdges = faceEdges(ring, n, rd);
             const res = carveIntoRing({
               ring,
@@ -1356,6 +1417,31 @@ export function reconcileEaveSteps(args: {
             applied++;
             ring = res.ring;
             footprintTouched = true;
+            carvedAreaU2 +=
+              Math.hypot(res.span.b.x - res.span.a.x, res.span.b.y - res.span.a.y) *
+              carveDepthU;
+            // The recess's new perpendicular return walls (outer → inner).
+            // For an L-step only the riser AT the step is new — the other
+            // end merges into the neighboring wall/corner.
+            {
+              const innerOf = (pp: Pt): Pt => ({
+                x: pp.x - n.x * carveDepthU,
+                y: pp.y - n.y * carveDepthU,
+              });
+              if (o.op.kind === "notch") {
+                carvedReturnLegs.push(
+                  { points: [{ ...res.span.a }, innerOf(res.span.a)] },
+                  { points: [{ ...res.span.b }, innerOf(res.span.b)] },
+                );
+              } else {
+                const uA3 = faceU(res.span.a, rd);
+                const uB3 = faceU(res.span.b, rd);
+                const stU = o.steps[0].u;
+                const endPt =
+                  Math.abs(uA3 - stU) <= Math.abs(uB3 - stU) ? res.span.a : res.span.b;
+                carvedReturnLegs.push({ points: [{ ...endPt }, innerOf(endPt)] });
+              }
+            }
             const carry = carryCarveFollowers({
               runs: runsW,
               dss: dssW,
@@ -1398,7 +1484,11 @@ export function reconcileEaveSteps(args: {
               }, but the traced roof edge ran straight there; a ~${Math.round(carveDepthFt)} ft ${
                 o.op.kind === "notch" ? "inset" : "recess"
               } was carved into the outline (${
-                perpFt != null ? "sized from the perpendicular elevation's profile" : "schematic depth"
+                perpFt != null && perpFt > MAX_CARVE_DEPTH_FT
+                  ? `the perpendicular profile measures ~${Math.round(perpFt)} ft — carved at the ${MAX_CARVE_DEPTH_FT} ft schematic cap`
+                  : perpFt != null
+                    ? "sized from the perpendicular elevation's profile"
+                    : "schematic depth"
               } — verify on the canvas). Gutters follow the new edge with Σ priced LF preserved; the recess's return walls price or suggest through the closure pass like any other uncovered span.`,
             );
           }
@@ -1442,7 +1532,8 @@ export function reconcileEaveSteps(args: {
       // one flush fascia plane across the whole side. NEVER against plan
       // ink: a jog printed on the roof plan IS a roof jog — the per-side
       // summary undercounting it is the summary's error, not the outline's.
-      const unmatched = ink ? [] : traced.filter((_, ti) => !matchedTraced.has(ti));
+      const unmatched =
+        ink || unlocated > 0 ? [] : traced.filter((_, ti) => !matchedTraced.has(ti));
       for (const t of unmatched.slice(0, 3)) {
         const frac = Math.round(((t.u - uMin) / width) * 100);
         wallJogFlags.push(
@@ -1481,6 +1572,7 @@ export function reconcileEaveSteps(args: {
       verifiedJogIds,
       carvedJogIds,
       wallJogFlags,
+      carvedReturnLegs,
     };
   } catch {
     return unchanged;

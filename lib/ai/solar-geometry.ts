@@ -1463,6 +1463,21 @@ export function refineEdgesToPhoto(args: {
   const areaRatio = polygonArea(next) / Math.max(1, polygonArea(ring));
   if (areaRatio < 0.88 || areaRatio > 1.12) return { ring, refined: 0 };
   if (polygonSelfIntersects(next)) return { ring, refined: 0 };
+  // JOG-CRUSH guard: a short riser between two long walls is skipped by
+  // the slide (< 1.6 m), but its two neighbors slide INDEPENDENTLY — if
+  // they land near-collinear the corner rebuild collapses the riser to a
+  // sliver. The ±12% area gate can't see one lost jog; a per-edge length
+  // floor can. Any meaningful input edge crushed below 40% of its traced
+  // length rejects the whole refinement (photo evidence that destroys
+  // geometry is worse than no refinement).
+  const minKeepPx = 0.3 / metersPerPixel;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const inLen = Math.hypot(ring[j].x - ring[i].x, ring[j].y - ring[i].y);
+    if (inLen < minKeepPx) continue;
+    const outLen = Math.hypot(next[j].x - next[i].x, next[j].y - next[i].y);
+    if (outLen < inLen * 0.4) return { ring, refined: 0 };
+  }
   return { ring: next, refined };
 }
 
@@ -2189,6 +2204,23 @@ export type CleanedFootprint = {
  * with the grid's uniform scale — the same numbers work at 0.1 and
  * 0.25 m/px.
  */
+/** Keep original vertices at ~stepPx intervals of walked path length —
+ *  unlike index decimation, dense and sparse stretches thin evenly and a
+ *  corner vertex is never more than stepPx of arc from a kept one. */
+export function decimateByArcLength(pts: Pt[], stepPx: number): Pt[] {
+  if (pts.length <= 2 || !(stepPx > 0)) return pts.slice();
+  const out: Pt[] = [pts[0]];
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc >= stepPx) {
+      out.push(pts[i]);
+      acc = 0;
+    }
+  }
+  return out;
+}
+
 export function cleanFootprint(
   boundary: Pt[],
   metersPerPixel: number,
@@ -2205,9 +2237,15 @@ export function cleanFootprint(
   // into the diagonals the owner kept flagging.
   const epsPx = (opts?.simplifyEpsM ?? 0.3) / metersPerPixel;
 
+  // ARC-LENGTH decimation (was index-based i % k): index skipping on a
+  // 2500-3500 pt Moore trace ran at 0.3-0.4 m spacing and could drop one
+  // of a small jog's two corner vertices before DP ever saw it — the
+  // surviving vertex then read as a shallow bend and the whole step
+  // simplified away. Walking the path and keeping a vertex every eps/2
+  // of ARC keeps corner evidence at half the simplifier's own tolerance.
   const downsampled =
     boundary.length > 800
-      ? boundary.filter((_, i) => i % Math.ceil(boundary.length / 800) === 0)
+      ? decimateByArcLength(boundary, Math.max(1, epsPx / 2))
       : boundary;
   if (downsampled.length < 8) return null;
 
@@ -2236,7 +2274,9 @@ export function cleanFootprint(
   // don't taper at 3–5°; this is the dark-pavement bulge shape that
   // collapseOffGridBulges misses (its pattern needs two clearly off-grid
   // edges; here the step is grid-aligned and the taper is nearly so).
-  const wedge = collapseTaperWedges(bulge.points, metersPerPixel);
+  const wedge = collapseTaperWedges(bulge.points, metersPerPixel, {
+    isRoofAt: opts?.isRoofAt,
+  });
   if (process.env.SOLAR_WEDGE_DEBUG) {
     // eslint-disable-next-line no-console
     console.error(
@@ -2288,6 +2328,12 @@ export function collapseTaperWedges(
     maxTaperDeg?: number;
     minTaperM?: number;
     maxEndOffM?: number;
+    /** Roof-height veto (same contract as collapseOffGridBulges): the
+     *  sliver being cut must NOT read as real roof — a genuine 1-2 m step
+     *  followed by a slightly mis-fit long wall matches the taper-wedge
+     *  pattern geometrically, and without this veto it was the only
+     *  cleanup pass that could eat a real jog with no ground truth. */
+    isRoofAt?: (x: number, y: number) => boolean;
   },
 ): { points: Pt[]; collapsed: number } {
   const maxStepPx = (opts?.maxStepM ?? 2.2) / metersPerPixel;
@@ -2396,6 +2442,24 @@ export function collapseTaperWedges(
       const a1 = Math.abs(area2(trial));
       if (a1 > a0 || a0 - a1 > a0 * 0.06) continue;
       if (polygonSelfIntersects(trial)) continue;
+      // Roof-height veto: sample midway between each removed vertex and
+      // the closing chord — if the sliver reads roof, it's a real step,
+      // not a pavement-shadow artifact.
+      if (opts?.isRoofAt) {
+        const cA = pts[(i - 1 + n) % n];
+        const cB = pts[(i + k + 1) % n];
+        const cdx = cB.x - cA.x;
+        const cdy = cB.y - cA.y;
+        const cl2 = cdx * cdx + cdy * cdy;
+        const samples: Pt[] = [];
+        for (const idx of remove) {
+          const p = pts[idx];
+          const t = cl2 > 0 ? Math.max(0, Math.min(1, ((p.x - cA.x) * cdx + (p.y - cA.y) * cdy) / cl2)) : 0;
+          samples.push({ x: (p.x + cA.x + cdx * t) / 2, y: (p.y + cA.y + cdy * t) / 2 });
+        }
+        const roofN = samples.filter((sp) => opts.isRoofAt!(sp.x, sp.y)).length;
+        if (roofN * 2 >= samples.length && samples.length > 0) continue;
+      }
       pts = trial;
       collapsed++;
       return true;

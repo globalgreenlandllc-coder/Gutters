@@ -1325,6 +1325,9 @@ export async function runEstimateFromPlan(
   // carve exposes). Σ priced LF byte-identical in every branch, and old
   // stored reads (no eave_steps key anywhere) pass through byte-identical.
   // Skipped under the ink takeoff — the outline IS the roof layout.
+  // Return walls each carve exposed — normally priced by the closure pass
+  // below; when that pass is skipped they surface as unpriced suggestions.
+  let carvedReturnLegsFromStep: import("@/lib/ai/eave-step-reconcile").EaveStepSuggestion[] = [];
   if (!inkApplied) try {
     const stepRec = reconcileEaveSteps({
       analysis,
@@ -1358,6 +1361,7 @@ export async function runEstimateFromPlan(
     for (const s of stepRec.suggestedEaves) {
       suggestedEavesFromPlan.push({ points: [s.points[0], s.points[1]], tier: s.tier });
     }
+    carvedReturnLegsFromStep = stepRec.carvedReturnLegs;
     if (
       stepNotes.length > 0 ||
       stepRec.suggestedEaves.length > 0 ||
@@ -1440,7 +1444,9 @@ export async function runEstimateFromPlan(
       `⏸ Hip closure not applied — ${hipVerdict.reason}. The unpriced walls above stay review-flagged; if this roof is actually fully hipped, Re-analyze so fresh elevation reads can prove it.`,
     ];
   }
+  let perimeterClosureRan = false;
   if (!inkApplied && !edgeApplied && (!isAiTrace || hipClosureOk)) {
+    perimeterClosureRan = true;
     const closed = closeVectorPerimeter(analysis, {
       faceNormals: orientation?.normals ?? null,
       // Merged layout evidence: a roof-page face reading a continuous eave
@@ -1469,6 +1475,22 @@ export async function runEstimateFromPlan(
     for (const s of closed.suggestedRuns ?? []) {
       suggestedEavesFromPlan.push({ points: [s.start, s.end], tier: "upper" });
     }
+  }
+
+  // A carve promises its return walls "price or suggest through the closure
+  // pass" — when that pass was skipped (AI trace that isn't unanimously
+  // hip), keep the promise here: each exposed return surfaces as an
+  // unpriced tap-to-add suggestion instead of silently un-guttered walls.
+  if (!perimeterClosureRan && carvedReturnLegsFromStep.length > 0) {
+    for (const leg of carvedReturnLegsFromStep) {
+      suggestedEavesFromPlan.push({ points: [leg.points[0], leg.points[1]], tier: leg.tier });
+    }
+    analysis.notes = [
+      ...(analysis.notes ?? []),
+      `➕ ${carvedReturnLegsFromStep.length} carved-recess return wall${
+        carvedReturnLegsFromStep.length === 1 ? "" : "s"
+      } suggested (unpriced, tap-to-add) — the perimeter-closure pass was skipped on this takeoff, so the carve's new returns are surfaced here instead.`,
+    ];
   }
 
   // 💧 Printed downspout marks on the roof-plan page are a FLOOR for the

@@ -2238,7 +2238,13 @@ export async function runSolarFirstEstimate(args: {
   }
 
   // ---- Measurements ---------------------------------------------------
-  const cornerSplit = classifyPolygonCorners(roofPolygon, W, H);
+  // Scale-aware corner epsilon: the solar ring is already regularized, so
+  // the legacy 6 px (≈1 ft here) blanket simplify was erasing the two
+  // billed miters of every small real jog. ~0.4 ft still dedupes pixel
+  // jitter without uncounting jog corners the drawing keeps.
+  const cornerSplit = classifyPolygonCorners(roofPolygon, W, H, {
+    simplifyEpsPx: Math.min(6, Math.max(2, 0.4 * canvasPxPerFt)),
+  });
   const openEnds = countOpenEaveEnds(eavesForCounts);
   const measurements = measurementsFromVision({
     eaveLF: totalEaveLF,

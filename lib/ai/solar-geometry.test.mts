@@ -1546,3 +1546,74 @@ test("convexCornersOf: returns OUTSIDE corners for both windings", async () => {
     );
   }
 });
+
+/* ————— jog-following hardening (owner: "each jog followed even better") ————— */
+
+test("collapseTaperWedges: roof-height veto keeps a wedge that reads as REAL roof", async () => {
+  const { collapseTaperWedges } = await import("./solar-geometry.ts");
+  // Same Sarasota shape that collapses above — but the DSM says the
+  // sliver is roof: a genuine 1.8 m step + slightly mis-fit long wall.
+  const ring = [
+    { x: 266, y: 334 },
+    { x: 272, y: 139 },
+    { x: 403, y: 143 },
+    { x: 404, y: 125 },
+    { x: 634, y: 146 },
+    { x: 630, y: 287 },
+    { x: 627, y: 472 },
+    { x: 483, y: 467 },
+    { x: 487, y: 341 },
+  ];
+  const roofEverywhere = collapseTaperWedges(ring, 0.1, { isRoofAt: () => true });
+  assert.equal(roofEverywhere.collapsed, 0, "real roof sliver survives");
+  assert.equal(roofEverywhere.points.length, ring.length);
+  const pavement = collapseTaperWedges(ring, 0.1, { isRoofAt: () => false });
+  assert.equal(pavement.collapsed, 1, "non-roof sliver still collapses");
+});
+
+test("decimateByArcLength: even spacing regardless of vertex density, corners preserved within the step", async () => {
+  const { decimateByArcLength } = await import("./solar-geometry.ts");
+  // Dense stretch (0.25 px spacing) then sparse stretch (5 px spacing) —
+  // index decimation would thin these at wildly different arc rates.
+  const pts: { x: number; y: number }[] = [];
+  for (let x = 0; x <= 100; x += 0.25) pts.push({ x, y: 0 });
+  for (let y = 5; y <= 100; y += 5) pts.push({ x: 100, y });
+  const out = decimateByArcLength(pts, 2);
+  // Every kept-to-kept arc ≥ the step means ~uniform coverage; the corner
+  // region (100,0) must have a survivor within one step of arc.
+  const nearCorner = out.some((p) => Math.hypot(p.x - 100, p.y - 0) <= 2 + 1e-6);
+  assert.ok(nearCorner, "corner vertex survives within one step of arc");
+  assert.ok(out.length >= 60 && out.length <= 85, `evenly thinned (got ${out.length})`);
+});
+
+test("cleanFootprint: a 1 m mid-wall fascia step SURVIVES the full cleanup chain (decimate → DP → regularize → wedges → dechamfer)", async () => {
+  const { cleanFootprint } = await import("./solar-geometry.ts");
+  // 60×40 m building; the bottom fascia steps UP 1 m (10 px) at mid-wall
+  // — the small real jog the owner keeps flagging. Boundary walked at
+  // ~1 px steps (>800 pts) so the decimation path is exercised.
+  const pts: { x: number; y: number }[] = [];
+  const walk = (ax: number, ay: number, bx: number, by: number) => {
+    const len = Math.hypot(bx - ax, by - ay);
+    const steps = Math.max(1, Math.round(len));
+    for (let i = 0; i < steps; i++) {
+      pts.push({ x: ax + ((bx - ax) * i) / steps, y: ay + ((by - ay) * i) / steps });
+    }
+  };
+  walk(0, 0, 600, 0);
+  walk(600, 0, 600, 400);
+  walk(600, 400, 300, 400);
+  walk(300, 400, 300, 390); // the 1 m riser
+  walk(300, 390, 0, 390);
+  walk(0, 390, 0, 0);
+  assert.ok(pts.length > 800, "dense boundary triggers decimation");
+  const cleaned = cleanFootprint(pts, 0.1);
+  assert.ok(cleaned, "cleanup produced a ring");
+  const ring = cleaned!.points;
+  const hasNear = (x: number, y: number, tol: number) =>
+    ring.some((p) => Math.hypot(p.x - x, p.y - y) <= tol);
+  assert.ok(hasNear(300, 400, 4), "outer step corner kept");
+  assert.ok(hasNear(300, 390, 4), "inner step corner kept");
+  // Both fascia levels survive: some ring edge near y=400 and some near 390.
+  const nearLevel = (y: number) => ring.some((p) => Math.abs(p.y - y) <= 3 && p.x > 5 && p.x < 595);
+  assert.ok(nearLevel(400) && nearLevel(390), "the jog's two fascia levels both drawn");
+});

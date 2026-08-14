@@ -553,11 +553,18 @@ export function classifyPolygonCorners(
   polygon: RoofPolygon,
   imageWidth: number,
   imageHeight: number,
+  opts?: {
+    /** Pre-count simplification epsilon in CANVAS px. The default 6 was
+     *  tuned for jaggy SAM masks; on an already-regularized ring (the
+     *  solar engine's) 6 px ≈ 1 ft and silently un-bills the two miters
+     *  of every small real jog — those callers pass a scale-aware value. */
+    simplifyEpsPx?: number;
+  },
 ): { outside: number; inside: number } {
   const pts = ensureCCW(
     simplify(
       transformToCanvas(polygon.points, imageWidth, imageHeight),
-      6,
+      opts?.simplifyEpsPx ?? 6,
     ),
   );
   if (pts.length < 3) return { outside: 0, inside: 0 };

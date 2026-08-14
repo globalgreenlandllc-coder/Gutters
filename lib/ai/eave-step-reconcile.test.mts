@@ -838,7 +838,7 @@ test("(C1) 1168G shape — a page step PAIR reading in-then-out carves a recesse
   assert.deepEqual(out.analysis.totals, snap.totals, "totals untouched");
 });
 
-test("(C2) out-then-in pair (projecting middle) never grows the envelope — both flanks carve inward as corner recesses instead", () => {
+test("(C2) out-then-in pair (projecting middle) is NEVER carved — a bump-out the trace missed suggests, it doesn't recess the flanks", () => {
   const a = analysisOf(RECT, rectRuns());
   const snap = structuredClone(a);
   const out = reconcileEaveSteps({
@@ -846,25 +846,29 @@ test("(C2) out-then-in pair (projecting middle) never grows the envelope — bot
     perFace: null,
     roofPlanSteps: { front: [roofStepDir(0.25, "outward"), roofStepDir(0.75, "inward")] },
   });
-  // A projecting middle = both FLANKS recessed relative to the traced
-  // envelope: two L-steps, corners (0,60) and (100,60) slide to y=52.
+  // Both offsets are EXPLICIT and read outward-first: the middle PROJECTS.
+  // Carving the flanks inward would cut recesses where the building grows —
+  // the outline stays exactly as traced and both steps surface as unpriced
+  // suggestions instead.
   assert.deepEqual(
     out.analysis.building_footprint,
-    [
-      { x: 0, y: 0 },
-      { x: 100, y: 0 },
-      { x: 100, y: 52 },
-      { x: 75, y: 52 },
-      { x: 75, y: 60 },
-      { x: 25, y: 60 },
-      { x: 25, y: 52 },
-      { x: 0, y: 52 },
-    ],
-    "both flanks recede; the middle keeps the outer line (envelope never grows)",
+    snap.building_footprint,
+    "outline untouched — a projecting middle is never carved",
   );
-  assert.deepEqual(out.carvedJogIds, ["front@0.25", "front@0.75"]);
-  assert.equal(out.notes.filter((n) => /ROOF JOG CARVED/.test(n)).length, 2, "two corner recesses");
+  assert.deepEqual(out.carvedJogIds, [], "nothing carved");
+  assert.equal(
+    out.notes.filter((n) => /PROJECTING JOG/.test(n)).length,
+    1,
+    "one loud projecting-jog note",
+  );
+  assert.equal(out.suggestedEaves.length, 2, "both steps suggested (unpriced)");
+  assert.equal(
+    out.notes.filter((n) => /ROOF STEPS HERE/.test(n)).length,
+    2,
+    "each step keeps the suggest-don't-carve note",
+  );
   assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+  assert.deepEqual(out.analysis.totals, snap.totals, "totals untouched");
 });
 
 test("(C4) fragmented fascia — collinear sub-edge chain reads as ONE plane, the inset still carves across it", () => {
@@ -1203,4 +1207,124 @@ test("elevationStepsForVectorGate — old reads → null; readable reads flatten
   const rear = out!.find((f) => f.face === "rear")!;
   assert.deepEqual(rear.steps, []);
   assert.equal(rear.continuous_eave, true);
+});
+
+/* ————— owner round 4: jog-following hardening ————— */
+
+test("(U1) steps reported WITHOUT a location never flatten or flag the traced jogs", () => {
+  // The page COUNTED a fascia step but couldn't place it. The traced jog on
+  // this side is probably that step — pressing it flat (or flagging it as a
+  // wall jog) against an unlocatable read erases the exact geometry the
+  // read corroborates. Everything stays as traced, with one honest note.
+  const a = analysisOf(STEPPED, steppedRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(null)] },
+  });
+  assert.deepEqual(
+    out.analysis.building_footprint,
+    snap.building_footprint,
+    "traced jog KEPT — no flatten against an unlocatable read",
+  );
+  assert.deepEqual(out.wallJogFlags, [], "no wall-jog flag either");
+  assert.equal(
+    out.notes.filter((n) => /without a usable location/.test(n)).length,
+    1,
+    "one honest note",
+  );
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(C7) a carved recess reports its RETURN WALLS — two for a notch, one for an L-step (at the riser)", () => {
+  // Notch: inset between 25% and 75% of the 100-wide front face, 4 ft
+  // schematic depth = 8 u. Returns at x=25 and x=75, outer y=60 → inner 52.
+  const a = analysisOf(RECT, rectRuns());
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.25), roofStep(0.75)] },
+  });
+  assert.equal(out.carvedJogIds.length, 2, "notch carved");
+  const legs = out.carvedReturnLegs
+    .map((l) => l.points.map((p) => `${p.x},${p.y}`).sort().join(" "))
+    .sort();
+  assert.deepEqual(
+    legs,
+    ["25,52 25,60", "75,52 75,60"],
+    "both return walls reported outer→inner",
+  );
+
+  // L-step: a lone step at 60% recesses toward the nearer (right) corner —
+  // only the riser at x=60 is a NEW wall; the corner end merges into the
+  // right face.
+  const b = analysisOf(RECT, rectRuns());
+  const out2 = reconcileEaveSteps({
+    analysis: b,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.6)] },
+  });
+  assert.equal(out2.carvedJogIds.length, 1, "L-step carved");
+  assert.equal(out2.carvedReturnLegs.length, 1, "exactly one new return");
+  const leg = out2.carvedReturnLegs[0]!.points.map((p) => `${p.x},${p.y}`).sort();
+  assert.deepEqual(leg, ["60,52", "60,60"], "the riser at the step's u");
+});
+
+test("(C8) carve area budget — past ~10% of the footprint, later faces suggest instead of carving", () => {
+  // Front + rear each carve a 56 u × 8 u inset (448 u² each) of the 6000 u²
+  // footprint (budget 600). By the LEFT face the budget is spent — its pair
+  // must fall back to unpriced suggestions with a loud note.
+  const a = analysisOf(RECT, rectRuns());
+  const snap = structuredClone(a);
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: {
+      front: [roofStep(0.12), roofStep(0.68)],
+      rear: [roofStep(0.12), roofStep(0.68)],
+      left: [roofStep(0.2), roofStep(0.8)],
+    },
+  });
+  assert.equal(out.carvedJogIds.length, 4, "front + rear pairs carve (4 steps)");
+  assert.equal(
+    out.notes.filter((n) => /Carve budget reached/.test(n)).length,
+    1,
+    "budget note on the face that tripped it",
+  );
+  assert.equal(out.suggestedEaves.length, 2, "left pair suggested, not carved");
+  assert.equal(lfSum(out.analysis), lfSum(snap), "Σ priced LF identical");
+});
+
+test("(C9) an excluded edge STRADDLING the recess boundary is left untouched (no skewed dash); one fully inside rides the carve", () => {
+  const a = analysisOf(RECT, rectRuns());
+  a.excluded_edges = [
+    // straddles the recess boundary at x=75 — must stay exactly put
+    { start: { x: 70, y: 60 }, end: { x: 90, y: 60 }, reason: "rake" },
+    // fully inside the recess span — rides down with the carved fascia
+    { start: { x: 30, y: 60 }, end: { x: 50, y: 60 }, reason: "rake" },
+  ] as never;
+  const out = reconcileEaveSteps({
+    analysis: a,
+    perFace: null,
+    roofPlanSteps: { front: [roofStep(0.25), roofStep(0.75)] },
+  });
+  assert.equal(out.carvedJogIds.length, 2, "notch carved");
+  const ee = out.analysis.excluded_edges as { start: Pt; end: Pt }[];
+  assert.deepEqual(
+    [ee[0].start, ee[0].end],
+    [
+      { x: 70, y: 60 },
+      { x: 90, y: 60 },
+    ],
+    "straddling exclusion untouched",
+  );
+  assert.deepEqual(
+    [ee[1].start, ee[1].end],
+    [
+      { x: 30, y: 52 },
+      { x: 50, y: 52 },
+    ],
+    "inside exclusion carried onto the recessed fascia",
+  );
 });
