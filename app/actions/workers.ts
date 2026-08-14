@@ -42,6 +42,9 @@ export type AssignableProposalDTO = {
   id: string;
   address: string;
   clientName: string;
+  /** Client identity for sibling-proposal chaining (same client + same
+   *  site → offer to assign both to one crew in one visit). */
+  clientEmail: string;
   jobType: string | null;
   hasRoof: boolean;
   /** The proposal's contract total in cents — the base a worker's pay %
@@ -258,6 +261,7 @@ const ASSIGNABLE_PROPOSAL_SELECT = {
   id: true,
   address: true,
   clientName: true,
+  clientEmail: true,
   data: true,
   totalCents: true,
   selectedPackageId: true,
@@ -307,6 +311,7 @@ export async function listAssignableProposals(
       id: r.id,
       address: r.address,
       clientName: r.clientName,
+      clientEmail: r.clientEmail,
       jobType,
       hasRoof,
       estimateTotalCents,

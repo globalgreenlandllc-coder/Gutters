@@ -20,6 +20,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Hammer,
+  Link2,
   MapPin,
   Phone,
   Plus,
@@ -54,6 +55,7 @@ import {
   type CrewAvailabilityEntry,
 } from "@/app/actions/availability";
 import { cn } from "@/lib/utils";
+import { proposalPairKey } from "@/lib/proposal-siblings";
 import { dayKey } from "@/lib/day-key";
 
 /* ------------------------------------------------------------------ */
@@ -448,6 +450,10 @@ export function CalendarBoard({
     startsAt: string;
     endsAt: string;
     seed?: SchedulableItem;
+    /** Sibling proposals (same client + same site) dropped as ONE chip —
+     *  the create modal schedules each as its own appointment with the
+     *  same crew and window. */
+    chainedSeeds?: SchedulableItem[];
     workerId?: string | null;
   } | null>(null);
   const [sidebarFilter, setSidebarFilter] = useState("");
@@ -608,7 +614,7 @@ export function CalendarBoard({
      effectAllowed and dropEffect must AGREE ("move" everywhere) — a
      copy/move mismatch makes browsers silently cancel the drop. */
   const dragData = useRef<
-    | { kind: "item"; item: SchedulableItem }
+    | { kind: "item"; item: SchedulableItem; chained?: SchedulableItem[] }
     | { kind: "appt-move"; appt: AppointmentDTO; grabOffsetMin: number }
     | { kind: "appt-resize"; appt: AppointmentDTO }
     | { kind: "job-move"; job: JobCalendarEventDTO; grabOffsetMin: number }
@@ -622,8 +628,12 @@ export function CalendarBoard({
     setDragSource(null);
   }
 
-  function startDragItem(e: DragEvent, item: SchedulableItem) {
-    dragData.current = { kind: "item", item };
+  function startDragItem(
+    e: DragEvent,
+    item: SchedulableItem,
+    chained?: SchedulableItem[],
+  ) {
+    dragData.current = { kind: "item", item, chained };
     e.dataTransfer.effectAllowed = "move";
     // Setting some data is required for Firefox to actually start a drag.
     e.dataTransfer.setData("text/plain", item.id);
@@ -705,7 +715,10 @@ export function CalendarBoard({
         dayIndex: target.dayIndex,
         slotIndex: target.slotIndex,
         durationMin: DEFAULT_DURATION_MIN[defaultTypeForItem(d.item)],
-        label: d.item.title,
+        label:
+          d.chained && d.chained.length > 0
+            ? `${d.item.title} +${d.chained.length} more`
+            : d.item.title,
       };
     } else if (d.kind === "appt-move" || d.kind === "job-move") {
       const src = d.kind === "appt-move" ? d.appt : d.job;
@@ -747,6 +760,7 @@ export function CalendarBoard({
         startsAt: start.toISOString(),
         endsAt: end.toISOString(),
         seed: d.item,
+        chainedSeeds: d.chained,
         workerId: selectedWorkerId,
       });
       return;
@@ -828,6 +842,7 @@ export function CalendarBoard({
         startsAt: start.toISOString(),
         endsAt: new Date(start.getTime() + durMin * 60000).toISOString(),
         seed: d.item,
+        chainedSeeds: d.chained,
         workerId: selectedWorkerId,
       });
       return;
@@ -1132,6 +1147,7 @@ export function CalendarBoard({
           startsAt={creating.startsAt}
           endsAt={creating.endsAt}
           seed={creating.seed}
+          chainedSeeds={creating.chainedSeeds}
           defaultWorkerId={creating.workerId ?? null}
           crew={crew}
           availability={availability}
@@ -2435,7 +2451,11 @@ function Sidebar({
   dropActive: boolean;
   dropKind: "appt" | "job" | null;
   onFilter: (v: string) => void;
-  onDragStart: (e: DragEvent, item: SchedulableItem) => void;
+  onDragStart: (
+    e: DragEvent,
+    item: SchedulableItem,
+    chained?: SchedulableItem[],
+  ) => void;
   onDragEnd: () => void;
   onSmart: (item: SchedulableItem) => void;
   onUnscheduleDragOver: (e: DragEvent) => void;
@@ -2443,6 +2463,27 @@ function Sidebar({
 }) {
   const leads = items.filter((i) => i.kind === "lead");
   const proposals = items.filter((i) => i.kind === "proposal");
+  // Sibling proposals (same client + same job site) fold into ONE chained
+  // chip — dropping it schedules both with the same crew in one visit.
+  const chainGroups: SchedulableItem[][] = [];
+  const singles: SchedulableItem[] = [];
+  {
+    const byKey = new Map<string, SchedulableItem[]>();
+    for (const pr of proposals) {
+      const key = proposalPairKey(pr);
+      if (!key) {
+        singles.push(pr);
+        continue;
+      }
+      const arr = byKey.get(key);
+      if (arr) arr.push(pr);
+      else byKey.set(key, [pr]);
+    }
+    for (const arr of byKey.values()) {
+      if (arr.length >= 2) chainGroups.push(arr);
+      else singles.push(arr[0]);
+    }
+  }
 
   return (
     <aside
@@ -2501,7 +2542,15 @@ function Sidebar({
           )}
           {proposals.length > 0 && (
             <Group title="Proposals to install" count={proposals.length}>
-              {proposals.map((i) => (
+              {chainGroups.map((grp) => (
+                <ChainedDragItem
+                  key={grp[0].id}
+                  items={grp}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
+              ))}
+              {singles.map((i) => (
                 <DragItem
                   key={i.id}
                   item={i}
@@ -2590,6 +2639,58 @@ function DragItem({
       >
         <Zap className="h-3.5 w-3.5" />
       </button>
+    </div>
+  );
+}
+
+/** Two+ proposals for the SAME client at the SAME job site, dragged as one
+ *  chip: drop it on a day and every proposal books with that crew for the
+ *  same window — one visit, separate work orders. */
+function ChainedDragItem({
+  items,
+  onDragStart,
+  onDragEnd,
+}: {
+  items: SchedulableItem[];
+  onDragStart: (
+    e: DragEvent,
+    item: SchedulableItem,
+    chained?: SchedulableItem[],
+  ) => void;
+  onDragEnd: () => void;
+}) {
+  const [primary, ...rest] = items;
+  return (
+    <div
+      draggable
+      onDragStart={(e) => onDragStart(e, primary, rest)}
+      onDragEnd={onDragEnd}
+      className="transition-smooth group relative cursor-grab rounded-lg border border-accent-300 bg-accent-50 px-2.5 py-1.5 text-xs shadow-sm hover:bg-accent-100 active:cursor-grabbing"
+      title="Drag onto the calendar — schedules every chained proposal with the same crew"
+    >
+      <div className="flex items-center gap-1.5">
+        <Link2 className="h-3 w-3 shrink-0 text-accent-700" />
+        <span className="truncate font-semibold text-zinc-900">
+          {primary.clientName || primary.title}
+        </span>
+        <span className="ml-auto shrink-0 rounded-full bg-accent-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+          {items.length} jobs
+        </span>
+      </div>
+      {primary.address && (
+        <div className="truncate text-[11px] text-zinc-500">{primary.address}</div>
+      )}
+      <div className="mt-1 space-y-0.5">
+        {items.map((c) => (
+          <div key={c.id} className="flex items-center gap-1 truncate text-[11px] text-accent-900/80">
+            <Hammer className="h-2.5 w-2.5 shrink-0 text-accent-600" />
+            <span className="truncate">{c.title}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 text-[10px] font-medium text-accent-700">
+        Same client & site — one visit, {items.length} work orders
+      </div>
     </div>
   );
 }
@@ -2746,6 +2847,7 @@ function CreateModal({
   startsAt,
   endsAt,
   seed,
+  chainedSeeds,
   defaultWorkerId,
   crew,
   availability,
@@ -2755,6 +2857,9 @@ function CreateModal({
   startsAt: string;
   endsAt: string;
   seed?: SchedulableItem;
+  /** Sibling proposals dropped as one chained chip — each schedules as its
+   *  own appointment with the same crew/window when its box stays checked. */
+  chainedSeeds?: SchedulableItem[];
   defaultWorkerId: string | null;
   crew: OwnerWorkerDTO[];
   availability: AvailabilityMap;
@@ -2775,6 +2880,11 @@ function CreateModal({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [chainOn, setChainOn] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries((chainedSeeds ?? []).map((c) => [c.id, true])),
+  );
+  const [partial, setPartial] = useState(false);
+  const chained = (chainedSeeds ?? []).filter((c) => chainOn[c.id]);
 
   async function onSave() {
     if (!title.trim()) {
@@ -2797,9 +2907,44 @@ function CreateModal({
       proposalId: seed?.kind === "proposal" ? seed.id : null,
       workerId,
     });
-    setSaving(false);
     if (!r.ok) {
+      setSaving(false);
       setErr(r.reason);
+      return;
+    }
+    // Chained siblings: one visit, one crew — each proposal still gets its
+    // own appointment row so job files, statuses and portal links stay
+    // per-proposal.
+    const failures: string[] = [];
+    for (const c of chained) {
+      const r2 = await createAppointment({
+        title: c.title,
+        type,
+        startsAt: fromLocalInput(start),
+        endsAt: fromLocalInput(end),
+        address: c.address || address || null,
+        notes: notes || null,
+        clientName: c.clientName || clientName || null,
+        clientPhone: clientPhone || null,
+        clientEmail: c.clientEmail || clientEmail || null,
+        leadId: null,
+        proposalId: c.id,
+        workerId,
+      });
+      if (!r2.ok) failures.push(`${c.title}: ${r2.reason}`);
+    }
+    setSaving(false);
+    if (failures.length > 0) {
+      // The first appointment IS on the calendar — never retry the whole
+      // save (it would double-book it). Say what failed, then refresh.
+      setPartial(true);
+      setErr(
+        `First appointment scheduled ✓ — ${failures.length} chained one${
+          failures.length === 1 ? "" : "s"
+        } failed: ${failures.join("; ")}. Drag ${
+          failures.length === 1 ? "it" : "them"
+        } on separately.`,
+      );
       return;
     }
     onCreated();
@@ -2831,25 +2976,80 @@ function CreateModal({
         crew={crew}
         availability={availability}
       />
+      {(chainedSeeds ?? []).length > 0 && (
+        <div className="space-y-2 rounded-xl border border-accent-200 bg-accent-50/70 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-accent-900">
+            <Link2 className="h-3.5 w-3.5 text-accent-600" />
+            Same client, same job site — scheduling together
+          </div>
+          {(chainedSeeds ?? []).map((c) => (
+            <label
+              key={c.id}
+              className="flex cursor-pointer items-center gap-2 rounded-lg bg-white/80 px-2.5 py-1.5 ring-1 ring-accent-200/60"
+            >
+              <input
+                type="checkbox"
+                checked={!!chainOn[c.id]}
+                onChange={(e) =>
+                  setChainOn((m) => ({ ...m, [c.id]: e.target.checked }))
+                }
+                className="h-4 w-4 shrink-0 rounded border-zinc-300 accent-accent-600"
+              />
+              <span className="min-w-0 flex-1 truncate text-xs text-zinc-800">
+                {c.title}
+                {c.subtitle ? (
+                  <span className="text-zinc-500"> · {c.subtitle}</span>
+                ) : null}
+              </span>
+            </label>
+          ))}
+          <p className="text-[11px] leading-snug text-accent-900/70">
+            Each checked proposal books its own appointment with the same crew
+            and time window.
+          </p>
+        </div>
+      )}
       {err && (
-        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p
+          className={cn(
+            "rounded-lg border px-3 py-2 text-sm",
+            partial
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-rose-200 bg-rose-50 text-rose-700",
+          )}
+        >
           {err}
         </p>
       )}
       <div className="flex items-center justify-end gap-2 pt-2">
-        <button
-          onClick={onClose}
-          className="transition-smooth ring-focus press-scale rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onSave}
-          disabled={saving}
-          className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-700 disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Schedule"}
-        </button>
+        {partial ? (
+          <button
+            onClick={onCreated}
+            className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-700"
+          >
+            Close
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={onClose}
+              className="transition-smooth ring-focus press-scale rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="transition-smooth ring-focus press-scale inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-700 disabled:opacity-60"
+            >
+              {saving
+                ? "Saving…"
+                : chained.length > 0
+                  ? `Schedule ${chained.length + 1} together`
+                  : "Schedule"}
+            </button>
+          </>
+        )}
       </div>
     </ModalShell>
   );

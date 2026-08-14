@@ -11,6 +11,7 @@ import {
   Loader2,
   Upload,
   Sparkles,
+  Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ import {
   type EstimateSource,
 } from "@/lib/worker-pay";
 import type { JobKind } from "@prisma/client";
+import { siblingProposals } from "@/lib/proposal-siblings";
 import {
   assignJob,
   getPayDefaults,
@@ -121,6 +123,11 @@ export function AssignJobModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
+  // Sibling chaining: other proposals for the SAME client at the SAME job
+  // site can ride along — one crew, one time window, separate work orders.
+  const [chained, setChained] = useState<Record<string, boolean>>({});
+  const [sibPay, setSibPay] = useState<Record<string, string>>({});
+  const [partial, setPartial] = useState(false);
   const prefillRef = useRef<Prefill | null>(initial ? prefillOf(initial) : null);
 
   // Job-file attachment + AI-read invoice total (an uploaded file overrides
@@ -144,6 +151,27 @@ export function AssignJobModal({
   const selected = proposalId
     ? proposals.find((p) => p.id === proposalId)
     : undefined;
+  const siblings = useMemo(
+    () => siblingProposals(proposals, selected ?? null),
+    [proposals, selected],
+  );
+  // New selection → chain every sibling by default (the whole point of the
+  // pairing is "send both"), with pay re-derived; unchecking is one tap.
+  const lastSelRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = selected?.id ?? null;
+    if (id === lastSelRef.current) return;
+    lastSelRef.current = id;
+    setChained(Object.fromEntries(siblings.map((sib) => [sib.id, true])));
+    setSibPay({});
+  }, [selected?.id, siblings]);
+  const chainedSibs = siblings.filter((sib) => chained[sib.id]);
+  /** A sibling's auto pay: the same % applied to ITS OWN estimate. */
+  const sibAutoCents = (sib: AssignableProposalDTO): number | null =>
+    computePayCents(
+      sib.estimateTotalCents > 0 ? sib.estimateTotalCents : null,
+      parseFloat(pct),
+    );
   const proposalBaseCents =
     selected && selected.estimateTotalCents > 0
       ? selected.estimateTotalCents
@@ -248,10 +276,17 @@ export function AssignJobModal({
     // so the reading isn't lost. The server re-verifies the claim.
     const percentDrove =
       !payTouched && computePayCents(baseCents, pctNum) != null;
+    // With chained siblings the default title gains a "job 1 of N" tag so
+    // the crew reads the pair as one visit — an owner-typed title is kept.
+    const total = chainedSibs.length + 1;
+    const primaryTitle =
+      chainedSibs.length > 0 && title === prefillRef.current?.title
+        ? `${title} · job 1 of ${total}`
+        : title;
     const r = await assignJob({
       workerId,
       proposalId: proposalId || null,
-      title,
+      title: primaryTitle,
       address,
       clientName: clientName || null,
       clientPhone: clientPhone || null,
@@ -268,17 +303,68 @@ export function AssignJobModal({
       payPct: percentDrove ? Math.min(pctNum, 100) : null,
       ignoreConflict,
     });
+    if (!r.ok) {
+      setBusy(false);
+      if ("conflict" in r && r.conflict) {
+        setConflict(r.reason);
+        return;
+      }
+      setErr(r.reason);
+      return;
+    }
+    // Chained siblings ride along: same worker, same window, each with its
+    // own proposal snapshot and its own pay. They overlap the job we just
+    // created BY DESIGN — one visit — so the conflict check is bypassed.
+    const failures: string[] = [];
+    let jobNo = 1;
+    for (const sib of chainedSibs) {
+      jobNo++;
+      const auto = sibAutoCents(sib);
+      const typed = sibPay[sib.id];
+      const typedCents =
+        typed != null && typed !== "" ? Math.round(parseFloat(typed) * 100) : null;
+      const r2 = await assignJob({
+        workerId,
+        proposalId: sib.id,
+        title: `${prefillOf(sib).title} · job ${jobNo} of ${total}`,
+        address: sib.address,
+        clientName: sib.clientName || clientName || null,
+        clientPhone: clientPhone || null,
+        kind: kindOf(sib),
+        scope: scope || null,
+        workerPayCents: typedCents ?? auto ?? 0,
+        startsAtIso: localToIso(start),
+        endsAtIso: localToIso(end),
+        attachmentUrl: null,
+        attachmentName: null,
+        attachmentType: null,
+        payBaseCents: sib.estimateTotalCents > 0 ? sib.estimateTotalCents : null,
+        payBasis: "estimate",
+        payPct:
+          typedCents == null && auto != null
+            ? Math.min(parseFloat(pct), 100)
+            : null,
+        ignoreConflict: true,
+      });
+      if (!r2.ok) failures.push(`${sib.address}: ${r2.reason}`);
+    }
     setBusy(false);
-    if (r.ok) {
+    if (failures.length > 0) {
+      // The first job DID go out — never retry the whole submit (that would
+      // double-assign it). Surface what failed and let the lists refresh.
+      setPartial(true);
+      setErr(
+        `First job assigned ✓ — ${failures.length} chained job${
+          failures.length === 1 ? "" : "s"
+        } failed: ${failures.join("; ")}. Assign ${
+          failures.length === 1 ? "it" : "them"
+        } separately from the proposals list.`,
+      );
       onDone();
-      onClose();
       return;
     }
-    if ("conflict" in r && r.conflict) {
-      setConflict(r.reason);
-      return;
-    }
-    setErr(r.reason);
+    onDone();
+    onClose();
   }
 
   const worker = assignable.find((w) => w.id === workerId);
@@ -342,6 +428,70 @@ export function AssignJobModal({
               is your % of it — adjust either, or attach an invoice to use that
               total instead.
             </span>
+          </div>
+        )}
+
+        {proposalId && siblings.length > 0 && (
+          <div className="space-y-2.5 rounded-xl border border-accent-200 bg-accent-50/70 px-3 py-3">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-accent-900">
+              <Link2 className="h-3.5 w-3.5 text-accent-600" />
+              Same client, same job site — {siblings.length} more proposal
+              {siblings.length === 1 ? "" : "s"}
+            </div>
+            <p className="text-[11px] leading-snug text-accent-900/75">
+              Checked proposals go to the same worker for the same time window
+              — one visit, separate work orders, each with its own pay.
+            </p>
+            {siblings.map((sib) => {
+              const on = !!chained[sib.id];
+              const auto = sibAutoCents(sib);
+              const shown =
+                sibPay[sib.id] ?? (auto != null ? (auto / 100).toFixed(2) : "");
+              return (
+                <div
+                  key={sib.id}
+                  className="flex items-center gap-2 rounded-lg bg-white/80 px-2.5 py-2 ring-1 ring-accent-200/60"
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) =>
+                      setChained((c) => ({ ...c, [sib.id]: e.target.checked }))
+                    }
+                    className="h-4 w-4 shrink-0 rounded border-zinc-300 accent-accent-600"
+                    aria-label={`Also assign ${sib.address}`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-medium text-zinc-800">
+                      {sib.estimateTotalCents > 0
+                        ? fmtMoney(sib.estimateTotalCents)
+                        : "Unpriced"}{" "}
+                      proposal
+                      {sib.hasRoof ? " · roof layout" : ""}
+                    </div>
+                    <div className="truncate text-[11px] text-zinc-500">
+                      {sib.address}
+                    </div>
+                  </div>
+                  <div className="relative w-24 shrink-0">
+                    <DollarSign className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={shown}
+                      disabled={!on}
+                      onChange={(e) =>
+                        setSibPay((m) => ({ ...m, [sib.id]: e.target.value }))
+                      }
+                      placeholder="0"
+                      aria-label="Chained job pay"
+                      className="input w-full pl-7 text-sm disabled:opacity-40"
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -564,6 +714,13 @@ export function AssignJobModal({
               </Button>
             </div>
           </div>
+        ) : partial ? (
+          <>
+            {err && <p className="text-sm text-amber-700">{err}</p>}
+            <div className="flex justify-end">
+              <Button onClick={onClose}>Close</Button>
+            </div>
+          </>
         ) : (
           <>
             {err && <p className="text-sm text-rose-600">{err}</p>}
@@ -580,7 +737,9 @@ export function AssignJobModal({
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
-                Assign job
+                {chainedSibs.length > 0
+                  ? `Assign ${chainedSibs.length + 1} jobs`
+                  : "Assign job"}
               </Button>
             </div>
           </>
